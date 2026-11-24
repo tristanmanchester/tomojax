@@ -684,7 +684,7 @@ impl AppState {
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
             {
-                self.model.error=Some("NPZ imports are not supported by this prototype. Use NXtomo/HDF5 or a recognised acquisition folder.".into());
+                self.model.error=Some("NPZ files can't be imported. Use NXtomo/HDF5 or an acquisition folder.".into());
                 continue;
             }
             let path = match std::fs::canonicalize(&path) {

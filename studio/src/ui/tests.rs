@@ -304,7 +304,7 @@ fn derived_sidebar_label_names_the_operation_even_for_simulated_inputs() {
 }
 
 #[test]
-fn welcome_and_empty_states_explain_the_actual_project_actions() {
+fn welcome_and_empty_states_show_only_the_project_actions() {
     let welcome = runtime(AppState::init(), (1440., 900.));
     let text = welcome
         .elements()
@@ -312,7 +312,9 @@ fn welcome_and_empty_states_explain_the_actual_project_actions() {
         .filter_map(|element| element.text)
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(text.contains("Create a project directory or open an existing project."));
+    assert!(text.contains("Create a project"));
+    assert!(text.contains("Open project"));
+    assert!(!text.contains("Projects contain"));
     assert!(!text.contains("make the data your own"));
     assert!(find(&welcome, "new-project").focusable);
     let (_directory, state) = project_state();
@@ -324,6 +326,7 @@ fn welcome_and_empty_states_explain_the_actual_project_actions() {
         .collect::<Vec<_>>()
         .join("\n");
     assert!(text.contains("No scans in this project"));
+    assert!(!text.contains("referenced in place"));
     assert!(find(&empty, "empty-add-scans").focusable);
     assert!(find(&empty, "empty-add-folder").focusable);
 }

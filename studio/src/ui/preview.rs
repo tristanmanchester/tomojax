@@ -10,8 +10,7 @@ pub fn controls(state: &AppState) -> El {
     };
     let mut body = col().key("interactive-preview-controls").gap(12.).w_full()
         .child(separator())
-        .child(strong("Interactive preview", 13., ink()))
-        .child(help("Edits replace the previous request. Choose Keep result to save a preview in this project."));
+        .child(strong("Interactive preview", 13., ink()));
     if matches!(preview.operation.as_str(), "slice" | "centre_sweep") {
         let count = preview.count.unwrap_or(1);
         body = body.child(slider(
@@ -31,9 +30,6 @@ pub fn controls(state: &AppState) -> El {
                 UiAction::SetPreviewIndex((value * count.saturating_sub(1) as f32).round() as usize)
             },
         ));
-        if preview.count.is_none() {
-            body = body.child(help("The worker plan supplies the slice range. You can edit the index field while it resolves."));
-        }
     }
     if preview.operation == "centre_sweep" {
         let span = state
@@ -75,7 +71,6 @@ pub fn controls(state: &AppState) -> El {
                     )
                     .child(label("input px", 10., muted())),
             );
-        body = body.child(help("Dragging evaluates one offset. The Centres field can request an ordered sweep of several offsets."));
     }
     if let Some(path) = &preview.error_path {
         body = body.child(label(format!("{path}: {}", preview.message), 11., error()).wrap());
@@ -148,9 +143,9 @@ pub fn footer(state: &AppState) -> El {
     if let Some(job) = state.preview_blocker() {
         body = body
             .child(help(if job.status == JobStatus::Paused {
-                "A paused job still holds the worker. Cancel it to run previews."
+                "A paused job holds the worker. Resume or cancel it to run previews."
             } else {
-                "Previews wait behind this job. Cancelling releases the worker; pausing retains it."
+                "Previews run after this job."
             }))
             .child(
                 row()

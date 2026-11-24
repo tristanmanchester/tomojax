@@ -267,15 +267,15 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
         .clip_rounded(0.);
     if !available {
         let message = if state.model.preview.is_some() {
-            "Waiting for the latest preview result."
+            "Waiting for preview…"
         } else if state.model.render_loading {
             "Loading image…"
         } else if state.model.active().is_some_and(|a| a.missing) {
-            "Reconnect the source to restore this view."
+            "Source not found"
         } else if kind == PlaneKind::Volume {
-            "Reconstruct a volume to explore its structure."
+            "No volume"
         } else {
-            "Select a scan or result to see this view."
+            "Nothing selected"
         };
         return area.child(
             col()
@@ -615,15 +615,12 @@ fn compare(state: &AppState) -> El {
         .child(
             col()
                 .gap(6.)
-                .child(strong("Compare results", 24., ink()))
-                .child(help(
-                    "Keep the same physical question in view across two results.",
-                )),
+                .child(strong("Compare results", 24., ink())),
         );
     if left.is_none() || right.is_none() {
         return main.child(el().grow(1.).min_h(0.).center().child(col().gap(16.).max_w(390.).center()
             .child(icon(Icon::Compare,36.,forest())).child(strong("Choose two results",20.,ink()))
-            .child(help("Select two volumes in the project navigator, or choose each result in the inspector."))
+            .child(help("Select two volumes in the navigator or the inspector."))
             .child(action_button("compare-selection","Compare selection",true,state.model.selection_count()>=2,UiAction::CompareSelection))));
     }
     if let Some(note) = &state.model.comparison_note {
@@ -668,11 +665,9 @@ fn empty_project(state: &AppState) -> El {
         .child(col().max_w(480.).gap(18.)
             .child(icon(Icon::Folder,36.,forest()))
             .child(strong("No scans in this project",27.,ink()))
-            .child(help("Add acquisition files or a scan folder. Sources can be referenced in place or copied into the project."))
             .child(row().gap(10.)
                 .child(action_button("empty-add-scans","Add scans",true,true,UiAction::ImportFiles))
                 .child(action_button("empty-add-folder","Add folder",false,true,UiAction::ImportFolder)))
             .child(separator().mt(10.))
-            .child(help("You can also generate a simulated acquisition with TomoJAX."))
             .child(action_button("empty-simulate","Simulate a scan",false,state.model.backend.ready,UiAction::Simulate).max_w(190.)))
 }

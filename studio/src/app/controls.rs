@@ -14,7 +14,7 @@ impl AppState {
         if self.local_job(id) {
             if action != "cancel" {
                 return Err(
-                    "File work can be cancelled; pause becomes available at a numerical checkpoint"
+                    "Pause is available once computation starts"
                         .into(),
                 );
             }

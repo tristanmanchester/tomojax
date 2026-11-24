@@ -345,9 +345,6 @@ pub fn view(state: &AppState) -> El {
                             .or_default()
                     },
                 ),
-            ))
-            .child(help(
-                "The array order is preserved. All TomoJAX correction types are available here.",
             ));
     } else {
         let steps = draft(&state.ui).unwrap_or_default();

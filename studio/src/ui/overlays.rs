@@ -4,7 +4,6 @@ use crate::AppState;
 use rune::{El, ScrollSpec, TextStyle, col, el, row, text_input};
 
 pub fn jobs_workspace(state: &AppState) -> El {
-    let active = state.model.active_jobs();
     let mut content = col()
         .key("jobs-workspace")
         .padding(26.)
@@ -17,13 +16,7 @@ pub fn jobs_workspace(state: &AppState) -> El {
             row()
                 .gap(20.)
                 .items_center()
-                .child(col().gap(7.).child(strong("Jobs", 26., ink())).child(help(
-                    if active == 0 {
-                        "Jobs retain their submitted inputs, settings and results."
-                    } else {
-                        "Processing continues while you prepare and explore other scans."
-                    },
-                )))
+                .child(strong("Jobs", 26., ink()))
                 .child(spacer())
                 .child(action_button(
                     "jobs-prepare",
@@ -36,7 +29,6 @@ pub fn jobs_workspace(state: &AppState) -> El {
     if state.model.jobs.is_empty() {
         return content.child(el().grow(1.).center().child(col().max_w(390.).gap(16.).center()
             .child(icon(Icon::Jobs,36.,forest())).child(strong("No jobs submitted",21.,ink()))
-            .child(help("Select one or more scans, choose an operation and queue it. Each job keeps the settings you submit."))
             .child(action_button("jobs-start","Prepare reconstruction",true,true,UiAction::SetWorkspace(Workspace::Reconstruct)))));
     }
     if state.live.frame().is_some() || state.live.loading() || state.live.error().is_some() {
@@ -442,7 +434,7 @@ pub fn command_palette(state: &AppState) -> El {
     let mut results = col().gap(3.).padding(8.);
     if commands.is_empty() {
         results = results
-            .child(help("No matching commands. Try a workspace or operation name.").padding(18.));
+            .child(help("No matching commands").padding(18.));
     }
     for (index, command) in commands.into_iter().enumerate() {
         let selected = index == state.ui.command_index;
@@ -639,7 +631,6 @@ pub fn shortcuts(state: &AppState) -> El {
         .child(col().padding(24.).gap(16.)
             .child(row().gap(12.).items_center().child(strong("Keyboard shortcuts",23.,ink())).child(spacer())
                 .child(icon_button("close-shortcuts","Close keyboard shortcuts",Icon::Close,true,|s,_|s.ui.shortcuts_open=false)))
-            .child(help("Search by action or binding. Edit a shortcut; conflicts are checked before it is saved."))
             .child(search_input("shortcut-search",&state.ui.shortcut_query,"Find a shortcut",|s|&mut s.ui.shortcut_query)))
         .child(separator()).child(col().key("shortcuts-scroll").grow(1.).min_h(0.).w_full().scroll(ScrollSpec { stick_bottom: false }).child(rows));
     if let Some(error) = &state.model.shortcut_error {
@@ -653,7 +644,7 @@ pub fn shortcuts(state: &AppState) -> El {
     }
     panel = panel.child(separator()).child(
         label(
-            "Use a binding such as mod+shift+r. ‘mod’ follows the system's primary modifier.",
+            "Format: mod+shift+r. mod is Ctrl, or Cmd on macOS.",
             10.5,
             muted(),
         )

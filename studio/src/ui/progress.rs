@@ -90,7 +90,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 caption = caption.child(number(format!("Auto window {low:.3}–{high:.3}"), 9., muted())
                     .key(format!("live-window-{axis}"))
                     .truncate()
-                    .help(format!("Automatic display window: {low} to {high} {}. Quantitative samples are unchanged.", plane.value_unit)));
+                    .help(format!("Automatic display window: {low} to {high} {}", plane.value_unit)));
             }
             slices = slices.child(
                 col()

@@ -97,7 +97,7 @@ impl AppState {
                 if self.project.is_none() {
                     return Err("Create or open a project before importing scans".into());
                 }
-                tx.open_file(FileDialogOptions{title:"Import tomography data · drop multiple files to import together".into(),..Default::default()}
+                tx.open_file(FileDialogOptions{title:"Import tomography data".into(),..Default::default()}
                     .filter("Tomography data",&["nxs","nx","h5","hdf5","tif","tiff","xtekct","txrm","vol","log","xml","info"])
                     .filter("All files",&["*"]),|s:&mut AppState,result,_|match result{Ok(Some(path))=>s.import_paths(vec![path]),Ok(None)=>{},Err(error)=>s.model.error=Some(format!("Could not open the file chooser: {error}. Drop files into the window instead."))});
             }
@@ -296,7 +296,7 @@ impl AppState {
                 old.check_inputs()?;
                 if old.destination.as_ref().is_some_and(|p| p.exists()) {
                     return Err(format!(
-                        "An output already exists at {}. Inspect it before submitting a new operation; retry will not overwrite it.",
+                        "An output already exists at {}. Move or delete it, then retry.",
                         old.destination.as_ref().unwrap().display()
                     ));
                 }

@@ -326,7 +326,7 @@ impl AppState {
         ]
         .map(|id| id.and_then(|id| self.project.as_ref()?.document.asset(id)?.volume()));
         self.model.comparison_note=match descriptors {
-            [Some(a),Some(b)] if a.shape!=b.shape||a.axes!=b.axes||a.unit!=b.unit=>Some("Different grids or units: views share a slice index, not physical registration. No subtraction is applied.".into()),
+            [Some(a),Some(b)] if a.shape!=b.shape||a.axes!=b.axes||a.unit!=b.unit=>Some("Grids differ: slices are matched by index, not position".into()),
             [Some(_),Some(_)]=>Some("Matching registered grids · shared axial index".into()),
             _=>Some("Choose two reconstructed volumes".into()),
         };

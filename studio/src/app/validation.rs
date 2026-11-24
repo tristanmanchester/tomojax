@@ -382,7 +382,7 @@ impl AppState {
             .iter()
             .any(|job| job.status == JobStatus::Running)
         {
-            "Queued behind the current worker operation. You can continue editing.".into()
+            "Queued behind the running job".into()
         } else {
             otherwise.into()
         }

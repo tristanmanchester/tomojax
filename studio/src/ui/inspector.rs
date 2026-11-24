@@ -11,16 +11,9 @@ pub fn view(state: &AppState) -> El {
         Workspace::Compare => "Compare",
         other => other.title(),
     };
-    let subtitle = match state.ui.workspace {
-        Workspace::Prepare => "Calibration and acquisition settings",
-        Workspace::Reconstruct => "Reconstruction settings and plan",
-        Workspace::Explore => "Display and measurement controls",
-        Workspace::Compare => "Registered volume comparison",
-        Workspace::Jobs => "Work captured at submission",
-    };
     let mut body = col().w_full().gap(18.);
     if let Some(asset) = state.model.active().filter(|a| a.missing) {
-        body=body.child(help("This source has moved or is unavailable. Reconnect it to continue; the project retains its processing record."))
+        body=body.child(help("Source not found."))
             .child(action_button("relink-inspector","Reconnect source",true,true,UiAction::RelinkAsset(asset.id.clone())).w_full())
             .child(separator());
     }
@@ -42,8 +35,7 @@ pub fn view(state: &AppState) -> El {
                 .pt(25.)
                 .pb(21.)
                 .gap(7.)
-                .child(strong(title, 22., ink()))
-                .child(label(subtitle, 11.5, muted()).wrap()),
+                .child(strong(title, 22., ink())),
         )
         .child(separator())
         .child(
@@ -110,12 +102,7 @@ fn processing(state: &AppState) -> El {
                     state.ui.import_copy,
                     true,
                     |s, _| s.ui.import_copy = !s.ui.import_copy,
-                ))
-                .child(help(if state.ui.import_copy {
-                    "New imports are copied; original acquisitions remain untouched."
-                } else {
-                    "Reference sources in place to avoid duplicating large acquisitions."
-                }));
+                ));
         }
     }
     body = body.child(operation_selector(state));
@@ -145,9 +132,9 @@ fn processing(state: &AppState) -> El {
     }
     if state.model.parameters.is_empty() {
         params = params.child(help(if state.model.backend.ready {
-            "This operation uses its current TomoJAX defaults."
+            "No settings for this operation."
         } else {
-            "Connecting to TomoJAX to discover supported settings…"
+            "Connecting to TomoJAX…"
         }));
     }
     body = body.child(params);
@@ -179,8 +166,7 @@ fn processing(state: &AppState) -> El {
             .child(separator())
             .child(property("Selected inputs", selection.to_string()));
     }
-    body.child(help("Each submitted job keeps its own inputs and settings. You can keep preparing work while it runs."))
-        .child(separator())
+    body.child(separator())
         .child(section("Reuse these settings",col().gap(10.)
             .child(field("recipe-name",&state.ui.recipe_name,"Recipe name","",|s|&mut s.ui.recipe_name))
             .child(action_button("save-recipe","Save recipe",false,state.model.backend.ready,UiAction::SaveRecipe).w_full())))
@@ -342,7 +328,7 @@ fn plan_placement(placement: &Placement) -> El {
             );
         }
     }
-    content.child(help("Memory is an estimate from the worker's current allocation snapshot; execution can choose a different placement."))
+    content
 }
 
 fn memory_bytes(bytes: u64) -> String {
@@ -604,9 +590,6 @@ fn explore(state: &AppState) -> El {
                     &format!("{:.0}%", state.ui.display.lighting * 100.),
                     true,
                     UiAction::SetLighting,
-                ))
-                .child(help(
-                    "Lighting reveals shape; it does not change attenuation values.",
                 )),
         ));
         let mut clipping = col().gap(10.);
@@ -631,7 +614,7 @@ fn explore(state: &AppState) -> El {
                 .child(choice("tool-navigate","Navigate",state.ui.inspect_tool==InspectTool::Navigate,enabled,UiAction::SetInspectTool(InspectTool::Navigate)))
                 .child(choice("tool-distance","Distance",state.ui.inspect_tool==InspectTool::Distance,enabled,UiAction::SetInspectTool(InspectTool::Distance)))
                 .child(choice("tool-region","Region",state.ui.inspect_tool==InspectTool::Region,enabled,UiAction::SetInspectTool(InspectTool::Region))))
-            .child(help(if state.model.preview.is_some() { "Keep the preview as a project result to measure it." } else { match state.ui.inspect_tool{
+            .child(help(if state.model.preview.is_some() { "Keep the preview to measure it." } else { match state.ui.inspect_tool{
                 InspectTool::Navigate if state.model.active().is_some_and(|a|a.kind==AssetKind::Volume)&&[PlaneKind::Axial,PlaneKind::Coronal,PlaneKind::Sagittal].iter().all(|p|state.model.planes.get(p).is_some_and(|p|p.available))=>"Drag to place the linked crosshair. Middle-drag pans; the wheel moves through slices.",
                 InspectTool::Navigate=>"Middle-drag pans; the wheel moves through the available planes.",
                 InspectTool::Distance=>"Drag between two points in the slice to measure their calibrated distance.",
@@ -698,7 +681,7 @@ fn explore(state: &AppState) -> El {
                 .child(property("Mean", compact_number(stats.mean)))
                 .child(property("Standard deviation", compact_number(stats.std)))
                 .child(help(format!(
-                    "{} sampled pixels. Quantitative exports retain the scientific data.",
+                    "{} sampled pixels",
                     stats.sampled_pixels
                 ))),
         ));
@@ -803,9 +786,6 @@ fn display(state: &AppState) -> El {
             state.ui.display.invert,
             ready,
             |s, tx| s.dispatch(UiAction::SetInvert(!s.ui.display.invert), tx),
-        ))
-        .child(help(
-            "Display settings change the image, not the quantitative data.",
         ));
     section(
         if comparison {
@@ -944,9 +924,11 @@ fn export_format(state: &AppState) -> El {
             .h(32.),
         );
     }
-    section("Export",col().gap(9.).child(choices).child(help(if state.ui.export_format=="uint16"{
-        "16-bit TIFF scales a sampled percentile range to integers. Use NXtomo or float TIFF to retain quantitative values."
-    }else{"Geometry and provenance stay with the result. Existing outputs are protected."})))
+    let mut export = col().gap(9.).child(choices);
+    if state.ui.export_format == "uint16" {
+        export = export.child(help("16-bit TIFF rescales values to integers over a percentile range."));
+    }
+    section("Export", export)
 }
 
 fn footer(state: &AppState) -> El {

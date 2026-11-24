@@ -291,8 +291,7 @@ fn project_tree(state: &AppState) -> El {
         .w_full();
     if state.model.assets.is_empty() {
         listing = listing.child(
-            help("Add scans to this project. Large datasets can stay in their original location.")
-                .padding(8.),
+            help("No scans").padding(8.),
         );
     } else if query.is_empty() {
         for asset in state.model.assets.iter().filter(|a| {
@@ -386,7 +385,7 @@ fn project_tree(state: &AppState) -> El {
                     }))
                     .child(label(
                         if project.save_error.is_some() {
-                            "Autosave needs attention"
+                            "Autosave failed"
                         } else if project.saving {
                             "Saving project…"
                         } else if project.dirty {
@@ -539,7 +538,6 @@ fn welcome(state: &AppState) -> El {
     let mut content=col().w(520.).max_w(650.).gap(20.)
         .child(icon(Icon::Layers,42.,forest()))
         .child(strong("TomoJAX Studio",30.,ink()))
-        .child(label("Create a project directory or open an existing project.\nProjects contain scans, processing settings and results.",14.,muted()).wrap())
         .child(row().gap(10.).pt(7.)
             .child(action_button("new-project","Create a project",true,true,UiAction::NewProject).h(42.))
             .child(action_button("open-project-welcome","Open project",false,true,UiAction::OpenProject).h(42.)));
