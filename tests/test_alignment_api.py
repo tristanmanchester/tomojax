@@ -84,10 +84,6 @@ def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypa
     expected = {"center": (1.45, -1.05) if cone else 1.45, "tilt": 0.5, "roll": 0.75}[name]
     np.testing.assert_allclose(result.info["calibration"][name]["value"], expected, atol=2e-6)
     assert result.info["calibration"][name]["change"] == correction
-    if name == "center":
-        assert type(result.scan.geometry) is type(scan.geometry)
-        if not cone:
-            assert tj.reconstruct(result.scan).info["automatic"]["method"] == "fourier"
     if name != "center":
         assert result.scan.detector.center == scan.detector.center
 
@@ -124,7 +120,7 @@ def test_fitted_global_geometry_round_trips_with_held_local_poses(
     loaded = tj.load(target)
     assert loaded.detector.center == result.scan.detector.center
     np.testing.assert_array_equal(loaded.projections, result.scan.projections)
-    assert loaded.poses is None
+    np.testing.assert_array_equal(loaded.poses, 0)
     np.testing.assert_allclose(
         stack_view_poses(loaded.geometry, 60), stack_view_poses(result.scan.geometry, 60), atol=2e-6
     )

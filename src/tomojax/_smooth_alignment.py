@@ -63,14 +63,7 @@ def align_poses(
             "to let the fit bound its own working scale."
         ) from exc
     changes = record["calibration"]
-    selected = (fit,) if isinstance(fit, str) else fit
-    local = bool({"translations", "rotations"}.intersection(selected))
-    corrected, values = publish_calibration(
-        scan,
-        fitted if local else None,
-        changes,
-        native_pixel_size=native,
-    )
+    corrected, values = publish_calibration(scan, fitted, changes, native_pixel_size=native)
     corrected = with_grid(corrected, working)
     calibration = {name: {"value": values[name], "change": changes[name]} for name in changes}
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
