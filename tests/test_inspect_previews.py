@@ -45,14 +45,14 @@ def test_a_sweep_writes_every_candidate_in_order_and_a_sheet(tmp_path, capsys):
     path, directory = tmp_path / "scan.nxs", tmp_path / "sweep"
     tj.save(path, _scan(recorded=3.0))
     report = _inspect_json(
-        capsys, str(path), "--preview-dir", str(directory), "--centres", "-3:3:1.5"
+        capsys, str(path), "--preview-dir", str(directory), "--centers", "-3:3:1.5"
     )
     sweep = report["sweep"]
-    assert [entry["centre_px"] for entry in sweep] == [-3.0, -1.5, 0.0, 1.5, 3.0]
+    assert [entry["center_px"] for entry in sweep] == [-3.0, -1.5, 0.0, 1.5, 3.0]
     assert [entry["ordinal"] for entry in sweep] == [0, 1, 2, 3, 4]
-    assert [entry["path"].rsplit("/", 1)[1] for entry in sweep][2] == "centre_02_+0.00px.png"
+    assert [entry["path"].rsplit("/", 1)[1] for entry in sweep][2] == "center_02_+0.00px.png"
     assert all((directory / entry["path"].rsplit("/", 1)[1]).exists() for entry in sweep)
-    assert (directory / "centre_sweep.png").exists()
+    assert (directory / "center_sweep.png").exists()
     assert report["sweep_apply"]["recorded_px"] == pytest.approx(3.0)
 
 
@@ -67,13 +67,13 @@ def test_the_printed_command_applies_the_chosen_centre_in_length_units(tmp_path,
     grid = tj.Grid(16, 16, 8, 0.25, 0.25, 0.5, vol_center=(0.0, 0.0, 0.75))
     path, directory = tmp_path / "scan.nxs", tmp_path / "sweep"
     tj.save(path, _scan(detector, grid))
-    report = _inspect_json(capsys, str(path), "--preview-dir", str(directory), "--centres", "-2,2")
+    report = _inspect_json(capsys, str(path), "--preview-dir", str(directory), "--centers", "-2,2")
     apply = report["sweep_apply"]
     chosen = report["sweep"][1]
-    u = chosen["centre_length"]
+    u = chosen["center_length"]
     assert u == pytest.approx(2 * 0.25) and apply["v"] == 0.75
     command = apply["command"].replace("U", repr(u)).split()
-    out = tmp_path / "centred.nxs"
+    out = tmp_path / "centered.nxs"
     assert command[:2] == ["tomojax", "correct"]
     assert main([*command[1:3], "-o", str(out), *command[5:], "--progress", "none"]) == 0
     centred = tj.load(out)
@@ -85,10 +85,10 @@ def test_the_printed_command_applies_the_chosen_centre_in_length_units(tmp_path,
 def test_repeated_candidates_and_slices_keep_their_order_and_never_collide(tmp_path, capsys):
     path, directory = tmp_path / "scan.nxs", tmp_path / "pv"
     tj.save(path, _scan())
-    argv = [str(path), "--preview-dir", str(directory), "--centres", "1,1,1.001"]
+    argv = [str(path), "--preview-dir", str(directory), "--centers", "1,1,1.001"]
     report = _inspect_json(capsys, *argv, "--slice", "z=2", "--slice", "z=5", "--slice", "z=2")
     names = [entry["path"].rsplit("/", 1)[1] for entry in report["sweep"]]
-    assert names == ["centre_00_+1.00px.png", "centre_01_+1.00px.png", "centre_02_+1.00px.png"]
+    assert names == ["center_00_+1.00px.png", "center_01_+1.00px.png", "center_02_+1.00px.png"]
     requests = [(r["axis"], r["index"]) for r in report["slice_requests"]]
     assert requests == [("z", 2), ("z", 5), ("z", 2)]
     assert report["slice_requests"][0]["path"] == report["slice_requests"][2]["path"]
@@ -157,7 +157,7 @@ def test_a_thousand_candidates_list_to_a_file_not_the_summary(monkeypatch, tmp_p
     monkeypatch.setattr(
         interactive, "sweep_planes", lambda *a: (np.zeros((4, 4), np.float32) for _ in range(1000))
     )
-    argv = ["inspect", str(path), "--preview-dir", str(directory), "--centres", "0:999:1"]
+    argv = ["inspect", str(path), "--preview-dir", str(directory), "--centers", "0:999:1"]
     assert main([*argv, "--progress", "json"]) == 0
     record = json.loads(capsys.readouterr().out.splitlines()[-1])
     listing = json.loads((directory / "inspect-previews.json").read_text())
@@ -173,31 +173,31 @@ def test_laminography_and_cone_scans_sweep(tmp_path, capsys, geometry):
     assert main([*argv, "--progress", "none"]) == 0
     capsys.readouterr()
     report = _inspect_json(
-        capsys, str(path), "--preview-dir", str(directory), "--centres", "-1,0,1"
+        capsys, str(path), "--preview-dir", str(directory), "--centers", "-1,0,1"
     )
-    assert len(report["sweep"]) == 3 and (directory / "centre_sweep.png").exists()
+    assert len(report["sweep"]) == 3 and (directory / "center_sweep.png").exists()
 
 
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--centres", "-3:3:1"],
-        ["--centres", "-3,0,3"],
-        ["--centres=-3:3:1"],
+        ["--centers", "-3:3:1"],
+        ["--centers", "-3,0,3"],
+        ["--centers=-3:3:1"],
     ],
 )
 def test_signed_centres_reach_the_parser_whole(tmp_path, capsys, argv):
     path = tmp_path / "scan.nxs"
     tj.save(path, _scan())
     report = _inspect_json(capsys, str(path), "--preview-dir", str(tmp_path / "pv"), *argv)
-    assert report["sweep"][0]["centre_px"] == -3.0
+    assert report["sweep"][0]["center_px"] == -3.0
 
 
 @pytest.mark.parametrize(
     ("argv", "message"),
     [
-        (["--centres", "1:0:1"], "STOP at least START"),
-        (["--centres", "a,b"], "START:STOP:STEP or a comma list"),
+        (["--centers", "1:0:1"], "STOP at least START"),
+        (["--centers", "a,b"], "START:STOP:STEP or a comma list"),
         (["--slice", "w=3"], "AXIS=INDEX"),
     ],
 )
@@ -213,12 +213,12 @@ def test_sweeps_need_a_folder_and_a_scan(tmp_path, capsys):
     from ._helpers import write_raw_nxtomo
 
     with pytest.raises(SystemExit) as error:
-        main(["inspect", "scan.nxs", "--centres", "0,1"])
+        main(["inspect", "scan.nxs", "--centers", "0,1"])
     assert error.value.code == 2 and "--preview-dir" in capsys.readouterr().err
     raw = tmp_path / "raw.nxs"
     write_raw_nxtomo(raw)
     with pytest.raises(SystemExit) as error:
-        main(["inspect", str(raw), "--preview-dir", str(tmp_path / "pv"), "--centres", "0,1"])
+        main(["inspect", str(raw), "--preview-dir", str(tmp_path / "pv"), "--centers", "0,1"])
     assert error.value.code == 2
     err = capsys.readouterr().err
     assert "holds raw frames" in err and "tomojax correct" in err
@@ -239,7 +239,7 @@ def test_a_parallel_scan_previews_and_sweeps_without_a_full_solve(tmp_path, caps
     monkeypatch.setattr(interactive, "reconstruct_resolved", full_solve)
     path, directory = tmp_path / "scan.nxs", tmp_path / "pv"
     tj.save(path, _scan())
-    argv = ["--preview-dir", str(directory), "--centres", "-1,0,1", "--slice", "z=4"]
+    argv = ["--preview-dir", str(directory), "--centers", "-1,0,1", "--slice", "z=4"]
     report = _inspect_json(capsys, str(path), *argv)
     assert "slice_z_4.png" in report["previews"] and len(report["sweep"]) == 3
 

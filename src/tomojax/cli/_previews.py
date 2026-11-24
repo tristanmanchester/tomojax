@@ -56,19 +56,19 @@ def parse_centres(text: str) -> tuple[float, ...]:
     """``START:STOP:STEP`` (STOP included when on the step grid) or a comma list."""
     if not is_centres_value(text):
         raise ValueError(
-            f"--centres takes START:STOP:STEP or a comma list of numbers, not {text!r}"
+            f"--centers takes START:STOP:STEP or a comma list of numbers, not {text!r}"
         )
     if ":" not in text:
         return tuple(float(part) for part in text.split(","))
     start, stop, step = (float(part) for part in text.split(":"))
     if not step > 0 or stop < start:
-        raise ValueError(f"--centres {text}: STEP must be positive and STOP at least START")
+        raise ValueError(f"--centers {text}: STEP must be positive and STOP at least START")
     count = math.floor((stop - start) / step + 1e-9) + 1
     return tuple(round(start + i * step, 12) for i in range(count))
 
 
 def is_centres_value(text: str) -> bool:
-    """Whether ``text`` is a ``--centres`` value, so a leading minus is not an option."""
+    """Whether ``text`` is a ``--centers`` value, so a leading minus is not an option."""
     return _SPEC.match(text) is not None
 
 
@@ -147,7 +147,7 @@ def destinations(
     """The files a preview run will write in ``directory``."""
     names = [slice_name(axis, index) for axis, index in dict.fromkeys(wanted)]
     names += [centre_name(i, len(centres), c) for i, c in enumerate(centres)]
-    extra = {"centre_sweep.png": bool(centres), "projection.png": projection, LISTING: listing}
+    extra = {"center_sweep.png": bool(centres), "projection.png": projection, LISTING: listing}
     return [directory / name for name in [*names, *(n for n, written in extra.items() if written)]]
 
 
@@ -159,7 +159,7 @@ def slice_name(axis: str, index: int) -> str:
 def centre_name(ordinal: int, count: int, centre: float) -> str:
     """The file of sweep candidate ``ordinal``: unique even for repeated centres."""
     width = max(2, len(str(count - 1)))
-    return f"centre_{ordinal:0{width}d}_{centre:+.2f}px.png"
+    return f"center_{ordinal:0{width}d}_{centre:+.2f}px.png"
 
 
 def saved_requests(
@@ -253,8 +253,8 @@ def write_sweep(
         out.sweep.append(
             {
                 "ordinal": ordinal,
-                "centre_px": centre,
-                "centre_length": centre * du,
+                "center_px": centre,
+                "center_length": centre * du,
                 "path": str(directory / name),
             }
         )
@@ -267,7 +267,7 @@ def write_sweep(
     shared = (min(low for low, _ in bounds), max(high for _, high in bounds))
     panels = []
     for thumb, entry in zip(thumbs, out.sweep, strict=True):
-        centre = cast("float", entry["centre_px"])
+        centre = cast("float", entry["center_px"])
         panel = _images.labelled(_images.to_uint8(thumb, shared), f"{centre:+.2f} px")
         panels.append(
             _images.outlined(panel) if math.isclose(centre, recorded, abs_tol=1e-6) else panel
@@ -277,11 +277,11 @@ def write_sweep(
         sheet = _images.labelled(
             np.asarray(sheet), f"recorded centre {recorded:+.2f} px (not swept)"
         )
-    _images.save_png(sheet, directory / "centre_sweep.png")
-    out.files["centre_sweep.png"] = str(directory / "centre_sweep.png")
+    _images.save_png(sheet, directory / "center_sweep.png")
+    out.files["center_sweep.png"] = str(directory / "center_sweep.png")
     v = scan.detector.center[1]
     out.apply = {
-        "command": f"tomojax correct {source} -o centred.nxs --detector-center U {v:g}",
+        "command": f"tomojax correct {source} -o centered.nxs --detector-center U {v:g}",
         "u_per_pixel": du,
         "v": v,
         "unit": shown_unit,

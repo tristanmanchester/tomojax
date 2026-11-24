@@ -32,7 +32,7 @@ def _build_parser() -> ProgressParser:
             "2 for a usage error.\n\nExamples:\n"
             "  tomojax inspect scan.nxs\n"
             "  tomojax inspect scan.nxs --preview-dir previews --slice z=200 --slice x=512\n"
-            "  tomojax inspect scan.nxs --preview-dir sweep --centres -20:20:2\n"
+            "  tomojax inspect scan.nxs --preview-dir sweep --centers -20:20:2\n"
             "  tomojax inspect scan.nxs --json > report.json"
         ),
     )
@@ -54,7 +54,7 @@ def _build_parser() -> ProgressParser:
         help="A plane to preview, such as z=200 (repeatable; default the central z plane)",
     )
     _ = parser.add_argument(
-        "--centres",
+        "--centers",
         metavar="SPEC",
         help="Sweep the detector centre, in pixels from the middle: START:STOP:STEP or a,b,c",
     )
@@ -67,13 +67,13 @@ def _build_parser() -> ProgressParser:
 
 
 def _joined(argv: Sequence[str]) -> list[str]:
-    """``--centres VALUE`` as ``--centres=VALUE``, so a negative VALUE is not read as an option."""
+    """``--centers VALUE`` as ``--centers=VALUE``, so a negative VALUE is not read as an option."""
     args = list(argv)
     joined: list[str] = []
     i = 0
     while i < len(args):
-        if args[i] == "--centres" and i + 1 < len(args) and pv.is_centres_value(args[i + 1]):
-            joined.append(f"--centres={args[i + 1]}")
+        if args[i] == "--centers" and i + 1 < len(args) and pv.is_centres_value(args[i + 1]):
+            joined.append(f"--centers={args[i + 1]}")
             i += 2
             continue
         joined.append(args[i])
@@ -113,7 +113,7 @@ def _print_previews(previews: pv.Previews) -> None:
     for note in previews.notes:
         print(f"  note: {note}")
     for name, path in previews.files.items():
-        if not name.startswith("centre_"):
+        if not name.startswith("center_"):
             print(f"  {path}")
     if not previews.sweep:
         return
@@ -122,11 +122,11 @@ def _print_previews(previews: pv.Previews) -> None:
     print("Centre sweep")
     print(f"  recorded centre: {apply.get('recorded_px', 0.0):+.2f} px")
     for entry in previews.sweep:
-        centre, length = entry["centre_px"], entry["centre_length"]
+        centre, length = entry["center_px"], entry["center_length"]
         print(
             f"  {entry['ordinal']:>3}  {centre:+.2f} px  U = {length:.6g} {unit}  {entry['path']}"
         )
-    print(f"  sheet: {previews.files['centre_sweep.png']}")
+    print(f"  sheet: {previews.files['center_sweep.png']}")
     print(f"  apply one: {apply.get('command')} (U from the list above)")
 
 
@@ -152,7 +152,7 @@ def _make_previews(
     if centres is not None and (frameless or raw):
         kind = "a reconstruction without its scan" if frameless else "raw frames"
         parser.fail(
-            f"--centres sweeps a scan of line integrals; {path} holds {kind}",
+            f"--centers sweeps a scan of line integrals; {path} holds {kind}",
             hint="tomojax correct turns raw frames into a scan" if raw else None,
         )
     scan = None if frameless or raw or (saved and centres is None) else tj.load(path)
@@ -201,12 +201,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     preview_dir = cast("str | None", args.preview_dir)
     try:
         slices = None if args.slice is None else [pv.parse_slice(s) for s in args.slice]
-        centres = None if args.centres is None else pv.parse_centres(cast("str", args.centres))
+        centres = None if args.centers is None else pv.parse_centres(cast("str", args.centers))
     except ValueError as exc:
-        parser.fail(str(exc), hint="for example --slice z=200 or --centres -10:10:1")
+        parser.fail(str(exc), hint="for example --slice z=200 or --centers -10:10:1")
     if (slices or centres) and preview_dir is None:
         parser.fail(
-            "--slice and --centres write images", hint="give a folder for them with --preview-dir"
+            "--slice and --centers write images", hint="give a folder for them with --preview-dir"
         )
 
     def run() -> Result | int:
