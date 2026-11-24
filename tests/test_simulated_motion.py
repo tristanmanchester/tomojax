@@ -211,17 +211,18 @@ def _exact_tier_ends(labels=("raw", "gauge-free"), config=None):
 
 @pytest.mark.numerical
 @pytest.mark.slow
-def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(monkeypatch):
+@pytest.mark.parametrize("label", ["gauge-free", "raw"])
+def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(label):
     # The exact tier's data are the fit's own model, so the objective's minimum is the truth
     # held in the fit's gauge. Run long with the stop rule off, the fit reaches it from a
     # 0.5 px start; a truth held at another sub-voxel position than the fit's gauge cannot be
     # reached, which is what this tier must exclude. Anything that moves the minimum (a
-    # pedestal, a filter's free band) fails here.
+    # pedestal, a filter's free band) fails here. The two fits are separate tests so they
+    # can run side by side.
     from tomojax.alignment import AlignConfig
 
-    ends = _exact_tier_ends(config=AlignConfig(iterations=100, tolerance=0.0))
-    assert ends["gauge-free"] < 2e-4
-    assert ends["raw"] > 5e-3
+    end = _exact_tier_ends((label,), config=AlignConfig(iterations=100, tolerance=0.0))[label]
+    assert end < 2e-4 if label == "gauge-free" else end > 5e-3
 
 
 @pytest.mark.numerical
