@@ -979,18 +979,13 @@ fn export_format(state: &AppState) -> El {
         ("float32", "TIFF 32"),
         ("uint16", "TIFF 16"),
     ] {
-        choices = choices.child(
-            button(
-                &format!("export-format-{value}"),
-                title,
-                state.ui.export_format == value,
-                true,
-                move |s, _| s.ui.export_format = value.into(),
-            )
-            .grow(1.)
-            .px(5.)
-            .h(32.),
-        );
+        choices = choices.child(choice(
+            &format!("export-format-{value}"),
+            title,
+            state.ui.export_format == value,
+            true,
+            UiAction::SetExportFormat(value.into()),
+        ));
     }
     let mut export = col().gap(9.).child(choices);
     if state.ui.export_format == "uint16" {
