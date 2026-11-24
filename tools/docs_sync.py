@@ -77,6 +77,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 None,
                 "Use the projector as a differentiable PyTorch operator.",
             ),
+            (
+                "docs/mcp.md",
+                "mcp",
+                None,
+                "Let an AI agent drive TomoJAX through the Model Context Protocol.",
+            ),
         ],
     ),
     (

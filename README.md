@@ -45,6 +45,7 @@ Commands that write data take `-o OUTPUT` and refuse to overwrite existing files
 | Simulate data or script the Python API | [Synthetic tomography](https://tomojax.dev/synthetic-tomography/), [examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
 | Correct per-view motion, setup angles, or the centre of rotation | [Align a scan](https://tomojax.dev/align-a-scan/) |
 | Reconstruct volumes larger than GPU memory, or use several GPUs | [Large scans and several GPUs](https://tomojax.dev/large-scans/) |
+| Let an AI agent such as Claude Code drive TomoJAX through MCP | [Use TomoJAX from an AI agent](https://tomojax.dev/mcp/) |
 | Check supported formats, models, and limitations | [Support matrix](https://tomojax.dev/support-matrix/), [known limitations](https://tomojax.dev/known-limitations/) |
 
 ## Python API
