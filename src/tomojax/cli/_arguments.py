@@ -12,6 +12,8 @@ import msgspec
 import numpy as np
 
 import tomojax as tj
+from tomojax._loading import projection_frames
+from tomojax._scan import frame_output_grid
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
@@ -38,12 +40,7 @@ def arguments(
         if value is None:
             return None
         if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
-            return read_reference(
-                name,
-                value,
-                context,
-                shape_only=layout_only and name in ("flats", "darks", "support", "volume"),
-            )
+            return read_reference(name, value, context, shape_only=layout_only)
         if isinstance(value, Record):
             with within(name):
                 return _constructors()[type(value).__name__](
@@ -67,7 +64,9 @@ def arguments(
     }
 
 
-def handle_member(name: str, value: Member, context: ex.ExecutionContext) -> Any:
+def handle_member(
+    name: str, value: Member, context: ex.ExecutionContext, *, shape_only: bool
+) -> Any:
     """Resolve a handle member in the domain expected by the operation field."""
     member = context.leases[value].value
     if name == "geometry" and isinstance(member, tj.Frames | tj.Scan):
@@ -75,7 +74,7 @@ def handle_member(name: str, value: Member, context: ex.ExecutionContext) -> Any
     if name == "region" and isinstance(member, tj.RegionEstimate):
         return member
     if name not in ("region", "geometry") and isinstance(member, ex.RegisteredArray):
-        return member.data
+        return array_layout(member.data) if shape_only else member.data
     raise InvalidParameter(name, f"{value.handle}.{value.member} has the wrong kind for {name}")
 
 
@@ -88,15 +87,15 @@ def read_reference(
 ) -> Any:
     """Resolve stored pixels, a scan geometry, or a region estimate at execution."""
     if isinstance(value, Member):
-        member = handle_member(name, value, context)
-        return np.broadcast_to(np.zeros((), member.dtype), member.shape) if shape_only else member
+        return handle_member(name, value, context, shape_only=shape_only)
     if isinstance(value, Npy):
         if value.artifact is not None:
             pinned = context.leases[value].value
             if not isinstance(pinned, Npy):
                 raise InvalidParameter(name, "expected an admitted NumPy file")
             value = pinned
-        return np.load(value.path, mmap_mode="r", allow_pickle=False)
+        data = np.load(value.path, mmap_mode="r", allow_pickle=False)
+        return array_layout(data) if shape_only else data
     if isinstance(value, Hdf5):
         with read_hdf5(value.path) as file:
             data = file.get(value.dataset)
@@ -110,6 +109,23 @@ def read_reference(
     return project_volume(Path(value.path), context, shape_only=shape_only)
 
 
+def array_layout(data: Any) -> np.ndarray:
+    """Represent dimensions and dtype without accessing samples, including positive exposures."""
+    return np.broadcast_to(np.ones((), data.dtype), data.shape)
+
+
+def scan_layout(frames: tj.Frames, *, raw: bool) -> tj.Scan:
+    """Represent the acquisition geometry without materialising line integrals."""
+    return tj.Scan(
+        np.broadcast_to(np.float32(0), frames.counts.shape),
+        frame_output_grid(frames.geometry, frames.source) if raw else frames.geometry,
+        name=frames.name,
+        corrections=frames.corrections,
+        source=frames.source,
+        view_positions=frames.view_positions,
+    )
+
+
 def source(
     ref: op.Source,
     context: ex.ExecutionContext,
@@ -117,9 +133,13 @@ def source(
     kinds: tuple[type, ...],
     field: str = "source",
     raw: bool | None = False,
+    layout_only: bool = False,
 ) -> Any:
     """Resolve a pinned input or file. With raw=None keep the file's native domain."""
     if isinstance(ref, op.PathInput):
+        if layout_only:
+            frames, is_raw = projection_frames(Path(ref.path), require_raw=raw is True)
+            return frames if raw or (raw is None and is_raw) else scan_layout(frames, raw=is_raw)
         if raw is None:
             from tomojax._loading import is_raw_input
 
@@ -139,7 +159,7 @@ _SUPPORT_BYTES = 32 << 20
 def hdf5_values(data: h5py.Dataset, name: str, *, shape_only: bool) -> np.ndarray:
     """Keep volume-sized support masks in seekable host storage."""
     if shape_only:
-        return np.broadcast_to(np.zeros((), data.dtype), data.shape)
+        return array_layout(data)
     if name == "support" and data.nbytes > _SUPPORT_BYTES:
         from tempfile import gettempdir
 

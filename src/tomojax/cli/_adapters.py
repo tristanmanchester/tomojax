@@ -33,7 +33,7 @@ from tomojax._workflow import (
     validate_save,
 )
 from tomojax.cli import execution as ex, operations as op, products as p
-from tomojax.cli._arguments import arguments, source
+from tomojax.cli._arguments import arguments, scan_layout, source
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import ancestor_paths, check_destinations
@@ -154,7 +154,7 @@ def result_info(item):
     return info
 
 
-def geometry_summary(item: Root) -> dict[str, Any]:
+def geometry_summary(item: Root, *, measured_angles: bool = True) -> dict[str, Any]:
     scan = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
     geometry = (
         item.scan.geometry if isinstance(item, tj.Alignment | tj.Simulation) else item.geometry
@@ -165,8 +165,9 @@ def geometry_summary(item: Root) -> dict[str, Any]:
         "center_uv": list(geometry.detector.center),
         "center_unit": unit_of(item if isinstance(item, tj.Reconstruction) else scan),
         "views": len(angles),
-        "angle_range_degree": [float(angles.min()), float(angles.max())],
     }
+    if measured_angles:
+        summary["angle_range_degree"] = [float(angles.min()), float(angles.max())]
     metadata = scan.source.geometry_metadata if scan is not None and scan.source else {}
     info = (
         item.info
@@ -259,20 +260,21 @@ class Admission:
 
                 record, _ = saved_projection_layout(Path(operation.path))
 
-                def scan_layout(path):
-                    frames, _ = projection_frames(Path(path))
-                    shape = np.broadcast_to(np.float32(0), frames.counts.shape)
-                    return tj.Scan(shape, frames.geometry, source=frames.source)
+                def stored_scan(path):
+                    frames, raw = projection_frames(Path(path))
+                    return scan_layout(frames, raw=raw)
 
                 build = {
                     "reconstruction": reconstruction_from_record,
                     "alignment": alignment_from_record,
                     "simulation": simulation_from_record,
                 }[operation.kind]
-                item = build(operation.path, record, scan_layout)
+                item = build(operation.path, record, stored_scan)
         if self.validating:
             self.details.update(
-                path=operation.path, kind=operation.kind, geometry=geometry_summary(item)
+                path=operation.path,
+                kind=operation.kind,
+                geometry=geometry_summary(item, measured_angles=operation.angles is None),
             )
         return work
 
@@ -289,7 +291,13 @@ class Admission:
     @prepare.register
     def combine(self, operation: op.Combine) -> Work:
         scans = [
-            source(ref, self.context, kinds=(tj.Scan,), field=f"sources[{i}]")
+            source(
+                ref,
+                self.context,
+                kinds=(tj.Scan,),
+                layout_only=self.validating,
+                field=f"sources[{i}]",
+            )
             for i, ref in enumerate(operation.sources)
         ]
         try:
@@ -357,8 +365,16 @@ class Admission:
 
     @prepare.register
     def fit(self, operation: op.Reconstruct | op.Align) -> Work:
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
-        options = arguments(operation, self.context, omit=("source", "axis", "index", "centres"))
+        layout_only = self.validating or self.plan
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=layout_only)
+        options = arguments(
+            operation,
+            self.context,
+            omit=("source", "axis", "index", "centres"),
+            layout_only=layout_only,
+        )
+        if not isinstance(operation, op.Align):
+            options["metadata_only"] = layout_only
         if isinstance(operation, op.Align):
             alignment = resolve_alignment(scan, **options)
 
@@ -400,14 +416,14 @@ class Admission:
     def region(self, operation: op.RegionPreview) -> Work:
         from tomojax._region import check_region_geometry
 
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=self.validating)
         check_region_geometry(scan)
         return partial(region_product, scan, self.context)
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
         options = arguments(operation, self.context, omit=("source",), layout_only=self.validating)
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=self.validating)
         grid = options["grid"] or scan.grid
         forward = isinstance(operation, op.Project)
         name = "volume" if forward else "projections"
@@ -456,7 +472,7 @@ class Admission:
         from tomojax.core.validation import view_indices
 
         kinds = (tj.Scan, tj.Frames) if isinstance(operation, op.Select | op.Crop) else (tj.Scan,)
-        item = source(operation.source, self.context, kinds=kinds)
+        item = source(operation.source, self.context, kinds=kinds, layout_only=self.validating)
         detector = item.geometry.detector
         if isinstance(operation, op.Select):
             try:
@@ -475,7 +491,9 @@ class Admission:
         if isinstance(operation, op.Bin):
             check_binning(operation.binning, detector.nv, detector.nu)
             return partial(item.binned, operation.binning)
-        poses = arguments(operation, self.context, omit=("source",))["poses"]
+        poses = arguments(operation, self.context, omit=("source",), layout_only=self.validating)[
+            "poses"
+        ]
         try:
             posed = item.with_poses(poses)
         except ValueError as err:
@@ -497,6 +515,7 @@ class Admission:
             self.context,
             kinds=(tj.Frames,) if raw else (tj.Frames, tj.Scan),
             raw=True if raw else None,
+            layout_only=self.validating,
         )
         if isinstance(operation, op.ReconstructSlabs):
             from tomojax._scan import geometry_record
@@ -504,7 +523,12 @@ class Admission:
             from tomojax.io.api import dataset_output_format, slab_volume
             from tomojax.recon.api import validate_slab_grid
 
-            settings = arguments(operation, self.context, omit=("source", "path", "force"))
+            settings = arguments(
+                operation,
+                self.context,
+                omit=("source", "path", "force"),
+                layout_only=self.validating,
+            )
             grid, _, _ = slab_settings(item, **settings)
             validate_slab_grid(operation.method, item.geometry, grid, item.geometry.detector)
             path = Path(operation.path)

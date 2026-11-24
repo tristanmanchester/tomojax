@@ -670,7 +670,7 @@ def test_unavailable_cuda_backend_is_rejected_in_preflight(
         )
 
 
-def test_mlem_preflight_checks_the_measurement_domain(worker, tmp_path):
+def test_mlem_execution_checks_the_measurement_domain(worker, tmp_path):
     path = tmp_path / "negative.nxs"
     grid = tj.Grid(3, 3, 2, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(4, 2, 1, 1), [0, 43, 91, 137])
@@ -678,10 +678,11 @@ def test_mlem_preflight_checks_the_measurement_domain(worker, tmp_path):
     measured[-1, -1, -1] = -0.125
     tj.save(path, tj.Scan(measured, geometry))
     recipe = dict(type="reconstruct", method="mlem", source=dict(type="path", path=str(path)))
-    for command in ("validate", "plan", "run"):
-        reply = worker(command, operation=recipe)
-        assert reply["type"] == "error", reply
-        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
+    for command in ("validate", "plan"):
+        assert worker(command, operation=recipe)["type"] == "result"
+    reply = worker("run", operation=recipe)
+    assert reply["type"] == "error", reply
+    assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
 
 
 def test_spdhg_seed_is_nonnegative_in_all_commands(worker, simulation):
@@ -701,7 +702,7 @@ def test_spdhg_seed_is_nonnegative_in_all_commands(worker, simulation):
 
 
 @pytest.mark.parametrize("bad_row", [2, 0])
-def test_fourier_preflight_checks_only_sampled_detector_rows(worker, tmp_path, bad_row):
+def test_fourier_execution_checks_only_sampled_detector_rows(worker, tmp_path, bad_row):
     grid = tj.Grid(5, 5, 1, 1, 1, 1, vol_center=(0, 0, 0.25))
     geometry = tj.ParallelGeometry(grid, tj.Detector(7, 5, 1, 1), [12, 45, 90, 163])
     data = np.ones((4, 5, 7), np.float32)
@@ -711,7 +712,8 @@ def test_fourier_preflight_checks_only_sampled_detector_rows(worker, tmp_path, b
     recipe = dict(type="reconstruct", method="fourier", source=dict(type="path", path=str(path)))
     for command in ("validate", "plan", "run"):
         reply = worker(command, operation=recipe)
-        if bad_row == 0:  # z=0.25 lies one quarter of the way from row 2 to row 3.
+        # z=0.25 lies one quarter of the way from row 2 to row 3.
+        if command != "run" or bad_row == 0:
             assert reply["type"] == "result", reply
         else:
             assert reply["type"] == "error", reply
@@ -722,7 +724,7 @@ def test_fourier_preflight_checks_only_sampled_detector_rows(worker, tmp_path, b
 
 
 @pytest.mark.parametrize("method", ["cgls", "fista", "spdhg", "sirt"])
-def test_iterative_preflight_requires_finite_measurements(worker, tmp_path, method):
+def test_iterative_execution_requires_finite_measurements(worker, tmp_path, method):
     grid = tj.Grid(4, 4, 2, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(4, 2, 1, 1), [0, 45, 90, 135])
     measured = np.zeros((4, 2, 4), np.float32)
@@ -730,10 +732,11 @@ def test_iterative_preflight_requires_finite_measurements(worker, tmp_path, meth
     path = tmp_path / "nonfinite.nxs"
     tj.save(path, tj.Scan(measured, geometry))
     recipe = dict(type="reconstruct", method=method, source=dict(type="path", path=str(path)))
-    for command in ("validate", "plan", "run"):
-        reply = worker(command, operation=recipe)
-        assert reply["type"] == "error", reply
-        assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
+    for command in ("validate", "plan"):
+        assert worker(command, operation=recipe)["type"] == "result"
+    reply = worker("run", operation=recipe)
+    assert reply["type"] == "error", reply
+    assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", "source")
 
 
 @pytest.mark.parametrize(("method", "field"), [("fbp", "method"), ("cgls", "warm_start")])
@@ -1089,9 +1092,7 @@ def test_validate_open_only_reads_calibration_metadata(tmp_path, monkeypatch):
 
     assert run().details["geometry"]["views"] == 1
     assert reads == []
-    assert not any(
-        getattr(e, "name", None) in ("load", "flat dark, log", "correct view batch") for e in events
-    )
+    assert not any(getattr(e, "name", None) in ("load", "correction") for e in events)
     save_dataset(path, _labelled_dataset([4, 2], [0, 2]))
     with pytest.raises(ValueError, match="No flat"):
         run()
@@ -1236,3 +1237,44 @@ def test_compressed_npz_windows_inflate_member_once(tmp_path, monkeypatch, order
     expected = (data[16:17, :, ::2], data[:, 128:129, ::2], data[:, :, 512:513])
     for file, plane in zip(files, expected, strict=True):
         np.testing.assert_array_equal(np.load(file), plane)
+
+
+@pytest.mark.parametrize("forward", [True, False], ids=["project", "backproject"])
+def test_projection_dry_run_reads_only_layout(tmp_path, monkeypatch, forward):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations as op
+    from tomojax.io import save_dataset
+    from tomojax.wire.arrays import Hdf5
+
+    path = tmp_path / "raw.nxs"
+    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    with h5py.File(path, "a") as file:
+        file.create_dataset("operand", shape=(2, 4, 4) if forward else (1, 2, 4), dtype="f")
+    geometry_reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    operand_reads = trace_detector_reads(monkeypatch, "/operand")
+    ref, operand = op.PathInput(str(path)), Hdf5(str(path), "/operand")
+    operation = op.Project(ref, operand) if forward else op.Backproject(ref, operand)
+    events = []
+    admitted(op.Validate(operation), None, Stage(tmp_path), None, event=events.append)
+    assert not geometry_reads and not operand_reads
+    assert not any(getattr(e, "name", None) in ("load", "correction") for e in events)
+
+
+def test_open_dry_run_omits_unread_angle_range(tmp_path, monkeypatch):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations as op
+    from tomojax.io import save_dataset
+    from tomojax.wire.arrays import Hdf5
+
+    path = tmp_path / "raw.nxs"
+    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    with h5py.File(path, "a") as file:
+        file["override"] = [37.0]
+    reads = trace_detector_reads(monkeypatch, "/override")
+    command = op.Open(str(path), "scan", angles=Hdf5(str(path), "/override"))
+    result = admitted(op.Validate(command), None, Stage(tmp_path), None)
+    assert result.details["geometry"]["views"] == 1
+    assert "angle_range_degree" not in result.details["geometry"]
+    assert not reads
