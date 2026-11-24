@@ -751,6 +751,7 @@ def binding(
             }
             else ""
         ),
+        "long": name in {*MODELS, "open", "edit_scan", "preview", "python"},
         "read_only": name in {"status", "inspect", "describe", "view", "preview"},
         "schema": spec,
         "output_schema": workflow_output()

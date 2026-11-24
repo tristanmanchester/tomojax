@@ -6,6 +6,7 @@ import asyncio
 from contextlib import suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 import os
 import signal
 import sys
@@ -33,6 +34,10 @@ class WorkerLost(RuntimeError):
     """The worker was lost before it returned a terminal. Its work must never be replayed."""
 
 
+class WorkerProtocolError(RuntimeError):
+    """The worker rejected a command before admission."""
+
+
 class WorkerError(ValueError):
     """A terminal failure, including its worker kind and parameter path."""
 
@@ -46,6 +51,7 @@ class WorkerError(ValueError):
 class Activity:
     """A task's most recent worker event and cancellation route."""
 
+    updated: datetime | None = None
     progress: Object | None = None
     cancel: Callable[[], None] | None = None
     requested: bool = False
@@ -56,6 +62,7 @@ class Activity:
 
     def record(self, event: Object) -> None:
         """Keep the active labels even when a newer worker event has no label."""
+        self.updated = datetime.now(UTC)
         self.progress = event
         kind = event["event"]
         if kind == "started":
@@ -210,6 +217,8 @@ class Generation:
         if job.execution:
             job.activity.cancel = None
         try:
+            if row["type"] == "protocol_error":
+                raise WorkerProtocolError(row["message"])
             if row["type"] != "result":
                 raise WorkerError(row.get("error", row))
             value = row["result"]

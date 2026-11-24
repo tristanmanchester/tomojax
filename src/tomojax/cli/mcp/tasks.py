@@ -73,7 +73,8 @@ class Tasks(Extension):
 
     identifier = "io.modelcontextprotocol/tasks"
 
-    def __init__(self) -> None:
+    def __init__(self, parts: dict[str, list[str]]) -> None:
+        self.parts = parts
         self.eligible: set[str] = set()
         self.store: dict[str, Task] = {}
 
@@ -104,7 +105,8 @@ class Tasks(Extension):
             raise MCPError(code=-32602, message="Unknown or expired task ID")
         if ctx.method == "tasks/get":
             fields = dict(task.fields)
-            if fields["status"] == "working" and task.job.progress:
+            if fields["status"] == "working" and task.job.updated:
+                fields["lastUpdatedAt"] = task.job.updated.isoformat()
                 fields["statusMessage"] = task.job.status()[0]
             return {**fields, "resultType": "complete"}
         if ctx.method == "tasks/cancel" and task.fields["status"] == "working":
@@ -118,7 +120,11 @@ class Tasks(Extension):
         call_next: CallNext,
     ) -> Any:
         """Register before returning the handle. Legacy and short calls block normally."""
-        if params.name not in self.eligible or not self.supports(ctx):
+        if (
+            params.name not in self.eligible
+            or (params.arguments or {}).get("dry_run") is True
+            or not self.supports(ctx)
+        ):
             job = Activity()
             token = activity.set(job)
             meta = ctx.meta or {}
@@ -139,6 +145,7 @@ class Tasks(Extension):
         fields = {
             "taskId": task_id,
             "status": "working",
+            "statusMessage": f"Starting {params.name}",
             "createdAt": now,
             "lastUpdatedAt": now,
             "ttlMs": TTL * 1000,
@@ -152,16 +159,25 @@ class Tasks(Extension):
                 result = await call_next(ctx)
                 if isinstance(result, BaseModel):
                     result = result.model_dump(mode="json", by_alias=True, exclude_none=True)
-                if result and (result.get("structuredContent") or {}).get("kind") == "cancelled":
+                if (
+                    result is not None
+                    and result.get("isError")
+                    and (result.get("structuredContent") or {}).get("kind") == "cancelled"
+                ):
                     fields.update(status="cancelled")
                 else:
                     fields.update(status="completed", result=result)
+            except MCPError as err:
+                fields.update(
+                    status="failed", error=err.error.model_dump(mode="json", exclude_none=True)
+                )
             except Exception as err:
                 fields.update(
                     status="failed",
-                    error={"code": getattr(err, "code", -32603), "message": str(err)},
+                    error={"code": -32603, "message": str(err)},
                 )
             finally:
+                del fields["statusMessage"]
                 fields["lastUpdatedAt"] = datetime.now(UTC).isoformat()
                 activity.reset(token)
 
@@ -169,6 +185,9 @@ class Tasks(Extension):
             task = self.store.pop(task_id)
             task.job.request_cancel()
             task.runner.cancel()
+            content = task.fields.get("result", {}).get("structuredContent") or {}
+            if uri := content.get("continuation"):
+                self.parts.pop(uri.split("/")[-2], None)
 
         self.store[task_id] = Task(
             fields,

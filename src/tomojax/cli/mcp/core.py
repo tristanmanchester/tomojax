@@ -21,7 +21,7 @@ from mcp_types import CallToolResult, ToolAnnotations
 
 from tomojax import __version__
 from tomojax.cli.mcp.ledger import Ledger
-from tomojax.cli.mcp.supervisor import Supervisor, WorkerLost
+from tomojax.cli.mcp.supervisor import Supervisor, WorkerLost, WorkerProtocolError
 from tomojax.cli.mcp.tasks import Tasks
 
 if TYPE_CHECKING:
@@ -59,7 +59,7 @@ class Adapter(Tool):
         del context, convert_result
         try:
             return await self.fn(arguments)
-        except WorkerLost as err:
+        except (WorkerLost, WorkerProtocolError) as err:
             raise MCPError(code=-32603, message=str(err)) from err
 
 
@@ -91,7 +91,7 @@ class Core:
         self.supervisor = supervisor
         self.bus = InMemorySubscriptionBus()
         self.parts: dict[str, list[str]] = {}
-        self.tasks = Tasks()
+        self.tasks = Tasks(self.parts)
         self.server = Server(
             "tomojax",
             version=__version__,

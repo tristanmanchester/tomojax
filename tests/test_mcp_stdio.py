@@ -21,6 +21,10 @@ from tomojax.cli.mcp.tools import Open
 
 pytestmark = pytest.mark.surface
 TASKS = "io.modelcontextprotocol/tasks"
+ACK = {
+    "resultType": "complete",
+    "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "tomojax", "version": tj.__version__}},
+}
 
 
 class Client:
@@ -119,6 +123,8 @@ from tomojax.cli import mcp
 mcp.__path__.insert(0, sys.argv.pop())
 from tomojax.cli.mcp import tasks
 tasks.TTL = 2
+tasks.HEARTBEAT = .15
+tasks.PROGRESS_INTERVAL = .01
 sys.exit(mcp.main())
 """
         cmd = [sys.executable, "-c", code, str(directory)]
@@ -157,14 +163,18 @@ def registry(core):
     records = previous_registry(core)
     async def probe(args):
         base = core.supervisor.base
-        if args.mode == "wait":
+        if args.mode in ("wait", "finishing"):
+            activity.get().record(dict(event="started", task=1, name="fit", label="centre"))
             (base / "entered").touch()
             while not (base / "finish").exists():
-                if activity.get() and activity.get().requested:
+                if activity.get().requested and args.mode == "wait":
                     return result({"kind":"cancelled"},error=True)
                 await asyncio.sleep(.005)
         if args.mode == "error":
             raise ValueError("bad specimen")
+        if args.mode == "protocol":
+            g = await core.supervisor.worker()
+            await g.request({"type": "unknown_command"})
         if args.mode == "loss":
             import os, signal
             g = await core.supervisor.worker()
@@ -283,15 +293,16 @@ def test_task_methods_cancel_race_and_expiry(tmp_path):
         working = c.task("get", tid)
         assert working["resultType"] == "complete"
         assert working["status"] == "working"
-        assert c.rpc("tasks/get", {"taskId": tid})["error"]["code"] == -32021
+        for method, params in (("get", {}), ("cancel", {}), ("update", {"inputResponses": {}})):
+            missing = c.rpc("tasks/" + method, {"taskId": tid, **params})["error"]
+            assert missing["code"] == -32021
+            assert missing["data"] == {"requiredCapabilities": {"extensions": {TASKS: {}}}}
         assert c.rpc("tasks/get", {"taskId": "unknown"}, tasks=True)["error"]["code"] == -32602
         assert (
-            c.task("update", tid, inputResponses={"stale": {"action": "accept", "content": {}}})[
-                "resultType"
-            ]
-            == "complete"
+            c.task("update", tid, inputResponses={"stale": {"action": "accept", "content": {}}})
+            == ACK
         )
-        assert c.task("cancel", tid)["resultType"] == "complete"
+        assert c.task("cancel", tid) == ACK
         assert c.terminal(tid)["status"] == "cancelled"
         failure = c.call("probe0", tasks=True, mode="error")["taskId"]
         assert c.terminal(failure)["result"]["isError"]
@@ -299,6 +310,70 @@ def test_task_methods_cancel_race_and_expiry(tmp_path):
         assert c.terminal(failure)["status"] == "completed"
         time.sleep(task["ttlMs"] / 1000)
         assert c.rpc("tasks/get", {"taskId": tid}, tasks=True)["error"]["code"] == -32602
+
+
+def test_task_progress_outlives_handoff_and_completion_wins_cancel(tmp_path):
+    install_overlay(tmp_path)
+    with connection(tmp_path, overlay=True) as c:
+        c.call("status")  # Warm the worker before starting the shortened expiry clock.
+        task = c.rpc(
+            "tools/call",
+            {
+                "name": "probe0",
+                "arguments": {"mode": "finishing"},
+                "_meta": {"progressToken": "fit"},
+            },
+            tasks=True,
+        )["result"]
+        tid = task["taskId"]
+        # Wait through two heartbeat notifications on a concurrent blocking call.
+        other = c.send(
+            "tools/call",
+            {
+                "name": "probe0",
+                "arguments": {"mode": "wait"},
+                "_meta": {"progressToken": "blocking"},
+            },
+        )
+        for _ in range(3):
+            event = c.receive("method", "notifications/progress")
+            assert event["params"]["progressToken"] == "blocking"
+        working = c.task("get", tid)
+        assert working["statusMessage"] == "waiting: fit centre"
+        assert working["lastUpdatedAt"] > task["createdAt"]
+        assert "result" not in working
+        assert c.task("cancel", tid) == ACK
+        (tmp_path / "finish").touch()
+        success = c.terminal(tid)
+        assert success["status"] == "completed" and success["resultType"] == "complete"
+        assert success["result"]["structuredContent"] == {"generation": 0}
+        assert c.receive("id", other)["result"]["resultType"] == "complete"
+        failed = c.terminal(c.call("probe0", tasks=True, mode="protocol")["taskId"])
+        assert failed["status"] == "failed" and failed["error"]["code"] == -32603
+        assert "unknown_command" in failed["error"]["message"]
+
+
+def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
+    with connection(tmp_path) as c:
+        task = c.call("simulate", tasks=True, size=16, n_views=32, rotation=360)
+        assert task["resultType"] == "task" and task["ttlMs"] == 86_400_000
+        assert task["pollIntervalMs"] == 10_000
+        simulation = c.terminal(task["taskId"])["result"]["structuredContent"]
+        args = dict(source=simulation["members"]["scan"], method="opposite-views", fit="center")
+        assert c.call("align", tasks=True, dry_run=True, **args)["resultType"] == "complete"
+        aligned = c.terminal(c.call("align", tasks=True, **args)["taskId"])
+        assert not aligned["result"]["isError"], aligned["result"]["content"][0]
+        assert (
+            aligned["status"] == "completed"
+            and aligned["result"]["structuredContent"]["members"]["scan"]
+        )
+        bad = c.terminal(c.call("python", tasks=True, code="1 / 0")["taskId"])
+        assert bad["status"] == "completed" and bad["result"]["isError"]
+        job = c.call(
+            "reconstruct", tasks=True, source=args["source"], method="sirt", iterations=10000
+        )
+        assert c.task("cancel", job["taskId"]) == ACK
+        assert c.terminal(job["taskId"])["status"] == "cancelled"
 
 
 def test_directory_inspection_and_unrecognised_hdf5(tmp_path):
