@@ -2,11 +2,13 @@
 
 import ast
 import base64
+from collections.abc import Iterator, Mapping
 from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import fields, is_dataclass, replace
 import traceback
 from types import FunctionType, MappingProxyType, ModuleType
+from typing import Any
 
 import h5py
 import jax
@@ -19,6 +21,7 @@ from tomojax.cli._browse import indexed
 from tomojax.cli._capture import capture
 from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._images import Panel, limits, montage
+from tomojax.cli._options import ancestor_paths
 from tomojax.cli.mcp.ledger import reserve
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
@@ -139,13 +142,39 @@ def show(array):
     _active.get().show(array)
 
 
+class HandleInputs(Mapping):
+    """Remember accessed source files across arbitrary transformations in Python."""
+
+    def __init__(self, values, paths, sources) -> None:
+        self.values_by_name = values
+        self.paths = paths
+        self.sources = sources
+
+    def __getitem__(self, name) -> Any:
+        item = self.values_by_name[name]
+        self.sources.update(self.paths[name])
+        return item
+
+    def copy(self) -> dict[str, Any]:
+        return dict(self)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.values_by_name)
+
+    def __len__(self) -> int:
+        return len(self.values_by_name)
+
+
 def execute_in_namespace(cmd, context):
     namespace = context.namespace
     if cmd.reset:
         namespace.clear()
+        namespace.sources.clear()
     pinned = {}
+    paths = {}
     issued = {}
     for name, ref in cmd.aliases.items():
+        paths[name] = tuple(ancestor_paths((context.leases[ref].provenance,)))
         if isinstance(ref, Member):
             pinned[name] = snapshot(
                 context.leases[ref].value, issued=issued, dependencies=set(), source=ref
@@ -155,7 +184,13 @@ def execute_in_namespace(cmd, context):
             issued[id(pinned[name])] = (pinned[name], ref)
     registrations = Registrations(context, cmd.ledger, issued)
     token = _active.set(registrations)
-    namespace.update(tj=tj, np=np, handles=MappingProxyType(pinned), register=register, show=show)
+    namespace.update(
+        tj=tj,
+        np=np,
+        handles=MappingProxyType(HandleInputs(pinned, paths, namespace.sources)),
+        register=register,
+        show=show,
+    )
     try:
         tree = ast.parse(cmd.code, filename="<python>")
         expr = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
@@ -179,7 +214,7 @@ def execute_in_namespace(cmd, context):
         )
 
 
-def run_python(cmd, context, manifest):
+def run_python(cmd, context):
     output = []
     try:
         with capture() as output:
@@ -191,11 +226,14 @@ def run_python(cmd, context, manifest):
             traceback.format_list(frames[start:]) + traceback.format_exception_only(err)
         )
         raise ValueError("".join(output) + message) from err
+    # Persistent globals can retain copies or calculated values even after close.
+    # Flatten to unique paths so repeated Python registrations have bounded lineage.
+    sources = [{"type": "path", "path": str(path)} for path in sorted(context.namespace.sources)]
     return ex.Success(
         p.PythonResult(
             output[0], output[1], value, registrations.products, tuple(registrations.images)
         ),
         Info({}, {}),
-        manifest,
+        p.Provenance("python", {"code": cmd.code, "reset": cmd.reset, "sources": sources}, ()),
         tuple(registrations.roots),
     )

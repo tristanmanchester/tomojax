@@ -90,7 +90,7 @@ class Session:
         self.emit = emit
         self.description = description
         self.ready = ready
-        self.namespace = {}
+        self.namespace = ex.PythonNamespace()
         self.namespace_bytes = 0
         self.seen: set[str] = set()
         self.revisions: dict[str, int] = {}

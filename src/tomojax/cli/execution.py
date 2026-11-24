@@ -103,6 +103,14 @@ class Staging(Protocol):
         ...
 
 
+class PythonNamespace(dict[str, Any]):
+    """Globals and the source files that values in them can derive from."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sources: set[Path] = set()
+
+
 @dataclass(frozen=True)
 class ExecutionContext:
     """Capabilities restricted to a single request and its pre-admitted inputs."""
@@ -112,7 +120,7 @@ class ExecutionContext:
     event: Callable[[Event], None]
     snapshot: Callable[[Snapshot], None]
     staging: Staging
-    namespace: dict[str, Any]
+    namespace: PythonNamespace
     measure: Callable[[int], None]
 
     def __init__[K: Member | Npy](
@@ -122,7 +130,7 @@ class ExecutionContext:
         event: Callable[[Event], None],
         snapshot: Callable[[Snapshot], None],
         staging: Staging,
-        namespace: dict[str, Any] | None = None,
+        namespace: PythonNamespace | None = None,
         measure: Callable[[int], None] = lambda _: None,
     ) -> None:
         object.__setattr__(self, "leases", MappingProxyType(dict(leases)))
@@ -130,7 +138,7 @@ class ExecutionContext:
         object.__setattr__(self, "event", event)
         object.__setattr__(self, "snapshot", snapshot)
         object.__setattr__(self, "staging", staging)
-        object.__setattr__(self, "namespace", {} if namespace is None else namespace)
+        object.__setattr__(self, "namespace", PythonNamespace() if namespace is None else namespace)
         object.__setattr__(self, "measure", measure)
 
     def lineage(self, command: ExecutionInput) -> tuple[Provenance, ...]:

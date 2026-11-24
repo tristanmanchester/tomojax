@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial, singledispatchmethod
 from pathlib import Path
@@ -25,7 +25,7 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
-from tomojax.cli._options import check_destinations
+from tomojax.cli._options import ancestor_paths, check_destinations, storage_paths
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.cli.products import VOLUME_DATASET
@@ -61,7 +61,6 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     operation = (
         command.operation if isinstance(command, op.Run | op.Plan | op.Validate) else command
     )
-    manifest = provenance(command, operation, context)
 
     def diagnostic(pointer: str, data: Any) -> Array:
         a = np.asarray(data)
@@ -79,11 +78,12 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             from tomojax.cli._python import run_python
 
             try:
-                return run_python(operation, context, manifest)
+                return run_python(operation, context)
             except Exception:
                 raise
             except BaseException as err:
                 raise ValueError(str(err)) from err
+        manifest = provenance(command, operation, context)
         if isinstance(operation, op.Plane):
             if not isinstance(command, op.Validate):
                 return ex.browse_plane(operation, context)
@@ -581,33 +581,7 @@ def export_summary(operation: op.Export, value, path: Path, paths: list[str]) ->
     return {"slice_count": grid.nz, "first_file": str(first), "last_file": str(last)}
 
 
-def ancestor_paths(ancestors: tuple[p.Provenance, ...]) -> Iterator[Path]:
-    """Identify caller-owned source files in a durable output's input history."""
-    for node in ancestors:
-        if node.operation == "open":
-            yield Path(node.parameters["path"]).resolve()
-            for field in ("flats", "darks"):
-                if isinstance(path := node.parameters.get(field), str):
-                    yield Path(path).resolve()
-        yield from storage_paths(node.parameters)
-        yield from ancestor_paths(node.inputs)
-
-
-def storage_paths(value: object) -> Iterator[Path]:
-    if isinstance(value, dict):
-        if value.get("type") in {"path", "npy", "hdf5"}:
-            yield Path(value["path"]).resolve()
-        else:
-            for option in value.values():
-                yield from storage_paths(option)
-    elif isinstance(value, tuple | list):
-        for option in value:
-            yield from storage_paths(option)
-
-
 def provenance(command, operation, context):
-    if isinstance(operation, op.Python):
-        return p.Provenance("python", {"code": operation.code, "reset": operation.reset}, ())
     parameters = msgspec.to_builtins(
         command if isinstance(command, op.Validate | op.Plan) else operation
     )

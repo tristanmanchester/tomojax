@@ -266,3 +266,19 @@ def test_show_preserves_detail_up_to_panel_limit(tmp_path):
             picture = Image.open(BytesIO(base64.b64decode(block["data"])))
             assert picture.width == min(width, 1024)
             assert picture.height == round(height * picture.width / width)
+
+
+def test_python_subset_preserves_acquisition_path_across_calls(tmp_path):
+    import tomojax as tj
+
+    path = tmp_path / "scan.nxs"
+    tj.save(path, tj.simulate(size=8, n_views=12).scan)
+    with connection(tmp_path) as c:
+        source = c.call("open", path=str(path), kind="scan")["structuredContent"]["handle"]
+        python(c, f"subset = handles[{source!r}].selected(np.arange(0,12,2))")
+        assert not c.call("control", action="close", target=source)["isError"]
+        derived = python(c, "register(subset)")["value"]
+        for dry_run in (True, False):
+            reply = c.call("save", source=derived, path=str(path), force=True, dry_run=dry_run)
+            assert reply["isError"] and "differ from input" in reply["content"][0]["text"]
+        assert len(tj.load(path).angles) == 12
