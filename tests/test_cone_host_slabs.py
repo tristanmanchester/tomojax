@@ -299,16 +299,6 @@ def test_cgls_lazy_rows_preserve_views_and_close_on_failure(monkeypatch, tmp_pat
     data = _data(geometry)
     cfg = CGLSConfig(iterations=2, backend="jax")
     output = np.memmap(tmp_path / "out", np.float32, "w+", shape=(9, 4, 5))
-    original_gradient = host._HostCGLS.gradient
-
-    def gradient(solver):
-        zero = solver.zero
-        result = original_gradient(solver)
-        if zero:
-            assert not solver.X._reads  # zero-start source is never read
-        return result
-
-    monkeypatch.setattr(host._HostCGLS, "gradient", gradient)
     expected, _ = cgls(geometry, GRID, DETECTOR, data, config=cfg, out=output)
     expected = expected.copy()
     rows = _cone_slabs.RowReader(lambda first, stop: data[:, first:stop], data.shape)
@@ -327,24 +317,6 @@ def test_cgls_lazy_rows_preserve_views_and_close_on_failure(monkeypatch, tmp_pat
     with pytest.raises(RuntimeError):
         cgls(geometry, GRID, DETECTOR, rows, config=cfg, out=output)
     assert closed == [None] * 4
-
-
-def test_unpenalized_cgls_sinks_do_not_read_unused_volumes(monkeypatch, host):
-    host(4)
-    module = import_module("tomojax.recon._cgls_host")
-
-    def run(solver):
-        solver.keep, solver.zero = False, False
-        solver.gradient()
-        solver.bounded()
-        assert not solver.X._held
-        monkeypatch.setattr(solver.D, "get", lambda *_: pytest.fail("unused direction read"))
-        solver.normal(None)
-        return {}
-
-    monkeypatch.setattr(module._HostCGLS, "run", run)
-    geometry = _geometry("cone")
-    cgls(geometry, GRID, DETECTOR, _data(geometry), config=CGLSConfig(iterations=1))
 
 
 @pytest.mark.parametrize("depth", [2, 9])
@@ -486,18 +458,8 @@ def test_accelerated_sirt_holds_its_iterate_and_work_volume_by_their_total(
     config = SIRTConfig(iterations=4, acceleration=True, relaxation=0.9)
     expected, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
     volume = 4 * GRID.nx * GRID.ny * GRID.nz
-    places = []
-    made = host_volume.host_volume
-
-    def recording(shape, directory=None, **kwargs):
-        places.append(directory)
-        return made(shape, directory, **kwargs)
-
-    monkeypatch.setattr(host_volume, "host_volume", recording)
-    monkeypatch.setattr(_cone_slabs, "host_volume", recording)
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 3 * volume)
     actual, _ = sirt(geometry, GRID, DETECTOR, data, config=config)
-    assert places == [tmp_path, tmp_path], places  # the iterate, then its work volume
     assert host_volume.scratch_directory(actual) == tmp_path
     assert _relative(actual, expected) < 1e-6

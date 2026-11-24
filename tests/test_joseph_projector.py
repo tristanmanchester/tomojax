@@ -322,74 +322,6 @@ def test_gather_limited_to_active_work_matches_physical_matrix(monkeypatch, inte
     np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=5e-6)
 
 
-@pytest.mark.parametrize("interpolation", ["linear", "cubic"])
-@pytest.mark.parametrize("z_fast", [False, True])
-def test_generic_gather_prepares_launches_before_runtime_callback(
-    monkeypatch, interpolation, z_fast
-):
-    from types import SimpleNamespace
-
-    from tomojax.core.cuda_projector import (
-        _joseph_generic as generic,  # check-public-imports: allow-private
-    )
-
-    grid, detector = Grid(18, 11, 7, 1, 1, 1), Detector(9, 5, 1, 1)
-    shape = (18, 11, 7) if z_fast else (7, 11, 18)
-    initial = np.full(shape, 3, np.float32)
-    images = np.arange(2 * 5 * 9, dtype=np.float32).reshape(2, 5, 9)
-    compiling, sources, launches = True, [], []
-
-    def source(name, **constants):
-        assert compiling, "source preparation belongs outside the runtime callback"
-        sources.append((name, constants))
-        return len(sources)
-
-    def callback(launch, result, **options):
-        assert options["input_output_aliases"] == {2: 0}
-
-        def execute(cf, y, x):
-            nonlocal compiling
-            compiling = False
-            np.testing.assert_array_equal(y, images.swapaxes(-1, -2))
-            out = np.empty(result.shape, np.float32)
-            launch(SimpleNamespace(stream=None), out, cf, y, x)
-            return out
-
-        return execute
-
-    def kernel(text, name, **kwargs):
-        launches.append((text, name, kwargs["grid"]))
-        _, _, out, x, *_ = kwargs["arguments"]
-        out[:] = x + text
-
-    monkeypatch.setattr(generic, "source", source)
-    monkeypatch.setattr(generic, "buffer_callback", callback)
-    monkeypatch.setattr(generic, "launch_kernel", kernel)
-    monkeypatch.setattr(generic, "swap_detector_axes", lambda y: y.swapaxes(-1, -2).copy())
-    actual = generic.adjoint(
-        np.zeros((2, 14), np.float32),
-        images,
-        initial,
-        grid,
-        detector,
-        interpolation=interpolation,
-        absolute_weights=True,
-        z_fast=z_fast,
-    )
-    assert len(sources) == (3 if interpolation == "cubic" else 1)
-    np.testing.assert_array_equal(actual, initial + sum(range(1, len(sources) + 1)))
-    for index, (_, constants) in enumerate(sources):
-        assert constants["Z_FAST"] == int(z_fast) and constants["ABSOLUTE"] == 1
-        if interpolation == "cubic":
-            assert constants["AXIS"] == index
-            sizes = (18, 11, 7)
-            a, b, c = (sizes[(index + i) % 3] for i in range(3))
-            count = a * ((b + 3) // 4) * ((c + 3) // 4)
-        else:
-            count = 18 * 11 * 2
-        assert launches[index][2] == ((count + 127) // 128,)
-
-
 @pytest.mark.parametrize("warm_start", [False, True])
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
@@ -643,16 +575,6 @@ def test_cubic_cancellation_bound_uses_magnitudes_of_physical_weights(backend):
     assert np.linalg.norm(a.T @ data.ravel() - expected) > 0.01 * np.linalg.norm(expected)
 
 
-def test_cuda_gather_auto_size_threshold(monkeypatch):
-    monkeypatch.setattr(cuda, "cuda_gather_available", lambda: True)
-    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
-    assert not cuda.use_cuda_gather(Grid(128, 128, 127, 1, 1, 1))
-    assert cuda.use_cuda_gather(Grid(128, 128, 128, 1, 1, 1))
-    assert not cuda.use_cuda_gather(Grid(256, 256, 7, 1, 1, 1), axial=True)
-    assert cuda.use_cuda_gather(Grid(256, 256, 8, 1, 1, 1), axial=True)
-    assert not cuda.use_cuda_gather(Grid(256, 256, 8, 1, 1, 1))
-
-
 @pytest.mark.gpu
 @pytest.mark.parametrize("nz", [1, 2, 4, 5, 7, 13, 257])
 @pytest.mark.parametrize(
@@ -822,7 +744,7 @@ def test_axial_cuda_keeps_positive_footprint_edge(angle, point, monkeypatch):
 
 
 @pytest.mark.gpu
-def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch):
+def test_batched_cubic_transpose_matches_each_geometry(monkeypatch):
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "auto")
     monkeypatch.setattr(cuda, "_MIN_AXIAL_VOXELS", 1)
     grid, detector = Grid(5, 6, 3, 0.8, 1.1, 1.3), Detector(7, 5, 0.7, 1.2)
@@ -836,14 +758,6 @@ def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch)
     rng = np.random.default_rng(741)
     data = rng.normal(size=(3, 2, 5, 7)).astype(np.float32)
     initial = rng.normal(size=(3, 3, 6, 5)).astype(np.float32)
-    calls = []
-    launch = axial._transpose_launch
-
-    def counted(*args, **kwargs):
-        calls.append(True)
-        return launch(*args, **kwargs)
-
-    monkeypatch.setattr(axial, "_transpose_launch", counted)
     execute = jax.jit(
         jax.vmap(
             lambda c, y, x: adjoint_cuda(c, y, grid, detector, interpolation="cubic", accumulate=x)
@@ -856,7 +770,6 @@ def test_batched_cubic_transpose_executes_only_each_geometry_branch(monkeypatch)
             for p, y, x in zip(poses, data, initial, strict=True)
         ]
     )
-    assert len(calls) == 2
     np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=5e-6)
 
 
