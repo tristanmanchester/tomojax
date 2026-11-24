@@ -106,11 +106,17 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     } else {
         json!({"found":false,"shape":null,"axes":null,"method":null})
     };
-    let image_key = "/entry/instrument/detector/image_key";
-    let key_found = file.link_exists(image_key);
-    // NXtomo image keys mark sample (0), flat (1) and dark (2) frames, and
-    // `image_key_control` marks return and alignment images (-1) to leave out, as
-    // the worker does; the keys are one small integer per frame.
+    // NXtomo image keys mark sample (0), flat (1) and dark (2) frames, and an
+    // `image_key_control` beside them marks return and alignment images (-1) to
+    // leave out. They are found as the worker finds them: at the detector, else
+    // the file's only per-frame dataset named `image_key`.
+    let frames = projection["n_views"].as_u64().map(|n| n as usize);
+    let image_key = ["/entry/instrument/detector/image_key"]
+        .into_iter()
+        .find(|name| file.link_exists(name))
+        .map(str::to_owned)
+        .or_else(|| frames.and_then(|frames| only_per_frame(&file, "image_key", frames)));
+    let key_found = image_key.is_some();
     let read_keys = |name: &str| -> Result<Option<Vec<i64>>, String> {
         if !file.link_exists(name) {
             return Ok(None);
@@ -120,18 +126,24 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
             .map(Some)
             .map_err(|error| error.to_string())
     };
-    let control = read_keys("/entry/instrument/detector/image_key_control")?;
-    let sample_count = read_keys(image_key)?.map(|keys| {
-        keys.iter()
-            .enumerate()
-            .filter(|&(i, &key)| {
-                key == 0
-                    && control
-                        .as_ref()
-                        .is_none_or(|control| control.get(i) != Some(&-1))
+    let sample_count = match &image_key {
+        Some(path) => {
+            let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+            let control = read_keys(&format!("{folder}/image_key_control"))?;
+            read_keys(path)?.map(|keys| {
+                keys.iter()
+                    .enumerate()
+                    .filter(|&(i, &key)| {
+                        key == 0
+                            && control
+                                .as_ref()
+                                .is_none_or(|control| control.get(i) != Some(&-1))
+                    })
+                    .count()
             })
-            .count()
-    });
+        }
+        None => None,
+    };
     let flat_found = file.link_exists("/entry/instrument/detector/data_white");
     let dark_found = file.link_exists("/entry/instrument/detector/data_dark");
     let tomojax_grid = entry
@@ -143,7 +155,7 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         "projection":projection,"angles":angles,"volume":volume,
         "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":geometry.is_object(),"meta_keys":geometry.as_object().map(|meta|meta.keys().collect::<Vec<_>>()).unwrap_or_default()},
         "detector_metadata":{"found":detector.is_object(),"nu":detector.get("nu"),"nv":detector.get("nv"),"du":detector.get("du"),"dv":detector.get("dv"),"center":detector.get("det_center")},
-        "flats_darks":{"image_key_found":key_found,"image_key_path":if key_found{Some(image_key)}else{None},
+        "flats_darks":{"image_key_found":key_found,"image_key_path":image_key,
             "sample_count":sample_count,
             "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
         "alignment":{"found":file.link_exists("/entry/processing/tomojax/align"),"params_found":file.link_exists("/entry/processing/tomojax/align/thetas")}});
@@ -233,6 +245,38 @@ pub fn reads_other_files(path: &Path) -> Result<bool, String> {
         }
     }
     Ok(false)
+}
+
+/// The path of the file's only dataset named `name` holding one value per frame.
+fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<String> {
+    let mut found = Vec::new();
+    let mut groups = vec![file.group("/").ok()?];
+    let mut visited = 0usize;
+    while let Some(group) = groups.pop() {
+        // Hard-linked groups can form cycles; real files have far fewer groups.
+        visited += 1;
+        if visited > 100_000 {
+            break;
+        }
+        let mut links = Vec::new();
+        let _ = group.iter_visit_default(|link, info| {
+            if info.link_type == hdf5::LinkType::Hard {
+                links.push(link.to_owned());
+            }
+            Ok(())
+        });
+        for link in links {
+            if let Ok(child) = group.group(&link) {
+                groups.push(child);
+            } else if link == name
+                && let Ok(dataset) = group.dataset(&link)
+                && dataset.shape() == [frames]
+            {
+                found.push(dataset.name());
+            }
+        }
+    }
+    (found.len() == 1).then(|| found.remove(0))
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {
@@ -806,6 +850,25 @@ mod tests {
         let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 1);
+        assert!(!arrays.contains_key("projections"));
+
+        // Keys stored elsewhere (an NXdata group) are found as the worker finds
+        // them: the file's only per-frame `image_key`.
+        {
+            let file = hdf5::File::open_rw(&path).unwrap();
+            let detector = file.group("/entry/instrument/detector").unwrap();
+            detector.unlink("image_key").unwrap();
+            detector.unlink("image_key_control").unwrap();
+            file.create_group("/entry/data")
+                .unwrap()
+                .new_dataset_builder()
+                .with_data(&[1i32, 0, 0, 2])
+                .create("image_key")
+                .unwrap();
+        }
+        let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "frames");
+        assert_eq!(report["flats_darks"]["sample_count"], 2);
         assert!(!arrays.contains_key("projections"));
     }
 

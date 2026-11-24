@@ -275,6 +275,10 @@ impl AppState {
                 if let Some(kind) = super::previewing::kind(&operation) {
                     self.previews.retry(kind);
                 }
+                // A failed input read is retried too: the source may be back.
+                if self.form_input_error().is_some() {
+                    self.form_context.retry();
+                }
                 self.preview_context.signature.clear();
                 self.request_interactive(&operation)?;
             }
