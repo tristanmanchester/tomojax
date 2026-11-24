@@ -127,13 +127,7 @@ a newer save error.
 
 Managed data uses relative project paths. Referenced acquisitions stay external
 unless the user selects copying. Captured job inputs retain their original paths
-and metadata fingerprints even if the asset is later relinked. Directory
-fingerprints cover sorted descendant paths, kinds, sizes and modification times;
-they reject symbolic links and nonregular entries. Pixel bytes are not hashed.
-Captures also fingerprint secondary array and coordinate files. Checks run on
-background threads before execution and before accepting computed outputs. A
-changed input prevents publication as a completed result; an already committed
-destination remains available for review.
+even if the asset is later relinked.
 
 Managed source copies and array-only outputs use owned staging paths. Copies use
 bounded chunks, observe cancellation, and publish only after validation. Region

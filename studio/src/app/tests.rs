@@ -809,26 +809,6 @@ fn the_zoom_readout_is_the_zoom_the_3d_camera_shows() {
 }
 
 #[test]
-fn each_submission_is_followed_by_a_fresh_input_capture() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut state = AppState::init();
-    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
-    let scan = ramp_volume(directory.path(), "scan", 2);
-    let id = scan.id.clone();
-    let path = scan.path.clone();
-    state.project.as_mut().unwrap().document.assets.push(scan);
-    state.model.selected_assets = [id.clone()].into();
-    state.model.active_asset = Some(id);
-    state.await_inputs();
-    let before = state.current_form_inputs()[0].fingerprint.clone();
-    // The source changes after the capture, as the submission is made.
-    std::fs::write(&path, b"re-exported").unwrap();
-    state.form_context.retry();
-    state.await_inputs();
-    assert_ne!(state.current_form_inputs()[0].fingerprint, before);
-}
-
-#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
@@ -979,7 +959,6 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     assert!(project.resolve(&project.document.assets[0].path).is_file());
 
     state.set_operation("reconstruct", Some(&json!({"method":"fourier"})));
-    state.await_inputs();
     state.queue_operation("reconstruct").unwrap();
     // A later edit must have no effect on the queued command or resulting solver.
     state.set_operation(
@@ -1059,7 +1038,6 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         state.model.selected_assets = [preview_source].into_iter().collect();
         state.set_operation(operation, Some(&parameters));
         let jobs_before = state.project.as_ref().unwrap().document.jobs.len();
-        state.await_inputs();
         state.queue_operation(operation).unwrap();
         drive(&mut state, |s| {
             s.model
@@ -1560,57 +1538,6 @@ fn npz_is_rejected_before_a_worker_or_copy_task_is_started() {
             .as_ref()
             .is_some_and(|e| e.contains("NPZ"))
     );
-}
-
-#[test]
-fn changed_input_is_rejected_before_a_computed_result_is_accepted() {
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("acquisition.bin");
-    std::fs::write(&source, b"original data").unwrap();
-    let mut state = AppState::init();
-    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
-    let project = state.project.as_mut().unwrap();
-    let asset = Asset::input(source.clone(), false);
-    let asset_id = asset.id.clone();
-    project.document.assets.push(asset);
-    let mut job = project::Job::new(
-        "validate",
-        json!({}),
-        vec![project.capture(&asset_id).unwrap()],
-    );
-    job.status = JobStatus::Running;
-    let id = job.id.clone();
-    project.document.jobs.push(job);
-    std::fs::write(&source, b"changed after numerical execution").unwrap();
-    state.result(
-        Pending::Execute(id.clone()),
-        ResultValue::Output(Box::new(Output {
-            value: Product::Validated,
-            info: crate::protocol::Info {
-                summary: Default::default(),
-                arrays: Default::default(),
-            },
-            manifest: crate::protocol::Provenance {
-                operation: "validate".into(),
-                parameters: json!({}),
-                inputs: vec![],
-            },
-        })),
-    );
-    drive(&mut state, |s| {
-        s.project.as_ref().unwrap().document.jobs[0].status == JobStatus::Failed
-    });
-    let project = state.project.as_ref().unwrap();
-    assert!(
-        project.document.jobs[0]
-            .error
-            .as_ref()
-            .unwrap()
-            .contains("changed after submission")
-    );
-    assert!(project.document.jobs[0].result.is_none());
-    assert_eq!(project.document.assets.len(), 1);
-    state.shutdown();
 }
 
 #[test]

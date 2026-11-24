@@ -131,7 +131,7 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     client.output(json!({"type":"run","operation":{"type":"save","source":{"type":"member","handle":simulation.value.handle().unwrap(),"member":"self"},"path":path,"include_scan":true}}));
     let mut asset = Asset::input(path.clone(), false);
     asset.kind = "simulation".into();
-    let input = CapturedInput::from_asset(&asset, directory.path()).unwrap();
+    let input = CapturedInput::from_asset(&asset, directory.path());
     client
         .previews
         .retain_inputs(std::slice::from_ref(&input))

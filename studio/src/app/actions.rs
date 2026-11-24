@@ -275,10 +275,6 @@ impl AppState {
                 if let Some(kind) = super::previewing::kind(&operation) {
                     self.previews.retry(kind);
                 }
-                // A failed input read is retried too: the source may be back.
-                if self.form_input_error().is_some() {
-                    self.form_context.retry();
-                }
                 self.preview_context.signature.clear();
                 self.request_interactive(&operation)?;
             }
@@ -356,7 +352,6 @@ impl AppState {
                 if old.status.active() {
                     return Err("This job is still active".into());
                 }
-                old.check_inputs()?;
                 if old.destination.as_ref().is_some_and(|p| p.exists()) {
                     return Err(format!(
                         "An output already exists at {}. Move or delete it, then retry.",

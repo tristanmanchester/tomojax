@@ -98,7 +98,7 @@ fn changing_project_keeps_ownership_of_an_old_validation_rejection() {
 }
 
 #[test]
-fn a_relinked_asset_cannot_reuse_a_plan_from_its_previous_fingerprint() {
+fn a_relinked_asset_cannot_reuse_a_plan_from_its_previous_source() {
     let directory = tempfile::tempdir().unwrap();
     let first = directory.path().join("original.nxs");
     let replacement = directory.path().join("replacement.nxs");
@@ -114,7 +114,6 @@ fn a_relinked_asset_cannot_reuse_a_plan_from_its_previous_fingerprint() {
     state.model.active_asset = Some(id.clone());
     state.model.selected_assets.insert(id.clone());
     state.poll_form_context();
-    drive(&mut state, |state| !state.form_inputs_pending());
     let original = state.current_form_input().unwrap();
     state
         .validation
@@ -156,10 +155,9 @@ fn a_relinked_asset_cannot_reuse_a_plan_from_its_previous_fingerprint() {
         .unwrap()
         .path = replacement;
     state.poll_form_context();
-    drive(&mut state, |state| !state.form_inputs_pending());
     let changed = state.current_form_input().unwrap();
     assert_eq!(changed.asset, original.asset);
-    assert_ne!(changed.fingerprint, original.fingerprint);
+    assert_ne!(changed.path, original.path);
     assert!(state.validation_event(&reply("old-source-plan")));
     assert!(state.model.validation.plan.is_none());
     assert!(state.model.validation.plan_inputs.is_none());

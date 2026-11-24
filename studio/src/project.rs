@@ -28,6 +28,7 @@ pub fn manifest_name(root: &Path) -> Option<String> {
 }
 
 pub const MANIFEST: &str = "project.tomojax.json";
+const LOCK: &str = ".tomojax.lock";
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
 pub fn now_ms() -> u64 {
@@ -198,152 +199,21 @@ impl Asset {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Fingerprint {
-    pub bytes: u64,
-    pub modified_ns: Option<u128>,
-    pub directory: bool,
-    /// Metadata change detection, not a digest of potentially terabytes of pixels.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tree_digest: Option<String>,
-}
-const LOCK: &str = ".tomojax.lock";
-
-/// Whether a folder also holds a Studio project (its lock exists from the moment
-/// the project is opened, before the first manifest is written).
-fn holds_project(folder: &Path) -> bool {
-    folder.join(MANIFEST).exists() || folder.join(LOCK).exists()
-}
-
-/// Whether `relative`, inside a folder that also holds a project, belongs to that
-/// project (its manifest and the files it writes) rather than to the acquisition.
-fn is_project_entry(relative: &Path) -> bool {
-    let mut components = relative.components();
-    let Some(first) = components.next() else {
-        return false;
-    };
-    let first = first.as_os_str().to_string_lossy();
-    let nested = components.next().is_some();
-    (first.starts_with(MANIFEST) || first == LOCK) && !nested
-        || matches!(first.as_ref(), "inputs" | "derived" | "cache")
-}
-
-impl Fingerprint {
-    pub fn read(path: &Path) -> Result<Self, String> {
-        let meta = fs::symlink_metadata(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        if meta.file_type().is_symlink() {
-            return Err(
-                "A captured input cannot contain symbolic links; choose its resolved dataset path"
-                    .into(),
-            );
-        }
-        if !meta.is_file() && !meta.is_dir() {
-            return Err(format!(
-                "{} is not a regular file or dataset directory",
-                path.display()
-            ));
-        }
-        let modified_ns = meta
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_nanos());
-        if meta.is_file() {
-            return Ok(Self {
-                bytes: meta.len(),
-                modified_ns,
-                directory: false,
-                tree_digest: None,
-            });
-        }
-        let mut hash = blake3::Hasher::new();
-        hash.update(b"tomojax-directory-metadata-v1\0");
-        let project_here = holds_project(path);
-        let mut pending = vec![PathBuf::new()];
-        let mut bytes = 0u64;
-        while let Some(relative) = pending.pop() {
-            let current = path.join(&relative);
-            // A project kept in the folder, or in a subfolder, is not acquisition data.
-            if (project_here && is_project_entry(&relative))
-                || (!relative.as_os_str().is_empty() && current.is_dir() && holds_project(&current))
-            {
-                continue;
-            }
-            let meta = fs::symlink_metadata(&current)
-                .map_err(|e| format!("{}: {e}", current.display()))?;
-            if meta.file_type().is_symlink() {
-                return Err(format!(
-                    "{} is a symbolic link; choose a dataset without linked descendants",
-                    current.display()
-                ));
-            }
-            if !meta.is_file() && !meta.is_dir() {
-                return Err(format!(
-                    "{} is not a regular dataset entry",
-                    current.display()
-                ));
-            }
-            let name = relative.as_os_str().as_encoded_bytes();
-            hash.update(&(name.len() as u64).to_le_bytes());
-            hash.update(name);
-            hash.update(&[u8::from(meta.is_dir())]);
-            let size = if meta.is_file() { meta.len() } else { 0 };
-            hash.update(&size.to_le_bytes());
-            // File times only: a folder's time changes whenever an entry is added,
-            // and the entry names already record that.
-            let modified = meta
-                .modified()
-                .ok()
-                .filter(|_| meta.is_file())
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos());
-            hash.update(&[u8::from(modified.is_some())]);
-            hash.update(&modified.unwrap_or_default().to_le_bytes());
-            bytes = bytes
-                .checked_add(size)
-                .ok_or("The input's total byte count overflows")?;
-            if meta.is_dir() {
-                let mut entries = fs::read_dir(&current)
-                    .map_err(|e| format!("{}: {e}", current.display()))?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| e.to_string())?;
-                entries.sort_by_key(|entry| entry.file_name());
-                pending.extend(
-                    entries
-                        .into_iter()
-                        .rev()
-                        .map(|entry| relative.join(entry.file_name())),
-                );
-            }
-        }
-        Ok(Self {
-            bytes,
-            modified_ns: None,
-            directory: true,
-            tree_digest: Some(hash.finalize().to_hex().to_string()),
-        })
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CapturedInput {
     pub asset: String,
     pub name: String,
     pub path: PathBuf,
     pub kind: String,
-    pub fingerprint: Fingerprint,
     #[serde(default)]
     pub open_parameters: Value,
     #[serde(default)]
     pub arrays: BTreeMap<String, ArrayDescriptor>,
-    #[serde(default)]
-    pub storage_fingerprints: BTreeMap<PathBuf, Fingerprint>,
 }
 
 impl CapturedInput {
-    /// Capture from a detached asset snapshot, so callers can perform all file
-    /// metadata work on an I/O thread without borrowing the project or UI.
-    pub fn from_asset(asset: &Asset, root: &Path) -> Result<Self, String> {
+    /// The asset as a job reads it: its path and array storage made absolute.
+    pub fn from_asset(asset: &Asset, root: &Path) -> Self {
         let absolute = |path: &Path| {
             if path.is_absolute() {
                 path.to_owned()
@@ -351,41 +221,31 @@ impl CapturedInput {
                 root.join(path)
             }
         };
-        let path = absolute(&asset.path);
-        let fingerprint = Fingerprint::read(&path)?;
         let mut arrays = asset.arrays.clone();
-        let mut storage_fingerprints = BTreeMap::new();
-        let mut resolve = |storage: &mut crate::protocol::Storage| -> Result<(), String> {
+        let resolve = |storage: &mut crate::protocol::Storage| {
             if let crate::protocol::Storage::Hdf5 { path: stored, .. }
             | crate::protocol::Storage::Npy { path: stored, .. } = storage
             {
-                let resolved = absolute(Path::new(stored));
-                if resolved != path && !storage_fingerprints.contains_key(&resolved) {
-                    storage_fingerprints.insert(resolved.clone(), Fingerprint::read(&resolved)?);
-                }
-                *stored = resolved.to_string_lossy().into();
+                *stored = absolute(Path::new(stored)).to_string_lossy().into();
             }
-            Ok(())
         };
         for array in arrays.values_mut() {
-            resolve(&mut array.storage)?;
+            resolve(&mut array.storage);
             for axis in &mut array.axes {
                 if let crate::protocol::Coordinates::Coordinates { values } = &mut axis.coordinates
                 {
-                    resolve(values)?;
+                    resolve(values);
                 }
             }
         }
-        Ok(Self {
+        Self {
             asset: asset.id.clone(),
             name: asset.name.clone(),
             kind: asset.kind.clone(),
-            fingerprint,
-            path,
+            path: absolute(&asset.path),
             open_parameters: asset.open_parameters.clone(),
             arrays,
-            storage_fingerprints,
-        })
+        }
     }
 }
 
@@ -512,55 +372,6 @@ impl Job {
             telemetry: crate::progress::JobProgress::default(),
             kept_preview: None,
         }
-    }
-    pub fn check_inputs(&self) -> Result<(), String> {
-        for input in &self.inputs {
-            if input
-                .path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-            {
-                return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognised acquisition".into());
-            }
-            let current = Fingerprint::read(&input.path)?;
-            if current != input.fingerprint {
-                return Err(format!(
-                    "{} changed after submission. Review the input and submit a new job.",
-                    input.name
-                ));
-            }
-            let mut checked = BTreeSet::new();
-            for array in input.arrays.values() {
-                let coordinates = array
-                    .axes
-                    .iter()
-                    .filter_map(|axis| match &axis.coordinates {
-                        crate::protocol::Coordinates::Coordinates { values } => Some(values),
-                        crate::protocol::Coordinates::Uniform { .. } => None,
-                    });
-                for storage in std::iter::once(&array.storage).chain(coordinates) {
-                    let path = match storage {
-                        crate::protocol::Storage::Hdf5 { path, .. }
-                        | crate::protocol::Storage::Npy { path, .. } => Path::new(path),
-                        crate::protocol::Storage::Member { .. } => continue,
-                    };
-                    if path == input.path || !checked.insert(path) {
-                        continue;
-                    }
-                    let expected = input.storage_fingerprints.get(path).ok_or_else(|| format!(
-                        "The storage fingerprint for {} was not captured. Review {} and submit a new job.", path.display(), input.name
-                    ))?;
-                    if Fingerprint::read(path)? != *expected {
-                        return Err(format!(
-                            "{} changed after submission ({}). Review the input and submit a new job.",
-                            input.name,
-                            path.display()
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 }
 
@@ -844,7 +655,7 @@ impl Project {
             .document
             .asset(id)
             .ok_or("The selected input no longer exists")?;
-        CapturedInput::from_asset(asset, &self.root)
+        Ok(CapturedInput::from_asset(asset, &self.root))
     }
     pub fn changed(&mut self) -> Result<(), String> {
         self.document.modified = now_ms();
@@ -974,7 +785,7 @@ mod tests {
         let mut sim_job = Job::new("simulate", json!({"phantom":"random_shapes"}), vec![]);
         sim_job.result = Some(simulation.id.clone());
         std::fs::write(p.resolve(&simulation.path), []).unwrap();
-        let input = CapturedInput::from_asset(&simulation, &p.root).unwrap();
+        let input = CapturedInput::from_asset(&simulation, &p.root);
         let mut reconstruction = Asset::input("result.nxs".into(), true);
         reconstruction.parent = Some(simulation.id.clone());
         reconstruction.method = Some("fbp".into());
@@ -1063,41 +874,6 @@ mod tests {
     }
 
     #[test]
-    fn a_project_kept_in_a_tiff_folder_is_not_part_of_the_acquisition() {
-        let directory = tempfile::tempdir().unwrap();
-        let folder = directory.path().join("tiffs");
-        fs::create_dir(&folder).unwrap();
-        fs::write(folder.join("view_0001.tif"), "pixels").unwrap();
-        let mut project = Project::open(&folder, true).unwrap();
-        let asset = Asset::input(folder.clone(), false);
-        project.document.assets.push(asset.clone());
-        let job = Job::new("open", json!({}), vec![project.capture(&asset.id).unwrap()]);
-        project.document.jobs.push(job.clone());
-        project.changed().unwrap();
-        project.flush().unwrap();
-        fs::write(folder.join("derived/result.nxs"), "result").unwrap();
-        assert!(job.check_inputs().is_ok());
-        fs::write(folder.join("view_0001.tif"), "re-exported pixels").unwrap();
-        assert!(job.check_inputs().is_err());
-    }
-
-    #[test]
-    fn a_project_in_a_subfolder_of_a_tiff_folder_is_not_part_of_the_acquisition() {
-        let directory = tempfile::tempdir().unwrap();
-        let folder = directory.path().join("tiffs");
-        fs::create_dir(&folder).unwrap();
-        fs::write(folder.join("view_0001.tif"), "pixels").unwrap();
-        let mut project = Project::open(&folder.join("studio"), true).unwrap();
-        let asset = Asset::input(folder.clone(), false);
-        project.document.assets.push(asset.clone());
-        let job = Job::new("open", json!({}), vec![project.capture(&asset.id).unwrap()]);
-        project.document.jobs.push(job.clone());
-        project.changed().unwrap();
-        project.flush().unwrap();
-        assert!(job.check_inputs().is_ok());
-    }
-
-    #[test]
     fn array_paths_inside_the_project_are_stored_relative() {
         let mut descriptor: ArrayDescriptor = serde_json::from_value(json!({
             "shape":[2], "dtype":"<f4", "unit":"1", "domain":"attenuation",
@@ -1113,30 +889,6 @@ mod tests {
         assert_eq!(
             value["axes"][0]["coordinates"]["values"]["path"],
             "/elsewhere/z.npy"
-        );
-    }
-
-    #[test]
-    fn detached_input_capture_retains_storage_fingerprints_on_an_io_thread() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut project = Project::open(&directory.path().join("project"), true).unwrap();
-        let path = project.root.join("derived/input.npy");
-        fs::write(&path, b"original captured bytes").unwrap();
-        let asset = Asset::input("derived/input.npy".into(), true);
-        project.document.assets.push(asset.clone());
-        let expected = project.capture(&asset.id).unwrap();
-        let root = project.root.clone();
-        let captured = std::thread::spawn(move || CapturedInput::from_asset(&asset, &root))
-            .join()
-            .unwrap()
-            .unwrap();
-        assert_eq!(captured.path, path);
-        assert_eq!(captured.fingerprint, expected.fingerprint);
-        assert_eq!(captured.asset, expected.asset);
-        assert!(
-            Job::new("slice", json!({"index":3}), vec![captured])
-                .check_inputs()
-                .is_ok()
         );
     }
 
@@ -1186,126 +938,6 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_existing_tiff_invalidates_a_captured_directory() {
-        let directory = tempfile::tempdir().unwrap();
-        let input = directory.path().join("acquisition");
-        fs::create_dir_all(input.join("views")).unwrap();
-        let frame = input.join("views/frame-001.tif");
-        fs::write(&frame, b"first pixels").unwrap();
-        let timestamp = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
-        File::options()
-            .write(true)
-            .open(&frame)
-            .unwrap()
-            .set_times(fs::FileTimes::new().set_modified(timestamp))
-            .unwrap();
-        let mut project = Project::open(&directory.path().join("project"), true).unwrap();
-        let asset = Asset::input(input.clone(), false);
-        let asset_id = asset.id.clone();
-        project.document.assets.push(asset);
-        let job = Job::new(
-            "reconstruct",
-            json!({"method":"fourier"}),
-            vec![project.capture(&asset_id).unwrap()],
-        );
-        let old_directory_time = fs::metadata(&input).unwrap().modified().unwrap();
-        assert!(job.check_inputs().is_ok());
-        assert_eq!(
-            job.inputs[0].fingerprint,
-            Fingerprint::read(&input).unwrap()
-        );
-        fs::write(&frame, b"other pixels").unwrap();
-        File::options()
-            .write(true)
-            .open(&frame)
-            .unwrap()
-            .set_times(
-                fs::FileTimes::new().set_modified(timestamp + std::time::Duration::from_secs(2)),
-            )
-            .unwrap();
-        assert_eq!(
-            fs::metadata(&input).unwrap().modified().unwrap(),
-            old_directory_time
-        );
-        assert!(
-            job.check_inputs()
-                .unwrap_err()
-                .contains("changed after submission")
-        );
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn directory_capture_does_not_follow_external_symbolic_links() {
-        let directory = tempfile::tempdir().unwrap();
-        let input = directory.path().join("acquisition");
-        fs::create_dir(&input).unwrap();
-        let external = directory.path().join("outside.tif");
-        fs::write(&external, b"outside").unwrap();
-        std::os::unix::fs::symlink(&external, input.join("linked.tif")).unwrap();
-        assert!(
-            Fingerprint::read(&input)
-                .unwrap_err()
-                .contains("symbolic link")
-        );
-    }
-
-    #[test]
-    fn captured_array_products_detect_changes_in_secondary_data_and_coordinates() {
-        let directory = tempfile::tempdir().unwrap();
-        let mut project = Project::open(&directory.path().join("project"), true).unwrap();
-        for name in ["main.npy", "secondary.npy", "angles.npy"] {
-            fs::write(project.root.join("derived").join(name), b"original data").unwrap();
-        }
-        let mut asset = Asset::input("derived/main.npy".into(), true);
-        let primary: ArrayDescriptor = serde_json::from_value(json!({
-            "storage":{"type":"npy","path":"derived/main.npy"},"shape":[2],"dtype":"float32",
-            "axes":[{"name":"view","frame":"acquisition","unit":"radian",
-                "coordinates":{"type":"coordinates","values":{"type":"npy","path":"derived/angles.npy"}}}],
-            "unit":"1","domain":"line_integrals"
-        })).unwrap();
-        let mut secondary = primary.clone();
-        secondary.storage = crate::protocol::Storage::Npy {
-            path: "derived/secondary.npy".into(),
-            artifact: None,
-        };
-        asset.arrays.insert("before".into(), primary);
-        asset.arrays.insert("after".into(), secondary);
-        let id = asset.id.clone();
-        project.document.assets.push(asset);
-        for changed in ["secondary.npy", "angles.npy"] {
-            let captured = project.capture(&id).unwrap();
-            assert_eq!(
-                captured.storage_fingerprints.len(),
-                2,
-                "shared coordinate storage is captured once"
-            );
-            let job = Job::new("export_array", json!({}), vec![captured]);
-            let encoded = serde_json::to_vec(&job).unwrap();
-            let job: Job = serde_json::from_slice(&encoded).unwrap();
-            assert!(job.check_inputs().is_ok());
-            fs::write(
-                project.root.join("derived").join(changed),
-                b"changed scalar or coordinate data",
-            )
-            .unwrap();
-            let error = job.check_inputs().unwrap_err();
-            assert!(error.contains("changed after submission"));
-            assert!(error.contains(changed));
-        }
-        let captured = project.capture(&id).unwrap();
-        let mut old = serde_json::to_value(&captured).unwrap();
-        old.as_object_mut().unwrap().remove("storage_fingerprints");
-        let old: CapturedInput = serde_json::from_value(old).unwrap();
-        assert!(
-            Job::new("export_array", json!({}), vec![old])
-                .check_inputs()
-                .unwrap_err()
-                .contains("was not captured")
-        );
-    }
-
-    #[test]
     fn autosave_reopen_retains_context_and_marks_unfinished_jobs() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("Copper corrosion");
@@ -1329,27 +961,6 @@ mod tests {
         assert_eq!(project.document.workspace.indices, [7, 19, 31]);
         assert_eq!(project.document.jobs[0].status, JobStatus::Interrupted);
         project.flush().unwrap();
-    }
-
-    #[test]
-    fn submissions_reject_changed_inputs_and_survive_relinking() {
-        let dir = tempfile::tempdir().unwrap();
-        let source = dir.path().join("scan.nxs");
-        fs::write(&source, b"original").unwrap();
-        let mut project = Project::open(&dir.path().join("project"), true).unwrap();
-        let asset = Asset::input(source.clone(), false);
-        let id = asset.id.clone();
-        project.document.assets.push(asset);
-        let job = Job::new(
-            "reconstruct",
-            json!({"method":"fourier"}),
-            vec![project.capture(&id).unwrap()],
-        );
-        project.document.asset_mut(&id).unwrap().path = dir.path().join("elsewhere.nxs");
-        assert_eq!(job.inputs[0].path, source);
-        assert!(job.check_inputs().is_ok());
-        fs::write(&source, b"changed input content").unwrap();
-        assert!(job.check_inputs().is_err());
     }
 
     #[test]

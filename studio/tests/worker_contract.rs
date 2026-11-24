@@ -146,7 +146,6 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
         vec![project.capture(&source_id).unwrap()],
     );
     draft["method"] = json!("sirt");
-    job.check_inputs().unwrap();
     let job_id = job.id.clone();
     project.document.jobs.push(job.clone());
     project.changed().unwrap();

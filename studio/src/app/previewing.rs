@@ -117,7 +117,7 @@ impl AppState {
             .catalog
             .definition(&definition)
             .map(|schema| &schema["properties"]);
-        let inputs = if !processing || self.form_inputs_pending() {
+        let inputs = if !processing {
             Vec::new()
         } else if properties.is_some_and(|p| {
             ["sources", "volume", "projections"]
@@ -145,11 +145,7 @@ impl AppState {
             let input = self.current_form_input();
             let parameters = forms::parameters(&self.ui, &self.catalog);
             let mut message = None;
-            if self.form_inputs_pending() {
-                message = Some("Checking source metadata".to_owned());
-            } else if let Some(error) = self.form_input_error() {
-                message = Some(error.to_owned());
-            } else if input.is_none() {
+            if input.is_none() {
                 message = Some("Select a source scan for this preview".to_owned());
             } else if let Err(error) = &parameters {
                 message = Some(error.clone());
@@ -160,9 +156,10 @@ impl AppState {
                 let signature = json!([input, parameters, kind.operation()]).to_string();
                 if signature != self.preview_context.signature {
                     if self.preview_context.displayed.is_some()
-                        && self.previews.current(kind).is_some_and(|c| {
-                            c.input.asset == input.asset && c.input.fingerprint == input.fingerprint
-                        })
+                        && self
+                            .previews
+                            .current(kind)
+                            .is_some_and(|c| c.input.asset == input.asset)
                     {
                         self.preview_context.previous = self
                             .imaging

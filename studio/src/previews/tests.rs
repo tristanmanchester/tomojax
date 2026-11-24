@@ -2,8 +2,7 @@ use super::*;
 
 fn input() -> CapturedInput {
     serde_json::from_value(
-        json!({"asset":"scan-a","name":"Acquisition","path":"/source.nxs","kind":"scan",
-        "fingerprint":{"bytes":128,"modified_ns":1,"directory":false}}),
+        json!({"asset":"scan-a","name":"Acquisition","path":"/source.nxs","kind":"scan"}),
     )
     .unwrap()
 }
@@ -216,6 +215,6 @@ fn explicit_form_inputs_remain_warm_while_only_two_idle_sources_are_cached() {
     assert_eq!(previews.sources.trim(&BTreeSet::new()).len(), 3);
     assert_eq!(previews.sources.entries.len(), 2);
     let mut changed = inputs[0].clone();
-    changed.fingerprint.modified_ns = Some(2);
+    changed.path = "/data/other-scan.nxs".into();
     assert_ne!(first, previews.ensure_input(changed).unwrap());
 }

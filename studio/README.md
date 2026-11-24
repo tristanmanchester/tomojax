@@ -83,7 +83,7 @@ forward projection and backprojection.
 
 Slice, centre, correction and region previews update as you edit. They use
 temporary worker results; **Keep result** creates a project result with the
-settings, source fingerprints and worker provenance that produced it. Changing a
+settings, source paths and worker provenance that produced it. Changing a
 control replaces its earlier request. While the new preview computes, the last
 one stays on screen with an updating label. **Stop** cancels that control's preview;
 **Update preview** explicitly retries it. Preview requests do not wait for the
@@ -111,15 +111,12 @@ path; **Review** reveals and focuses the corresponding control. Nested JSON
 errors identify the failing path beside the containing editor. A draft with a
 current validation error cannot be queued. Reconstruction and alignment forms also request the worker's plan, including method, reasons,
 grid, placement and memory estimates. Editing settings invalidates the previous
-plan. For a normal batch, the preflight describes the active input; each captured
-input is checked when its job runs. **Combine scans** preflights its selected set.
+plan. For a normal batch, the preflight describes the active input. **Combine scans** preflights its selected set.
 
 Each submitted job keeps its own copy of the parameters and records the source
-paths, kinds and metadata fingerprints, including secondary array and coordinate
-files. Editing a form, applying another recipe or relinking an asset leaves
-submitted work unchanged. Inputs are checked again before a result is accepted; if
-a captured source has changed or gone, the job fails and names it. Don't modify
-referenced acquisitions while they are being processed.
+paths and kinds. Editing a form, applying another recipe or relinking an asset
+leaves submitted work unchanged. Don't modify referenced acquisitions while they
+are being processed.
 
 The local queue admits jobs to one official worker. You can reorder waiting
 jobs, prepare more work, or browse saved data while processing runs. Pause and

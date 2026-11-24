@@ -66,26 +66,19 @@ impl AppState {
         if operation != "simulate" && selected.is_empty() {
             return Err("Select a scan or result first".into());
         }
-        // The form captures the selected inputs on an I/O thread; a job takes that
-        // capture, so large acquisitions are never walked on the UI thread.
         let inputs = if operation == "simulate" {
             vec![]
         } else {
-            if let Some(error) = self.form_input_error().map(str::to_owned) {
-                self.form_context.retry();
-                return Err(error);
-            }
-            let captured = self.current_form_inputs();
-            if self.form_inputs_pending()
-                || !captured
-                    .iter()
-                    .map(|input| &input.asset)
-                    .eq(selected.iter())
-            {
-                return Err("Reading the selected inputs; queue again in a moment".into());
-            }
-            captured.to_vec()
+            self.current_form_inputs().to_vec()
         };
+        if inputs.iter().any(|input| {
+            input
+                .path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
+        }) {
+            return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognised acquisition".into());
+        }
         let project = self
             .project
             .as_mut()
@@ -116,10 +109,6 @@ impl AppState {
                     .push(Job::new(operation, parameters.clone(), vec![input]));
             }
         }
-        // The next job takes a fresh capture, read in the background: a source
-        // that changed since this one (so its job will ask for a new submission)
-        // is fingerprinted anew rather than resubmitted with the old fingerprint.
-        self.form_context.retry();
         self.mark_dirty();
         self.ui.jobs_open = true;
         self.model.status = "Submitted settings are captured with each job".into();
@@ -158,7 +147,7 @@ impl AppState {
         {
             active.status = JobStatus::Running;
             active.started = Some(now_ms());
-            active.stage = "Checking captured inputs".into();
+            active.stage = "Starting".into();
         }
         self.running = Some(Running {
             job: job.id.clone(),
@@ -167,15 +156,7 @@ impl AppState {
             next_input: 0,
         });
         self.mark_dirty();
-        self.spawn_local(Some(job.id.clone()), move |cancelled| {
-            let result = check_cancel(&cancelled)
-                .and_then(|()| job.check_inputs())
-                .and_then(|()| check_cancel(&cancelled));
-            LocalEvent::StartChecked {
-                job: job.id,
-                result,
-            }
-        });
+        self.advance_job();
     }
 
     fn active_job(&self) -> Option<Job> {
@@ -205,7 +186,6 @@ impl AppState {
             return;
         };
         let id = job.id.clone();
-        let captured = job.clone();
         self.spawn_local(Some(id.clone()),move|cancelled|{
             let result=(||->Result<(),String>{
                 check_cancel(&cancelled)?;
@@ -229,7 +209,6 @@ impl AppState {
                 }
                 let document=json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
                 std::fs::write(stage.path().join("arrays.json"),serde_json::to_vec_pretty(&document).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-                captured.check_inputs()?;
                 check_cancel(&cancelled)?;
                 if destination.exists(){return Err("The export directory was created by another process".into());}
                 std::fs::rename(stage.path(),&destination).map_err(|e|e.to_string())?;
@@ -388,28 +367,16 @@ impl AppState {
                 self.release_output(&output);
                 return;
             }
-            let captured = self
+            let known = self
                 .project
                 .as_ref()
-                .and_then(|p| p.document.jobs.iter().find(|j| j.id == id))
-                .cloned();
-            let Some(captured) = captured else {
+                .is_some_and(|p| p.document.jobs.iter().any(|j| j.id == id));
+            if !known {
                 self.release_output(&output);
                 return;
-            };
-            self.spawn_local(Some(id), move |cancelled| {
-                let result = check_cancel(&cancelled)
-                    .and_then(|()| captured.check_inputs())
-                    .and_then(|()| check_cancel(&cancelled));
-                LocalEvent::OutputChecked {
-                    pending,
-                    output,
-                    result,
-                }
-            });
-        } else {
-            self.result_checked(pending, output);
+            }
         }
+        self.result_checked(pending, output);
     }
 
     pub(super) fn result_checked(&mut self, pending: Pending, output: Box<Output>) {
@@ -770,16 +737,6 @@ impl AppState {
         artifacts.sort();
         artifacts.dedup();
         let handle = output.value.handle().map(str::to_owned);
-        let captured = self
-            .project
-            .as_ref()
-            .unwrap()
-            .document
-            .jobs
-            .iter()
-            .find(|j| j.id == job)
-            .unwrap()
-            .clone();
         if let Some(job) = self.project.as_mut().and_then(|p| p.document.job_mut(job)) {
             job.destination = Some(destination.clone());
             job.stage = "Copying preview arrays into project".into();
@@ -790,7 +747,6 @@ impl AppState {
         self.spawn_local(Some(job.clone()), move |cancelled| {
             let result = (|| -> Result<(), String> {
                 check_cancel(&cancelled)?;
-                captured.check_inputs()?;
                 let stage = tempfile::Builder::new()
                     .prefix(".arrays-")
                     .tempdir_in(root.join("derived"))
@@ -798,7 +754,6 @@ impl AppState {
                 for (source, filename) in copies {
                     local::copy_file(&source, &stage.path().join(filename), &cancelled)?;
                 }
-                captured.check_inputs()?;
                 check_cancel(&cancelled)?;
                 if destination.exists() {
                     return Err("The result destination already exists".into());

@@ -66,10 +66,6 @@ struct Running {
     next_input: usize,
 }
 enum LocalEvent {
-    FormCaptured {
-        generation: u64,
-        result: Result<Vec<project::CapturedInput>, String>,
-    },
     Copied {
         asset: Asset,
         result: Result<PathBuf, String>,
@@ -89,15 +85,6 @@ enum LocalEvent {
     },
     Exported {
         job: String,
-        result: Result<(), String>,
-    },
-    StartChecked {
-        job: String,
-        result: Result<(), String>,
-    },
-    OutputChecked {
-        pending: Pending,
-        output: Box<Output>,
         result: Result<(), String>,
     },
 }
@@ -393,9 +380,6 @@ impl AppState {
 
     fn local_event(&mut self, event: LocalEvent) {
         match event {
-            LocalEvent::FormCaptured { generation, result } => {
-                self.form_context.complete(generation, result);
-            }
             LocalEvent::Copied {
                 mut asset,
                 result,
@@ -452,29 +436,6 @@ impl AppState {
                 Err(error) => {
                     if !self.shutting_down {
                         self.fail_job(&job, &error, error == CANCELLED)
-                    }
-                }
-            },
-            LocalEvent::StartChecked { job, result } => {
-                if !self.shutting_down {
-                    match result {
-                        Ok(()) => self.advance_job(),
-                        Err(error) => self.fail_job(&job, &error, error == CANCELLED),
-                    }
-                }
-            }
-            LocalEvent::OutputChecked {
-                pending,
-                output,
-                result,
-            } => match result {
-                Ok(()) => self.result_checked(pending, output),
-                Err(error) => {
-                    self.release_output(&output);
-                    if !self.shutting_down {
-                        self.request_failed(pending, error.clone(), error == CANCELLED);
-                    } else if let Pending::Save { output, .. } = pending {
-                        self.release_output(&output);
                     }
                 }
             },
@@ -921,14 +882,13 @@ fn stage_copy_input(
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
     check_cancel(cancelled)?;
-    let before = project::Fingerprint::read(source)?;
     let staging = destination.with_extension(format!("{}-partial", project::new_id("copy")));
-    let result=copy_input(source,&staging,cancelled).and_then(|()|{
+    let result = copy_input(source, &staging, cancelled).and_then(|()| {
         check_cancel(cancelled)?;
-        if project::Fingerprint::read(source)?!=before{return Err("The acquisition changed while it was being copied. Import it again after acquisition has finished.".into());}
-        check_cancel(cancelled)?;
-        if destination.exists(){return Err("The copy destination already exists".into());}
-        std::fs::rename(&staging,destination).map_err(|e|e.to_string())
+        if destination.exists() {
+            return Err("The copy destination already exists".into());
+        }
+        std::fs::rename(&staging, destination).map_err(|e| e.to_string())
     });
     if result.is_err() {
         if staging.is_dir() {

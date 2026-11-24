@@ -1,42 +1,14 @@
-//! Captured source context shared by edit-time checks and interactive previews.
-//! Filesystem work runs once per source selection on a native I/O task.
+//! The selected inputs as the open form sees them, shared by edit-time checks,
+//! interactive previews and submission.
 use super::*;
 use crate::project::CapturedInput;
 
 #[derive(Default)]
 pub(super) struct FormContext {
     key: String,
-    generation: u64,
     active: Option<String>,
     selected_count: usize,
     inputs: Vec<CapturedInput>,
-    pending: bool,
-    error: Option<String>,
-}
-
-impl FormContext {
-    pub(super) fn complete(&mut self, generation: u64, result: Result<Vec<CapturedInput>, String>) {
-        if generation != self.generation {
-            return;
-        }
-        self.pending = false;
-        match result {
-            Ok(inputs) => {
-                self.inputs = inputs;
-                self.error = None;
-            }
-            Err(error) => {
-                self.inputs.clear();
-                self.error = Some(error);
-            }
-        }
-    }
-
-    /// Captures the inputs again on the next poll (after a failure: the source
-    /// may be back).
-    pub(super) fn retry(&mut self) {
-        self.key.clear();
-    }
 }
 
 impl AppState {
@@ -89,28 +61,15 @@ impl AppState {
         if key == self.form_context.key {
             return false;
         }
-        let generation = self.form_context.generation + 1;
         self.form_context = FormContext {
             key,
-            generation,
             active: self.model.active_asset.clone(),
             selected_count,
-            pending: !assets.is_empty(),
-            ..Default::default()
+            inputs: assets
+                .iter()
+                .map(|asset| CapturedInput::from_asset(asset, &project.root))
+                .collect(),
         };
-        if !assets.is_empty() {
-            let root = project.root.clone();
-            self.spawn_local(None, move |cancelled| {
-                let result = assets
-                    .iter()
-                    .map(|asset| {
-                        check_cancel(&cancelled)?;
-                        CapturedInput::from_asset(asset, &root)
-                    })
-                    .collect();
-                LocalEvent::FormCaptured { generation, result }
-            });
-        }
         true
     }
 
@@ -127,58 +86,5 @@ impl AppState {
             .form_context
             .selected_count
             .min(self.form_context.inputs.len())]
-    }
-
-    pub(super) fn form_input_error(&self) -> Option<&str> {
-        self.form_context.error.as_deref()
-    }
-
-    pub(crate) fn form_inputs_pending(&self) -> bool {
-        self.form_context.pending
-    }
-}
-
-#[cfg(test)]
-impl AppState {
-    /// Waits, as the Queue button does, until the selected inputs are captured.
-    pub(super) fn await_inputs(&mut self) {
-        let limit = std::time::Instant::now() + std::time::Duration::from_secs(45);
-        loop {
-            self.poll();
-            let selected = self.selected_inputs();
-            if !self.form_inputs_pending()
-                && self
-                    .current_form_inputs()
-                    .iter()
-                    .map(|input| &input.asset)
-                    .eq(selected.iter())
-            {
-                return;
-            }
-            assert!(
-                std::time::Instant::now() < limit,
-                "inputs were not captured"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn old_source_capture_cannot_replace_a_new_selection() {
-        let mut context = FormContext {
-            generation: 2,
-            pending: true,
-            ..Default::default()
-        };
-        context.complete(1, Err("old source missing".into()));
-        assert!(context.pending);
-        assert!(context.error.is_none());
-        context.complete(2, Ok(Vec::new()));
-        assert!(!context.pending);
     }
 }
