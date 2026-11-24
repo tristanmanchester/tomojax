@@ -78,6 +78,12 @@
                   "$ref": "#/$defs/Files"
                 },
                 {
+                  "$ref": "#/$defs/PythonResult"
+                },
+                {
+                  "$ref": "#/$defs/Evaluation"
+                },
+                {
                   "$ref": "#/$defs/Inspection"
                 },
                 {
@@ -105,6 +111,8 @@
                   "sweep": "#/$defs/Sweep",
                   "correction_preview": "#/$defs/CorrectionResult",
                   "files": "#/$defs/Files",
+                  "python": "#/$defs/PythonResult",
+                  "evaluation": "#/$defs/Evaluation",
                   "inspection": "#/$defs/Inspection",
                   "reconstruction_plan": "#/$defs/ReconPlan",
                   "joint_plan": "#/$defs/JointPlan",
@@ -661,6 +669,114 @@
         "destination",
         "staged",
         "force"
+      ],
+      "additionalProperties": false
+    },
+    "PythonResult": {
+      "title": "PythonResult",
+      "description": "Captured streams, last expression, registered products and rendered images.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "python"
+          ]
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "value": {},
+        "handles": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Scan"
+                  },
+                  {
+                    "$ref": "#/$defs/Frames"
+                  },
+                  {
+                    "$ref": "#/$defs/Reconstruction"
+                  },
+                  {
+                    "$ref": "#/$defs/Alignment"
+                  },
+                  {
+                    "$ref": "#/$defs/Simulation"
+                  },
+                  {
+                    "$ref": "#/$defs/Region"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "scan": "#/$defs/Scan",
+                    "frames": "#/$defs/Frames",
+                    "reconstruction": "#/$defs/Reconstruction",
+                    "alignment": "#/$defs/Alignment",
+                    "simulation": "#/$defs/Simulation",
+                    "region": "#/$defs/Region"
+                  }
+                }
+              },
+              {
+                "$ref": "#/$defs/ArrayResult"
+              }
+            ]
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "stdout",
+        "stderr",
+        "value",
+        "handles",
+        "images"
+      ],
+      "additionalProperties": false
+    },
+    "Evaluation": {
+      "title": "Evaluation",
+      "description": "Additive held-out scores on a frozen native detector split.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "evaluation"
+          ]
+        },
+        "split_fingerprint": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "object"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "split_fingerprint",
+        "reference",
+        "scores"
       ],
       "additionalProperties": false
     },

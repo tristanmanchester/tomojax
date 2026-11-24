@@ -124,6 +124,7 @@ class StatusReport(Record, tag="status"):
     requests: dict[str, Literal["queued", "running", "pause-requested", "paused"]]
     handles: dict[str, Count]
     allocators: tuple[Snapshot, ...]
+    python_namespace_bytes: Count = 0
 
 
 class Ack(Record, tag="ack"):

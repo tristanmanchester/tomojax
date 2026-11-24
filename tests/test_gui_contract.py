@@ -49,6 +49,7 @@ def test_generated_contract_is_current():
         "alignment-scan",
         "simulation",
         "edit-combine",
+        "evaluate-python",
         "raw-slabs",
         "session",
     ],

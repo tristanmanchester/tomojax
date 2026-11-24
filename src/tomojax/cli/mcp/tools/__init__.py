@@ -68,6 +68,13 @@ class Open(Record):
     detail: Literal["summary", "full"] = "summary"
 
 
+class Python(Record):
+    """Run trusted local Python with tj, np, handles, register and show."""
+
+    code: str = ""
+    reset: bool = False
+
+
 class Describe(Record):
     """Show expert parameters for an operation or a specific solver method."""
 
@@ -245,7 +252,7 @@ class Tools:
                 "allocators": elapsed_samples(state["allocators"]),
                 "jobs": state["requests"],
                 "handles": handles,
-                "python_namespace_bytes": 0,
+                "python_namespace_bytes": state.get("python_namespace_bytes", 0),
                 "recovery": self.supervisor.report,
             }
         )
@@ -334,21 +341,7 @@ class Tools:
         if "path" in command:
             destination = self.supervisor.base / Path(command["path"]).expanduser()
             command["path"] = str(destination.parent.resolve() / destination.name)
-        config = command.get("config")
-        if config is not None and "type" not in config:
-            if model is op.Align:
-                config["type"] = "AlignConfig"
-            else:
-                configs = {
-                    cls.__name__.removesuffix("Config").lower(): cls.__name__
-                    for cls in get_args(op.Config.__value__)
-                }
-                method = command["method"]
-                if method not in configs:
-                    raise ValueError(
-                        "Choose a specific method or give config its type from describe."
-                    )
-                config["type"] = configs[method]
+        tag_configs(command, model)
         command = wire_arguments(command, model, base=self.supervisor.base, ledger=self.ledger)
         # Validate nested expert keys here too, preserving their full field paths.
         msgspec.convert(command, type=model)
@@ -374,6 +367,14 @@ class Tools:
                 return await asyncio.to_thread(lambda: seeing.render(seeing.preview_panels(value)))
         if dry:
             return await self.dry_run(command, detail=detail)
+        if model is op.Evaluate:
+            g = await self.supervisor.worker()
+            started = time.monotonic()
+            evaluated = await g.request({"type": "run", "operation": command})
+            data = evaluated["value"]
+            if detail == "full":
+                data.update(manifest=evaluated["manifest"], info=evaluated["info"])
+            return result({**data, "wall_seconds": round(time.monotonic() - started, 3)})
         return await self.execute(command, detail=detail)
 
     async def dry_run(self, command: Object, *, detail: str) -> CallToolResult:
@@ -456,7 +457,9 @@ class Tools:
             await seeing.default_panels(self, data, reply)
         return reply
 
-    def publish_handle(self, command: Object, output: Object) -> Object:
+    def publish_handle(
+        self, command: Object, output: Object, *, reserved: tuple[str, dict] | None = None
+    ) -> Object:
         """Issue the session identity while the accepting generation is still live."""
         value = output["value"]
         kind: str = value["type"]
@@ -505,7 +508,11 @@ class Tools:
                 if axis["coordinates"]["type"] == "coordinates"
                 and "artifact" in axis["coordinates"]["values"]
             ]
-        ref = self.ledger.issue(alias, record)
+        if reserved is None:
+            ref = self.ledger.issue(alias, record)
+        else:
+            ref, records = reserved
+            records[ref] = record
         data = {"handle": ref, **summary}
         data["members"] = (
             {
@@ -524,6 +531,47 @@ class Tools:
             }
         return data
 
+    async def python(self, args: Python) -> CallToolResult:
+        g = await self.supervisor.worker()
+        aliases = {
+            ref: resolve(
+                ref,
+                base=self.supervisor.base,
+                ledger=self.ledger,
+                field="array" if "artifact" in record else "source",
+            )
+            for ref, record in self.ledger.live.items()
+        }
+        command = {
+            "type": "python",
+            "code": args.code,
+            "reset": args.reset,
+            "aliases": aliases,
+            "ledger": [str(self.ledger.path), self.ledger.owner],
+        }
+
+        def publish(output):
+            value = output["value"]
+            records = {}
+            summaries = {}
+            for ref, product in value["handles"].items():
+                summaries[ref] = self.publish_handle(
+                    command, {**output, "value": product}, reserved=(ref, records)
+                )
+            self.ledger.live.update(records)
+            value["handles"] = summaries
+            if g.prefix > 1:
+                value["namespace_generation"] = g.prefix
+                value["restart_notice"] = "Worker restart cleared the preceding namespace."
+            return value
+
+        value = await g.request(command, accept=publish)
+        images = value.pop("images")
+        reply = result(value)
+        for png in images:
+            reply.content.append(ImageContent(type="image", mime_type="image/png", data=png))
+        return reply
+
     async def describe(self, args: Describe) -> CallToolResult:
         """Select operation and config keys from the running worker's real schema."""
         g = await self.supervisor.worker()
@@ -531,7 +579,7 @@ class Tools:
         names = {
             d["properties"]["type"]["enum"][0]: k
             for k, d in definitions.items()
-            if "type" in d["properties"]
+            if "type" in d["properties"] and not k.endswith("Settings")
         }
         if args.operation not in names:
             raise ValueError(f"Unknown operation. Choose from {', '.join(sorted(names))}")
@@ -618,6 +666,29 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
     return result(data, text=f"{kind}: {message}. {next_step}", error=True)
 
 
+def tag_configs(command: Object, model: type[Record]) -> None:
+    """Select each expert config's wire type from its enclosing method."""
+    settings = (
+        [command] if model is not op.Evaluate else [*command["candidates"], command["reference"]]
+    )
+    for setting in settings:
+        config = setting.get("config")
+        if config is not None and "type" not in config:
+            if setting["type"] == "align":
+                config["type"] = "AlignConfig"
+            else:
+                configs = {
+                    cls.__name__.removesuffix("Config").lower(): cls.__name__
+                    for cls in get_args(op.Config.__value__)
+                }
+                method = setting["method"]
+                if method not in configs:
+                    raise ValueError(
+                        "Choose a specific method or give config its type from describe."
+                    )
+                config["type"] = configs[method]
+
+
 def workflow_output() -> Object:
     """Describe handle, file, preflight, error and continuation responses."""
     return {
@@ -698,7 +769,7 @@ def registry(core: Core) -> list[Object]:
     return (
         [
             binding(cls, getattr(tools, cls.__name__.lower()), definitions, parts=core.parts)
-            for cls in (Status, Inspect, Open, Describe, Control)
+            for cls in (Status, Inspect, Open, Describe, Control, Python)
         ]
         + [binding(seeing.View, partial(seeing.view, tools), definitions, parts=core.parts)]
         + [

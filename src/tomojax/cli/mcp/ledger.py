@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+from contextlib import closing
 import fcntl
 from pathlib import Path
 import re
 import secrets
 import sqlite3
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 ID = re.compile(r"@([a-z]+)-([1-9][0-9]*)-([a-z2-7]{4})")
 
@@ -22,7 +26,8 @@ class Ledger:
         self.owner = uuid4().hex
         self.lock = (directory / self.owner).open("xb")
         fcntl.flock(self.lock, fcntl.LOCK_EX)
-        self.db = sqlite3.connect(directory / "ledger")
+        self.path = directory / "ledger"
+        self.db = sqlite3.connect(self.path)
         self.live: dict[str, dict[str, Any]] = {}
         with self.db:
             self.db.execute("BEGIN IMMEDIATE")
@@ -37,7 +42,9 @@ class Ledger:
             else:
                 self.tag = base64.b32encode(secrets.token_bytes(3)).decode().lower()[:4]
                 self.db.execute("INSERT INTO settings VALUES(?)", (self.tag,))
-            for (owner,) in self.db.execute("SELECT DISTINCT owner FROM ids WHERE state='live'"):
+            for (owner,) in self.db.execute(
+                "SELECT DISTINCT owner FROM ids WHERE state IN ('live','reserved')"
+            ):
                 path = directory / owner
                 try:
                     with path.open("rb") as fd:
@@ -48,7 +55,8 @@ class Ledger:
                 except BlockingIOError:
                     continue
                 self.db.execute(
-                    "UPDATE ids SET state='lost' WHERE owner=? AND state='live'", (owner,)
+                    "UPDATE ids SET state='lost' WHERE owner=? AND state IN ('reserved','live')",
+                    (owner,),
                 )
 
     def issue(self, kind: str, record: dict[str, Any]) -> str:
@@ -88,7 +96,8 @@ class Ledger:
         """Retire every live reference owned by this generation."""
         with self.db:
             self.db.execute(
-                "UPDATE ids SET state='lost' WHERE owner=? AND state='live'", (self.owner,)
+                "UPDATE ids SET state='lost' WHERE owner=? AND state IN ('reserved','live')",
+                (self.owner,),
             )
         records = list(self.live)
         self.live.clear()
@@ -100,3 +109,30 @@ class Ledger:
         self.db.close()
         Path(self.lock.name).unlink()
         self.lock.close()
+
+
+def reserve(kind: str, ledger: tuple[str, str] | None) -> str:
+    """Reserve a final identifier before Python regains control."""
+    if ledger is None:
+        return f"{kind}-{uuid4().hex}"
+    path, owner = ledger
+    with closing(sqlite3.connect(path)) as db, db:
+        cursor = db.execute(
+            "INSERT INTO ids(kind,owner,state) VALUES(?,?,'reserved')", (kind, owner)
+        )
+        (tag,) = db.execute("SELECT tag FROM settings").fetchone()
+        return f"@{kind}-{cursor.lastrowid}-{tag}"
+
+
+def activate(ledger: tuple[str, str], names: Iterable[str]) -> None:
+    """Activate the worker's entire group in the transaction that publishes its roots."""
+    path, owner = ledger
+    with closing(sqlite3.connect(path)) as db, db:
+        for ref in names:
+            number = ref.split("-")[1]
+            updated = db.execute(
+                "UPDATE ids SET state='live' WHERE n=? AND owner=? AND state='reserved'",
+                (number, owner),
+            )
+            if not updated.rowcount:
+                raise ValueError(f"Missing reservation for {ref}")

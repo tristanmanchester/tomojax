@@ -353,6 +353,7 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
         recon = dict(source=fitted["members"]["scan"], method="fbp")
         assert data("reconstruct", **recon, dry_run=True)["grid"]["nx"] == size
         volume = data("reconstruct", **recon)
+        candidates, table = check_chain_panels_and_evaluation(data, volume, recon, scan, size)
         reply = c.call("save", source=volume["handle"], path="result.nxs")
         assert not reply["isError"], reply["content"][0]["text"]
         assert [x["name"] for x in reply["content"] if x["type"] == "resource_link"] == [
@@ -384,6 +385,7 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
             )
 
     phantom = tj.simulate(**acquisition)
+    check_scores(phantom, candidates, table, size)
     aligned = tj.align(phantom.scan, fit="center", method="opposite-views")
     assert fitted["calibration"]["center"]["value"] == pytest.approx(
         aligned.scan.detector.center[0], abs=1e-5
@@ -392,6 +394,73 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
     expected = tj.reconstruct(aligned.scan, "fbp")
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-4, atol=3e-5)
     assert np.linalg.norm(actual.volume - phantom.phantom) < np.linalg.norm(phantom.phantom)
+
+
+def check_chain_panels_and_evaluation(data, volume, recon, scan, size):
+    assert data("view", source=volume["handle"])["panels"]
+    assert data("preview", operation=dict(type="slice", axis="z", index=size // 2, **recon))[
+        "panels"
+    ]
+    candidates = [
+        dict(type="reconstruct", method="cgls", iterations=2),
+        dict(type="reconstruct", method="cgls", iterations=3, config=dict(interpolation="cubic")),
+    ]
+    candidates.append(dict(type="align", fit="center", method="opposite-views"))
+    table = data(
+        "evaluate",
+        source=scan,
+        candidates=candidates,
+        reference=dict(type="reconstruct", method="cgls", iterations=3),
+    )
+    assert len(table["scores"]) == 3
+    assert data("python", code=f"float(handles[{volume['handle']!r}].volume.max())")["value"] > 0
+    return candidates, table
+
+
+def check_scores(phantom, candidates, table, size):
+    import numpy as np
+
+    from tomojax.evaluation import Split
+    from tomojax.forward import project_joseph
+    from tomojax.geometry import stack_view_poses
+    from tomojax.recon import CGLSConfig
+
+    split = Split.interleaved(phantom.scan.projections.shape, stride=5, offset=2)
+    assert table["split_fingerprint"] == split.fingerprint
+    training = phantom.scan.selected(split.train.ravel())
+    for row, setting in zip(table["scores"], candidates, strict=True):
+        assert row["count"] == int(split.test.sum()) * size**2 and np.isfinite(row["mse"])
+        if size > 32:
+            continue
+        fit_scan = training
+        detector = phantom.scan.detector
+        if setting["type"] == "align":
+            alignment = tj.align(training, method="opposite-views", fit="center")
+            fit_scan = alignment.scan
+            detector = fit_scan.detector
+            assert alignment.image is None
+            assert row["diagnostic"]["calibration"]["center"]["value"] == pytest.approx(
+                detector.center[0], abs=1e-5
+            )
+        cfg = CGLSConfig(
+            iterations=setting.get("iterations", 3),
+            interpolation=setting.get("config", {}).get("interpolation", "linear"),
+        )
+        fitted_volume = tj.reconstruct(fit_scan, "cgls", config=cfg)
+        predicted = project_joseph(
+            fitted_volume.volume,
+            stack_view_poses(phantom.scan.geometry, size * 2),
+            phantom.scan.grid,
+            detector,
+            interpolation=cfg.interpolation,
+        )
+        expected_score = split.score(predicted, phantom.scan.projections)
+        assert row["count"] == expected_score.count
+        assert row["relative_l2"] == pytest.approx(expected_score.relative_l2, rel=1e-6)
+        assert row["mse"] == pytest.approx(expected_score.mse, rel=2e-6)
+        assert np.linalg.norm(fitted_volume.volume - phantom.phantom) < np.linalg.norm(
+            phantom.phantom
+        )
 
 
 def test_directory_discovery_counts_frames_without_worker_calls(tmp_path):

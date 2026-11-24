@@ -68,6 +68,9 @@ def matched_operators(
     grid: Grid | None,
     context: str,
     devices: Device | Sequence[Device] | None = None,
+    *,
+    interpolation: str = "linear",
+    backend: str = "auto",
 ):
     """The grid, the split of the views among ``devices`` and builders of their operators.
 
@@ -79,14 +82,23 @@ def matched_operators(
     detector = geometry.detector
     det_grid = detector_grid_from_geometry_inputs(detector, geometry)
     model, backend = resolve_geometry_projector(
-        geometry, "auto", detector=detector, det_grid=det_grid, context=context
+        geometry, backend, detector=detector, det_grid=det_grid, context=context
     )
     n_views = len(geometry.angles)
     poses = stack_view_poses(geometry, n_views)
     axial_cuda = backend == "cuda" and model == "joseph" and isinstance(geometry, ParallelGeometry)
     batch = _view_batch_size(grid, detector, n_views, axial_cuda=axial_cuda)
     split = view_split(devices, n_views)
-    build = functools.partial(projection_operators, poses, grid, detector, det_grid, backend, batch)
+    build = functools.partial(
+        projection_operators,
+        poses,
+        grid,
+        detector,
+        det_grid,
+        backend,
+        batch,
+        interpolation=interpolation,
+    )
     private = resident_model(model, backend)
     if split is not None or not isinstance(private, PrivateJoseph):
         return grid, split, functools.partial(build, model, split=split), None

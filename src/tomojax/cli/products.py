@@ -139,6 +139,24 @@ class Files(Record, tag="files"):
     recovery: dict[str, list[str]] = msgspec.field(default_factory=dict)
 
 
+class PythonResult(Record, tag="python"):
+    """Captured streams, last expression, registered products and rendered images."""
+
+    stdout: str
+    stderr: str
+    value: Any
+    handles: dict[str, HandleProduct | ArrayResult]
+    images: tuple[str, ...]
+
+
+class Evaluation(Record, tag="evaluation"):
+    """Additive held-out scores on a frozen native detector split."""
+
+    split_fingerprint: str
+    reference: dict[str, Any]
+    scores: tuple[dict[str, Any], ...]
+
+
 class Inspection(Record, tag="inspection"):
     """The public inspection report."""
 
@@ -204,6 +222,8 @@ type DataProduct = (
     | Sweep
     | CorrectionResult
     | Files
+    | PythonResult
+    | Evaluation
     | Inspection
     | ReconPlan
     | JointPlan

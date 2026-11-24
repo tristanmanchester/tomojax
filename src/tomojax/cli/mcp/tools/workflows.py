@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from functools import reduce
+from functools import cache, reduce
 from operator import or_
 from typing import Any, Literal, cast
 
@@ -37,6 +37,7 @@ MODELS = {
     str(model.__struct_config__.tag): model
     for model in (
         op.Correct,
+        op.Evaluate,
         op.Reconstruct,
         op.ReconstructSlabs,
         op.Align,
@@ -61,12 +62,22 @@ REFERENCES = {
 }
 
 
+@cache
 def form(model: type[Record], *, tagged: bool = False) -> type[Record]:
     """Keep wire defaults and types except where the server owns the representation."""
     fields = []
     for field in msgspec.structs.fields(model):
         entry = (field.name, REFERENCES.get(field.name, field.type))
-        fields.append(entry if field.required else (*entry, field.default))
+        default = field.default
+        if model is op.Evaluate:
+            recon = form(op.ReconstructSettings, tagged=True)
+            if field.name == "candidates":
+                choices = recon | form(op.AlignSettings, tagged=True)
+                entry = (field.name, tuple[choices, ...])
+            if field.name == "reference":
+                entry = (field.name, recon)
+                default = msgspec.convert(msgspec.to_builtins(default), type=recon)
+        fields.append(entry if field.required else (*entry, default))
     if not tagged:
         fields.extend([DRY, DETAIL])
     return cast(

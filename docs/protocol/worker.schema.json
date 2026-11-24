@@ -81,6 +81,9 @@
                 {
                   "anyOf": [
                     {
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python"
+                    },
+                    {
                       "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read"
                     },
                     {
@@ -105,6 +108,7 @@
                   "discriminator": {
                     "propertyName": "type",
                     "mapping": {
+                      "python": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python",
                       "read": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read",
                       "statistics": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics",
                       "run": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run",
@@ -670,6 +674,11 @@
           "items": {
             "$ref": "https://tomojax.dev/protocol/products.schema.json#/$defs/Snapshot"
           }
+        },
+        "python_namespace_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 0
         }
       },
       "required": [

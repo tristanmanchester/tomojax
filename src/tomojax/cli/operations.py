@@ -77,10 +77,9 @@ class Correct(Record, tag="correct"):
     binning: int = 1
 
 
-class Reconstruct(Record, tag="reconstruct"):
+class ReconstructSettings(Record, tag="reconstruct", kw_only=True):
     """Reconstruct the supplied scan on its resolved grid."""
 
-    source: Source
     method: Method = "auto"
     grid: w.Grid | None = None
     region: Region | None = None
@@ -92,6 +91,12 @@ class Reconstruct(Record, tag="reconstruct"):
     warm_start: bool | None = None
     seed: int | None = None
     devices: tuple[Id, ...] | None = None
+
+
+class Reconstruct(ReconstructSettings, tag="reconstruct"):
+    """Reconstruct the supplied scan on its resolved grid."""
+
+    source: Source
 
 
 class ReconstructSlabs(Record, tag="reconstruct_slabs"):
@@ -108,10 +113,9 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     epsilon: float = 1e-6
 
 
-class Align(Record, tag="align"):
+class AlignSettings(Record, tag="align", kw_only=True):
     """Return geometry-corrected scan and fitted pose table."""
 
-    source: Source
     fit: str | tuple[str, ...] = "translations"
     grid: w.Grid | None = None
     region: Region | None = None
@@ -123,6 +127,39 @@ class Align(Record, tag="align"):
     interpolation: Literal["linear", "cubic"] | None = None
     resolution: int | None = None
     config: w.AlignConfig | None = None
+
+
+class Align(AlignSettings, tag="align"):
+    """Return geometry-corrected scan and fitted pose table."""
+
+    source: Source
+
+
+class Interleaved(Record, tag="interleaved"):
+    """Hold out regularly spaced views with optional neighbouring guard views."""
+
+    stride: int = 5
+    offset: int = 2
+    guard: int = 0
+
+
+class Angular(Record, tag="angular"):
+    """Hold out an interior angular block with guards in degrees."""
+
+    start: float
+    width: float
+    guard: float = 0
+    period: float = 360
+
+
+class Evaluate(Record, tag="evaluate"):
+    """Score settings against shared held-out line integrals. Corrections run per partition."""
+
+    source: Source
+    candidates: tuple[ReconstructSettings | AlignSettings, ...]
+    split: Interleaved | Angular = Interleaved()
+    corrections: tuple[Step, ...] = ()
+    reference: ReconstructSettings = ReconstructSettings(method="cgls", iterations=30)
 
 
 class Simulate(Record, tag="simulate"):
@@ -274,6 +311,7 @@ class RegionPreview(Record, tag="region_preview"):
 
 type Workflow = (
     Correct
+    | Evaluate
     | Reconstruct
     | ReconstructSlabs
     | Align
@@ -310,7 +348,18 @@ class Validate(Record, tag="validate"):
     operation: Workflow | Interactive | Open
 
 
-type ExecutionInput = Read | Statistics | Run | Interactive | Inspect | Open | Plan | Validate
+class Python(Record, tag="python"):
+    """Run code with an admission snapshot of the live objects and arrays."""
+
+    code: str = ""
+    reset: bool = False
+    aliases: dict[str, Member | Npy] = msgspec.field(default_factory=dict)
+    ledger: tuple[str, str] | None = None
+
+
+type ExecutionInput = (
+    Python | Read | Statistics | Run | Interactive | Inspect | Open | Plan | Validate
+)
 
 
 def input_references(command: ExecutionInput) -> tuple[Member | Npy, ...]:

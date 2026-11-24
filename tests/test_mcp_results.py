@@ -84,6 +84,7 @@ def test_each_wire_field_has_a_tool_owner():
     assert set(interactive) == set(get_args(op.Interactive.__value__))
     assert set(get_args(op.ExecutionInput.__value__)) == {
         op.Open,
+        op.Python,
         op.Inspect,
         op.Plan,
         op.Validate,
@@ -92,6 +93,13 @@ def test_each_wire_field_has_a_tool_owner():
         op.Read,
         op.Statistics,
     }
+    assert (
+        set(op.Python.__struct_fields__) - {"aliases", "ledger"}
+        == schemas["python"]["properties"].keys()
+    )
+    for candidate in (op.ReconstructSettings, op.AlignSettings):
+        fields = schemas["evaluate"]["$defs"][candidate.__name__]["properties"]
+        assert set(candidate.__struct_fields__) <= fields.keys()
     assert op.Run.__struct_fields__ == ("operation", "previews")  # previews owned by M3 panels
     for wrapper in (op.Plan, op.Validate):
         assert wrapper.__struct_fields__ == ("operation",)  # dry_run
@@ -105,7 +113,7 @@ def test_each_wire_field_has_a_tool_owner():
             if key in cls.__struct_fields__:
                 wire = msgspec.json.schema(cls)["$defs"]
                 for nested in wire:
-                    if nested.endswith("Config"):
+                    if nested.endswith("Config") and cls is not op.Evaluate:
                         assert '"type": "object"' in json.dumps(schema["properties"]["config"])
                         assert nested not in schema.get("$defs", {})  # keys belong to describe
                     elif nested in {step.__name__ for step in get_args(op.Step.__value__)}:

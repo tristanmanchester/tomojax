@@ -757,6 +757,45 @@ def axial_fbp_plane(
     return parallel_fbp(geometry, grid, detector, projections, cfg, None, row=index)[0]
 
 
+def predict_projections(
+    geometry: ScanGeometry, volume: np.ndarray | jnp.ndarray, *, grid: Grid, config: MethodConfig
+) -> jnp.ndarray:
+    """Project a reconstruction with the fitted method's detector lattice and interpolation.
+
+    Parameters
+    ----------
+    geometry : ScanGeometry
+        Acquisition geometry of the views to predict.
+    volume : array
+        Reconstructed attenuation in (z, y, x) order.
+    grid : Grid
+        Physical sampling of the reconstruction.
+    config : MethodConfig
+        Resolved reconstruction settings, including CGLS interpolation.
+
+    Returns
+    -------
+    jax.Array
+        Predicted line integrals in (view, v, u) order.
+    """
+    import jax.numpy as jnp
+
+    from tomojax.recon._operators import matched_operators, project
+
+    if isinstance(config, recon.FBPConfig | recon.FourierConfig):
+        return project(geometry, volume, grid=grid)
+    _, _, build, _ = matched_operators(
+        geometry,
+        grid,
+        "evaluate",
+        getattr(config, "devices", None),
+        interpolation=getattr(config, "interpolation", "linear"),
+        backend=config.backend,
+    )
+    forward, _ = build()
+    return forward(jnp.asarray(volume))
+
+
 def _detector_grid(
     geometry: Geometry, detector: Detector
 ) -> tuple[jnp.ndarray, jnp.ndarray] | None:
@@ -773,6 +812,7 @@ __all__ = [
     "clear_filter_caches",
     "default_fbp_scale",
     "method_config",
+    "predict_projections",
     "project",
     "reconstruct_arrays",
     "reconstruct_slabs",

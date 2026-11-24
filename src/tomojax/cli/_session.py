@@ -17,6 +17,7 @@ from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
 from tomojax.cli._commit import helper
 from tomojax.cli._staging import Stages
+from tomojax.cli.mcp.ledger import activate
 from tomojax.errors import classify
 from tomojax.wire import progress as w
 from tomojax.wire.arrays import Array, Coordinates, Member, Npy, Record
@@ -45,6 +46,7 @@ class Artifact:
     resource: Resource
     manifest: p.Provenance
     metadata: Array | None = None
+    name: str | None = None
 
 
 @dataclass
@@ -65,6 +67,7 @@ class Job:
     stages: Stages
     leases: dict[Member | Npy, ex.Lease]
     lifetime: ExitStack
+    resources: dict[Member | Npy, tuple[Resource, ...]]
     published: set[str] = field(default_factory=set)
 
 
@@ -87,6 +90,8 @@ class Session:
         self.emit = emit
         self.description = description
         self.ready = ready
+        self.namespace = {}
+        self.namespace_bytes = 0
         self.seen: set[str] = set()
         self.revisions: dict[str, int] = {}
         self.queue: deque[Job] = deque()
@@ -145,10 +150,27 @@ class Session:
                 else:
                     self.emit(e.ProtocolError("invalid_request", str(err), rid))
 
+    def python_inputs(self, cmd: op.Python) -> op.Python:
+        """Bind the live identifiers under the admission lock, before close can retire them."""
+        aliases = {ref: key for key, ref in cmd.aliases.items()}
+        live: dict[str, Member | Npy] = {}
+        for key in self.handles:
+            member = Member(key, "self")
+            live[aliases.get(member, key)] = member
+        for token, artifact in self.artifacts.items():
+            storage = Npy(str(artifact.path), token)
+            if name := aliases.get(storage, artifact.name):
+                live[name] = storage
+        return msgspec.structs.replace(cmd, aliases=live)
+
     def _pin(self, rid: str, cmd: op.ExecutionInput, channel: e.ChannelRevision | None) -> Job:
         with ExitStack() as pins:
             leases: dict[Member | Npy, ex.Lease] = {}
+            resources: dict[Member | Npy, tuple[Resource, ...]] = {}
             pending = list(op.input_references(cmd))
+            if isinstance(cmd, op.Python):
+                cmd = self.python_inputs(cmd)
+                pending.extend(cmd.aliases.values())
             while pending:
                 ref = pending.pop()
                 if ref in leases:
@@ -160,16 +182,22 @@ class Session:
                     member = leases[ref].value
                     if isinstance(member, ex.RegisteredArray):
                         metadata = member.metadata
-                    handle.resource.pin(pins)
-                    for token in handle.artifacts.intersection(self.artifacts):
-                        self.artifacts[token].resource.pin(pins)
+                    resources[ref] = (
+                        handle.resource,
+                        *(
+                            self.artifacts[token].resource
+                            for token in handle.artifacts.intersection(self.artifacts)
+                        ),
+                    )
                 elif ref.artifact:
                     artifact = self.artifacts[ref.artifact]
                     if str(artifact.path) != ref.path:
                         raise ValueError("artifact path differs from issued path")
-                    artifact.resource.pin(pins)
+                    resources[ref] = (artifact.resource,)
                     metadata = artifact.metadata
                     leases[ref] = ex.Lease(ref, artifact.manifest, metadata)
+                for resource in resources[ref]:
+                    resource.pin(pins)
                 if metadata and isinstance(cmd, op.Read):
                     pending.extend(
                         ax.coordinates.values
@@ -185,6 +213,7 @@ class Session:
                 Stages(self.root, self.index),
                 leases,
                 pins.pop_all(),
+                resources,
             )
 
     def _accept(self, rid: str, channel: e.ChannelRevision | None) -> None:
@@ -213,6 +242,7 @@ class Session:
                 {k: "queued" if j in self.queue else j.control.state for k, j in self.jobs.items()},
                 {k: h.size for k, h in self.handles.items()},
                 tuple(self.snapshots.values()),
+                self.namespace_bytes,
             )
         if isinstance(cmd, e.Close):
             self._close_handle(cmd.handle)
@@ -272,6 +302,10 @@ class Session:
             self._execute(job)
             del job  # Release the last execution context while waiting for more work.
 
+    def measure_namespace(self, size: int) -> None:
+        with self.changed:
+            self.namespace_bytes = size
+
     def _execute(self, job: Job) -> None:
         context = ex.ExecutionContext(
             job.leases,
@@ -279,6 +313,8 @@ class Session:
             partial(self._event, job),
             partial(self._sample, job),
             job.stages,
+            self.namespace,
+            self.measure_namespace,
         )
         success = None
         failure = None
@@ -310,24 +346,44 @@ class Session:
                     logging.exception("Failed to dispose unpublished handle for %s", job.id)
             self._finish(job, e.ErrorReply(job.id, job.channel, error))
 
-    def _commit(self, job: Job, success: ex.Success) -> p.Output:
+    def bind_roots(
+        self, job: Job, success: ex.Success, undo: ExitStack
+    ) -> tuple[p.Product, dict[str, Handle]]:
+        """Build every handle descriptor before installing the first root or artifact."""
         value = success.value
-        handle = None
+        roots = {}
         if isinstance(value, ex.NewHandle):
             bound = value.bind(job.id)
-            handle = Handle(
+            roots[job.id] = Handle(
                 bound, success.manifest, value.logical_bytes, Resource(value.dispose), job.published
             )
             product = bound.product
         else:
             product = value
-        group = list(job.stages.outputs.values())
-        if self.external and isinstance(product, p.Files):
-            product = p.Files(product.paths, tuple(group))
-        result = p.Output(product, success.info, success.manifest)
-        # Encode before changing any caller-owned destination.
-        _ = msgspec.json.encode(result)
+        for name, root in success.roots:
+            bound = root.bind(name)
+            lifetime = ExitStack()
+            undo.callback(lifetime.close)
+            lifetime.callback(root.dispose)
+            for ref in root.dependencies:
+                for resource in job.resources[ref]:
+                    resource.pin(lifetime)
+            roots[name] = Handle(
+                bound, success.manifest, root.logical_bytes, Resource(lifetime.close), set()
+            )
+            assert isinstance(product, p.PythonResult)
+            product.handles[name] = bound.product
+        return product, roots
+
+    def _commit(self, job: Job, success: ex.Success) -> p.Output:
         with ExitStack() as undo:
+            product, roots = self.bind_roots(job, success, undo)
+            group = list(job.stages.outputs.values())
+            if self.external and isinstance(product, p.Files):
+                product = p.Files(product.paths, tuple(group))
+            result = p.Output(product, success.info, success.manifest)
+            # Encode before changing any caller-owned destination.
+            _ = msgspec.json.encode(result)
             for token in tuple(job.stages.arrays):
                 self._publish(job, token, success.manifest, undo)
             if isinstance(product, p.Files):
@@ -345,11 +401,27 @@ class Session:
                     result = p.Output(
                         p.Files(product.paths, recovery=recovery), success.info, success.manifest
                     )
+            self._register_arrays(result)
+            self.name_arrays(job.id, product)
+            if (
+                isinstance(job.command, op.Python)
+                and job.command.ledger
+                and isinstance(product, p.PythonResult)
+            ):
+                activate(job.command.ledger, product.handles)
+            self.handles.update(roots)
             undo.pop_all()
-        self._register_arrays(result)
-        if handle:
-            self.handles[job.id] = handle
         return result
+
+    def name_arrays(self, request: str, product: p.Product) -> None:
+        """Remember which published arrays are top-level Python inputs."""
+        names = product.handles if isinstance(product, p.PythonResult) else {request: product}
+        for name, member in names.items():
+            if isinstance(member, p.ArrayResult | p.Projections | p.Volume):
+                array = getattr(member, member.__struct_fields__[0])
+                storage = array.storage
+                if isinstance(storage, Npy) and storage.artifact in self.artifacts:
+                    self.artifacts[storage.artifact].name = name
 
     def _register_arrays(self, value: object) -> None:
         if isinstance(value, Array):

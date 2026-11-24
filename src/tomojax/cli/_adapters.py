@@ -37,6 +37,7 @@ from tomojax.wire.progress import Event, Preview
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
 EXECUTABLE = (
+    op.Python,
     op.Inspect,
     op.Open,
     op.Validate,
@@ -60,20 +61,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     operation = (
         command.operation if isinstance(command, op.Run | op.Plan | op.Validate) else command
     )
-    parameters = msgspec.to_builtins(
-        command if isinstance(command, op.Validate | op.Plan) else operation
-    )
-    manifest = p.Provenance(parameters.pop("type"), parameters, context.lineage(command))
-
-    def event(record: progress.Event) -> None:
-        if isinstance(record, progress.Preview):
-            arrays = {
-                name: sample.store(lambda a: stage_array(context, a))
-                for name, sample in record.arrays.items()
-            }
-            context.event(Preview(schema=2, task=record.task, time=record.time, arrays=arrays))
-        else:
-            context.event(msgspec.convert(progress.to_json(record), type=Event))
+    manifest = provenance(command, operation, context)
 
     def diagnostic(pointer: str, data: Any) -> Array:
         a = np.asarray(data)
@@ -83,10 +71,19 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     for snapshot in sample():
         context.snapshot(snapshot)
     with progress.watch(
-        event,
+        partial(report_event, context),
         control=cast("progress.Control", context.control),
         previews=isinstance(command, op.Run) and command.previews,
     ):
+        if isinstance(operation, op.Python):
+            from tomojax.cli._python import run_python
+
+            try:
+                return run_python(operation, context, manifest)
+            except Exception:
+                raise
+            except BaseException as err:
+                raise ValueError(str(err)) from err
         if isinstance(operation, op.Plane):
             if not isinstance(command, op.Validate):
                 return ex.browse_plane(operation, context)
@@ -99,14 +96,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         context.control.checkpoint()
         for snapshot in sample():
             context.snapshot(snapshot)
-        info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
-        if isinstance(item, tj.Alignment):
-            poses = np.asarray(item.poses)
-            info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
-        if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
-            info = {**info, "geometry": geometry_summary(item)}
-            if calibration := info["geometry"].get("calibration"):
-                info["calibration"] = calibration
+        info = result_info(item)
         if isinstance(item, p.Files):
             info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
@@ -116,6 +106,30 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 storage = saved_storage(operation.path)
             return ex.Success(handle(item, volume_storage=storage), summary, manifest)
         return ex.Success(item, summary, manifest)
+
+
+def report_event(context: ex.ExecutionContext, record: progress.Event) -> None:
+    if isinstance(record, progress.Preview):
+        arrays = {
+            name: sample.store(lambda a: stage_array(context, a))
+            for name, sample in record.arrays.items()
+        }
+        context.event(Preview(schema=2, task=record.task, time=record.time, arrays=arrays))
+    else:
+        context.event(msgspec.convert(progress.to_json(record), type=Event))
+
+
+def result_info(item):
+    """Geometric registration and solver diagnostics for the public product."""
+    info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+    if isinstance(item, tj.Alignment):
+        poses = np.asarray(item.poses)
+        info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
+    if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
+        info = {**info, "geometry": geometry_summary(item)}
+        if calibration := info["geometry"].get("calibration"):
+            info["calibration"] = calibration
+    return info
 
 
 def geometry_summary(item: Root) -> dict[str, Any]:
@@ -234,6 +248,54 @@ class Admission:
         except ValueError as err:
             raise InvalidParameter("sources", str(err)) from err
         return lambda: tj.Scan.combine(scans, name=operation.name)
+
+    @prepare.register
+    def evaluate(self, operation: op.Evaluate) -> Work:
+        from tomojax._evaluation import evaluate, local_motion, partitions
+
+        data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames))
+        steps = arguments(
+            operation, self.context, omit=("source", "split", "reference", "candidates")
+        )["corrections"]
+        spec = msgspec.to_builtins(operation.split)
+        kind = spec.pop("type")
+        if not operation.candidates:
+            raise InvalidParameter("candidates", "supply at least one setting")
+        if operation.reference.grid is not None or operation.reference.region is not None:
+            raise InvalidParameter("reference", "alignment reference uses the scan's default grid")
+        try:
+            domain = partitions(data, kind, spec, steps)
+        except InvalidParameter:
+            raise
+        except ValueError as err:
+            raise InvalidParameter("split", str(err)) from err
+        candidates = [
+            (
+                setting.__struct_config__.tag,
+                arguments(setting, self.context),
+                msgspec.to_builtins(setting),
+            )
+            for setting in operation.candidates
+        ]
+        reference = arguments(operation.reference, self.context)
+        train = domain[1].scan
+        for action, settings, _ in candidates:
+            if action == "align":
+                local_motion(settings)
+                resolve_alignment(train, **settings)
+                resolve_reconstruction(train, **reference)
+            else:
+                resolve_reconstruction(train, **settings)
+        self.details.update(
+            split_fingerprint=domain[0].fingerprint,
+            training_views=len(domain[1].indices),
+            test_views=len(domain[2].indices),
+        )
+        return lambda: p.Evaluation(
+            domain[0].fingerprint,
+            msgspec.to_builtins(operation.reference),
+            evaluate(domain, candidates, reference),
+        )
 
     @prepare.register
     def fit(self, operation: op.Reconstruct | op.Align) -> Work:
@@ -544,3 +606,12 @@ def storage_paths(value: object) -> Iterator[Path]:
     elif isinstance(value, tuple | list):
         for option in value:
             yield from storage_paths(option)
+
+
+def provenance(command, operation, context):
+    if isinstance(operation, op.Python):
+        return p.Provenance("python", {"code": operation.code, "reset": operation.reset}, ())
+    parameters = msgspec.to_builtins(
+        command if isinstance(command, op.Validate | op.Plan) else operation
+    )
+    return p.Provenance(parameters.pop("type"), parameters, context.lineage(command))
