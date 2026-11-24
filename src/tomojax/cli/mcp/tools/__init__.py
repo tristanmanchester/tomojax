@@ -18,6 +18,7 @@ from mcp_types import CallToolResult, ImageContent, ResourceLink, TextContent
 import msgspec
 
 from tomojax.cli import operations as op, wire_options as w
+from tomojax.cli.mcp.guidance import operation_parameters
 from tomojax.cli.mcp.supervisor import WorkerError, activity
 from tomojax.cli.mcp.tools import seeing
 from tomojax.cli.mcp.tools.budget import bounded
@@ -33,13 +34,19 @@ if TYPE_CHECKING:
 
 
 class Status(Record):
-    """List versions, devices, jobs, live references and worker recovery information."""
+    """List live handles and job IDs.
+
+    Check device memory, worker versions and recovery details before starting or retrying a job.
+    """
 
     detail: Literal["summary", "full"] = "summary"
 
 
 class Inspect(Record):
-    """Inspect a file or find datasets in a directory. Request a central preview with preview."""
+    """Identify scan files in a directory or inspect an acquisition before opening it.
+
+    Check shapes, geometry, angles and flat/dark metadata. Set preview for a central image.
+    """
 
     path: Id
     preview: bool = False
@@ -47,7 +54,11 @@ class Inspect(Record):
 
 
 class Open(Record):
-    """Open data as a handle. It lasts until close, worker restart or server exit."""
+    """Load a scan, raw frames or a saved TomoJAX result.
+
+    Use kind to select the object and supply missing acquisition metadata. The handle lasts
+    until close, worker restart or server exit.
+    """
 
     path: Id
     kind: op.RootKind = "scan"
@@ -69,21 +80,33 @@ class Open(Record):
 
 
 class Python(Record):
-    """Run trusted local Python with handles, register and show. See tomojax://guide/python."""
+    """Run Python in the worker for custom geometry, analysis or solvers.
+
+    Read objects from handles, publish snapshots with register and display images with show.
+    Variables persist between calls. Handles last until close, worker restart or server exit.
+    See tomojax://guide/python.
+    """
 
     code: str = ""
     reset: bool = False
 
 
 class Describe(Record):
-    """Show expert parameters for an operation or a specific solver method."""
+    """Look up parameters, defaults, units and choices before configuring an operation.
+
+    Supply method to see its solver settings.
+    """
 
     operation: Id
     method: str | None = None
 
 
 class Control(Record):
-    """Cancel, pause or resume a job by target ID, close a handle, reload tools or restart."""
+    """Pause, resume or cancel a worker job by its status ID.
+
+    Close a handle to release it, reload tool definitions, or restart the worker to discard its
+    handles and Python namespace.
+    """
 
     action: Literal["cancel", "pause", "resume", "close", "reload", "restart"]
     target: str | None = None
@@ -574,35 +597,7 @@ class Tools:
 
     async def describe(self, args: Describe) -> CallToolResult:
         """Select operation and config keys from the running worker's real schema."""
-        g = await self.supervisor.worker()
-        definitions = (await g.request({"type": "describe"}))["parameters"]["$defs"]
-        names = {
-            d["properties"]["type"]["enum"][0]: k
-            for k, d in definitions.items()
-            if "type" in d["properties"] and not k.endswith("Settings")
-        }
-        if args.operation not in names:
-            raise ValueError(f"Unknown operation. Choose from {', '.join(sorted(names))}")
-        operation = definitions[names[args.operation]]
-        entry = operation
-        if args.method:
-            methods = operation["properties"].get("method", {}).get("x-choices", [])
-            if args.method not in methods:
-                raise ValueError(f"method must be one of {methods}")
-            config = next(
-                (k for k in definitions if k.lower() == args.method.lower() + "config"), None
-            )
-            if args.operation == "align" and args.method == "joint":
-                config = "AlignConfig"
-            if config:
-                entry = definitions[config]
-        return result(
-            {
-                "operation": args.operation,
-                "method": args.method,
-                "parameters": {k: v for k, v in entry["properties"].items() if k != "type"},
-            }
-        )
+        return result(await operation_parameters(self.supervisor, args.operation, args.method))
 
     async def control(self, args: Control) -> CallToolResult:
         """Apply supervisor or off-queue worker controls."""
@@ -656,7 +651,9 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
         "cancelled": "Resubmit when ready.",
         "superseded": "Use the newer job.",
-        "input": "Inspect the input path and metadata.",
+        "input": "Read the traceback, correct the Python code and retry."
+        if name == "python"
+        else "Inspect the input path and metadata.",
         "internal": "Check status for worker and device information.",
     }
     next_step = hints.get(kind, f"Check the {name} tool parameters and retry.")
@@ -736,7 +733,7 @@ def binding(
 
     return {
         "name": name,
-        "description": (cls.__doc__ or "")
+        "description": " ".join((cls.__doc__ or "").split())
         + (
             " Handles last until close, worker restart or server exit."
             if name
@@ -746,6 +743,7 @@ def binding(
                 "simulate",
                 "reconstruct",
                 "edit_scan",
+                "preview",
                 "project",
                 "backproject",
             }

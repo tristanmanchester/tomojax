@@ -3724,7 +3724,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Output dataset path; an existing file is overwritten."
+          "description": "Output dataset path. Set force to replace existing files."
         },
         "force": {
           "type": "boolean",
@@ -4864,7 +4864,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Saved simulation dataset."
+          "description": "Acquisition or saved dataset to load. Select its object type with kind."
         },
         "kind": {
           "enum": [

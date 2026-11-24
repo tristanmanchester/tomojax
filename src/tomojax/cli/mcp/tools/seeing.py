@@ -26,12 +26,10 @@ if TYPE_CHECKING:
 
 
 class View(op.Window, kw_only=True):
-    """Inspect a member, saved file, .npy or file.h5::/dataset.
+    """View volume slices, projections, sinograms, pose plots or differences on matching grids.
 
-    ROI is half-open in storage order.
-    Planes defaults to the central planes. Set axis and index to pick one. Profile reads a
-    one-dimensional ROI. Difference subtracts other from source on matching volume grids.
-    Pose columns are alpha, beta, phi (degrees), then x, z, y (geometry length).
+    Inspect statistics, profiles and pose tables for a handle, saved file or HDF5 dataset.
+    Select a plane with axis and index, or a half-open ROI in storage order.
     """
 
     source: str

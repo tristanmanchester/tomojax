@@ -1,6 +1,7 @@
 """Keep the worked Python routes reachable in an installed server."""
 
 from importlib import resources
+import json
 from pathlib import Path
 import re
 from types import SimpleNamespace
@@ -21,6 +22,47 @@ def guide(c, topic):
 
 def example(text, heading):
     return text.split("## " + heading + "\n", 1)[1].split("```python\n", 1)[1].split("\n```", 1)[0]
+
+
+def test_workflow_prompts_and_live_resources(tmp_path):
+    topics = {
+        "reconstruct-scan",
+        "lab-ct-start-to-finish",
+        "find-the-centre",
+        "check-a-reconstruction",
+    }
+    with connection(tmp_path) as c:
+        listing = c.rpc("prompts/list", {})["result"]["prompts"]
+        assert {p["name"] for p in listing} == topics
+        for topic in topics:
+            reply = c.rpc("prompts/get", {"name": topic, "arguments": {"source": "scan.nxs"}})
+            (message,) = reply["result"]["messages"]
+            assert message["role"] == "user"
+            assert guide(c, topic) in message["content"]["text"]
+            assert "scan.nxs" in message["content"]["text"]
+        templates = c.rpc("resources/templates/list", {})["result"]["resourceTemplates"]
+        assert {t["uriTemplate"] for t in templates} == {
+            "tomojax://guide/{topic}",
+            "tomojax://handle/{id}",
+            "tomojax://describe/{operation}",
+            "tomojax://result/{call}/{n}",
+        }
+        ref = c.call("simulate", size=8)["structuredContent"]["handle"]
+
+        def read(uri):
+            return c.rpc("resources/read", {"uri": uri})
+
+        uri = f"tomojax://handle/{ref}"
+        handle = json.loads(read(uri)["result"]["contents"][0]["text"])
+        assert handle["kind"] == "simulation" and handle["shape"] == [8, 8, 8]
+        assert (
+            handle["manifest"]
+            == c.call("status", detail="full")["structuredContent"]["handles"][ref]["manifest"]
+        )
+        info = json.loads(read("tomojax://describe/reconstruct")["result"]["contents"][0]["text"])
+        assert info == c.call("describe", operation="reconstruct")["structuredContent"]
+        c.call("control", action="close", target=ref)
+        assert "closed" in read(uri)["error"]["message"]
 
 
 def test_worked_python_routes(tmp_path):

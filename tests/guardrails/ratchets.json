@@ -61,7 +61,7 @@
     "_data": 2201,
     "alignment": 4672,
     "backends": 273,
-    "cli": 9400,
+    "cli": 9496,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
@@ -77,7 +77,7 @@
   "cuda_switches": 34,
   "environment_reads": 23,
   "suppressions": {
-    "noqa": 4,
+    "noqa": 5,
     "type: ignore": 11,
     "pyright: ignore": 12
   },

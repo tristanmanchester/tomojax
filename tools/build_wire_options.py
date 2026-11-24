@@ -167,6 +167,13 @@ def description() -> dict[str, Any]:
                 by_name[name] = wire_name
             public[owner.__qualname__] = by_name
         document["x-python"] = public
+    # The open command dispatches to five loaders; save adds overwrite protection.
+    definitions["Open"]["properties"]["path"]["description"] = (
+        "Acquisition or saved dataset to load. Select its object type with kind."
+    )
+    definitions["Save"]["properties"]["path"]["description"] = (
+        "Output dataset path. Set force to replace existing files."
+    )
     # The everyday alignment controls replace fields on this same configuration.
     align = definitions["Align"]["properties"]
     for name, field in definitions["AlignConfig"]["properties"].items():

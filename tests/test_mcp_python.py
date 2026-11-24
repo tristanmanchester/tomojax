@@ -64,6 +64,7 @@ os.read(0,1) == b''""",
             reply = c.call("python", code=f"survived=42\nregister(x)\nraise {error}('example')")
             assert reply["isError"]
             assert error in reply["content"][0]["text"]
+            assert "traceback" in reply["structuredContent"]["next"]
         state = c.call("status")["structuredContent"]
         assert not state["handles"] and state["python_namespace_bytes"] >= 83 * 8
         assert python(c, "survived")["value"] == 42
