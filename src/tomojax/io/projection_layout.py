@@ -5,20 +5,17 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-import h5py
 import numpy as np
 
 from tomojax._data import Hdf5Frames, npz_layout, read_nxtomo
-from tomojax.core.files import read_hdf5
 from tomojax.io._datasets import ProjectionDataset, psi_record
-from tomojax.io._hdf5_array import read_hdf5_array
 
 
 def saved_npz_layout(
-    path: Path, *, resources: ExitStack | None = None
+    path: Path, *, resources: ExitStack | None = None, volume_only: bool = False
 ) -> tuple[ProjectionDataset, dict[str, Any]]:
     """Read the archive metadata with sliceable sources for its saved arrays."""
-    payload, arrays = npz_layout(path, resources=resources)
+    payload, arrays = npz_layout(path, resources=resources, volume_only=volume_only)
     return ProjectionDataset.from_nxtomo(payload, source_path=path), arrays
 
 
@@ -47,19 +44,7 @@ class MatlabFrames:
 
     def __init__(self, stored: Hdf5Frames) -> None:
         self.stored = stored
-        self.storage_dtype = stored.dtype
         self.shape = (len(stored), stored.cols, stored.rows)
 
     def __getitem__(self, views: int | slice) -> np.ndarray:
         return self.stored[views].swapaxes(-1, -2).astype(self.dtype, copy=False)
-
-    def sampled(self, ranges: tuple[range, range, range]) -> np.ndarray:
-        """Read logical (view, row, column) indices from the MATLAB-ordered phase stack."""
-        views, rows, cols = ranges
-        selection = tuple(slice(r.start, r.stop, r.step) for r in (views, cols, rows))
-        with read_hdf5(self.stored.path, rdcc_nbytes=0) as file:
-            phase = file[self.stored.dataset]
-            assert isinstance(phase, h5py.Dataset)
-            return (
-                read_hdf5_array(phase, selection).transpose(0, 2, 1).astype(self.dtype, copy=False)
-            )

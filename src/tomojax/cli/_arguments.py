@@ -14,10 +14,8 @@ import numpy as np
 import tomojax as tj
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
-from tomojax.cli._results import stored_axes
-from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.devices import as_devices
-from tomojax.core.files import read_hdf5, read_path
+from tomojax.core.files import read_hdf5
 from tomojax.errors import InvalidParameter, within
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
@@ -44,7 +42,7 @@ def arguments(
                 name,
                 value,
                 context,
-                shape_only=layout_only and name in ("flats", "darks", "support"),
+                shape_only=layout_only and name in ("flats", "darks", "support", "volume"),
             )
         if isinstance(value, Record):
             with within(name):
@@ -105,26 +103,11 @@ def read_reference(
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter(name, f"no dataset {value.dataset} in {value.path}")
             return hdf5_values(data, name, shape_only=shape_only)
-    if name == "projections":
-        return tj.load(value.path).projections
-    return saved_volume(Path(value.path), name)
+    if name != "volume":
+        raise InvalidParameter(name, op.ACQUISITION_ARRAY_ERROR)
+    from tomojax.cli._browse import project_volume
 
-
-def saved_volume(path: Path, name: str) -> np.ndarray:
-    """Read only the requested volume, transposed into logical voxel order."""
-    if h5py.is_hdf5(path):
-        with read_hdf5(path) as file:
-            data = file.get(VOLUME_DATASET)
-            if isinstance(data, h5py.Dataset):
-                axes = stored_axes(file, path)
-                return np.asarray(data[...]).transpose(tuple(axes.index(a) for a in "zyx"))
-    elif path.suffix.lower() == ".npz":
-        with np.load(read_path(path), allow_pickle=False) as fields:
-            if "volume" in fields.files:
-                if str(fields.get("volume_axes_order", "")) != "zyx":
-                    raise ValueError(f"{path}: volume has no zyx axes tag")
-                return fields["volume"]
-    raise InvalidParameter(name, f"{path} holds no saved volume")
+    return project_volume(Path(value.path), context, shape_only=shape_only)
 
 
 def source(

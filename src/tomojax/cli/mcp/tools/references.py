@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from msgspec import inspect as mi
 
-from tomojax.cli.operations import PathInput
+from tomojax.cli.operations import ACQUISITION_ARRAY_ERROR, PathInput
 from tomojax.wire.arrays import Member, Npy, Record
 
 if TYPE_CHECKING:
@@ -30,7 +30,8 @@ def resolve(
     *,
     base: Path,
     ledger: Ledger,
-    field: Literal["array", "saved_array", "source", "calibration"] = "array",
+    field: Literal["array", "source", "calibration"] = "array",
+    allow_path: bool = True,
 ) -> Object | str:
     """Convert one typed reference to its worker representation."""
     if value.startswith("@"):
@@ -49,11 +50,13 @@ def resolve(
     path = str((base / Path(filename).expanduser()).resolve())
     if separator:
         return {"type": "hdf5", "path": path, "dataset": "/" + dataset}
-    if field == "saved_array" and Path(path).suffix.lower() != ".npy":
-        return {"type": "path", "path": path}
-    if field == "calibration" and Path(path).suffix.lower() != ".npy":
+    if field != "source" and Path(path).suffix.lower() == ".npy":
+        return {"type": "npy", "path": path}
+    if field == "calibration":
         return path
-    return {"type": "path" if field == "source" else "npy", "path": path}
+    if not allow_path:
+        raise ValueError(ACQUISITION_ARRAY_ERROR)
+    return {"type": "path", "path": path}
 
 
 def choices(info: mi.Type) -> Iterator[mi.Type]:
@@ -81,10 +84,7 @@ def wire_arguments(command: Object, model: type[Record], *, base: Path, ledger: 
                     "calibration" if any(isinstance(t, mi.StrType) for t in options) else "array"
                 )
                 return resolve(
-                    value,
-                    base=base,
-                    ledger=ledger,
-                    field="saved_array" if PathInput in structs else field,
+                    value, base=base, ledger=ledger, field=field, allow_path=PathInput in structs
                 )
             if PathInput in structs or (Member in structs and value.startswith("@")):
                 return resolve(value, base=base, ledger=ledger, field="source")

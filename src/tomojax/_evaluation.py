@@ -117,7 +117,7 @@ def _select_views(data, ids, *, raw):
 def partition_layout(data, kind, settings, steps, *, raw):
     """Validate the native split before any data-dependent rejection or calibration."""
     from tomojax.corrections.api import check_scan_steps
-    from tomojax.corrections.tiles import check_calibration_layout
+    from tomojax.corrections.calibration import check_calibration_layout
 
     if raw:
         check_calibration_layout(data)

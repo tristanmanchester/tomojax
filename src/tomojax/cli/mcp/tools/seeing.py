@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 class View(op.Window, kw_only=True):
     """View volume slices, projections, sinograms, pose plots or differences on matching grids.
 
-    Inspect statistics, profiles and pose tables for a handle, saved file or HDF5 dataset.
-    Select a plane with axis and index, and zoom in on detail with a half-open ROI in storage
-    order (z, y, x for a volume).
+    Use handle members, session arrays, .npy files, file.h5::/dataset or saved TomoJAX volumes.
+    Open acquisitions and select .projections, or use kind=frames and .counts for raw counts.
+    Select a plane with axis and index. Specify the half-open ROI in array order.
     """
 
     source: str
@@ -205,7 +205,7 @@ def reference(tools: Tools, name: str, mode: str) -> Object:
     """Resolve the source by storage type and requested member."""
     if name.startswith("@") and "." not in name and mode.startswith("pose_"):
         name += ".poses"
-    src = resolve(name, base=tools.supervisor.base, ledger=tools.ledger, field="saved_array")
+    src = resolve(name, base=tools.supervisor.base, ledger=tools.ledger)
     assert isinstance(src, dict)
     return src
 

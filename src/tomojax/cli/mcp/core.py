@@ -49,8 +49,13 @@ field (simulation phantom, reconstruction volume, alignment working image, scan 
 For a scan operation use a scan handle or .scan on a simulation, alignment or reconstruction.
 Select another array with .member, e.g. .poses (alpha, beta, phi in degrees, then x, z, y
 in the geometry length unit).
-Handles last until closed, worker restart or server exit. Use file.h5::/dataset for
-an HDF5 dataset and ./@name for a literal path. Relative paths use the project directory.
+Handles last until closed, worker restart or server exit. Array fields accept handle members,
+session arrays, .npy files and file.h5::/dataset in storage order. For acquisitions, open
+and select .projections, or open with kind=frames and select .counts. For a first look use
+inspect with preview=true, or preview with correction_preview for corrected rows.
+View and project.volume also accept saved TomoJAX volumes by path in logical (z, y, x) order.
+Workflow source fields accept acquisition paths. Relative paths use the project directory.
+Use ./@name for a literal path starting with @.
 The usual workflow is inspect, open, correct, align the centre, reconstruct, view slices
 and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector spacings
 share one physical length unit. Check slices before trusting a residual. Use dry_run

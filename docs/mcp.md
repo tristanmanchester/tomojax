@@ -87,7 +87,11 @@ Tools that accept `dry_run` report what a call would do without running it: the 
 
 Each result is kept in the server as a handle with an ID such as `@scan-12-k7m2`. Pass that ID to any tool that takes data. Add a member to choose part of a result, for example `@align-3-k7m2.scan` for the aligned scan or `@sim-1-k7m2.phantom` for a simulation's phantom. A bare handle gives the whole object to `save` and `export`, and its main array (volume, projections, phantom or working image) to an array field.
 
-Anything that is not a handle is a file path, resolved against the project directory. A bare acquisition path in a projections field supplies the same line integrals as opening the scan and selecting `.projections`, including correction of raw detector counts. A volume field reads the saved volume in `(z, y, x)` order. Use `scan.h5::/entry/data/data` to read the literal dataset in storage order, and `./@name` for a file whose name starts with `@`.
+Workflow `source` fields accept acquisition paths through the normal loader. For array fields, use a handle member, a session array such as `@array-…`, a `.npy` file or an explicit HDF5 dataset such as `scan.h5::/entry/data/data`. Literal arrays use storage order. Relative paths use the project directory. Write `./@name` for a file whose name starts with `@`.
+
+To view or backproject measured line integrals, use `open` and select the scan’s `.projections`. For raw counts, open with `kind=frames` and select `.counts`. Use `inspect` with `preview=true` for a first look, or `preview` with `correction_preview` to compare raw and corrected rows.
+
+`view` and the `volume` field of `project` also accept saved TomoJAX volumes by path (`.nxs`, `.h5` or `.npz`). They use logical `(z, y, x)` order. The worker’s `read` and `statistics` commands use the same references as `view` and can read a region of a saved volume or lazy frames handle in bounded tiles.
 
 Handles last until you close them, the worker restarts, or the server exits. Save results you want to keep. An ID from an earlier session returns an error saying the handle is gone.
 

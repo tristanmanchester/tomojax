@@ -59,12 +59,13 @@ WORKFLOW_HELP = {
         "accuracy or test acquisition artefacts."
     ),
     op.Project: (
-        "Forward-project a volume through the source scan geometry. Compare the predicted "
-        "detector images with measured projections."
+        "Forward-project a volume through the source scan geometry. Supply a handle member, "
+        "session array, .npy file, file.h5::/dataset or saved TomoJAX volume in (z, y, x) order."
     ),
     op.Backproject: (
         "Backproject detector values onto a volume grid with the exact transpose of the "
-        "forward projector. Use it to map projection residuals into object space."
+        "forward projector. Supply an opened scan's .projections, a session array, .npy file or "
+        "file.h5::/dataset."
     ),
     op.Save: (
         "Save a TomoJAX dataset with its provenance manifest so it can be reopened. Set "

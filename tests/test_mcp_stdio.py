@@ -866,7 +866,7 @@ def test_correction_comparison_and_frame_profile(tmp_path):
         assert len(profile["coordinates"]) == 5
 
 
-def test_project_and_backproject_select_members_of_saved_npz(tmp_path):
+def test_project_and_evaluate_saved_npz(tmp_path):
     def call(name, **params):
         reply = c.call(name, **params)
         assert not reply["isError"], reply
@@ -876,15 +876,11 @@ def test_project_and_backproject_select_members_of_saved_npz(tmp_path):
         sim = call("simulate", size=8, n_views=12)
         scan = sim["members"]["scan"]
         call("save", source=sim["handle"], path="sim.npz")
-        for tool, field, member in (
-            ("project", "volume", "phantom"),
-            ("backproject", "projections", "projections"),
-        ):
-            actual = call(tool, source=scan, **{field: "sim.npz"})["handle"]
-            expected = call(tool, source=scan, **{field: sim["handle"] + "." + member})["handle"]
-            assert call(
-                "python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])"
-            )["value"]
+        actual = call("project", source=scan, volume="sim.npz")["handle"]
+        expected = call("project", source=scan, volume=sim["members"]["phantom"])["handle"]
+        assert call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
+            "value"
+        ]
         for source in (sim["members"]["phantom"], "sim.npz"):
             stats = call("view", source=source, mode="statistics")
             assert stats["count"] == 8**3
@@ -896,7 +892,7 @@ def test_project_and_backproject_select_members_of_saved_npz(tmp_path):
         )
 
 
-def test_backproject_discovers_nexus_projections(tmp_path):
+def test_backproject_reads_explicit_datasets(tmp_path):
     import numpy as np
 
     path = tmp_path / "simulation.nxs"
@@ -911,7 +907,7 @@ def test_backproject_discovers_nexus_projections(tmp_path):
     with connection(tmp_path) as c:
         scan = c.call("open", kind="scan", path=str(path))["structuredContent"]["handle"]
         for src, expected in (
-            (str(path), True),
+            (f"{scan}.projections", True),
             (f"{plain}::/entry/projections", True),
             (f"{path}::/other", False),
         ):
@@ -936,41 +932,41 @@ def test_projection_preview_keeps_requested_stride(tmp_path):
         assert "stride (1, 1, 2), display subsampling (1, 1, 2)" in panel["labels"]
 
 
-@pytest.mark.parametrize(
-    "kind", ["raw.nxs", "raw.npz", "corrected.nxs", "corrected.npz", "bliss.h5"]
-)
-def test_backproject_bare_path_matches_opened_projections(tmp_path, kind):
-    from tests.test_esrf_readers import _write_bliss_sequence
+def test_view_acquisition_requires_opened_member(tmp_path):
+    import numpy as np
+
     from tests.test_io_workflows import _labelled_dataset
     from tomojax.io import save_dataset
 
-    path = tmp_path / kind
-    if kind.startswith("bliss"):
-        _write_bliss_sequence(path, "measurement/hrsrot")
-    elif kind.startswith("raw"):
-        save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
-    else:
-        save_dataset(path, _labelled_dataset([0.5, 7, 0.25], [0, 3, 0]))
+    path = tmp_path / "raw.nxs"
+    save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
     with connection(tmp_path) as c:
         scan = c.call("open", kind="scan", path=path.name)["structuredContent"]["handle"]
-        volumes, profiles = [], []
-        for ref in (path.name, f"{scan}.projections"):
-            profile = c.call("view", source=ref, mode="profile", roi=[[0, 2], [0, 1], [0, 1]])
-            assert not profile["isError"], profile
-            profiles.append(profile["structuredContent"])
-            result = c.call("backproject", source=scan, projections=ref)
-            assert not result["isError"], result
-            volumes.append(result["structuredContent"]["handle"])
-        assert profiles[0] == profiles[1]
-        actual, expected = volumes
-        assert c.call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
-            "structuredContent"
-        ]["value"]
-        if path.suffix == ".nxs":
-            literal = c.call(
-                "backproject", source=scan, projections=f"{path}::/entry/instrument/detector/data"
-            )
-            assert literal["isError"] and "does not match" in literal["content"][0]["text"]
+        for name, args in (
+            ("view", {"source": path.name}),
+            ("project", {"source": scan, "volume": path.name, "dry_run": True}),
+            ("backproject", {"source": scan, "projections": path.name, "dry_run": True}),
+        ):
+            reply = c.call(name, **args)
+            error = reply["structuredContent"]
+            assert reply["isError"] and error["kind"] == "invalid_parameter"
+            for hint in (
+                "open",
+                ".projections",
+                "kind=frames",
+                ".counts",
+                "correction_preview",
+                "inspect",
+                "preview=true",
+            ):
+                assert hint in error["message"]
+        frames = c.call("open", kind="frames", path=path.name)["structuredContent"]["handle"]
+        for ref, expected in (
+            (f"{scan}.projections", -np.log([0.4, 0.8])),
+            (f"{frames}.counts", [5, 9]),
+        ):
+            profile = c.call("view", source=ref, mode="profile", roi=[[0, 2], [0, 1], [1, 2]])
+            np.testing.assert_allclose(profile["structuredContent"]["profile"], expected, rtol=1e-6)
 
 
 def test_inspect_saved_npz_with_and_without_preview(tmp_path):

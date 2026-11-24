@@ -8,8 +8,6 @@ import json
 from math import prod
 from operator import itemgetter
 from pathlib import Path
-from tempfile import TemporaryFile
-from typing import BinaryIO
 from zipfile import ZIP_STORED, ZipFile
 
 import numpy as np
@@ -76,18 +74,14 @@ def array_header(stream):
 
 
 class MemberReader:
-    """Read bounded spans, retaining inflated bytes only for nonmonotonic access."""
+    """Read bounded spans in physical file order."""
 
     def __init__(self, stream, compressed) -> None:
         self.stream = stream
         self.compressed = compressed
-        self.cache: BinaryIO | None = None
 
     def read(self, offset, size):
         progress.check_cancelled()
-        if self.cache is not None:
-            self.cache.seek(offset)
-            return self.cache.read(size)
         if self.compressed:
             # ZipExtFile.seek inflates the skipped interval in a single allocation.
             while (gap := offset - self.stream.tell()) > 0:
@@ -112,10 +106,6 @@ class NpzFrames(FrameStack):
     end: int
 
     reader: MemberReader | None = None
-
-    def read_bytes(self, ranges: tuple[range, ...]) -> int:
-        # Include axis indices, buffered offsets and the zip decoder's working space.
-        return prod(map(len, ranges)) * self.dtype.itemsize + 16 * sum(map(len, ranges)) + (1 << 20)
 
     def _read(self, indices, rows, cols):
         return self.read_windows(
@@ -189,32 +179,6 @@ class NpzFrames(FrameStack):
         for offset, group in groupby(ordered, key=itemgetter(0)):
             yield offset, min(self.block_bytes, self.end - offset), group
 
-    @contextmanager
-    def cached_rows(self, ranges, fields):
-        """Retain selected sample and calibration rows for nonmonotonic correction reads."""
-        reader = self.reader
-        if reader is None or not self.compressed or reader.cache is not None:
-            yield
-            return
-        views, rows, _ = ranges
-        # A detector gap may need neighbours anywhere on the selected row.
-        columns = range(self.cols)
-        selections = [self.selection((views, rows, columns))]
-        selections.extend(
-            field.selection((range(len(field)), rows, columns))
-            for field in fields
-            if isinstance(field, NpzFrames) and field.reader is reader
-        )
-        with TemporaryFile() as cache:
-            for offset, size, _ in self.blocks(selections):
-                cache.seek(offset)
-                cache.write(reader.read(offset, size))
-            reader.cache = cache
-            try:
-                yield
-            finally:
-                reader.cache = None
-
     @property
     def block_bytes(self):
         return max(1, _BLOCK_BYTES // self.dtype.itemsize) * self.dtype.itemsize
@@ -260,13 +224,13 @@ class NpzFrames(FrameStack):
                 first = stop
 
 
-def npz_layout(path: Path, *, resources: ExitStack | None = None):
+def npz_layout(path: Path, *, resources: ExitStack | None = None, volume_only: bool = False):
     """Describe arrays from NPY headers. An optional request scope keeps their decoders open."""
     stacks = {}
     placeholders = {}
     with ZipFile(read_path(path)) as archive, ExitStack() as local:
         owner = local if resources is None else resources
-        for key in ("projections", "volume"):
+        for key in ("volume",) if volume_only else ("projections", "volume"):
             member = key + ".npy"
             if member not in archive.namelist():
                 continue
@@ -294,7 +258,7 @@ def npz_layout(path: Path, *, resources: ExitStack | None = None):
                 dtype=dtype,
             )
             placeholders[key] = np.broadcast_to(np.zeros((), dtype), shape)
-        fields = _load_npz_dataset(archive, mapped=placeholders)
+        fields = _load_npz_dataset(archive, mapped=placeholders, volume_only=volume_only)
         fields.pop("volume", None)
         payload = LoadedNXTomo.from_dataset(fields)
         payload.metadata.volume = placeholders.get("volume")
@@ -302,7 +266,7 @@ def npz_layout(path: Path, *, resources: ExitStack | None = None):
 
 
 def _load_npz_dataset(
-    archive: ZipFile, *, mapped: dict[str, np.ndarray] | None = None
+    archive: ZipFile, *, mapped: dict[str, np.ndarray] | None = None, volume_only: bool = False
 ) -> LoadedDataset:
     out: LoadedDataset = dict(mapped or {})
     known = {
@@ -315,6 +279,8 @@ def _load_npz_dataset(
     }
     for member in archive.infolist():
         k = member.filename.removesuffix(".npy")
+        if volume_only and ("volume" not in out or k not in {"grid", "geometry_meta", _AXES_KEY}):
+            continue
         if mapped is not None and k in mapped:
             continue
         with archive.open(member) as stream:

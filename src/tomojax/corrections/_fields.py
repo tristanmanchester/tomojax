@@ -43,7 +43,6 @@ def flat_fields(
     *,
     flat_scales: np.ndarray | None = None,
     dark_source: str | None = None,
-    require_light: bool = True,
 ) -> tuple[Fields, tuple[Correction, ...]]:
     """The mean flat of each set, the mean dark, and the record of them.
 
@@ -95,7 +94,7 @@ def flat_fields(
         usable &= np.isfinite(signal) & (signal > floor)
         light[i] = signal
         release_planes(light, i, i + 1)
-    if require_light and not np.any(usable):
+    if not np.any(usable):
         raise ValueError(
             "No detector pixels have resolved illumination above the dark field: "
             "supply illuminated flats=... and matching darks=... (CLI --flats/--darks), "

@@ -31,6 +31,13 @@ type Config = (
 type Region = RegionName | Member
 
 
+ACQUISITION_ARRAY_ERROR = (
+    "An acquisition path cannot supply an array. Use open and select .projections, or use "
+    "kind=frames and .counts for raw counts. Use preview with correction_preview for corrected "
+    "rows, or inspect with preview=true for a first look."
+)
+
+
 class PathInput(Record, tag="path"):
     """File input opened on the execution queue."""
 

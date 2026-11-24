@@ -406,8 +406,8 @@ class Admission:
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
+        options = arguments(operation, self.context, omit=("source",), layout_only=self.validating)
         scan = source(operation.source, self.context, kinds=(tj.Scan,))
-        options = arguments(operation, self.context, omit=("source",))
         grid = options["grid"] or scan.grid
         forward = isinstance(operation, op.Project)
         name = "volume" if forward else "projections"

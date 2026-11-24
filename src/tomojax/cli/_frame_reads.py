@@ -1,16 +1,12 @@
 """Bounded detector reads for the worker's logical (view, row, column) selections."""
 
-from contextlib import nullcontext
 from itertools import product
-from math import prod
 from typing import cast
 
 import h5py
 import numpy as np
 
 from tomojax.core.files import read_hdf5
-from tomojax.corrections.tiles import corrected_tile
-from tomojax.errors import InvalidParameter
 
 
 def frame_pixels(data, ranges, budget):
@@ -85,80 +81,3 @@ def hdf5_pixels(data, ranges):
         for i, frame in enumerate(indices):
             out[i] = np.asarray(dataset[(frame, *detector)])
         return out
-
-
-def source_bytes(stack, ranges):
-    views, rows, cols = ranges
-    if hasattr(stack, "read_bytes"):
-        return stack.read_bytes(ranges)
-    if hasattr(stack, "blocks"):
-        return sum(source_bytes(block, tile) for _, block, tile in block_windows(stack, ranges))
-    if hasattr(stack, "window") and not hasattr(stack, "dataset"):
-        # Some detectors expose complete rows even for a narrow column window.
-        width = getattr(stack, "read_width", cols[-1] - cols[0] + 1)
-        return len(views) * len(rows) * width * stack.dtype.itemsize
-    return prod(map(len, ranges)) * getattr(stack, "storage_dtype", stack.dtype).itemsize
-
-
-class ReadLimit(InvalidParameter):
-    """The requested slice needs more detector input than a single read permits."""
-
-    def __init__(self) -> None:
-        super().__init__("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
-
-
-class SampleTiles:
-    def __init__(self, samples, calibration=None) -> None:
-        self.samples = samples
-        self.calibration = calibration
-        self.dtype = np.dtype(np.float32) if calibration is not None else samples.dtype
-        self.shape = samples.shape
-
-    def cache(self, ranges):
-        if self.calibration is not None and hasattr(self.samples, "cached_rows"):
-            return self.samples.cached_rows(
-                ranges, (self.calibration.flats, self.calibration.darks)
-            )
-        return nullcontext()
-
-    def cost(self, ranges):
-        n = source_bytes(self.samples, ranges)
-        if self.calibration is not None:
-            for field in (self.calibration.flats, self.calibration.darks):
-                if field is not None:
-                    n += source_bytes(field, (range(len(field)), *ranges[1:]))
-        return n
-
-    def read(self, ranges, budget):
-        spent = 0
-
-        def check(n):
-            if n > budget:
-                raise ReadLimit
-
-        def read(stack, tile):
-            nonlocal spent
-            spent += source_bytes(stack, tile)
-            check(spent)
-            return frame_pixels(stack, tile, budget)
-
-        check(self.cost(ranges))
-        if self.calibration is not None:
-            with self.cache(ranges):
-                return corrected_tile(self.calibration, ranges, read)
-        return read(self.samples, ranges)
-
-    def chunks(self, tile, budget):
-        """Split statistical slabs until each sample and its calibration fit together."""
-        try:
-            yield self.read(tile, budget)
-            return
-        except ReadLimit:
-            # Rows partition both sample and calibration reads, including gap interpolation.
-            axis = next((i for i in (1, 0, 2) if len(tile[i]) > 1), None)
-            if axis is None:
-                raise
-        r = tile[axis]
-        middle = len(r) // 2
-        for half in (r[:middle], r[middle:]):
-            yield from self.chunks((*tile[:axis], half, *tile[axis + 1 :]), budget)

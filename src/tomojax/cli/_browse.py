@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from itertools import product
 import math
 from pathlib import Path
@@ -15,13 +15,13 @@ import msgspec
 import numpy as np
 
 from tomojax._files import saved_volume_grid
-from tomojax._loading import projection_frames
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._display import plane_windows
-from tomojax.cli._frame_reads import SampleTiles, frame_pixels
+from tomojax.cli._frame_reads import frame_pixels
 from tomojax.cli._handles import stage_array
-from tomojax.cli._results import disk_volume, scan_axes, stored_grid, unit_of
+from tomojax.cli._results import disk_volume, stored_grid
 from tomojax.core.files import read_hdf5
+from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
 from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
@@ -46,40 +46,41 @@ class SavedVolume:
 @contextmanager
 def source_array(
     source: Storage | op.PathInput, context: ex.ExecutionContext
-) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
+) -> Iterator[tuple[Any, Array]]:
     """Keep HDF5 open only while its selected datasets are in use."""
     if isinstance(source, Member):
         registered = context.leases[source].value
         if not isinstance(registered, ex.RegisteredArray):
             raise InvalidParameter("source", "choose a registered array member")
-        yield registered.data, registered.metadata, {}
+        yield registered.data, registered.metadata
         return
     path = Path(source.path)
     if isinstance(source, op.PathInput):
-        with ExitStack() as resources:
-            yield from saved_array(path, resources)
+        with saved_volume(path, "source") as volume:
+            yield volume
         return
     if isinstance(source, Hdf5):
         with read_hdf5(path) as file:
             data = file.get(source.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
-            if "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET:
+            if (
+                "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET
+                and "volume_axes_order" in file["/entry/processing/tomojax"].attrs
+            ):
                 grid, _, geom_meta, axes = stored_grid(file, path)
-                yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta), {}
+                yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta)
             else:
-                yield data, indexed(source, data), {}
+                yield data, indexed(source, data)
         return
     data = np.load(path, mmap_mode="r", allow_pickle=False)
     lease = context.leases.get(source)
-    yield data, (lease and lease.metadata) or indexed(source, data), {}
+    yield data, (lease and lease.metadata) or indexed(source, data)
 
 
-def saved_array(
-    path: Path, resources: ExitStack
-) -> Iterator[tuple[Any, Array, dict[str, np.ndarray]]]:
-    """Browse saved volumes in logical axis order or the opened scan's line integrals."""
-    layout = None
+@contextmanager
+def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
+    """Open only the volume and its registration in logical voxel order."""
     if h5py.is_hdf5(path):
         with read_hdf5(path) as file:
             data = file.get(p.VOLUME_DATASET)
@@ -89,32 +90,41 @@ def saved_array(
                 yield (
                     volume,
                     disk_volume(path, grid, "zyx", volume.shape, volume.data.dtype.str, geom_meta),
-                    {},
                 )
                 return
-    elif path.suffix.lower() == ".npz":
-        record, arrays = saved_npz_layout(path, resources=resources)
-        if (volume := arrays.get("volume")) is not None:
-            grid = saved_volume_grid(
-                record.grid.to_dict() if record.grid else None, record.geometry_metadata
-            )
-            meta = disk_volume(
-                path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
-            )
-            yield volume, meta, {}
-            return
-        layout = record, arrays.get("projections")
-    frames, raw = projection_frames(path, layout=layout)
-    counts = frames.counts
-    data = (
-        counts if layout is not None and not raw else SampleTiles(counts, frames if raw else None)
-    )
-    view = Axis("view", "acquisition", "degree", Coordinates(Member(str(path), "angles")))
-    axes = scan_axes(frames.geometry.detector, view, unit_of(frames))
-    meta = Array(
-        Member(str(path), "projections"), data.shape, data.dtype.str, axes, "1", "line_integrals"
-    )
-    yield data, meta, {"view": np.asarray(frames.geometry.angles)}
+    elif path.is_file() and path.suffix.lower() == ".npz":
+        with ExitStack() as resources:
+            record, arrays = saved_npz_layout(path, resources=resources, volume_only=True)
+            if (volume := arrays.get("volume")) is not None:
+                grid = saved_volume_grid(
+                    record.grid.to_dict() if record.grid else None, record.geometry_metadata
+                )
+                meta = disk_volume(
+                    path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
+                )
+                yield volume, meta
+                return
+    raise InvalidParameter(field, op.ACQUISITION_ARRAY_ERROR)
+
+
+def project_volume(path: Path, context: ex.ExecutionContext, *, shape_only: bool) -> np.ndarray:
+    """Read the registered volume in bounded tiles, or just its shape for preflight."""
+    with saved_volume(path, "volume") as (data, meta):
+        if shape_only:
+            return np.broadcast_to(np.zeros((), meta.dtype), meta.shape)
+        # The projector consumes the full array. Stage it in bounded reads,
+        # using the library's file-backed allocation for volumes larger than RAM.
+        volume = host_array(meta.shape, dtype=meta.dtype)
+        if hasattr(data, "copy_views"):
+            data.copy_views(slice(None), volume)
+        else:
+            ranges = tuple(range(n) for n in meta.shape)
+            for tile in ordered_tiles(ranges, READ_BYTES // volume.itemsize):
+                context.control.checkpoint()
+                key = tuple(slice(r.start, r.stop) for r in tile)
+                volume[key] = data[key]
+                release(volume)
+        return volume
 
 
 def indexed(storage: Storage, data: Any) -> Array:
@@ -135,8 +145,6 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
-    if isinstance(data, SampleTiles):
-        return data.read(ranges, READ_BYTES)
     if hasattr(data, "window"):
         return frame_pixels(data, ranges, READ_BYTES)
     keys = tuple(slice(r.start, r[-1] + 1, r.step) for r in ranges)
@@ -146,7 +154,7 @@ def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
 def browse(
     request: op.Read | op.Statistics, context: ex.ExecutionContext
 ) -> p.Layout | p.ArrayResult | p.DisplayPlanes | p.StatisticsResult:
-    with source_array(request.source, context) as (data, meta, vectors):
+    with source_array(request.source, context) as (data, meta):
         if np.dtype(meta.dtype).kind not in "biuf":
             raise InvalidParameter("source", f"expected real numeric data, got {meta.dtype}")
         ranges = window(meta.shape, request)
@@ -159,7 +167,7 @@ def browse(
                 axis["coordinates"].pop("values", None)
             return p.Layout(layout)
         if request.mode is None:
-            return p.ArrayResult(read_window(context, data, meta, vectors, ranges))
+            return p.ArrayResult(read_window(context, data, meta, ranges))
         if request.mode in ("projection", "sinogram") and meta.domain == "attenuation":
             raise InvalidParameter(
                 "source",
@@ -186,14 +194,12 @@ def browse(
         )
         for (dim, at, _, _, sampling), tile, sampled in zip(windows, tiles, samples, strict=True):
             planes.append(
-                p.DisplayPlane(
-                    read_window(context, data, meta, vectors, tile, sampled), dim, at, sampling
-                )
+                p.DisplayPlane(read_window(context, data, meta, tile, sampled), dim, at, sampling)
             )
         return p.DisplayPlanes(tuple(planes))
 
 
-def read_window(context, data, meta, vectors, ranges, sampled=None):
+def read_window(context, data, meta, ranges, sampled=None):
     shape = tuple(map(len, ranges))
     if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
         raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
@@ -203,11 +209,8 @@ def read_window(context, data, meta, vectors, ranges, sampled=None):
         if isinstance(coord, Uniform):
             selected = Uniform(coord.origin + r.start * coord.spacing, r.step * coord.spacing)
         else:
-            if axis.name in vectors:
-                values = vectors[axis.name][r.start : r.stop : r.step]
-            else:
-                with source_array(coord.values, context) as (v, _, _):
-                    values = pixels(v, (r,))
+            with source_array(coord.values, context) as (v, _):
+                values = pixels(v, (r,))
             selected = Coordinates(stage_array(context, values))
         axes.append(msgspec.structs.replace(axis, coordinates=selected))
     columns = meta.columns
@@ -241,12 +244,8 @@ def sample_chunks(data, ranges):
     if hasattr(data, "sample_chunks"):
         yield from data.sample_chunks(ranges)
         return
-    with data.cache(ranges) if isinstance(data, SampleTiles) else nullcontext():
-        for tile in ordered_tiles(ranges, READ_BYTES // 8):
-            if isinstance(data, SampleTiles):
-                yield from data.chunks(tile, READ_BYTES)
-            else:
-                yield pixels(data, tile)
+    for tile in ordered_tiles(ranges, READ_BYTES // 8):
+        yield pixels(data, tile)
 
 
 def exact_percentiles(samples, percentiles, low, high, control):

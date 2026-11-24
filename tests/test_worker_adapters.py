@@ -826,18 +826,41 @@ def test_hyperslab_limit_stride_and_exact_statistics(worker, tmp_path):
 
 
 @pytest.mark.parametrize("ext", ["nxs", "npz"])
-def test_saved_file_registered_reads(worker, tmp_path, ext):
+def test_saved_volume_registered_reads(worker, tmp_path, ext):
     sim = tj.simulate(size=8, n_views=12)
-    for root, pixels, names in (
-        (sim, sim.phantom, "zyx"),
-        (sim.scan, sim.scan.projections, ("view", "v", "u")),
-    ):
-        path = tmp_path / f"data.{ext}"
-        tj.save(path, root)
-        source = dict(type="path", path=str(path))
-        a = output(worker("read", source=source, stride=[2, 1, 2]))["value"]["array"]
-        assert [axis["name"] for axis in a["axes"]] == list(names)
-        np.testing.assert_allclose(np.load(a["storage"]["path"]), np.asarray(pixels)[::2, :, ::2])
+    path = tmp_path / f"result.{ext}"
+    tj.save(path, tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan))
+    source = dict(type="path", path=str(path))
+    a = output(worker("read", source=source, stride=[2, 1, 2]))["value"]["array"]
+    assert [axis["name"] for axis in a["axes"]] == list("zyx")
+    np.testing.assert_array_equal(np.load(a["storage"]["path"]), sim.phantom[::2, :, ::2])
+    view = output(worker("read", source=source, mode="planes", axis="x", index=2))["value"]
+    plane = view["planes"][0]["array"]
+    np.testing.assert_array_equal(np.load(plane["storage"]["path"]), sim.phantom[:, :, 2:3])
+
+
+@pytest.mark.parametrize("ext", ["nxs", "npz"])
+def test_acquisition_array_paths_return_open_guidance(worker, simulation, tmp_path, ext):
+    path = tmp_path / f"scan.{ext}"
+    tj.save(path, tj.simulate(size=8, n_views=12).scan)
+    source = dict(type="path", path=str(path))
+    requests = [(op, dict(source=source), "source") for op in ("read", "statistics")]
+    for op, field in (("project", "volume"), ("backproject", "projections")):
+        recipe = dict(type=op, source=simulation["value"]["scan"], **{field: source})
+        requests.extend((cmd, dict(operation=recipe), field) for cmd in ("validate", "run"))
+    for cmd, args, field in requests:
+        error = worker(cmd, **args)["error"]
+        assert (error["kind"], error["path"]) == ("invalid_parameter", field)
+        for hint in (
+            "open",
+            ".projections",
+            "kind=frames",
+            ".counts",
+            "correction_preview",
+            "inspect",
+            "preview=true",
+        ):
+            assert hint in error["message"]
 
 
 @pytest.mark.parametrize("axes", ["xyz", "yzx"])
@@ -878,6 +901,12 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
     assert output(worker("statistics", **args))["value"]["mean"] == pytest.approx(
         x[2:4, :7:2, 3:4].mean()
     )
+
+    # A literal dataset remains readable in stored order without TomoJAX registration.
+    with h5py.File(path, "r+") as file:
+        del file["/entry/processing/tomojax"].attrs["volume_axes_order"]
+    literal = output(worker("read", source=ref))["value"]["array"]
+    np.testing.assert_array_equal(np.load(literal["storage"]["path"]), disk_pixels)
 
 
 def read_frames(stack, shape, roi, stride, tmp_path):
@@ -948,32 +977,34 @@ def test_strided_window_reader_bounds_unsampled_work(tmp_path):
     np.testing.assert_array_equal(result, data[1::2, 1::8, 3::5])
 
 
-def test_bare_projection_plane_reads_only_its_pixels(tmp_path, monkeypatch):
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-
-    sim = tj.simulate(size=8, n_views=24)
-    path = tmp_path / "large.nxs"
-    tj.save(path, sim.scan)
-    where = "/entry/instrument/detector/data"
-    with h5py.File(path, "r+") as f:
-        del f[where]
-        f[where] = f.create_dataset("large", shape=(24, 512, 512), dtype="f4", fillvalue=2)
-        f["/entry/instrument/detector"].attrs["detector_meta_json"] = json.dumps(
-            tj.Detector(512, 512, 1, 1).to_dict()
+@pytest.mark.parametrize(("kind", "member"), [("scan", "projections"), ("frames", "counts")])
+def test_opened_detector_member_reads_bounded_tiles(worker, tmp_path, kind, member):
+    path = tmp_path / "raw.h5"
+    with h5py.File(path, "w") as file:
+        file.create_dataset("exchange/data", (17, 512, 512), dtype="f4", fillvalue=5)
+        file["exchange/theta"] = np.arange(17) * 10.0
+    opened = output(
+        worker(
+            "open",
+            path=str(path),
+            kind=kind,
+            flats=11,
+            darks=1,
+            pixel_size=1,
+            geometry={"kind": "parallel"},
         )
-    reads = trace_detector_reads(monkeypatch, where)
-    ref = operations.PathInput(str(path))
-    stage = Stage(tmp_path)
-    admitted(operations.Read(source=ref, metadata_only=True), None, stage, ref)
-    assert reads == []
-    with pytest.raises(ValueError, match="16 MiB"):
-        admitted(operations.Read(source=ref), None, stage, ref)
-    assert reads == []
-    admitted(operations.Read(source=ref, mode="projection", index=15), None, stage, ref)
-    plane = np.load(stage.private)
-    np.testing.assert_equal(plane, np.full((1, 512, 512), 2, np.float32))
-    assert sum(reads) == plane.nbytes
+    )["value"]
+    source = dict(type="member", handle=opened["handle"], member=member)
+    assert "16 MiB" in worker("read", source=source)["error"]["message"]
+    tile = dict(source=source, roi=[[4, 5], [1, 512], [3, 511]], stride=[1, 7, 4])
+    plane = output(worker("read", mode="projection", **tile))["value"]["planes"][0]["array"]
+    expected = -np.log(0.4) if kind == "scan" else 5
+    pixels = np.load(plane["storage"]["path"])
+    assert pixels.shape == (1, 73, 127)
+    np.testing.assert_allclose(pixels, expected, rtol=1e-6)
+    stats = output(worker("statistics", **tile))["value"]
+    assert stats["count"] == pixels.size
+    assert stats["mean"] == pytest.approx(expected)
 
 
 def trace_detector_reads(monkeypatch, where):
@@ -996,83 +1027,31 @@ def trace_detector_reads(monkeypatch, where):
     return reads
 
 
-def test_project_saved_volume_skips_archived_scan(tmp_path, monkeypatch):
+@pytest.mark.parametrize("ext", ["nxs", "npz"])
+def test_project_saved_volume_skips_archived_scan(tmp_path, monkeypatch, ext):
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations
     from tomojax.wire.arrays import Member
 
     sim = tj.simulate(size=8, n_views=12)
-    path = tmp_path / "archived.nxs"
+    path = tmp_path / f"archived.{ext}"
     recon = tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan)
     tj.save(path, recon, include_scan=True)
     ref = Member("opened", "scan")
     stage = Stage(tmp_path)
-    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    reads = (
+        trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+        if ext == "nxs"
+        else count_inflated_bytes(monkeypatch, "projections.npy")
+    )
     project = operations.Project(source=ref, volume=operations.PathInput(str(path)))
     admitted(operations.Run(operation=project), sim.scan, stage, ref)
     np.testing.assert_allclose(np.load(stage.private), tj.project(sim.scan.geometry, sim.phantom))
     assert reads == []
 
 
-@pytest.mark.parametrize("ext", ["npz", "nxs"])
-@pytest.mark.parametrize("gap", [False, True])
-def test_raw_projection_tile_uses_acquisition_positions(tmp_path, ext, gap, monkeypatch):
-    from tests.test_io_workflows import _labelled_dataset
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-    from tomojax.io import save_dataset
-
-    record = _labelled_dataset([1, 12, 4, 6, 8, 10, 36], [2, 1, 0, 0, 0, 0, 1])
-    record.projections = record.projections[:, :, :1] + np.arange(16, dtype=np.float32) ** 2
-    record.projections[2:6] += 0.2 * np.arange(16, dtype=np.float32)
-    record.detector = tj.Detector(16, 2, 1, 1)
-    if gap:
-        record.projections[[1, 6], :, 4:8] = 0  # its measured neighbours lie outside the ROI
-    path = tmp_path / f"drift.{ext}"
-    save_dataset(path, record)
-    expected = tj.load(path).projections[1:4:2, 1:, 5:16:5]
-    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
-    ref = operations.PathInput(str(path))
-    stage = Stage(tmp_path)
-    admitted(
-        operations.Read(source=ref, roi=((1, 4), (1, 2), (5, 16)), stride=(2, 1, 5)),
-        None,
-        stage,
-        ref,
-    )
-    np.testing.assert_array_equal(np.load(stage.private), expected)
-    if ext == "nxs":
-        # Three selected columns of two samples, two flats and one dark. Finding
-        # a gap needs the full calibration row and two extra sample columns.
-        pixels = 3 * (2 + 2 + 1) + (3 * 16 + 2 * 2 if gap else 0)
-        assert sum(reads) == pixels * record.projections.dtype.itemsize
-
-
-def test_projection_read_budgets_calibration_before_pixels(tmp_path, monkeypatch):
-    from tests.test_io_workflows import _labelled_dataset
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-    from tomojax.io import save_dataset
-
-    record = _labelled_dataset([0, 4, 2], [2, 1, 0])
-    path = tmp_path / "raw.nxs"
-    save_dataset(path, record)
-    where = "/entry/instrument/detector/data"
-    with h5py.File(path, "r+") as file:
-        del file[where]
-        file.create_dataset(where, (3, 1536, 1536), dtype="f4")
-        file["/entry/instrument/detector"].attrs["detector_meta_json"] = json.dumps(
-            tj.Detector(1536, 1536, 1, 1).to_dict()
-        )
-    reads = trace_detector_reads(monkeypatch, where)
-    ref = operations.PathInput(str(path))
-    with pytest.raises(ValueError, match="16 MiB"):
-        admitted(operations.Read(source=ref), None, Stage(tmp_path), ref)
-    assert not reads
-
-
 @pytest.mark.parametrize("compressed", [False, True])
-def test_npz_reads_fortran_order_samples_past_tile_budget(tmp_path, compressed):
+def test_npz_reads_fortran_order_volume_past_tile_budget(tmp_path, compressed):
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations
 
@@ -1081,12 +1060,7 @@ def test_npz_reads_fortran_order_samples_past_tile_budget(tmp_path, compressed):
     data = np.zeros(shape, dtype=np.float32, order="F")
     data[1, -1, -2:] = (8, 12)
     write = np.savez_compressed if compressed else np.savez
-    write(
-        path,
-        projections=data,
-        thetas_deg=[0, 90],
-        detector=json.dumps(tj.Detector(shape[2], shape[1], 1, 1).to_dict()),
-    )
+    write(path, volume=data, volume_axes_order="zyx")
     ref = operations.PathInput(str(path))
     roi = ((1, 2), (511, 512), (4095, 4097))
     stage = Stage(tmp_path)
@@ -1095,59 +1069,6 @@ def test_npz_reads_fortran_order_samples_past_tile_budget(tmp_path, compressed):
     np.testing.assert_equal(np.load(stage.private).ravel(), [8, 12])
     result = admitted(operations.Statistics(source=ref, roi=roi), None, stage, ref)
     assert result.mean == 10
-
-
-def test_matlab_phase_read_maps_only_selected_samples(tmp_path, monkeypatch):
-    from tests.test_psi_reader import _write_v73
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-
-    phase = np.arange(7 * 4 * 6, dtype=np.float64).reshape(7, 4, 6)
-    path = tmp_path / "phase.mat"
-    _write_v73(path, phase, np.arange(7), 1e-6)
-    ref = operations.PathInput(str(path))
-    stage = Stage(tmp_path)
-    reads = trace_detector_reads(monkeypatch, "/aligned_phase_sinogram")
-    admitted(
-        operations.Read(source=ref, roi=((4, 5), (1, 4), (2, 6)), stride=(1, 2, 1)),
-        None,
-        stage,
-        ref,
-    )
-    actual = np.load(stage.private)
-    np.testing.assert_equal(actual, phase[4:5, 1:4:2, 2:6])
-    assert actual.dtype == np.float32
-    assert sum(reads) == actual.size * phase.dtype.itemsize
-
-
-def test_compressed_npz_midpoint_and_pixel_have_bounded_peak_memory(tmp_path):
-    import tracemalloc
-
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-
-    geometry = tj.ParallelGeometry(
-        tj.Grid(8, 8, 8, 1, 1, 1), tj.Detector(512, 512, 1, 1), np.arange(48)
-    )
-    data = np.broadcast_to(np.arange(48, dtype=np.float32)[:, None, None], (48, 512, 512))
-    path = tmp_path / "large.npz"
-    tj.save(path, tj.Scan(data, geometry))
-    source = operations.PathInput(str(path))
-    stage = Stage(tmp_path)
-    for request, expected in (
-        (operations.Read(source=source, mode="projection"), data[24:25]),
-        (
-            operations.Read(source=source, roi=((24, 25), (15, 16), (87, 88))),
-            data[24:25, 15:16, 87:88],
-        ),
-    ):
-        tracemalloc.start()
-        try:
-            admitted(request, None, stage, source)
-            assert tracemalloc.get_traced_memory()[1] < 16 << 20
-        finally:
-            tracemalloc.stop()
-        np.testing.assert_array_equal(np.load(stage.private), expected)
 
 
 def test_validate_open_only_reads_calibration_metadata(tmp_path, monkeypatch):
@@ -1315,29 +1236,3 @@ def test_compressed_npz_windows_inflate_member_once(tmp_path, monkeypatch, order
     expected = (data[16:17, :, ::2], data[:, 128:129, ::2], data[:, :, 512:513])
     for file, plane in zip(files, expected, strict=True):
         np.testing.assert_array_equal(np.load(file), plane)
-
-
-def test_compressed_npz_calibration_reads_member_once(tmp_path, monkeypatch):
-    from zipfile import ZipFile
-
-    from tests.test_io_workflows import _labelled_dataset
-    from tests.worker_adapter import Stage, admitted
-    from tomojax.cli import operations
-    from tomojax.io import save_dataset
-
-    record = _labelled_dataset([1, 12, 4, 6, 8, 10, 36], [2, 1, 0, 0, 0, 0, 1])
-    record.projections = np.broadcast_to(record.projections[:, :1, :1], (7, 256, 128)).copy()
-    record.projections[[1, 6], :, 24:32] = 0
-    record.detector = tj.Detector(128, 256, 1, 1)
-    path = tmp_path / "raw.npz"
-    save_dataset(path, record)
-    expected = np.asarray(tj.load(path).projections)[1::2, 3::17, 26::11]
-    ref = operations.PathInput(str(path))
-    roi = ((1, 4), (3, 256), (26, 128))
-    with ZipFile(path) as archive:
-        size = archive.getinfo("projections.npy").file_size
-    inflated = count_inflated_bytes(monkeypatch, "projections.npy")
-    stage = Stage(tmp_path)
-    admitted(operations.Read(source=ref, roi=roi, stride=(2, 17, 11)), None, stage, ref)
-    assert 0 < sum(inflated) <= size
-    np.testing.assert_array_equal(np.load(stage.private), expected)
