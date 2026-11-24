@@ -123,7 +123,7 @@ pub struct AppState {
     auto_demo: bool,
     startup_input: Option<PathBuf>,
     last_context: Value,
-    difference: Option<([u64;2], std::sync::Arc<crate::imaging::PlaneData>)>,
+    difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
     applied_window: Option<[f32; 2]>,
     window_prefill: Option<[String; 2]>,
     centre_sinogram: bool,
@@ -679,12 +679,10 @@ impl AppState {
             .and_then(|id| document.asset(id))
             .is_none()
         {
-            let newest = document.assets.iter().max_by_key(|asset| {
-                (
-                    asset.is_result(),
-                    asset.created,
-                )
-            });
+            let newest = document
+                .assets
+                .iter()
+                .max_by_key(|asset| (asset.is_result(), asset.created));
             self.model.active_asset = newest.map(|asset| asset.id.clone());
             if let Some(id) = &self.model.active_asset {
                 self.model.selected_assets.insert(id.clone());

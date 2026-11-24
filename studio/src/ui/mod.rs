@@ -161,13 +161,22 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                 .help(&project.path),
         );
     }
-    bar = bar.child(button(
-        "command-palette", if narrow {"Search"} else {"Search commands"}, false, true,
-        |s,tx| s.dispatch(UiAction::ShowPalette,tx)
-    ).help("Search commands"));
-    bar = bar.child(quiet_button("shortcut-settings", "Shortcuts", state.ui.shortcuts_open, |s, tx| {
-        s.dispatch(UiAction::ShowShortcuts, tx)
-    }));
+    bar = bar.child(
+        button(
+            "command-palette",
+            if narrow { "Search" } else { "Search commands" },
+            false,
+            true,
+            |s, tx| s.dispatch(UiAction::ShowPalette, tx),
+        )
+        .help("Search commands"),
+    );
+    bar = bar.child(quiet_button(
+        "shortcut-settings",
+        "Shortcuts",
+        state.ui.shortcuts_open,
+        |s, tx| s.dispatch(UiAction::ShowShortcuts, tx),
+    ));
     if state.model.project.is_some() && state.ui.workspace != Workspace::Jobs {
         let count = state.model.active_jobs();
         let title = if count == 0 {
@@ -182,9 +191,13 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                 })
                 .label("Activity"),
             )
-            .child(icon_button("toggle-inspector", "Inspector", Icon::Inspector, true, |s, _| {
-                s.ui.inspector_open = !s.ui.inspector_open
-            }));
+            .child(icon_button(
+                "toggle-inspector",
+                "Inspector",
+                Icon::Inspector,
+                true,
+                |s, _| s.ui.inspector_open = !s.ui.inspector_open,
+            ));
     }
     bar
 }
@@ -396,22 +409,29 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             .size(18., 24.),
         );
     }
-    name = name
-        .child(icon(
-            if asset.kind == AssetKind::Volume {
-                Icon::Cube
-            } else {
-                Icon::Layers
-            },
-            15.,
-            if active { forest() } else { muted() },
-        ));
-    let renaming = state.ui.rename.as_ref().is_some_and(|(id, _)| id == &asset.id);
+    name = name.child(icon(
+        if asset.kind == AssetKind::Volume {
+            Icon::Cube
+        } else {
+            Icon::Layers
+        },
+        15.,
+        if active { forest() } else { muted() },
+    ));
+    let renaming = state
+        .ui
+        .rename
+        .as_ref()
+        .is_some_and(|(id, _)| id == &asset.id);
     if let Some((_, draft)) = state.ui.rename.as_ref().filter(|_| renaming) {
         name = name.child(
-            submit_input("result-name", draft, "Result name", UiAction::RenameResult, |s| {
-                &mut s.ui.rename.as_mut().unwrap().1
-            })
+            submit_input(
+                "result-name",
+                draft,
+                "Result name",
+                UiAction::RenameResult,
+                |s| &mut s.ui.rename.as_mut().unwrap().1,
+            )
             .grow(1.),
         );
     } else {
@@ -425,10 +445,16 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
     }
     if active && asset.operation.is_some() && !renaming {
         let (id, current) = (asset.id.clone(), asset.name.clone());
-        name = name.child(icon_button("rename-result", "Rename result", Icon::Edit, true, move |s, tx| {
-            s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
-            tx.focus("result-name", true);
-        }));
+        name = name.child(icon_button(
+            "rename-result",
+            "Rename result",
+            Icon::Edit,
+            true,
+            move |s, tx| {
+                s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
+                tx.focus("result-name", true);
+            },
+        ));
     } else if selected && !renaming {
         name = name.child(icon(Icon::Check, 13., forest()));
     }
@@ -487,13 +513,31 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
             .pl(if has_children { 47. } else { 22. }),
         );
     if renaming {
-        let valid = state.ui.rename.as_ref().is_some_and(|(_, d)| !d.text.trim().is_empty());
+        let valid = state
+            .ui
+            .rename
+            .as_ref()
+            .is_some_and(|(_, d)| !d.text.trim().is_empty());
         return item.child(
             row()
                 .gap(6.)
                 .pl(22.)
-                .child(action_button("save-result-name", "Save", true, valid, UiAction::RenameResult).h(30.))
-                .child(quiet_button("cancel-result-name", "Cancel", false, |s, _| s.ui.rename = None).h(30.)),
+                .child(
+                    action_button(
+                        "save-result-name",
+                        "Save",
+                        true,
+                        valid,
+                        UiAction::RenameResult,
+                    )
+                    .h(30.),
+                )
+                .child(
+                    quiet_button("cancel-result-name", "Cancel", false, |s, _| {
+                        s.ui.rename = None
+                    })
+                    .h(30.),
+                ),
         );
     }
     item

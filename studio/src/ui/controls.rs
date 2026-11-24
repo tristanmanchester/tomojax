@@ -165,7 +165,14 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
             vec![[9., 4.], [9., 20.]],
         ],
         Icon::Edit => vec![
-            vec![[4., 20.], [5., 16.], [16., 5.], [19., 8.], [8., 19.], [4., 20.]],
+            vec![
+                [4., 20.],
+                [5., 16.],
+                [16., 5.],
+                [19., 8.],
+                [8., 19.],
+                [4., 20.],
+            ],
             vec![[13.5, 7.5], [16.5, 10.5]],
         ],
         Icon::Inspector => vec![
@@ -273,7 +280,7 @@ pub fn icon_button(
     enabled: bool,
     f: impl Fn(&mut AppState, &mut Tx) + 'static,
 ) -> El {
-    tinted_icon_button(key,title,glyph,enabled,muted(),f)
+    tinted_icon_button(key, title, glyph, enabled, muted(), f)
 }
 pub fn tinted_icon_button(
     key: &str,
@@ -444,7 +451,10 @@ pub fn submit_field(
     submit: UiAction,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
-    labelled(title, text_field(key, value, title, "", "", Some(submit), edit))
+    labelled(
+        title,
+        text_field(key, value, title, "", "", Some(submit), edit),
+    )
 }
 
 fn labelled(title: &str, control: El) -> El {
@@ -563,7 +573,10 @@ fn slider_on(
         .focus_ring(1.5, 1., forest())
         .on_drag(move |s: &mut AppState, drag, tx| {
             if enabled && matches!(drag.phase, Phase::Down | Phase::Move) {
-                s.dispatch(drag_action(((drag.x-6.) / (drag.w-12.).max(1.)).clamp(0., 1.)), tx);
+                s.dispatch(
+                    drag_action(((drag.x - 6.) / (drag.w - 12.).max(1.)).clamp(0., 1.)),
+                    tx,
+                );
             }
         })
         .on_step(move |s: &mut AppState, step, tx| {
@@ -577,19 +590,28 @@ fn slider_on(
             }
         })
         .child(
-            el().h(4.).w_full().px(6.).fill(if dark { canvas_muted().alpha(0.35) } else { line() }).radius(2.).child(
-                el().h_full()
-                    .w_frac(value)
-                    .fill(color("#82A68A"))
-                    .radius(2.)
-                    .child(
-                        el().size(12., 12.)
-                            .radius(6.)
-                            .fill(paper())
-                            .border(2., color("#82A68A"))
-                            .pin(None, Some(-4.), Some(-6.), None),
-                    ),
-            ),
+            el().h(4.)
+                .w_full()
+                .px(6.)
+                .fill(if dark {
+                    canvas_muted().alpha(0.35)
+                } else {
+                    line()
+                })
+                .radius(2.)
+                .child(
+                    el().h_full()
+                        .w_frac(value)
+                        .fill(color("#82A68A"))
+                        .radius(2.)
+                        .child(
+                            el().size(12., 12.)
+                                .radius(6.)
+                                .fill(paper())
+                                .border(2., color("#82A68A"))
+                                .pin(None, Some(-4.), Some(-6.), None),
+                        ),
+                ),
         );
     col()
         .gap(3.)
@@ -598,8 +620,16 @@ fn slider_on(
         .child(
             row()
                 .justify_between()
-                .child(label(title, 11., if dark { canvas_muted() } else { muted() }))
-                .child(number(formatted, 11., if dark { canvas_ink() } else { muted() })),
+                .child(label(
+                    title,
+                    11.,
+                    if dark { canvas_muted() } else { muted() },
+                ))
+                .child(number(
+                    formatted,
+                    11.,
+                    if dark { canvas_ink() } else { muted() },
+                )),
         )
         .child(track)
 }

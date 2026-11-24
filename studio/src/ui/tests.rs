@@ -619,13 +619,25 @@ fn explorer_labels_physical_pitch_and_keeps_one_save_status() {
     let (_dir, mut state) = viewing_state();
     state.model.assets[0].voxel_pitch = Some([0.5, 0.75, 2.]);
     state.model.assets[0].units = "mm".into();
-    let rt = runtime(state, (1540.,980.));
+    let rt = runtime(state, (1540., 980.));
     let elements = rt.elements();
-    assert!(elements.iter().filter_map(|e| e.text.as_deref()).any(|text| text.contains("voxels of 0.5 × 0.75 × 2 mm")));
-    let saved = elements.iter().filter(|e| e.text.as_deref()==Some("Project saved")).collect::<Vec<_>>();
-    assert_eq!(saved.len(),1);
+    assert!(
+        elements
+            .iter()
+            .filter_map(|e| e.text.as_deref())
+            .any(|text| text.contains("voxels of 0.5 × 0.75 × 2 mm"))
+    );
+    let saved = elements
+        .iter()
+        .filter(|e| e.text.as_deref() == Some("Project saved"))
+        .collect::<Vec<_>>();
+    assert_eq!(saved.len(), 1);
     assert!(saved[0].rect[1] >= 950.);
-    assert!(elements.iter().any(|e| e.text.as_deref()==Some("Explore") && e.path.contains("inspector")));
+    assert!(
+        elements
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Explore") && e.path.contains("inspector"))
+    );
 }
 
 #[test]
@@ -633,12 +645,26 @@ fn job_row_shows_one_status_and_preserves_stage_detail() {
     let (_dir, mut state) = project_state();
     state.ui.workspace = Workspace::Jobs;
     state.model.jobs.push(JobView {
-        id:"result-job".into(),name:"Specimen · FBP".into(),operation:"Reconstruction".into(),
-        status:JobStatus::Completed,stage:"Complete".into(),..Default::default()
+        id: "result-job".into(),
+        name: "Specimen · FBP".into(),
+        operation: "Reconstruction".into(),
+        status: JobStatus::Completed,
+        stage: "Complete".into(),
+        ..Default::default()
     });
-    let mut rt = runtime(state, (1540.,980.));
-    assert_eq!(rt.elements().iter().filter(|e| e.text.as_deref()==Some("Complete")).count(),1);
-    rt.update(|s,_| s.model.jobs[0].stage="Plan ready".into());
+    let mut rt = runtime(state, (1540., 980.));
+    assert_eq!(
+        rt.elements()
+            .iter()
+            .filter(|e| e.text.as_deref() == Some("Complete"))
+            .count(),
+        1
+    );
+    rt.update(|s, _| s.model.jobs[0].stage = "Plan ready".into());
     rt.frame(0.1);
-    assert!(rt.elements().iter().any(|e| e.text.as_deref()==Some("Plan ready")));
+    assert!(
+        rt.elements()
+            .iter()
+            .any(|e| e.text.as_deref() == Some("Plan ready"))
+    );
 }

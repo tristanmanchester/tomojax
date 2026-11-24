@@ -216,10 +216,10 @@ impl AppState {
                 let axis = descriptor
                     .axes
                     .iter()
-                    .position(|a| a.name == ["z","y","x"][self.ui.compare_plane.axis().unwrap()])
+                    .position(|a| a.name == ["z", "y", "x"][self.ui.compare_plane.axis().unwrap()])
                     .unwrap_or(0);
-                let index =
-                    self.ui.display.indices[self.ui.compare_plane.axis().unwrap()].min(descriptor.shape[axis].saturating_sub(1));
+                let index = self.ui.display.indices[self.ui.compare_plane.axis().unwrap()]
+                    .min(descriptor.shape[axis].saturating_sub(1));
                 if let Err(error) =
                     self.imaging
                         .request_plane(slot, self.resolved(&descriptor), axis, index, 1024)
@@ -326,7 +326,12 @@ impl AppState {
         ]
         .map(|id| id.and_then(|id| self.project.as_ref()?.document.asset(id)?.volume()));
         self.model.comparison_note = match descriptors {
-            [Some(a), Some(b)] if a.shape != b.shape || a.axes != b.axes || a.unit != b.unit || a.domain != b.domain => {
+            [Some(a), Some(b)]
+                if a.shape != b.shape
+                    || a.axes != b.axes
+                    || a.unit != b.unit
+                    || a.domain != b.domain =>
+            {
                 Some("Grids differ: slices are matched by index, not position".into())
             }
             [Some(_), Some(_)] => None,
@@ -335,30 +340,50 @@ impl AppState {
         if self.model.comparison_note.is_some() && self.ui.compare_mode == CompareMode::Difference {
             self.ui.compare_mode = CompareMode::Pair;
         }
-        if self.ui.workspace == Workspace::Compare && self.ui.compare_mode == CompareMode::Difference
-            && let (Some(left),Some(right)) = (self.imaging.plane(6),self.imaging.plane(7)) {
-            let ids = [left.id,right.id];
-            if self.difference.as_ref().is_none_or(|(old,_)| *old != ids) {
-                self.difference = left.difference(right).map(|plane|(ids,std::sync::Arc::new(plane)));
+        if self.ui.workspace == Workspace::Compare
+            && self.ui.compare_mode == CompareMode::Difference
+            && let (Some(left), Some(right)) = (self.imaging.plane(6), self.imaging.plane(7))
+        {
+            let ids = [left.id, right.id];
+            if self.difference.as_ref().is_none_or(|(old, _)| *old != ids) {
+                self.difference = left
+                    .difference(right)
+                    .map(|plane| (ids, std::sync::Arc::new(plane)));
             }
-        } else {self.difference = None;}
+        } else {
+            self.difference = None;
+        }
         self.prefill_window();
     }
 
-    pub(crate) fn difference_ready(&self) -> bool { self.difference.is_some() }
-    pub(crate) fn compare_window(&self, slot:u32) -> Option<[f32;2]> {
-        let slot = if slot == 7 && self.ui.compare_linked {6} else {slot};
+    pub(crate) fn difference_ready(&self) -> bool {
+        self.difference.is_some()
+    }
+    pub(crate) fn compare_window(&self, slot: u32) -> Option<[f32; 2]> {
+        let slot = if slot == 7 && self.ui.compare_linked {
+            6
+        } else {
+            slot
+        };
         let data = self.imaging.plane(slot)?;
-        Some(if slot == 7 {data.statistics.window} else {self.applied_window.unwrap_or(data.statistics.window)})
+        Some(if slot == 7 {
+            data.statistics.window
+        } else {
+            self.applied_window.unwrap_or(data.statistics.window)
+        })
     }
 
-    pub(crate) fn current_window(&self) -> Option<[f32;2]> {
-        if self.ui.workspace == Workspace::Compare {return self.compare_window(6);}
+    pub(crate) fn current_window(&self) -> Option<[f32; 2]> {
+        if self.ui.workspace == Workspace::Compare {
+            return self.compare_window(6);
+        }
         self.applied_window.or_else(|| {
             if self.ui.main_view == PlaneKind::Volume {
                 self.imaging.volume(8).map(|data| data.statistics.window)
             } else {
-                self.imaging.plane(self.ui.main_view.mark()).map(|data| data.statistics.window)
+                self.imaging
+                    .plane(self.ui.main_view.mark())
+                    .map(|data| data.statistics.window)
             }
         })
     }
@@ -437,7 +462,7 @@ impl AppState {
                     settings.zoom = 1.;
                     settings.pan = [0.; 2];
                 }
-                if matches!(slot,6|7) {
+                if matches!(slot, 6 | 7) {
                     settings.window = self.compare_window(slot);
                 }
                 items.push(RenderItem::Plane {
@@ -447,9 +472,22 @@ impl AppState {
                 });
             }
         }
-        if let Some(data) = self.pending_preview_plane() {items.push(RenderItem::Plane{mark:11,data:data.clone(),display:display.clone()});}
-        if let Some((_,data)) = &self.difference {
-            items.push(RenderItem::Plane{mark:10,data:data.clone(),display:DisplaySettings {window:None,..display.clone()}});
+        if let Some(data) = self.pending_preview_plane() {
+            items.push(RenderItem::Plane {
+                mark: 11,
+                data: data.clone(),
+                display: display.clone(),
+            });
+        }
+        if let Some((_, data)) = &self.difference {
+            items.push(RenderItem::Plane {
+                mark: 10,
+                data: data.clone(),
+                display: DisplaySettings {
+                    window: None,
+                    ..display.clone()
+                },
+            });
         }
         if let Some(data) = self.imaging.plane(self.ui.main_view.mark()) {
             items.push(RenderItem::Plane {
@@ -618,7 +656,16 @@ impl AppState {
 
     pub(super) fn capture_workspace(&self) -> project::Workspace {
         let mut draft_choices = self.ui.parameter_choices.clone();
-        draft_choices.insert("studio:prefill".into(),self.window_prefill.as_ref().is_some_and(|v| v[0]==self.ui.display.window_low.text && v[1]==self.ui.display.window_high.text).to_string());
+        draft_choices.insert(
+            "studio:prefill".into(),
+            self.window_prefill
+                .as_ref()
+                .is_some_and(|v| {
+                    v[0] == self.ui.display.window_low.text
+                        && v[1] == self.ui.display.window_high.text
+                })
+                .to_string(),
+        );
         draft_choices.insert("studio:preview_array".into(), self.ui.preview_array.clone());
         draft_choices.insert(
             "studio:compare_linked".into(),
@@ -772,8 +819,15 @@ impl AppState {
         if let Some(value) = context.draft_edits.get("studio:window_high") {
             self.ui.display.window_high.replace_text(value.clone());
         }
-        if context.draft_choices.get("studio:prefill").map_or_else(|| self.valid_window().is_ok(), |v| v == "true") {
-            self.window_prefill = Some([self.ui.display.window_low.text.clone(),self.ui.display.window_high.text.clone()]);
+        if context
+            .draft_choices
+            .get("studio:prefill")
+            .map_or_else(|| self.valid_window().is_ok(), |v| v == "true")
+        {
+            self.window_prefill = Some([
+                self.ui.display.window_low.text.clone(),
+                self.ui.display.window_high.text.clone(),
+            ]);
         }
         if let Some(value) = context.draft_choices.get("studio:preview_array")
             && matches!(value.as_str(), "before" | "after")
@@ -908,13 +962,16 @@ impl AppState {
                             ),
                             method: a.method.clone(),
                             simulated: a.simulated,
-                            operation: if a.is_result() {p
-                                .document
-                                .jobs
-                                .iter()
-                                .find(|job| job.result.as_deref() == Some(&a.id))
-                                .map(|job| job.operation.clone())
-                                .or_else(|| a.provenance.as_ref().map(|p| p.operation.clone()))} else {None},
+                            operation: if a.is_result() {
+                                p.document
+                                    .jobs
+                                    .iter()
+                                    .find(|job| job.result.as_deref() == Some(&a.id))
+                                    .map(|job| job.operation.clone())
+                                    .or_else(|| a.provenance.as_ref().map(|p| p.operation.clone()))
+                            } else {
+                                None
+                            },
                         }
                     })
                     .collect()

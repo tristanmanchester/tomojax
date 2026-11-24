@@ -160,7 +160,9 @@ fn heading(state: &AppState) -> El {
         // "128 × 128 × 128 voxels of 1 mm": the grid and its pitch read as one fact.
         let unit = unit_name(&asset.units);
         match details.last_mut() {
-            Some(grid) if grid.ends_with(" voxels") => grid.push_str(&format!(" of {pitch} {unit}")),
+            Some(grid) if grid.ends_with(" voxels") => {
+                grid.push_str(&format!(" of {pitch} {unit}"))
+            }
             _ => details.push(format!("Voxels of {pitch} {unit}")),
         }
     }
@@ -220,16 +222,31 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
         .is_some_and(|p| p.available);
     if volume_available {
         let mut modes = row().gap(2.);
-        for (view,title) in [(PlaneKind::Volume,"3D"),(PlaneKind::Axial,"Slice")] {
-            let selected = (kind==PlaneKind::Volume)==(view==PlaneKind::Volume);
-            let mode = el().key(if view==PlaneKind::Volume {"show-volume"} else {"show-slice"}).role("radio").label(title).checked(selected)
-                .focusable(true).focus_ring(1.5,0.,canvas_muted()).h(28.).px(8.).center().radius(4.)
-                .fill(if selected {forest()} else {canvas_bg()})
-                .on_press_tx(move |s:&mut AppState,tx|s.dispatch(UiAction::SetMainView(view),tx))
-                .child(strong(title,11.,canvas_ink()));
-            modes=modes.child(mode);
+        for (view, title) in [(PlaneKind::Volume, "3D"), (PlaneKind::Axial, "Slice")] {
+            let selected = (kind == PlaneKind::Volume) == (view == PlaneKind::Volume);
+            let mode = el()
+                .key(if view == PlaneKind::Volume {
+                    "show-volume"
+                } else {
+                    "show-slice"
+                })
+                .role("radio")
+                .label(title)
+                .checked(selected)
+                .focusable(true)
+                .focus_ring(1.5, 0., canvas_muted())
+                .h(28.)
+                .px(8.)
+                .center()
+                .radius(4.)
+                .fill(if selected { forest() } else { canvas_bg() })
+                .on_press_tx(move |s: &mut AppState, tx| {
+                    s.dispatch(UiAction::SetMainView(view), tx)
+                })
+                .child(strong(title, 11., canvas_ink()));
+            modes = modes.child(mode);
         }
-        toolbar=toolbar.child(modes);
+        toolbar = toolbar.child(modes);
     }
     toolbar
         .child(tinted_icon_button(
@@ -285,7 +302,7 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
 pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) -> El {
     let comparison = matches!(mark, 6 | 7 | 10);
     let info = if comparison {
-        state.model.comparison_planes[usize::from(mark==7)].as_ref()
+        state.model.comparison_planes[usize::from(mark == 7)].as_ref()
     } else {
         state.model.planes.get(&kind)
     };
@@ -299,11 +316,34 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
         .center()
         .fill(canvas_bg())
         .clip_rounded(0.);
-    if !available && interactive && let Some(old) = state.pending_preview_plane() {
-        let update = state.model.preview.as_ref().map(|p| p.centre.map_or_else(|| format!("Updating slice {}…",p.index+1),|c|format!("Updating centre {c:+.2} px…"))).unwrap_or_default();
-        return area.child(el().aspect_fit(old.aspect()).effect(11).fill(canvas_bg())
-            .child(el().w_full().h_full().fill(canvas_bg().alpha(0.45))))
-            .child(label(update,11.,canvas_ink()).padding(7.).fill(canvas_bg()).pin(Some(10.),Some(10.),None,None));
+    if !available
+        && interactive
+        && let Some(old) = state.pending_preview_plane()
+    {
+        let update = state
+            .model
+            .preview
+            .as_ref()
+            .map(|p| {
+                p.centre.map_or_else(
+                    || format!("Updating slice {}…", p.index + 1),
+                    |c| format!("Updating centre {c:+.2} px…"),
+                )
+            })
+            .unwrap_or_default();
+        return area
+            .child(
+                el().aspect_fit(old.aspect())
+                    .effect(11)
+                    .fill(canvas_bg())
+                    .child(el().w_full().h_full().fill(canvas_bg().alpha(0.45))),
+            )
+            .child(
+                label(update, 11., canvas_ink())
+                    .padding(7.)
+                    .fill(canvas_bg())
+                    .pin(Some(10.), Some(10.), None, None),
+            );
     }
     if !available {
         let message = if state.model.preview.is_some() {
@@ -361,7 +401,12 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
         surface = surface.aspect_fit(ratio);
     }
     if comparison {
-        surface = surface.child(cursor_lines(state.ui.compare_cursor, state.ui.display.zoom, state.ui.display.pan, kind));
+        surface = surface.child(cursor_lines(
+            state.ui.compare_cursor,
+            state.ui.display.zoom,
+            state.ui.display.pan,
+            kind,
+        ));
     }
     if !comparison
         && state.model.preview.is_none()
@@ -388,7 +433,8 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
                 }
                 let delta = [drag.dx - s.ui.drag_last[0], drag.dy - s.ui.drag_last[1]];
                 s.ui.drag_last = [drag.dx, drag.dy];
-                if !comparison && kind.axis().is_some()
+                if !comparison
+                    && kind.axis().is_some()
                     && s.ui.inspect_tool != InspectTool::Navigate
                     && tx.button() != PointerButton::Middle
                 {
@@ -421,8 +467,9 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
                         );
                     } else if comparison {
                         s.ui.compare_cursor = std::array::from_fn(|i| {
-                            let pos=[drag.x/drag.w.max(1.),drag.y/drag.h.max(1.)][i];
-                            ((pos-0.5-s.ui.display.pan[i])/s.ui.display.zoom+0.5).clamp(0.,1.)
+                            let pos = [drag.x / drag.w.max(1.), drag.y / drag.h.max(1.)][i];
+                            ((pos - 0.5 - s.ui.display.pan[i]) / s.ui.display.zoom + 0.5)
+                                .clamp(0., 1.)
                         });
                     } else if kind == PlaneKind::Volume {
                         s.dispatch(
@@ -547,9 +594,9 @@ fn crosshair(state: &AppState, kind: PlaneKind, interactive: bool) -> El {
     } else {
         [0.; 2]
     };
-    cursor_lines([u,v],zoom,pan,kind)
+    cursor_lines([u, v], zoom, pan, kind)
 }
-fn cursor_lines([u,v]:[f32;2],zoom:f32,pan:[f32;2],kind:PlaneKind) -> El {
+fn cursor_lines([u, v]: [f32; 2], zoom: f32, pan: [f32; 2], kind: PlaneKind) -> El {
     let u = ((u - 0.5) * zoom + 0.5 + pan[0]) * 100.;
     let v = ((v - 0.5) * zoom + 0.5 + pan[1]) * 100.;
     let tint = axis(kind.axis().unwrap_or(0)).alpha(0.6);
@@ -627,23 +674,39 @@ fn image_footer(state: &AppState, kind: PlaneKind) -> El {
     } else {
         0.
     };
-    col().px(15.).py(7.).fill(canvas_bg()).child(label(if state.ui.workspace==Workspace::Compare {""}else{info.map_or("",|p|p.quality.as_str())},11.,canvas_muted()).truncate()).child(canvas_slider(
-        "image-index",
-        kind.title(),
-        value,
-        &format!("{} / {}", if count > 0 { index + 1 } else { 0 }, count),
-        count > 1,
-        move |f| {
-            let index = (f * count.saturating_sub(1) as f32).round() as usize;
-            if let Some(axis) = kind.axis() {
-                UiAction::SetSlice { axis, index }
-            } else if kind == PlaneKind::Projection {
-                UiAction::SetProjectionIndex(index)
-            } else {
-                UiAction::SetSinogramRow(index)
-            }
-        },
-    ))
+    col()
+        .px(15.)
+        .py(7.)
+        .fill(canvas_bg())
+        .child(
+            label(
+                if state.ui.workspace == Workspace::Compare {
+                    ""
+                } else {
+                    info.map_or("", |p| p.quality.as_str())
+                },
+                11.,
+                canvas_muted(),
+            )
+            .truncate(),
+        )
+        .child(canvas_slider(
+            "image-index",
+            kind.title(),
+            value,
+            &format!("{} / {}", if count > 0 { index + 1 } else { 0 }, count),
+            count > 1,
+            move |f| {
+                let index = (f * count.saturating_sub(1) as f32).round() as usize;
+                if let Some(axis) = kind.axis() {
+                    UiAction::SetSlice { axis, index }
+                } else if kind == PlaneKind::Projection {
+                    UiAction::SetProjectionIndex(index)
+                } else {
+                    UiAction::SetSinogramRow(index)
+                }
+            },
+        ))
 }
 
 fn compare(state: &AppState) -> El {

@@ -375,15 +375,22 @@ pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
         return !matches!(method, "fbp" | "fourier");
     }
     let config = format!("{method}Config");
-    catalog.document()["$defs"].as_object().and_then(|defs| defs.iter().find(|(key, _)| key.eq_ignore_ascii_case(&config)).map(|(_, schema)| schema)).is_none_or(|schema| {
-        schema["properties"]
-            .get(if name == "nonnegative" {
-                "lower_bound"
-            } else {
-                name
-            })
-            .is_some()
-    })
+    catalog.document()["$defs"]
+        .as_object()
+        .and_then(|defs| {
+            defs.iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(&config))
+                .map(|(_, schema)| schema)
+        })
+        .is_none_or(|schema| {
+            schema["properties"]
+                .get(if name == "nonnegative" {
+                    "lower_bound"
+                } else {
+                    name
+                })
+                .is_some()
+        })
 }
 
 pub fn parameters(ui: &UiState, catalog: &SchemaCatalog) -> Result<Value, String> {

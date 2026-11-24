@@ -13,10 +13,7 @@ impl AppState {
     pub(super) fn control_job(&mut self, id: &str, action: &str) -> Result<(), String> {
         if self.local_job(id) {
             if action != "cancel" {
-                return Err(
-                    "Pause is available once computation starts"
-                        .into(),
-                );
+                return Err("Pause is available once computation starts".into());
             }
             self.cancel_local(id);
             if let Some(job) = self.project.as_mut().and_then(|p| p.document.job_mut(id)) {

@@ -833,7 +833,9 @@ fn reopening_uses_the_saved_view_or_centres_the_newest_result() {
     document.assets.push(result.clone());
     document.assets[0].created = result.created + 1;
     document.assets[0].provenance = Some(crate::protocol::Provenance {
-        operation: "open".into(), parameters: json!({}), inputs: vec![],
+        operation: "open".into(),
+        parameters: json!({}),
+        inputs: vec![],
     });
     original.shutdown();
     drop(original);

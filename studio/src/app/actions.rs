@@ -165,7 +165,8 @@ impl AppState {
                 let asset = self
                     .project
                     .as_mut()
-                    .and_then(|p| p.document.asset_mut(id)).filter(|a| a.is_result())
+                    .and_then(|p| p.document.asset_mut(id))
+                    .filter(|a| a.is_result())
                     .ok_or("Select a result to rename.")?;
                 asset.name = name.into();
                 self.ui.rename = None;
@@ -402,7 +403,9 @@ impl AppState {
             }
             UiAction::SetSlice { axis, index } => {
                 if axis < 3 {
-                    let count = if self.ui.workspace == Workspace::Compare && Some(axis) == self.ui.compare_plane.axis() {
+                    let count = if self.ui.workspace == Workspace::Compare
+                        && Some(axis) == self.ui.compare_plane.axis()
+                    {
                         self.model.comparison_count
                     } else {
                         self.slice_count(axis)
@@ -465,11 +468,16 @@ impl AppState {
             UiAction::SetDensity(value) => self.ui.display.density = value.clamp(0.05, 8.),
             UiAction::SetThreshold(value) => self.ui.display.threshold = value.clamp(0., 0.99),
             UiAction::SetLighting(value) => self.ui.display.lighting = value.clamp(0., 1.),
-            UiAction::SwapComparison => std::mem::swap(&mut self.model.compare_left,&mut self.model.compare_right),
-            UiAction::CompareMode(mode) => self.ui.compare_mode=mode,
-            UiAction::ComparePlane(plane) => self.ui.compare_plane=plane,
-            UiAction::SetExportFormat(format) => self.ui.export_format=format,
-            UiAction::RemoveMeasurement(id) => self.model.measurements.retain(|m| m.id!=id || Some(&m.asset)!=self.model.active_asset.as_ref()),
+            UiAction::SwapComparison => {
+                std::mem::swap(&mut self.model.compare_left, &mut self.model.compare_right)
+            }
+            UiAction::CompareMode(mode) => self.ui.compare_mode = mode,
+            UiAction::ComparePlane(plane) => self.ui.compare_plane = plane,
+            UiAction::SetExportFormat(format) => self.ui.export_format = format,
+            UiAction::RemoveMeasurement(id) => self
+                .model
+                .measurements
+                .retain(|m| m.id != id || Some(&m.asset) != self.model.active_asset.as_ref()),
             UiAction::SetCompareLeft(id) => {
                 self.model.compare_left = Some(id);
             }
@@ -507,7 +515,9 @@ impl AppState {
                 self.model.measurements.retain(|m| m.id != "draft");
             }
             UiAction::ClearMeasurements => {
-                self.model.measurements.retain(|m| Some(&m.asset)!=self.model.active_asset.as_ref());
+                self.model
+                    .measurements
+                    .retain(|m| Some(&m.asset) != self.model.active_asset.as_ref());
                 self.mark_dirty();
             }
             UiAction::Undo => {

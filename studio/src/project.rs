@@ -82,7 +82,11 @@ impl Asset {
         }
     }
     pub fn is_result(&self) -> bool {
-        self.parent.is_some() || self.provenance.as_ref().is_some_and(|record| record.operation != "open")
+        self.parent.is_some()
+            || self
+                .provenance
+                .as_ref()
+                .is_some_and(|record| record.operation != "open")
     }
 
     pub fn volume(&self) -> Option<&ArrayDescriptor> {
@@ -619,7 +623,9 @@ impl Project {
             // Keep the actual saved value as the initial choice in either case.
             let workspace = &mut document.workspace;
             if let Some(filter) = workspace.parameters["filter"].as_str() {
-                workspace.draft_choices.insert("filter".into(), filter.into());
+                workspace
+                    .draft_choices
+                    .insert("filter".into(), filter.into());
             }
             document.version = 2;
         }
@@ -820,7 +826,10 @@ mod tests {
         p.document.jobs = vec![sim_job, job];
         p.document.version = 1;
         p.document.workspace.parameters = json!({"method":"fbp", "filter":"hann"});
-        p.document.workspace.draft_choices.insert("filter".into(), String::new());
+        p.document
+            .workspace
+            .draft_choices
+            .insert("filter".into(), String::new());
         p.changed().unwrap();
         p.flush().unwrap();
         drop(p);

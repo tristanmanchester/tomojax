@@ -639,11 +639,18 @@ fn explore(state: &AppState) -> El {
                                     .shrink()
                                     .min_w(0.)
                                     .truncate(),
-                            ).child({
+                            )
+                            .child({
                                 let id = measurement.id.clone();
-                                icon_button(&format!("remove-measurement-{id}"), "Remove measurement", Icon::Close, true, move |s, tx| {
-                                    s.dispatch(UiAction::RemoveMeasurement(id.clone()), tx)
-                                })
+                                icon_button(
+                                    &format!("remove-measurement-{id}"),
+                                    "Remove measurement",
+                                    Icon::Close,
+                                    true,
+                                    move |s, tx| {
+                                        s.dispatch(UiAction::RemoveMeasurement(id.clone()), tx)
+                                    },
+                                )
                             }),
                     )
                     .child(
@@ -661,7 +668,12 @@ fn explore(state: &AppState) -> El {
                     ),
             );
         }
-        if state.model.measurements.iter().any(|m| Some(&m.asset)==state.model.active_asset.as_ref()) {
+        if state
+            .model
+            .measurements
+            .iter()
+            .any(|m| Some(&m.asset) == state.model.active_asset.as_ref())
+        {
             measure = measure.child(
                 action_button(
                     "clear-measurements",
@@ -719,14 +731,7 @@ fn display(state: &AppState) -> El {
         body = body.child(histogram(plane));
     }
     if let Some(plane) = info.filter(|p| !p.units.is_empty()) {
-        body = body.child(
-            label(
-                format!("Unit: {}", unit_name(&plane.units)),
-                11.,
-                muted(),
-            )
-            .wrap(),
-        );
+        body = body.child(label(format!("Unit: {}", unit_name(&plane.units)), 11., muted()).wrap());
     }
     body = body
         .child(
