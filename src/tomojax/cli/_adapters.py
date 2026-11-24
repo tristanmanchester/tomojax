@@ -312,7 +312,7 @@ class Admission:
             validated_views_per_batch,
         )
 
-        raw = isinstance(operation, op.CorrectionPreview | op.ReconstructSlabs)
+        raw = isinstance(operation, op.ReconstructSlabs)
         if isinstance(operation.source, op.PathInput) and not raw:
             raw = is_raw_input(operation.source.path)
         item = source(
@@ -354,6 +354,15 @@ class Admission:
         settings = arguments(operation, self.context, omit=("source", "rows"))
         steps = settings.pop("corrections")
         validated_views_per_batch(operation.views_per_batch)
+        if isinstance(item, tj.Scan) and isinstance(operation, op.CorrectionPreview):
+            # A scan's band bins after its line-integral steps, as Scan.binned does.
+            check_scan_steps(steps)
+            if operation.epsilon != 1e-6:
+                raise InvalidParameter("epsilon", "epsilon applies to raw frames")
+            check_binning(operation.binning, *item.projections.shape[1:])
+            check_rows(operation.rows, item.projections.shape[1], operation.binning)
+            settings.pop("epsilon", None)
+            return partial(correction_product, operation, item, steps, settings, self.context)
         if isinstance(item, tj.Scan):
             check_scan_steps(steps)
             if operation.epsilon != 1e-6 or operation.binning != 1:

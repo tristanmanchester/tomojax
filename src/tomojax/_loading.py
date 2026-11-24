@@ -23,7 +23,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, views_of
-from tomojax._loading_geometry import frame_geometry
+from tomojax._loading_geometry import centre_of, centred, frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
     Scan,
@@ -176,6 +176,7 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Scan:
+    centre, declared = centre_of(declared)
     with discard_failed_outputs() as outputs:
         progress.check_cancelled()
         file = Path(path)
@@ -200,7 +201,8 @@ def load_scan_with_declaration(
             found = _line_integrals(file, **paths)
             if found is not None:
                 outputs.own(found[0].projections)
-                return _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+                scan = _record_scan(file, *found, apply_poses=apply_poses, **overrides)
+                return centred(scan, centre)
         frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
         fields = _with_fields(
             frames,
@@ -211,7 +213,7 @@ def load_scan_with_declaration(
         )
         scan = _corrected_on_load(fields, file)
         outputs.own(scan.projections)
-        return scan
+        return centred(scan, centre)
 
 
 def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset, np.ndarray] | None:
@@ -721,6 +723,7 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     declared: DeclaredGeometry | None = None,
 ) -> Frames:
+    centre, declared = centre_of(declared)
     with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
         file = Path(path)
         if not file.exists():
@@ -746,15 +749,14 @@ def load_raw_frames_with_declaration(
             **overrides,
         )
         outputs.own(frames.counts)
-        return _require_calibration(
-            _with_fields(
-                frames,
-                flats=flats,
-                darks=darks,
-                exposure_times=exposure_times,
-                flat_exposure_times=flat_exposure_times,
-            )
+        fields = _with_fields(
+            frames,
+            flats=flats,
+            darks=darks,
+            exposure_times=exposure_times,
+            flat_exposure_times=flat_exposure_times,
         )
+        return centred(_require_calibration(fields), centre)
 
 
 def _frames(

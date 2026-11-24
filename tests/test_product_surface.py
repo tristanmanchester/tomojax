@@ -96,7 +96,7 @@ def test_every_command_takes_input_and_a_guarded_output(
             assert "INPUT" in usage
         if command != "inspect":
             assert "-o OUTPUT" in usage
-        assert "--force" in usage
+        assert "--force" in captured.out
 
 
 def test_help_names_only_the_settings_route_a_command_has(
@@ -219,7 +219,7 @@ def test_config_files_name_the_new_key_for_a_retired_one(
         )
     assert exc.value.code == 2
     assert "config key 'lambda_tv'" in (err := capsys.readouterr().err)
-    assert err.rstrip().endswith("was renamed 'tv_weight'")
+    assert "was renamed 'tv_weight'" in err
 
 
 def test_recon_help_does_not_import_jax() -> None:

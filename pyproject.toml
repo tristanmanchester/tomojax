@@ -33,6 +33,9 @@ dependencies = [
     "olefile>=0.47,<1",
     "scipy>=1.16.1,<2",
     "msgspec>=0.19,<1",
+    "rich>=15,<16",
+    "rich-argparse>=1.7,<2",
+    "pillow>=11",
 ]
 
 [project.optional-dependencies]
@@ -52,7 +55,7 @@ spectra = [
 ]
 
 [project.scripts]
-tomojax = "tomojax.cli.main:main"
+tomojax = "tomojax.cli.main:run"
 
 [project.urls]
 Repository = "https://github.com/tristanmanchester/tomojax"

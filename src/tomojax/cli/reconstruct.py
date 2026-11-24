@@ -10,26 +10,24 @@ options are; and saves the result with :func:`tomojax.save`.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass, fields, replace
+from contextlib import nullcontext
+from dataclasses import dataclass, fields
 from functools import partial
-import json
 import logging
 from pathlib import Path
 import sys
 from typing import TYPE_CHECKING, Any, cast, get_args
 
-import msgspec
 import numpy as np
 
 from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
-    region_grid,
-    zero_outside_cylinder,
 )
 from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
 
 if TYPE_CHECKING:
@@ -37,14 +35,18 @@ if TYPE_CHECKING:
 
     from tomojax import Reconstruction, Scan
     from tomojax._workflow import Region
+    from tomojax.cli._watch import WatchDirectory
     from tomojax.recon.api import MethodConfig
     from tomojax.wire.progress import Result
+
+LOG = logging.getLogger(__name__)
 
 _METHODS = get_args(Method.__value__)[1:]
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
 _NOT_SETTINGS = frozenset({"support", "devices"})
+
 
 _PUBLIC = (
     "--method",
@@ -60,6 +62,7 @@ _PUBLIC = (
     "--include-scan",
     "--preview",
     "--manifest",
+    "--watch-dir",
     "--progress",
     "--dry-run",
 )
@@ -80,7 +83,7 @@ _EPILOG = (
 )
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser() -> ProgressParser:
     """The ``tomojax reconstruct`` parser; expert settings are the methods' configuration fields."""
     p = ProgressParser(
         prog="tomojax reconstruct",
@@ -101,7 +104,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     add_force(p)
     _ = p.add_argument(
-        "--dry-run", action="store_true", help="Print the reconstruction plan as JSON"
+        "--dry-run", action="store_true", help="Print the plan (method, grid, memory) and stop"
     )
     add_config(p, settings=_settings)
     _ = p.add_argument(
@@ -179,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Also write a JSON record of the run (inputs, settings, versions)",
     )
-    add_progress(p)
+    add_progress(p, watch_dir=True)
     hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
 
@@ -261,7 +264,7 @@ class _Run:
 
     def validate(
         self,
-        parser: argparse.ArgumentParser,
+        parser: ProgressParser,
         args: argparse.Namespace,
         metadata: Mapping[str, object],
     ) -> MethodConfig | None:
@@ -338,61 +341,59 @@ def _write_manifest(
     }
     manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
     save_manifest(str(run.manifest), manifest)
-    logging.info("Saved reproducibility manifest to %s", run.manifest)
+    LOG.info("Saved reproducibility manifest to %s", run.manifest)
 
 
 def main() -> int:
     """Run ``tomojax reconstruct``."""
     parser = build_parser()
     args, metadata = parse_args_with_config(parser)
-    if args.dry_run and args.progress == "json":
-        parser.error("--dry-run cannot write a plan with --progress json")
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
-    return run_command("reconstruct", args.progress, partial(_run, parser, args, metadata))
+    watch = watch_directory(args.watch_dir, working=False)
+    operation = partial(_run, parser, args, metadata, watch)
+    return run_command("reconstruct", args.progress, operation, watch=watch)
 
 
 def _run(
-    parser: argparse.ArgumentParser, args: argparse.Namespace, metadata: Mapping[str, object]
+    parser: ProgressParser,
+    args: argparse.Namespace,
+    metadata: Mapping[str, object],
+    watch: WatchDirectory | None,
 ) -> Result | None:
     import tomojax as tj
     from tomojax import progress
     from tomojax.cli._runtime import report_automatic
-    from tomojax.core import log_jax_env, setup_logging
 
     run = _Run.of(args)
     config = run.validate(parser, args, metadata)
-    setup_logging()
-    log_jax_env()
     progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
     progress.check_cancelled()
-    keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
-    grid, cylinder = None, None
-    if run.grid is not None:
-        shape = (run.grid[2], run.grid[1], run.grid[0])
-        grid, cylinder = region_grid(scan, run.region, shape=shape)
-    elif run.region is not None:
-        keywords["region"] = run.region
-    if args.dry_run:
-        from tomojax._planning import resolve_reconstruction
-        from tomojax.cli._plans import plan_product
+    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow import reconstruct_resolved
+    from tomojax.cli._plans import announce, dry_run, plan_product
 
-        work = resolve_reconstruction(scan, run.method, grid=grid, config=config, **keywords)
-        print(json.dumps(msgspec.to_builtins(plan_product(scan, work)), indent=2))
-        return None
+    keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
+    shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
+    work = resolve_reconstruction(
+        scan, run.method, region=run.region, shape=shape, config=config, **keywords
+    )
+    if args.dry_run:
+        return dry_run(args.progress, run.data, plan_product(scan, work), scan, work)
+    used = tuple(f for f, v in (("--region", run.region), ("--grid", run.grid)) if v is not None)
+    _ = announce("reconstruct", scan, work, used=used)
     assert run.out is not None
-    result = tj.reconstruct(scan, run.method, grid=grid, config=config, **keywords)
-    if cylinder is not None:
-        result = replace(result, volume=zero_outside_cylinder(result.volume, result.grid, cylinder))
+    with progress.previews() if watch is not None else nullcontext():
+        result = reconstruct_resolved(work)
     report_automatic(result.info)
     source = scan.source
     if (
         source is not None
         and source.geometry_metadata.get("detector_center_status") == "not_recorded"
     ):
-        logging.warning(
+        LOG.warning(
             "%s records no rotation centre; the detector middle was used. "
             "Fit one with tomojax align --fit center before reconstructing.",
             run.data,
@@ -400,10 +401,11 @@ def _run(
     progress.check_cancelled()
     tj.save(run.out, result, include_scan=run.include_scan)
     if run.preview is not None:
-        from tomojax.recon.quicklook import save_quicklook_png
+        from tomojax.cli._images import save_volume_plane
 
         progress.check_cancelled()
-        _ = save_quicklook_png(run.preview, result.volume)
+        label = f"z plane · {result.method} · {Path(run.out).name}"
+        _ = save_volume_plane(Path(run.preview), result.volume, result.grid, "z", label)
     if run.manifest is not None:
         progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")

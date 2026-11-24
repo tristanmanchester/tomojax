@@ -19,11 +19,11 @@ def workflow_steps(root: Path) -> list[list[str]]:
 
 
 def verify_workflow_outputs(root: Path) -> None:
-    """Require both datasets and the three slice previews (the reconstruction holds no scan)."""
+    """Require both datasets and the three central slice previews of the 32-voxel volume."""
     expected = [
         root / "synthetic.nxs",
         root / "recon.nxs",
-        *(root / "previews" / f"{name}.png" for name in ("slice_x", "slice_y", "slice_z")),
+        *(root / "previews" / f"slice_{axis}_16.png" for axis in "xyz"),
     ]
     missing = [str(path) for path in expected if not path.is_file() or not path.stat().st_size]
     if missing:

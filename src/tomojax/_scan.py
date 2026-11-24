@@ -859,6 +859,26 @@ def frame_output_grid(
     return rebuild(geometry, grid=grid)
 
 
+def shifted_center(geometry: ScanGeometry, du: float, dv: float = 0.0) -> ScanGeometry:
+    """``geometry`` with every detector moved by ``(du, dv)`` in its own plane.
+
+    Segments and wrapped geometries move together, so their relative offsets,
+    poses and panel orientations are kept.
+    """
+    from tomojax.geometry import ConeSegments
+
+    if isinstance(geometry, ConeSegments):
+        segments = tuple(shifted_center(part, du, dv) for part in geometry.segments)
+        return replace(geometry, segments=segments)
+    if not is_dataclass(geometry) or isinstance(geometry, type):
+        raise TypeError(f"cannot shift a {type(geometry).__name__} geometry")
+    if base := getattr(geometry, "base", None):
+        return replace(geometry, base=shifted_center(base, du, dv))
+    detector = geometry.detector
+    u, v = detector.center
+    return replace(geometry, detector=replace(detector, center=(u + du, v + dv)))
+
+
 def binned_geometry(geometry: ScanGeometry, factor: int) -> ScanGeometry:
     """The geometry of detector block means, retaining physical pixel positions."""
     return rebuild(geometry, detector=lambda d: _binned_detector(d, factor))

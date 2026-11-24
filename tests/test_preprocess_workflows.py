@@ -186,6 +186,6 @@ def test_inspect_lists_the_corrections(tmp_path: Path, capsys: pytest.CaptureFix
     assert _preprocess(tmp_path / "raw.nxs", "-o", tmp_path / "scan.nxs") == 0
     _ = capsys.readouterr()
     main(["inspect", str(tmp_path / "scan.nxs")])
-    assert "Corrections: flat_dark(flats=1, darks=1, flat_sets=1), log(epsilon=1e-06)" in (
+    assert "applied: flat_dark(flats=1, darks=1, flat_sets=1), log(epsilon=1e-06)" in (
         capsys.readouterr().out
     )
