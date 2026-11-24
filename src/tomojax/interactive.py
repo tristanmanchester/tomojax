@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, is_dataclass, replace
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
@@ -16,11 +16,11 @@ from tomojax._planning import (
     resolve_reconstruction,
 )
 from tomojax._region import RegionEstimate, estimate_region
-from tomojax._scan import Scan, binned_geometry
+from tomojax._scan import Scan, binned_geometry, shifted_center
 from tomojax._workflow import reconstruct, reconstruct_resolved
 from tomojax.core.registration import planes, recorded_length_unit
 from tomojax.errors import InvalidParameter
-from tomojax.geometry import ConeSegments, grid_volume_origin
+from tomojax.geometry import grid_volume_origin
 from tomojax.recon import FBPConfig
 from tomojax.recon.api import AngularCoverageError, axial_fbp_plane
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from tomojax._loading import Frames
     from tomojax._parameters import Method, RegionName
     from tomojax.corrections import Step
-    from tomojax.geometry import Detector, Grid, ScanGeometry
+    from tomojax.geometry import Detector, Grid
 
 
 __all__ = [
@@ -94,23 +94,6 @@ def reconstruct_slice(
     return resolved_slice(plan, axis, index)
 
 
-def _shift_center(geometry: ScanGeometry, shift: float) -> ScanGeometry:
-    """Translate each calibrated detector horizontally, keeping poses and panel orientations."""
-    if isinstance(geometry, ConeSegments):
-        return replace(
-            geometry, segments=tuple(_shift_center(part, shift) for part in geometry.segments)
-        )
-    if not is_dataclass(geometry) or isinstance(geometry, type):
-        raise TypeError(f"cannot shift a {type(geometry).__name__} geometry")
-    if base := getattr(geometry, "base", None):
-        return replace(geometry, base=_shift_center(base, shift))
-    detector = geometry.detector
-    return replace(
-        geometry,
-        detector=replace(detector, center=(detector.center[0] + shift, detector.center[1])),
-    )
-
-
 def centre_sweep(
     scan: Scan,
     axis: Axis,
@@ -171,7 +154,7 @@ def resolve_sweep(
     for i, centre in enumerate(centres):
         progress.check_cancelled()
         shift = float(centre) * scan.detector.du - scan.detector.center[0]
-        shifted = replace(scan, geometry=_shift_center(scan.geometry, shift))
+        shifted = replace(scan, geometry=shifted_center(scan.geometry, shift))
         try:
             plan = resolve_reconstruction(
                 shifted, method, grid=fixed_grid, plane=(axis, index), **options
