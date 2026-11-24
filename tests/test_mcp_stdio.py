@@ -843,15 +843,27 @@ def test_view_acquisition_requires_opened_member(tmp_path):
             np.testing.assert_allclose(profile["structuredContent"]["profile"], expected, rtol=1e-6)
 
 
-def test_inspect_saved_npz_with_and_without_preview(tmp_path):
+def _preview(reply):
     import base64
     from io import BytesIO
 
     import numpy as np
     from PIL import Image
 
-    # check-public-imports: allow-private
-    from tomojax.cli._images import limits, to_uint8
+    with Image.open(BytesIO(base64.b64decode(reply["content"][1]["data"]))) as image:
+        return np.asarray(image)
+
+
+def _shows(image, pixels):
+    """The grey image is ``pixels`` on a linear scale (clipped at its extremes)."""
+    import numpy as np
+
+    assert image.shape == pixels.shape
+    assert np.corrcoef(image.ravel(), np.asarray(pixels, float).ravel())[0, 1] > 0.99
+
+
+def test_inspect_saved_npz_with_and_without_preview(tmp_path):
+    import numpy as np
 
     sim = tj.simulate(size=8, n_views=12)
     tj.save(tmp_path / "scan.npz", sim.scan)
@@ -872,10 +884,27 @@ def test_inspect_saved_npz_with_and_without_preview(tmp_path):
                     ["text", "image"] if preview else ["text"]
                 )
                 if preview:
-                    pixels = np.asarray(
-                        sim.scan.projections[6] if name == "scan" else sim.phantom[4]
-                    )
-                    with Image.open(
-                        BytesIO(base64.b64decode(reply["content"][1]["data"]))
-                    ) as image:
-                        np.testing.assert_equal(np.asarray(image), to_uint8(pixels, limits(pixels)))
+                    pixels = sim.scan.projections[6] if name == "scan" else sim.phantom[4]
+                    _shows(_preview(reply), np.asarray(pixels))
+
+
+@pytest.mark.parametrize("suffix", [".nxs", ".mat"])
+def test_inspect_preview_shows_the_central_sample_plane(tmp_path, suffix):
+    import h5py
+    import numpy as np
+
+    from tests.test_psi_reader import _write_v73
+
+    path = tmp_path / ("scan" + suffix)
+    rows = 1 if suffix == ".nxs" else 3  # a single-row sinogram, and a PSI phase stack
+    planes = np.arange(5 * rows * 7, dtype=np.float32).reshape(5, rows, 7) ** 2
+    if suffix == ".mat":
+        _write_v73(path, planes, np.arange(5), 1e-6)
+    else:
+        with h5py.File(path, "w") as file:
+            file["entry/instrument/detector/data"] = planes[:, 0]
+            file["entry/sample/rotation_angle"] = np.arange(5)
+    with connection(tmp_path) as c:
+        reply = c.call("inspect", path=path.name, preview=True)
+        assert not reply["isError"], reply
+        _shows(_preview(reply), planes[2])

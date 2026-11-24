@@ -8,6 +8,20 @@ and export scans, see results as labelled slice panels, and run Python against t
 loaded data. Install it with the `mcp` extra. See [Use TomoJAX from an AI
 agent](docs/mcp.md).
 
+`tomojax studio` opens TomoJAX Studio, a native workspace for tomography projects that
+runs every operation through the worker and shows slices, sinograms and volume renderings
+while jobs run. It is built from `studio/` with Rust; see [studio/README.md](studio/README.md).
+
+The `tomojax` command prints short usage errors with hints, nested live progress, and a
+one-line plan as `reconstruct` and `align` start. `--dry-run` prints the plan as text (JSON
+with `--progress json`), and `--watch-dir DIR` rewrites PNGs of the central planes at each
+checkpoint of a solve. `inspect --preview-dir` reconstructs a scan's slices (`--slice
+AXIS=INDEX`, written as `slice_z_200.png`) and sweeps the detector centre (`--centers`);
+`correct --preview` draws a row band's sinograms before and after the steps;
+`--detector-center` moves every detector of a segmented scan alike.
+`tj.interactive.reconstruct_slices` makes several planes, sharing one full reconstruction
+when any plane needs it.
+
 New TomoJAX NPZ files store metadata as JSON. For safety, the reader rejects
 pickled object arrays, so it can no longer open older NPZ files with pickled
 metadata. To convert one, load it with the previous TomoJAX release and save

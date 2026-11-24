@@ -6,7 +6,7 @@
 
 - Commands that produce a file (`correct`, `reconstruct`, `align`, `export`) take
   `INPUT -o OUTPUT [options]`.
-- `inspect INPUT [--json] [--preview-dir DIR [--slice AXIS=INDEX] [--centres SPEC]]`
+- `inspect INPUT [--json] [--preview-dir DIR [--slice AXIS=INDEX] [--centers SPEC]]`
   reports on a dataset without `-o`.
 - `simulate -o OUTPUT [options]` generates a synthetic scan without an input.
 - An existing output is refused unless `--force` is given, and an output may never
@@ -42,10 +42,10 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   `slice_<axis>_<index>.png`. A saved reconstruction's slices are read from the file
   (its three central planes by default); a scan's are reconstructed (its central z
   plane by default). `--slice AXIS=INDEX` chooses planes and can be repeated.
-  `--centres SPEC` sweeps the detector centre on a scan: it reconstructs the plane of
+  `--centers SPEC` sweeps the detector centre on a scan: it reconstructs the plane of
   the first `--slice` (or the central z plane) at each centre of `START:STOP:STEP`
   or a comma list, in pixels from the detector middle, and writes one image per
-  candidate and a contact sheet, `centre_sweep.png`. The report lists each candidate
+  candidate and a contact sheet, `center_sweep.png`. The report lists each candidate
   with the `U` to pass to `tomojax correct --detector-center U V`.
 - `correct`: import raw acquisitions or datasets, supply missing metadata (`--flats`,
   `--darks`, `--angles`, `--pixel-size`, `--detector-center`, `--geometry`, `--tilt`
@@ -109,8 +109,8 @@ as `slice_z_256.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).
 To judge the centre by eye instead, sweep it and look at the contact sheet:
 
 ```bash
-tomojax inspect scan.h5 --preview-dir sweep --centres -20:20:2
-tomojax correct scan.h5 -o centred.nxs --detector-center U V   # U and V as listed
+tomojax inspect scan.h5 --preview-dir sweep --centers -20:20:2
+tomojax correct scan.h5 -o centered.nxs --detector-center U V   # U and V as listed
 ```
 
 ## Follow or cancel a command
