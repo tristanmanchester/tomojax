@@ -404,6 +404,9 @@ impl AppState {
                             self.centre_sinogram = true;
                             self.mark_dirty();
                             self.start_metadata(&id);
+                            // The previous asset's pixels don't belong to the new one.
+                            self.image_key.clear();
+                            self.refresh_images();
                         }
                     }
                     Err(error) => self.model.error = Some(error),
@@ -819,6 +822,9 @@ impl AppState {
         self.set_operation("open", None);
         self.mark_dirty();
         self.refresh_model();
+        // The previous asset's pixels don't belong to the new one.
+        self.image_key.clear();
+        self.refresh_images();
         for id in metadata {
             self.start_metadata(&id);
         }

@@ -612,6 +612,24 @@ fn export_offers_what_each_kind_of_result_can_be_written_as() {
 }
 
 #[test]
+fn importing_a_scan_clears_the_previous_scans_pixels() {
+    let directory = tempfile::tempdir().unwrap();
+    let volume = ramp_volume(directory.path(), "volume", 3);
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    state.model.active_asset = Some(volume.id.clone());
+    state.project.as_mut().unwrap().document.assets = vec![volume];
+    state.ui.main_view = PlaneKind::Axial;
+    state.refresh_images();
+    drive(&mut state, |state| state.imaging.plane(1).is_some());
+    let tiffs = directory.path().join("tiffs");
+    std::fs::create_dir(&tiffs).unwrap();
+    std::fs::write(tiffs.join("view_0001.tif"), b"not yet inspected").unwrap();
+    state.import_paths(vec![tiffs]);
+    assert!(state.imaging.plane(1).is_none());
+}
+
+#[test]
 fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();

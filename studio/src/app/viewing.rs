@@ -263,7 +263,9 @@ impl AppState {
         self.model.comparison_planes =
             [6, 7].map(|slot| self.imaging.plane(slot).map(|plane| plane_view(plane)));
         for slot in [6, 7] {
-            if let ImagingStatus::Error(error) = self.imaging.status(slot) {
+            if self.ui.workspace == Workspace::Compare
+                && let ImagingStatus::Error(error) = self.imaging.status(slot)
+            {
                 self.model.error = Some(error.clone());
             }
         }

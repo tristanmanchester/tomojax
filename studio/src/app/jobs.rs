@@ -666,22 +666,22 @@ impl AppState {
                     .filter(|running| running.job == job.id)
             })
             .flatten()
-            .and_then(|running| {
-                let products: Vec<_> = running.products.iter().collect();
-                if job
-                    .parameters
-                    .get("projections")
-                    .is_some_and(|v| !v.is_null())
-                {
-                    projection_geometry(&products, "projections")
-                } else {
-                    array_member(products.iter().copied(), "projections").map(|array| array.index)
-                }
-            })
-            .and_then(|index| job.inputs.get(index));
-        asset.parent = source
-            .or(job.inputs.first())
-            .map(|input| input.asset.clone());
+            .and_then(|running| array_member(running.products.iter(), "projections"))
+            .and_then(|array| job.inputs.get(array.index));
+        // Projections given by reference belong to no input, so the result has no
+        // parent whose projections Explore would show beside it.
+        let referenced = job.operation == "backproject"
+            && job
+                .parameters
+                .get("projections")
+                .is_some_and(|v| !v.is_null());
+        asset.parent = if referenced {
+            None
+        } else {
+            source
+                .or(job.inputs.first())
+                .map(|input| input.asset.clone())
+        };
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
                 self.project
