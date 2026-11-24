@@ -108,6 +108,17 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     };
     let image_key = "/entry/instrument/detector/image_key";
     let key_found = file.link_exists(image_key);
+    // NXtomo image keys mark sample (0), flat (1) and dark (2) frames; the keys are
+    // one small integer per frame.
+    let sample_count = if key_found {
+        let keys = file
+            .dataset(image_key)
+            .and_then(|keys| keys.read_raw::<i64>())
+            .map_err(|error| error.to_string())?;
+        Some(keys.iter().filter(|&&key| key == 0).count())
+    } else {
+        None
+    };
     let flat_found = file.link_exists("/entry/instrument/detector/data_white");
     let dark_found = file.link_exists("/entry/instrument/detector/data_dark");
     let tomojax_grid = entry
@@ -120,10 +131,13 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":geometry.is_object(),"meta_keys":geometry.as_object().map(|meta|meta.keys().collect::<Vec<_>>()).unwrap_or_default()},
         "detector_metadata":{"found":detector.is_object(),"nu":detector.get("nu"),"nv":detector.get("nv"),"du":detector.get("du"),"dv":detector.get("dv"),"center":detector.get("det_center")},
         "flats_darks":{"image_key_found":key_found,"image_key_path":if key_found{Some(image_key)}else{None},
-            "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None},"status":"Metadata only; image-key values have not been read"},
+            "sample_count":sample_count,
+            "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
         "alignment":{"found":file.link_exists("/entry/processing/tomojax/align"),"params_found":file.link_exists("/entry/processing/tomojax/align/thetas")}});
     let mut kind = suggested_kind(&report).to_owned();
-    if kind == "scan" && !(tomojax_grid && detector.is_object()) {
+    let interleaved = sample_count
+        .is_some_and(|samples| report["projection"]["n_views"].as_u64() != Some(samples as u64));
+    if kind == "scan" && (interleaved || !(tomojax_grid && detector.is_object())) {
         kind = "frames".into();
     }
     let mut arrays = projection_arrays(&report, path)?;
@@ -727,6 +741,36 @@ mod tests {
             string_attribute(&angles, "units").unwrap().as_deref(),
             Some("degree")
         );
+    }
+
+    #[test]
+    fn header_import_does_not_show_flats_and_darks_as_views() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("raw.nxs");
+        {
+            let file = hdf5::File::create(&path).unwrap();
+            let detector = file
+                .create_group("entry")
+                .unwrap()
+                .create_group("instrument")
+                .unwrap()
+                .create_group("detector")
+                .unwrap();
+            detector
+                .new_dataset::<u16>()
+                .shape((4, 2, 3))
+                .create("data")
+                .unwrap();
+            detector
+                .new_dataset_builder()
+                .with_data(&[0i32, 1, 2, 0])
+                .create("image_key")
+                .unwrap();
+        }
+        let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "frames");
+        assert_eq!(report["flats_darks"]["sample_count"], 2);
+        assert!(!arrays.contains_key("projections"));
     }
 
     #[test]

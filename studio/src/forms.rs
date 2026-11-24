@@ -124,6 +124,15 @@ fn scalar_schema(schema: &Value) -> &Value {
     schema
 }
 
+/// Whether a schema, or one of its alternatives, is an array.
+fn accepts_array(schema: &Value) -> bool {
+    schema.get("type").and_then(Value::as_str) == Some("array")
+        || schema
+            .get("anyOf")
+            .and_then(Value::as_array)
+            .is_some_and(|alternatives| alternatives.iter().any(accepts_array))
+}
+
 fn label(key: &str) -> String {
     match key {
         "tv_weight" => "TV regularisation".into(),
@@ -465,7 +474,11 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
                 format!("{} needs an integer", label(&p.name)),
             ));
         }
-        if ty == "number" && !value.is_number() {
+        // A scalar-or-pair field (a detector pixel size) also takes [u, v].
+        let pair = value.as_array().is_some_and(|items| {
+            items.len() == 2 && items.iter().all(Value::is_number) && accepts_array(&p.schema)
+        });
+        if ty == "number" && !value.is_number() && !pair {
             return Err(DraftError::new(
                 &p.name,
                 format!("{} needs a number", label(&p.name)),
@@ -599,6 +612,33 @@ mod tests {
             parameters_detailed(&ui, &catalog).unwrap_err().path,
             "corrections"
         );
+    }
+
+    #[test]
+    fn a_scalar_or_pair_field_takes_either() {
+        let catalog = SchemaCatalog::new(
+            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        initialise(&mut ui, &catalog, "open", None);
+        ui.parameter_choices.insert("kind".into(), "frames".into());
+        for (text, expected) in [
+            ("0.5", Some(serde_json::json!(0.5))),
+            ("[0.5, 0.75]", Some(serde_json::json!([0.5, 0.75]))),
+            ("[1, 2, 3]", None),
+        ] {
+            ui.parameter_edits
+                .get_mut("pixel_size")
+                .unwrap()
+                .replace_text(text);
+            let parameters = parameters_detailed(&ui, &catalog);
+            match expected {
+                Some(value) => assert_eq!(parameters.unwrap()["pixel_size"], value, "{text}"),
+                None => assert_eq!(parameters.unwrap_err().path, "pixel_size", "{text}"),
+            }
+        }
     }
 
     #[test]

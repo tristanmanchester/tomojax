@@ -469,12 +469,27 @@ impl AppState {
                         .and_then(|p| p.document.jobs.iter().find(|j| j.id == job))
                         .and_then(|j| j.inputs.first())
                         .cloned();
+                    let root = self.project.as_ref().map(|p| p.root.clone());
                     if let Some(input) = input
+                        && let Some(root) = root
                         && let Some(asset) = self
                             .project
                             .as_mut()
                             .and_then(|p| p.document.asset_mut(&input.asset))
                     {
+                        // The full inspection knows which stored frames are sample
+                        // views, which the header reader may not.
+                        if let Ok(arrays) = metadata::inspection_arrays(report, &input.path) {
+                            match arrays.get("projections").cloned() {
+                                Some(mut projections) => {
+                                    projections.relative_to(&root);
+                                    asset.arrays.insert("projections".into(), projections);
+                                }
+                                None => {
+                                    asset.arrays.remove("projections");
+                                }
+                            }
+                        }
                         asset.inspection = report.clone();
                         asset.issue = report
                             .get("issues")
@@ -488,7 +503,16 @@ impl AppState {
                             });
                     }
                     self.complete_job(&job, None);
-                } else if matches!(output.value, Product::Frames { .. }) {
+                } else if matches!(output.value, Product::Frames { .. })
+                    && self.project.as_ref().is_some_and(|p| {
+                        p.document
+                            .jobs
+                            .iter()
+                            .any(|j| j.id == job && j.operation == "open")
+                    })
+                {
+                    // Open & calibrate records its settings on the source asset;
+                    // frames from crop or view selection are saved as new results.
                     let captured = self
                         .project
                         .as_ref()
