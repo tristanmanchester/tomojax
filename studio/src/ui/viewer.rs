@@ -412,7 +412,7 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
     if !available {
         let message = if state.model.preview.is_some() {
             "Waiting for preview…"
-        } else if state.model.render_loading {
+        } else if state.model.render_loading || (comparison && info.is_some()) {
             "Loading image…"
         } else if state.model.active().is_some_and(|a| a.missing) {
             "Source not found"

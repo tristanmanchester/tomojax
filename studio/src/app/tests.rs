@@ -419,7 +419,9 @@ fn header_metadata_keeps_worker_registered_arrays() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    // A corrections result, registered by the worker.
     let mut result = ramp_volume(directory.path(), "corrected", 2);
+    result.parent = Some("source-scan".into());
     let mut authoritative = result.arrays["volume"].clone();
     authoritative.domain = "line_integrals".into();
     result
@@ -442,7 +444,6 @@ fn header_metadata_keeps_worker_registered_arrays() {
     let project = state.project.as_mut().unwrap();
     let asset = project.document.asset_mut(&id).unwrap();
     asset.kind = "scan".into();
-    asset.parent = Some("source-scan".into());
     state.local_event(LocalEvent::Metadata {
         asset: id.clone(),
         result: Ok(Some((
@@ -630,9 +631,63 @@ fn importing_a_scan_clears_the_previous_scans_pixels() {
 }
 
 #[test]
-fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
+fn a_copied_import_opens_with_its_own_kind_and_a_fresh_window() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    // The previous asset: a reconstruction viewed through a narrow window.
+    let mut previous = ramp_volume(directory.path(), "previous", 2);
+    previous.kind = "reconstruction".into();
+    let previous_id = previous.id.clone();
+    state
+        .project
+        .as_mut()
+        .unwrap()
+        .document
+        .assets
+        .push(previous);
+    state.model.active_asset = Some(previous_id);
+    state.set_operation("open", None);
+    assert_eq!(state.ui.parameter_choices["kind"], "reconstruction");
+    state.applied_window = Some([0., 0.01]);
+    let copy = directory.path().join("copied.nxs");
+    std::fs::write(&copy, b"copied scan").unwrap();
+    let mut scan = Asset::input(copy.clone(), true);
+    scan.kind = "scan".into();
+    let id = scan.id.clone();
+    state.local_event(LocalEvent::Copied {
+        asset: scan,
+        result: Ok(copy),
+    });
+    assert_eq!(state.model.active_asset.as_deref(), Some(id.as_str()));
+    assert_eq!(state.applied_window, None);
+    assert_eq!(state.ui.parameter_choices["kind"], "scan");
+}
+
+#[test]
+fn view_undo_stays_with_its_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("first"), true)
+        .unwrap();
+    let context = state.capture_workspace();
+    state.view_history.push(context);
+    state
+        .open_project(&directory.path().join("second"), true)
+        .unwrap();
+    assert!(state.view_history.is_empty());
+}
+
+#[test]
+fn projection_roles_name_the_geometry_scan_and_the_array_input() {
+    use super::projection::ProjectionRoles;
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
+    let member = |handle: &str, member: &str| crate::protocol::Storage::Member {
+        handle: handle.into(),
+        member: member.into(),
+    };
     let selected = Product::Projections {
         projections: saved.clone(),
     };
@@ -641,61 +696,46 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
         projections: saved.clone(),
     };
     let (first, second) = (scan("first"), scan("second"));
-    let chosen = |products: &[&Product]| {
-        jobs::array_member(products.iter().copied(), "projections").map(|source| source.storage)
-    };
-    // A selected result wins wherever it sits in project order.
-    for products in [[&selected, &first], [&first, &selected]] {
-        assert_eq!(chosen(&products), Some(saved.storage.clone()));
-    }
-    // Otherwise the projections belong to the scan that supplies the geometry.
-    assert!(matches!(
-        chosen(&[&first, &second]),
-        Some(crate::protocol::Storage::Member { handle, .. }) if handle == "first"
-    ));
-
-    // Geometry: forward projection into another selected scan, whichever comes
-    // first; back projection from the scan whose projections it reads.
     let reconstruction = Product::Reconstruction {
         handle: "reconstruction".into(),
         volume: saved.clone(),
-        scan: Some(crate::protocol::Storage::Member {
-            handle: "reconstruction".into(),
-            member: "scan".into(),
-        }),
+        scan: Some(member("reconstruction", "scan")),
         method: "fbp".into(),
     };
-    assert_eq!(
-        jobs::projection_geometry(&[&reconstruction, &second], "volume"),
-        Some(1)
-    );
-    // A reconstruction is projected into a simulation's geometry, not the
-    // simulation's ground-truth phantom into the reconstruction's.
     let simulation = Product::Simulation {
         handle: "simulation".into(),
-        scan: crate::protocol::Storage::Member {
-            handle: "simulation".into(),
-            member: "scan".into(),
-        },
+        scan: member("simulation", "scan"),
         phantom: saved.clone(),
     };
-    let volume = jobs::array_member([&simulation, &reconstruction].into_iter(), "volume").unwrap();
-    assert_eq!(volume.index, 1);
+    let roles = |operation: &str, products: &[&Product]| {
+        let roles = ProjectionRoles::choose(operation, products, &json!({})).unwrap();
+        (roles.geometry, roles.array)
+    };
+    // Back projection: a selected projection result wherever it sits, else the
+    // projections of the scan that supplies the geometry.
+    assert_eq!(roles("backproject", &[&selected, &first]), (1, Some(0)));
+    assert_eq!(roles("backproject", &[&first, &selected]), (0, Some(1)));
+    assert_eq!(roles("backproject", &[&first, &second]), (0, Some(0)));
+    // Forward projection: a reconstruction into another selected scan, in either
+    // order; into its own scan when it is alone; a reconstruction before a
+    // simulation's ground-truth phantom.
+    assert_eq!(roles("project", &[&reconstruction, &second]), (1, Some(0)));
+    assert_eq!(roles("project", &[&second, &reconstruction]), (0, Some(1)));
+    assert_eq!(roles("project", &[&reconstruction]), (0, Some(0)));
     assert_eq!(
-        jobs::projection_geometry(&[&simulation, &reconstruction], "volume"),
-        Some(0)
+        roles("project", &[&simulation, &reconstruction]),
+        (0, Some(1))
     );
+    // An array given by reference is used as given and belongs to no input.
+    let referenced = ProjectionRoles::choose(
+        "backproject",
+        &[&first],
+        &json!({"projections": {"type": "npy", "path": "/residuals.npy"}}),
+    )
+    .unwrap();
     assert_eq!(
-        jobs::projection_geometry(&[&reconstruction], "volume"),
-        Some(0)
-    );
-    assert_eq!(
-        jobs::projection_geometry(&[&first, &second], "projections"),
-        Some(0)
-    );
-    assert_eq!(
-        jobs::projection_geometry(&[&selected, &second], "projections"),
-        Some(1)
+        (referenced.geometry, referenced.array, referenced.parent()),
+        (0, None, None)
     );
 
     // Forward projection keeps the volume's own registered grid.
@@ -708,10 +748,13 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     }
     let volume = Product::Volume { volume };
     let mut operation = serde_json::Map::new();
-    operation.insert("grid".into(), Value::Null);
-    assert!(
-        jobs::fill_projection_array(&mut operation, [&first, &volume].into_iter(), "volume")
-            .unwrap()
+    ProjectionRoles::choose("project", &[&first, &volume], &json!({"grid": null}))
+        .unwrap()
+        .apply(&mut operation)
+        .unwrap();
+    assert_eq!(
+        operation["volume"],
+        serde_json::to_value(&saved.storage).unwrap()
     );
     assert_eq!(
         operation["grid"],
@@ -732,12 +775,7 @@ fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let volume = Product::Volume {
         volume: micrometres,
     };
-    let error = jobs::fill_projection_array(
-        &mut serde_json::Map::new(),
-        [&scan, &volume].into_iter(),
-        "volume",
-    )
-    .unwrap_err();
+    let error = ProjectionRoles::choose("project", &[&scan, &volume], &json!({})).unwrap_err();
     assert!(error.contains("um") && error.contains("mm"), "{error}");
 }
 

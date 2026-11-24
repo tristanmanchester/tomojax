@@ -1,3 +1,4 @@
+use super::projection::ProjectionRoles;
 use super::*;
 use crate::project::{Job, JobStatus, new_id, now_ms};
 use crate::protocol::{Progress, Storage};
@@ -331,34 +332,14 @@ impl AppState {
                 operation.insert("source".into(), source(0, false)?);
                 operation.insert("force".into(), Value::Bool(false));
             }
-            _ => {
-                let index = if matches!(job.operation.as_str(), "project" | "backproject") {
-                    let key = if job.operation == "project" {
-                        "volume"
-                    } else {
-                        "projections"
-                    };
-                    let products: Vec<_> = running.products.iter().collect();
-                    projection_geometry(&products, key)
-                        .ok_or("Select a source scan alongside the array")?
-                } else {
-                    0
-                };
-                operation.insert("source".into(), source(index, true)?);
+            "project" | "backproject" => {
+                let products: Vec<_> = running.products.iter().collect();
+                let roles = ProjectionRoles::choose(&job.operation, &products, &job.parameters)?;
+                operation.insert("source".into(), source(roles.geometry, true)?);
+                roles.apply(&mut operation)?;
             }
-        }
-        if matches!(job.operation.as_str(), "project" | "backproject") {
-            let key = if job.operation == "project" {
-                "volume"
-            } else {
-                "projections"
-            };
-            if !operation.contains_key(key)
-                && !fill_projection_array(&mut operation, running.products.iter(), key)?
-            {
-                return Err(format!(
-                    "Select an input containing {key}, or provide its storage reference"
-                ));
+            _ => {
+                operation.insert("source".into(), source(0, true)?);
             }
         }
         if matches!(
@@ -432,20 +413,15 @@ impl AppState {
                             } else {
                                 root.join(&asset.path)
                             };
-                            asset.kind = metadata::suggested_kind(&report).into();
-                            asset.arrays.clear();
                             self.model
                                 .measurements
                                 .retain(|measurement| measurement.asset != id);
                             match metadata::inspection_arrays(&report, &path) {
-                                Ok(arrays) => {
-                                    for (key, mut array) in arrays {
-                                        // Paths inside the project stay relative, so a
-                                        // moved project still finds its managed data.
-                                        array.relative_to(&root);
-                                        asset.arrays.insert(key, array);
-                                    }
-                                }
+                                Ok(arrays) => asset.register_read(
+                                    metadata::suggested_kind(&report),
+                                    arrays,
+                                    &root,
+                                ),
                                 Err(error) => asset.issue = Some(error),
                             }
                             asset.inspection = report;
@@ -657,31 +633,24 @@ impl AppState {
         let mut asset = Asset::input(self.project.as_ref().unwrap().stored_path(path), true);
         asset.id = id.into();
         asset.kind = output.value.kind().into();
-        // A back projection's parent is the input whose projections it used, which
-        // Explore shows beside the volume: the same choice execution made.
-        let source = (job.operation == "backproject")
+        // A projection's result belongs to the input its roles name (for a back
+        // projection, the projections it read, which Explore shows beside it).
+        let roles = matches!(job.operation.as_str(), "project" | "backproject")
             .then(|| {
                 self.running
                     .as_ref()
                     .filter(|running| running.job == job.id)
             })
             .flatten()
-            .and_then(|running| array_member(running.products.iter(), "projections"))
-            .and_then(|array| job.inputs.get(array.index));
-        // Projections given by reference belong to no input, so the result has no
-        // parent whose projections Explore would show beside it.
-        let referenced = job.operation == "backproject"
-            && job
-                .parameters
-                .get("projections")
-                .is_some_and(|v| !v.is_null());
-        asset.parent = if referenced {
-            None
-        } else {
-            source
-                .or(job.inputs.first())
-                .map(|input| input.asset.clone())
-        };
+            .map(|running| {
+                let products: Vec<_> = running.products.iter().collect();
+                ProjectionRoles::choose(&job.operation, &products, &job.parameters)
+            });
+        asset.parent = match roles {
+            Some(Ok(roles)) => roles.parent().and_then(|index| job.inputs.get(index)),
+            _ => job.inputs.first(),
+        }
+        .map(|input| input.asset.clone());
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
                 self.project
@@ -895,22 +864,10 @@ impl AppState {
             self.refresh_model();
             return;
         }
-        self.model.active_asset = Some(id.clone());
-        self.model.selected_assets.clear();
-        self.model.selected_assets.insert(id.clone());
-        self.centre_sinogram = true;
-        self.applied_window = None;
-        self.ui.display.window_low.replace_text("");
-        self.ui.display.window_high.replace_text("");
-        self.window_prefill = Some([String::new(), String::new()]);
-        if let Some(shape) = self.volume_dimensions() {
-            self.ui.display.indices = shape.map(|n| n / 2);
-        }
-        self.image_key.clear();
+        self.model.selected_assets = [id.clone()].into();
+        self.activate(id.clone());
         self.complete_job(job, Some(id));
         self.refresh_model();
-        self.refresh_images();
-        self.ui.main_view = self.default_view();
     }
 
     pub(super) fn complete_job(&mut self, id: &str, result: Option<String>) {
@@ -1104,165 +1061,6 @@ impl AppState {
                 .retire_resources(std::collections::BTreeSet::new(), Some(handle.into()));
         }
     }
-}
-
-/// Where forward or back projection reads its volume or projections.
-pub(super) struct ArraySource {
-    /// The input that holds it.
-    pub index: usize,
-    /// Whether it is a selected array result rather than a member of a scan or
-    /// reconstruction.
-    pub registered: bool,
-    pub storage: crate::protocol::Storage,
-    pub descriptor: Option<crate::protocol::ArrayDescriptor>,
-}
-
-/// The volume or projections that forward or back projection reads, with its
-/// registration when known. A selected array result (a saved volume or forward
-/// projection) wins; otherwise the first input that holds one.
-pub(super) fn array_member<'a>(
-    products: impl Iterator<Item = &'a Product> + Clone,
-    key: &str,
-) -> Option<ArraySource> {
-    products
-        .clone()
-        .enumerate()
-        .find_map(|(index, product)| {
-            let array = match product {
-                Product::Volume { volume } if key == "volume" => volume,
-                Product::Projections { projections } if key == "projections" => projections,
-                _ => return None,
-            };
-            Some(ArraySource {
-                index,
-                registered: true,
-                storage: array.storage.clone(),
-                descriptor: Some(array.clone()),
-            })
-        })
-        .or_else(|| {
-            // A reconstructed or aligned volume before a simulation's ground-truth
-            // phantom, then project order.
-            products
-                .enumerate()
-                .filter_map(|(index, product)| {
-                    let members = product.members();
-                    let (rank, member, descriptor) = match product {
-                        Product::Scan { projections, .. } if key == "projections" => {
-                            (0, "projections", Some(projections))
-                        }
-                        _ if key == "projections" => (1, "projections", None),
-                        Product::Reconstruction { volume, .. } => (0, "volume", Some(volume)),
-                        Product::Alignment { image, .. } => (1, "image", image.as_ref()),
-                        Product::Simulation { phantom, .. } => (2, "phantom", Some(phantom)),
-                        _ => (3, "volume", None),
-                    };
-                    Some((
-                        rank,
-                        ArraySource {
-                            index,
-                            registered: false,
-                            storage: members.get(member)?.clone(),
-                            descriptor: descriptor.cloned(),
-                        },
-                    ))
-                })
-                .min_by_key(|(rank, source)| (*rank, source.index))
-                .map(|(_, source)| source)
-        })
-}
-
-/// The input whose scan supplies the geometry. Back projection uses the scan
-/// whose projections it reads, unless a projection result is selected. Forward
-/// projection prefers a selected scan other than the one holding the volume, so a
-/// reconstruction can be projected into another scan's geometry.
-pub(super) fn projection_geometry(products: &[&Product], key: &str) -> Option<usize> {
-    let array = array_member(products.iter().copied(), key);
-    let scans = || {
-        products
-            .iter()
-            .enumerate()
-            .filter(|(_, product)| product.scan_source().is_some())
-            .map(|(index, _)| index)
-    };
-    match array {
-        Some(array) if !array.registered && key == "projections" => Some(array.index),
-        Some(array) if !array.registered => scans()
-            .find(|&index| index != array.index)
-            .or_else(|| scans().find(|&index| index == array.index)),
-        _ => scans().next(),
-    }
-}
-
-/// Puts the volume or projections into a projection command. Forward projection
-/// also takes the volume's own grid, unless one is given, so its voxels keep
-/// their registered positions. Returns whether an array was found.
-pub(super) fn fill_projection_array<'a>(
-    operation: &mut serde_json::Map<String, Value>,
-    products: impl Iterator<Item = &'a Product> + Clone,
-    key: &str,
-) -> Result<bool, String> {
-    let scan_unit = products.clone().find_map(|product| match product {
-        Product::Scan { projections, .. } => projections
-            .axes
-            .get(1)
-            .map(|axis| axis.unit.clone())
-            .filter(|unit| !matches!(unit.as_str(), "pixel" | "index")),
-        _ => None,
-    });
-    let Some(ArraySource {
-        storage,
-        descriptor,
-        ..
-    }) = array_member(products, key)
-    else {
-        return Ok(false);
-    };
-    // The worker reads the volume in the scan's length unit.
-    if key == "volume"
-        && let (Some(scan), Some(volume)) = (
-            scan_unit,
-            descriptor
-                .as_ref()
-                .and_then(|d| d.axes.first())
-                .map(|axis| &axis.unit),
-        )
-        && !matches!(volume.as_str(), "index" | "voxel")
-        && *volume != scan
-    {
-        return Err(format!(
-            "The volume is registered in {volume} and the scan in {scan}; reconstruct the volume from this scan's geometry"
-        ));
-    }
-    operation.insert(
-        key.into(),
-        serde_json::to_value(storage).map_err(|e| e.to_string())?,
-    );
-    if key == "volume"
-        && operation.get("grid").is_none_or(Value::is_null)
-        && let Some(grid) = descriptor.as_ref().and_then(registered_grid)
-    {
-        operation.insert("grid".into(), grid);
-    }
-    Ok(true)
-}
-
-/// The grid of a volume registered with uniform (z, y, x) voxel-centre axes.
-fn registered_grid(volume: &crate::protocol::ArrayDescriptor) -> Option<Value> {
-    let names: Vec<_> = volume.axes.iter().map(|axis| axis.name.as_str()).collect();
-    if names != ["z", "y", "x"] || volume.shape.len() != 3 {
-        return None;
-    }
-    let mut uniform = volume.axes.iter().map(|axis| match axis.coordinates {
-        crate::protocol::Coordinates::Uniform { origin, spacing } => Some((origin, spacing)),
-        crate::protocol::Coordinates::Coordinates { .. } => None,
-    });
-    let (z, y, x) = (uniform.next()??, uniform.next()??, uniform.next()??);
-    Some(json!({
-        "nx": volume.shape[2], "ny": volume.shape[1], "nz": volume.shape[0],
-        "vx": x.1, "vy": y.1, "vz": z.1,
-        "vol_origin": [x.0, y.0, z.0],
-    }))
 }
 
 /// An array-only result (a saved volume or projections) is used as registered,

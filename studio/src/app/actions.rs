@@ -137,22 +137,7 @@ impl AppState {
                 } else {
                     self.model.selected_assets.insert(id.clone());
                 }
-                self.ui.rename = None;
-                self.model.active_asset = Some(id);
-                self.image_key.clear();
-                self.ui.display.indices = [0; 3];
-                self.ui.display.window_low.replace_text("");
-                self.ui.display.window_high.replace_text("");
-                self.applied_window = None;
-                self.window_prefill = Some([String::new(), String::new()]);
-                self.centre_sinogram = true;
-                self.ui.main_view = self.default_view();
-                if let Some(shape) = self.volume_dimensions() {
-                    self.ui.display.indices = shape.map(|n| n / 2);
-                }
-                if self.ui.operation == "open" {
-                    self.set_operation("open", None);
-                }
+                self.activate(id);
             }
             UiAction::SelectAllAssets => {
                 self.model.selected_assets = self

@@ -1,5 +1,6 @@
 //! Edit-time preflight uses the worker's exact operation and rejects obsolete drafts.
 use super::AppState;
+use super::projection::ProjectionRoles;
 use crate::engine::EngineEvent;
 use crate::forms::{self, DraftError, FieldIssue};
 use crate::protocol::{ErrorKind, Product, Response, ResultValue, SchemaCatalog};
@@ -454,21 +455,23 @@ impl AppState {
                 }
             }
             let products: Vec<_> = products.iter().collect();
-            if !value.contains_key(key) {
-                super::jobs::fill_projection_array(&mut value, products.iter().copied(), key)
-                    .map_err(|error| DraftError::new(key, error))?;
-            }
-            let index = super::jobs::projection_geometry(&products, key)
-                .ok_or_else(|| DraftError::new("source", "Select a scan alongside the array."))?;
+            let parameters = Value::Object(value.clone());
+            let roles = ProjectionRoles::choose(&self.ui.operation, &products, &parameters)
+                .map_err(|error| DraftError::new(key, error))?;
+            roles
+                .apply(&mut value)
+                .map_err(|error| DraftError::new(key, error))?;
             let Some(source) = self
                 .previews
-                .source_ref(&inputs[index])
+                .source_ref(&inputs[roles.geometry])
                 .map_err(|message| DraftError::new("source", message))?
             else {
                 return Ok(None);
             };
             value.insert("source".into(), json!(source));
-            self.validation.view.scope = format!("{} selected inputs", inputs.len());
+            // The roles are shown, so the user sees which input supplies what.
+            let names: Vec<_> = inputs.iter().map(|input| input.name.clone()).collect();
+            self.validation.view.scope = roles.describe(&names);
             return Ok(Some(Value::Object(value)));
         }
         let mut sources = Vec::new();

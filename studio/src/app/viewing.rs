@@ -105,6 +105,28 @@ impl AppState {
         descriptor
     }
 
+    /// Makes `id` the asset being viewed and prepared: its view starts fresh (the
+    /// previous asset's pixels, window, slices and sinogram row don't carry over)
+    /// and an Open & calibrate form takes its kind. Selection is the caller's.
+    pub(super) fn activate(&mut self, id: String) {
+        self.ui.rename = None;
+        self.model.active_asset = Some(id);
+        self.image_key.clear();
+        self.applied_window = None;
+        self.ui.display.window_low.replace_text("");
+        self.ui.display.window_high.replace_text("");
+        self.window_prefill = Some([String::new(), String::new()]);
+        self.centre_sinogram = true;
+        self.ui.display.indices = self
+            .volume_dimensions()
+            .map_or([0; 3], |shape| shape.map(|n| n / 2));
+        self.ui.main_view = self.default_view();
+        if self.ui.operation == "open" {
+            self.set_operation("open", None);
+        }
+        self.refresh_images();
+    }
+
     pub(super) fn refresh_images(&mut self) {
         if let Some(volume) = self.active_volume().cloned() {
             let volume = self.resolved(&volume);
@@ -260,8 +282,16 @@ impl AppState {
                 self.model.planes.insert(kind, plane_view(plane));
             }
         }
-        self.model.comparison_planes =
-            [6, 7].map(|slot| self.imaging.plane(slot).map(|plane| plane_view(plane)));
+        // Both sides show the requested slice; a side still reading it is not
+        // shown, so the pair never mixes two slices under one number.
+        let requested = self.ui.display.indices[self.ui.compare_plane.axis().unwrap_or(0)];
+        self.model.comparison_planes = [6, 7].map(|slot| {
+            self.imaging.plane(slot).map(|plane| {
+                let mut view = plane_view(plane);
+                view.available &= view.index == requested;
+                view
+            })
+        });
         for slot in [6, 7] {
             if self.ui.workspace == Workspace::Compare
                 && let ImagingStatus::Error(error) = self.imaging.status(slot)
@@ -276,9 +306,7 @@ impl AppState {
             .filter_map(|p| p.as_ref().map(|p| p.count))
             .min()
             .unwrap_or(0);
-        self.model.comparison_index = self.model.comparison_planes[0]
-            .as_ref()
-            .map_or(0, |p| p.index);
+        self.model.comparison_index = requested;
         if let Some(volume) = self.imaging.volume(8) {
             let statistics = &volume.statistics;
             let bins = statistics.histogram.len().max(1);

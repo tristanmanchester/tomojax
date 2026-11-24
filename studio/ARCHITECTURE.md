@@ -15,6 +15,7 @@ registered scalar data. A display operation never mutates a numerical input.
 | `project.rs` | Versioned manifest, captured inputs, job records, single writer and atomic autosave |
 | `app/` | Workflow scheduling, dialogs, project actions, presentation model and view coordination |
 | `forms.rs`, `app/validation.rs` | Schema-derived drafts, exact field paths, debounced worker validation and plans |
+| `app/projection.rs` | Which selected inputs a forward or back projection reads (geometry, volume or projections), chosen once for preflight, the worker command and the result's parent |
 | `previews.rs`, `app/previewing.rs` | Temporary per-control requests, warm sources, supersession and explicit Keep |
 | `live.rs` | Coherent registered solver checkpoints, pose tables and artifact read leases |
 | `progress.rs` | Durable task trees, metric histories, registry units and notes |

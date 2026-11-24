@@ -92,6 +92,28 @@ impl Asset {
             open_parameters: Value::Null,
         }
     }
+    /// Records the kind and arrays a reader found in this asset's file (the
+    /// header reader, or the worker's inspection). A worker result keeps the kind
+    /// and arrays the worker registered, which know its units and domain (the
+    /// file alone can't tell a crop of a reconstruction's scan, or a scan with
+    /// poses, from its source); the read only fills in arrays it lacks. Paths
+    /// inside the project are stored relative to it.
+    pub fn register_read(
+        &mut self,
+        kind: &str,
+        arrays: BTreeMap<String, ArrayDescriptor>,
+        root: &Path,
+    ) {
+        if !self.is_result() {
+            self.kind = kind.into();
+            self.arrays.clear();
+        }
+        for (key, mut array) in arrays {
+            array.relative_to(root);
+            self.arrays.entry(key).or_insert(array);
+        }
+    }
+
     pub fn is_result(&self) -> bool {
         self.parent.is_some()
             || self

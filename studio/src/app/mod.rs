@@ -5,6 +5,7 @@ mod editing;
 mod jobs;
 mod local;
 mod previewing;
+mod projection;
 #[cfg(test)]
 mod tests;
 pub(crate) mod validation;
@@ -398,15 +399,10 @@ impl AppState {
                             asset.managed = true;
                             let id = asset.id.clone();
                             project.document.assets.push(asset);
-                            self.model.active_asset = Some(id.clone());
-                            self.model.selected_assets.clear();
-                            self.model.selected_assets.insert(id.clone());
-                            self.centre_sinogram = true;
+                            self.model.selected_assets = [id.clone()].into();
+                            self.activate(id.clone());
                             self.mark_dirty();
                             self.start_metadata(&id);
-                            // The previous asset's pixels don't belong to the new one.
-                            self.image_key.clear();
-                            self.refresh_images();
                         }
                     }
                     Err(error) => self.model.error = Some(error),
@@ -473,49 +469,22 @@ impl AppState {
                         if let Some(project) = &mut self.project {
                             let root = project.root.clone();
                             if let Some(asset) = project.document.asset_mut(&id) {
+                                let previous = asset.kind.clone();
+                                asset.inspection = report;
+                                asset.issue = None;
+                                asset.register_read(&kind, arrays, &root);
+                                // An Open & calibrate form still on the old kind follows.
                                 if self.model.active_asset.as_ref() == Some(&id)
                                     && self.ui.operation == "open"
-                                    && self.ui.parameter_choices.get("kind") == Some(&asset.kind)
+                                    && self.ui.parameter_choices.get("kind") == Some(&previous)
                                 {
                                     self.ui
                                         .parameter_choices
-                                        .insert("kind".into(), kind.clone());
+                                        .insert("kind".into(), asset.kind.clone());
                                 }
-                                // A worker result keeps the kind the worker gave it; the
-                                // header can't tell a crop of a reconstruction's scan, or
-                                // a scan with poses applied, from the source kind.
-                                if !asset.is_result() {
-                                    asset.kind = kind;
-                                }
-                                asset.inspection = report;
-                                asset.issue = None;
-                                // Arrays already registered came from the worker, which
-                                // knows their units and domain; the header read fills in
-                                // the rest (imports and relinks start with none).
                                 self.model
                                     .measurements
                                     .retain(|measurement| measurement.asset != id);
-                                for (key, mut array) in arrays {
-                                    let store = |storage: &mut crate::protocol::Storage| {
-                                        if let crate::protocol::Storage::Hdf5 { path, .. }
-                                        | crate::protocol::Storage::Npy { path, .. } = storage
-                                            && let Ok(relative) =
-                                                Path::new(path).strip_prefix(&root)
-                                        {
-                                            *path = relative.to_string_lossy().into();
-                                        }
-                                    };
-                                    store(&mut array.storage);
-                                    for axis in &mut array.axes {
-                                        if let crate::protocol::Coordinates::Coordinates {
-                                            values,
-                                        } = &mut axis.coordinates
-                                        {
-                                            store(values);
-                                        }
-                                    }
-                                    asset.arrays.entry(key).or_insert(array);
-                                }
                             }
                         }
                         self.imaging.invalidate();
@@ -700,6 +669,9 @@ impl AppState {
                 })?;
         }
         let project = Project::open(path, create)?;
+        // View undo belongs to the project it was recorded in.
+        self.view_history.clear();
+        self.view_future.clear();
         let context = project.document.workspace.clone();
         self.preferences.visit(&project.root)?;
         self.project = Some(project);
@@ -810,21 +782,18 @@ impl AppState {
                 });
             } else {
                 asset.path = project.stored_path(&path);
-                self.model.active_asset = Some(asset.id.clone());
-                self.model.selected_assets.clear();
-                self.model.selected_assets.insert(asset.id.clone());
-                self.centre_sinogram = true;
                 metadata.push(asset.id.clone());
                 project.document.assets.push(asset);
             }
         }
         self.ui.workspace = Workspace::Prepare;
+        if let Some(id) = metadata.last() {
+            self.model.selected_assets = [id.clone()].into();
+            self.activate(id.clone());
+        }
         self.set_operation("open", None);
         self.mark_dirty();
         self.refresh_model();
-        // The previous asset's pixels don't belong to the new one.
-        self.image_key.clear();
-        self.refresh_images();
         for id in metadata {
             self.start_metadata(&id);
         }
