@@ -135,10 +135,16 @@ impl AppState {
                 // The active asset is always one of the selected ones: removing it
                 // from the selection makes the next selected asset active.
                 if extend && self.model.selected_assets.remove(&id) {
-                    if self.model.active_asset.as_ref() == Some(&id)
-                        && let Some(next) = self.selected_inputs().first().cloned()
-                    {
-                        self.activate(next);
+                    if self.model.active_asset.as_ref() == Some(&id) {
+                        let next = if self.model.selected_assets.is_empty() {
+                            None
+                        } else {
+                            self.selected_inputs().first().cloned()
+                        };
+                        match next {
+                            Some(next) => self.activate(next),
+                            None => self.model.active_asset = None,
+                        }
                     }
                 } else {
                     self.model.selected_assets.insert(id.clone());
@@ -220,8 +226,8 @@ impl AppState {
                 tx.open_file(FileDialogOptions{title:"Reconnect the original data file".into(),..Default::default()},move|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{
                         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition.".into());return;}
-                        if let Some(project)=&mut s.project{let path=project.stored_path(&path);if let Some(asset)=project.document.asset_mut(&id){asset.path=path;asset.managed=false;asset.arrays.clear();asset.issue=None;}}
-                        s.model.measurements.retain(|measurement|measurement.asset!=id);s.imaging.invalidate();s.start_metadata(&id);s.image_key.clear();s.mark_dirty();s.refresh_model();s.refresh_images();
+                        let mut reread=true;if let Some(project)=&mut s.project{let path=project.stored_path(&path);let root=project.root.clone();if let Some(asset)=project.document.asset_mut(&id){asset.relink(path,&root);reread = !asset.is_result();}}
+                        s.model.measurements.retain(|measurement|measurement.asset!=id);s.imaging.invalidate();if reread{s.start_metadata(&id);}s.image_key.clear();s.mark_dirty();s.refresh_model();s.refresh_images();
                     },Ok(None)=>{},Err(error)=>s.model.error=Some(error.to_string())});
             }
             UiAction::SetWorkspace(workspace) => self.set_workspace(workspace),
@@ -564,6 +570,9 @@ impl AppState {
             }
             UiAction::CancelMeasurement => {
                 self.model.measurements.retain(|m| m.id != "draft");
+            }
+            UiAction::CancelCopies => {
+                self.cancel_local(IMPORT_COPY);
             }
             UiAction::ClearMeasurements => {
                 self.model

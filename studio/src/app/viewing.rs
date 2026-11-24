@@ -830,6 +830,14 @@ impl AppState {
             self.ui.compare_linked.to_string(),
         );
         draft_choices.insert(
+            "studio:compare_plane".into(),
+            format!("{:?}", self.ui.compare_plane),
+        );
+        draft_choices.insert(
+            "studio:compare_mode".into(),
+            format!("{:?}", self.ui.compare_mode),
+        );
+        draft_choices.insert(
             "studio:corrections_json".into(),
             self.ui.corrections.json_mode.to_string(),
         );
@@ -970,6 +978,22 @@ impl AppState {
                 edit.replace_text(value.clone());
             }
         }
+        // Compare shows orthogonal slices only.
+        self.ui.compare_plane = context
+            .draft_choices
+            .get("studio:compare_plane")
+            .map(|plane| parse_plane(plane))
+            .filter(|plane| plane.axis().is_some())
+            .unwrap_or(PlaneKind::Axial);
+        self.ui.compare_mode = match context
+            .draft_choices
+            .get("studio:compare_mode")
+            .map(String::as_str)
+        {
+            Some("Split") => CompareMode::Split,
+            Some("Difference") => CompareMode::Difference,
+            _ => CompareMode::Pair,
+        };
         // Corrections edited as JSON stay in JSON, so its text is what runs.
         if context
             .draft_choices

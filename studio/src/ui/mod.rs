@@ -710,6 +710,24 @@ fn statusbar(state: &AppState) -> El {
         }))
         .child(label(status, 11., muted()).shrink().min_w(0.).truncate())
         .child(spacer());
+    if state.copying > 0 {
+        bar = bar
+            .child(label(
+                format!(
+                    "Copying {} source{} into the project",
+                    state.copying,
+                    if state.copying == 1 { "" } else { "s" }
+                ),
+                11.,
+                muted(),
+            ))
+            .child(
+                quiet_button("cancel-copy", "Cancel copy", false, |s, tx| {
+                    s.dispatch(UiAction::CancelCopies, tx)
+                })
+                .h(24.),
+            );
+    }
     if let Some(project) = &state.model.project {
         let (text, tone) = if project.save_error.is_some() {
             ("Autosave failed", error())

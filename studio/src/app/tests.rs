@@ -693,6 +693,40 @@ fn a_read_updates_the_calibration_kind_and_opens_a_volume_on_its_slices() {
 }
 
 #[test]
+fn compare_reopens_on_its_plane_and_mode() {
+    let mut state = AppState::init();
+    state.ui.compare_plane = PlaneKind::Coronal;
+    state.ui.compare_mode = CompareMode::Difference;
+    let context = state.capture_workspace();
+    state.ui.compare_plane = PlaneKind::Axial;
+    state.ui.compare_mode = CompareMode::Pair;
+    state.restore_workspace(&context);
+    assert_eq!(state.ui.compare_plane, PlaneKind::Coronal);
+    assert_eq!(state.ui.compare_mode, CompareMode::Difference);
+}
+
+#[test]
+fn a_reconnected_result_keeps_its_registration_on_the_new_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path().join("project");
+    let mut result = ramp_volume(directory.path(), "result", 2);
+    result.parent = Some("source".into());
+    let moved = directory.path().join("moved.npy");
+    result.relink(moved.clone(), &root);
+    assert_eq!(
+        result.arrays["volume"].storage,
+        crate::protocol::Storage::Npy {
+            path: moved.to_string_lossy().into(),
+            artifact: None,
+        }
+    );
+    // An import's registration is read again from the new file.
+    let mut import = ramp_volume(directory.path(), "import", 2);
+    import.relink(moved, &root);
+    assert!(import.arrays.is_empty());
+}
+
+#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();

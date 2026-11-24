@@ -114,6 +114,46 @@ impl Asset {
         }
     }
 
+    /// Points this asset at `path` (stored as the project stores paths). An
+    /// import's registration is dropped, to be read again from the new file; a
+    /// worker result keeps its registration (no reader can recover it from an
+    /// array file), with storage that named the old file now naming the new one.
+    pub fn relink(&mut self, path: PathBuf, root: &Path) {
+        let resolve = |path: &Path| {
+            if path.is_absolute() {
+                path.to_owned()
+            } else {
+                root.join(path)
+            }
+        };
+        let old = resolve(&self.path);
+        let new = path.to_string_lossy().into_owned();
+        self.path = path;
+        self.managed = false;
+        self.issue = None;
+        if !self.is_result() {
+            self.arrays.clear();
+            return;
+        }
+        let repoint = |storage: &mut crate::protocol::Storage| {
+            if let crate::protocol::Storage::Hdf5 { path, .. }
+            | crate::protocol::Storage::Npy { path, .. } = storage
+                && resolve(Path::new(path.as_str())) == old
+            {
+                *path = new.clone();
+            }
+        };
+        for array in self.arrays.values_mut() {
+            repoint(&mut array.storage);
+            for axis in &mut array.axes {
+                if let crate::protocol::Coordinates::Coordinates { values } = &mut axis.coordinates
+                {
+                    repoint(values);
+                }
+            }
+        }
+    }
+
     pub fn is_result(&self) -> bool {
         self.parent.is_some()
             || self

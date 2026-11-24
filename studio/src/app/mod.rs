@@ -23,6 +23,9 @@ use crate::{
 };
 use controls::ControlWatch;
 use local::{CANCELLED, LocalMessage, LocalTask, check_cancel};
+
+/// The local-task key of copies into a project, which **Cancel copy** stops.
+const IMPORT_COPY: &str = "import-copy";
 use rune::TextEdit;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
@@ -121,7 +124,7 @@ pub struct AppState {
     local_receive: mpsc::Receiver<LocalMessage>,
     local_tasks: HashMap<String, LocalTask>,
     shutting_down: bool,
-    copying: usize,
+    pub(crate) copying: usize,
     metadata_pending: usize,
     started: bool,
     auto_demo: bool,
@@ -405,6 +408,7 @@ impl AppState {
                             self.start_metadata(&id);
                         }
                     }
+                    Err(error) if error == CANCELLED => self.model.status = "Copy cancelled".into(),
                     Err(error) => self.model.error = Some(error),
                 }
             }
@@ -753,7 +757,7 @@ impl AppState {
             if self.ui.import_copy {
                 let inputs = project.root.join("inputs").join(&asset.id);
                 self.copying += 1;
-                self.spawn_local(None, move |cancelled| {
+                self.spawn_local(Some(IMPORT_COPY.into()), move |cancelled| {
                     let result = copy_acquisition(&path, &inputs, &cancelled);
                     LocalEvent::Copied { asset, result }
                 });

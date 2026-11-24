@@ -861,4 +861,8 @@ fn the_active_asset_stays_in_the_selection() {
     select(&mut rt, &second_id);
     assert_eq!(rt.state.model.selected_assets.len(), 1);
     assert_eq!(rt.state.model.active_asset.as_deref(), Some(first.as_str()));
+    // Deselecting the last one leaves nothing to process.
+    select(&mut rt, &first);
+    assert!(rt.state.model.selected_assets.is_empty());
+    assert_eq!(rt.state.model.active_asset, None);
 }

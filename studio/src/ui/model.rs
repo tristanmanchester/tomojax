@@ -627,6 +627,7 @@ pub enum UiAction {
     },
     CancelMeasurement,
     ClearMeasurements,
+    CancelCopies,
     Undo,
     Redo,
     DismissError,
