@@ -11,45 +11,10 @@ from typing import Any, ClassVar, cast
 import h5py
 import numpy as np
 
+from tomojax.core.files import validate_virtual_pixels
+
 from ._frame_stack import FrameStack
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
-
-
-def _check_virtual(data: Any, checked: set[tuple[str, str]] | None = None) -> None:
-    """Do not let HDF5's VDS fill value stand in for absent detector pixels."""
-    if not data.is_virtual:
-        return
-    checked = set() if checked is None else checked
-    identity = (str(Path(data.file.filename).resolve()), data.name)
-    if identity in checked:
-        return
-    checked.add(identity)
-    sources: dict[Path, list[Any]] = {}
-    for source in data.virtual_sources():
-        name, here = Path(source.file_name), Path(data.file.filename)
-        path = here if source.file_name == "." else here.parent / name
-        if name.is_absolute() and not path.exists():  # HDF5 then looks beside the virtual file
-            path = here.parent / name.name
-        sources.setdefault(path, []).append(source)
-    for path, mappings in sources.items():
-        try:
-            with h5py.File(path, "r") as backing:
-                for source in mappings:
-                    pixels = cast(Any, backing[source.dset_name])
-                    if source.src_space.get_select_type() == cast(Any, h5py).h5s.SEL_ALL:
-                        missing = pixels.size < source.vspace.get_select_npoints()
-                    else:
-                        bounds = source.src_space.get_select_bounds()[1]
-                        missing = pixels.ndim != len(bounds) or any(
-                            n <= end for n, end in zip(pixels.shape, bounds, strict=True)
-                        )
-                    if missing:
-                        raise ValueError(
-                            f"{path}:{source.dset_name}: missing virtual detector pixels"
-                        )
-                    _check_virtual(pixels, checked)
-        except (OSError, KeyError) as exc:
-            raise ValueError(f"{data.name}: missing virtual detector pixels in {path}") from exc
 
 
 @dataclass(frozen=True)
@@ -82,7 +47,7 @@ class Hdf5Frames(FrameStack):
             n, cols = int(data.shape[0]), int(data.shape[-1])
             rows = 1 if data.ndim == 2 else int(data.shape[1])
             layout = cast(Any, data)  # h5py's typing omits the storage layout
-            _check_virtual(layout)
+            validate_virtual_pixels(layout)
             # Unfiltered data supports direct reads of partial chunks. __getitem__
             # bypasses the chunk cache so narrow windows do not fetch whole frames.
             windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
@@ -258,6 +223,17 @@ class LocatedFrames:
     image_key_path: str | None = None
     angles_path: str | None = None
     return_images: int = 0
+
+    @property
+    def samples(self) -> Hdf5Frames:
+        """The detector stack restricted to frames labelled as sample projections.
+
+        Returns
+        -------
+        Hdf5Frames
+            A lazy view of sample frames, or all frames for an unlabelled stack.
+        """
+        return self.stack if self.image_key is None else self.stack.frames_at(self.image_key == 0)
 
     @property
     def raw(self) -> bool:

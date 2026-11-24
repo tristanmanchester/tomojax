@@ -331,28 +331,40 @@ class Split:
             If shapes disagree, weights are negative, or scored values are nonfinite.
         """
         views = slice(None) if views is None else views
-        indices = np.arange(self.shape[0])[views]
+        indices = range(self.shape[0])[views]
         expected = (len(indices), *self.shape[1:])
         if np.shape(prediction) != expected or np.shape(target) != expected:
             raise ValueError(f"prediction and target must have batch shape {expected}")
         compact = np.broadcast_to(self.test, (self.shape[0], *self.test.shape[1:]))[views]
         mask = np.broadcast_to(compact, expected)
-        w = np.broadcast_to(np.asarray(weights), expected)[mask].astype(np.float64)
-        observed = np.asarray(target)[mask].astype(np.float64)
-        predicted = np.asarray(prediction)[mask].astype(np.float64)
-        if not np.isfinite(w).all() or np.any(w < 0):
-            raise ValueError("scored weights must be finite and nonnegative")
-        keep = w > 0
-        observed, predicted, w = observed[keep], predicted[keep], w[keep]
-        if not np.isfinite(observed).all() or not np.isfinite(predicted).all():
-            raise ValueError("positive-weight held-out observations/predictions must be finite")
-        residual = predicted - observed
-        return Score(
-            float(np.sum(w * residual**2)),
-            float(np.sum(w * observed**2)),
-            float(np.sum(w)),
-            int(keep.sum()),
+        total = Score(0, 0, 0, 0)
+        # A single high-resolution view may itself be larger than the scoring workspace.
+        pixels = np.nditer(
+            [prediction, target, np.broadcast_to(weights, expected), mask],
+            flags=["external_loop", "buffered", "zerosize_ok"],
+            order="C",
+            buffersize=_SCORE_PIXELS,
         )
+        for guess, truth, weight, selected in pixels:
+            w = weight[selected].astype(np.float64)
+            if not np.isfinite(w).all() or np.any(w < 0):
+                raise ValueError("scored weights must be finite and nonnegative")
+            keep = w > 0
+            observed = truth[selected][keep].astype(np.float64)
+            predicted = guess[selected][keep].astype(np.float64)
+            w = w[keep]
+            if not np.isfinite(observed).all() or not np.isfinite(predicted).all():
+                raise ValueError("positive-weight held-out observations/predictions must be finite")
+            total += Score(
+                float(np.sum(w * (predicted - observed) ** 2)),
+                float(np.sum(w * observed**2)),
+                float(np.sum(w)),
+                len(w),
+            )
+        return total
+
+
+_SCORE_PIXELS = 128 << 10
 
 
 def _blocks(

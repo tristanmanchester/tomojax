@@ -77,3 +77,16 @@ def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, in
             if k + 1 < len(starts):
                 pending = reader.submit(read, starts[k + 1])
             yield start, min(start + batch, views), frames
+
+
+def copy_projections(projections, steps):
+    """Own the line-integral input before applying corrections in place."""
+    from tomojax.core.host_volume import fill, host_array
+
+    if not hasattr(projections, "shape") or any(
+        step.whole_rows or step.selects_views for step in steps
+    ):
+        return np.array(projections, np.float32, copy=True)
+    out = host_array(projections.shape)
+    depth = max(1, (32 << 20) // (4 * out.shape[1] * out.shape[2]))
+    return fill(out, projections, depth=depth)

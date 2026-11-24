@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from functools import partial, singledispatchmethod
 from pathlib import Path
 from typing import Any, cast
@@ -14,20 +14,32 @@ import numpy as np
 
 import tomojax as tj
 from tomojax import interactive, progress
-from tomojax._loading import load_raw_frames_with_declaration, load_scan_with_declaration
+from tomojax._loading import (
+    load_raw_frames_with_declaration,
+    load_scan_with_declaration,
+    projection_frames,
+)
 from tomojax._planning import resolve_reconstruction
 from tomojax._resources import sample
-from tomojax._scan import combined_geometry
+from tomojax._scan import combined_geometry, describe
 from tomojax._simulate import build_sim_config, simulate_config
 from tomojax._smooth_alignment import resolve_alignment
-from tomojax._workflow import align_resolved, reconstruct_resolved, validate_save
+from tomojax._workflow import (
+    align_resolved,
+    alignment_from_record,
+    reconstruct_resolved,
+    reconstruction_from_record,
+    simulation_from_record,
+    validate_save,
+)
 from tomojax.cli import execution as ex, operations as op, products as p
-from tomojax.cli._arguments import arguments, source
+from tomojax.cli._arguments import arguments, scan_layout, source
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
-from tomojax.cli._options import check_destinations
+from tomojax.cli._options import ancestor_paths, check_destinations
 from tomojax.cli._plans import plan_product
-from tomojax.cli._results import VOLUME_DATASET, scan_axes, unit_of
+from tomojax.cli._results import scan_axes, unit_of
+from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
@@ -36,11 +48,14 @@ from tomojax.wire.progress import Event, Preview
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
 EXECUTABLE = (
+    op.Python,
     op.Inspect,
     op.Open,
     op.Validate,
     op.Plan,
     op.Run,
+    op.Read,
+    op.Statistics,
     op.Plane,
     op.Slice,
     op.CentreSweep,
@@ -57,20 +72,6 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     operation = (
         command.operation if isinstance(command, op.Run | op.Plan | op.Validate) else command
     )
-    parameters = msgspec.to_builtins(
-        command if isinstance(command, op.Validate | op.Plan) else operation
-    )
-    manifest = p.Provenance(parameters.pop("type"), parameters, context.lineage(command))
-
-    def event(record: progress.Event) -> None:
-        if isinstance(record, progress.Preview):
-            arrays = {
-                name: sample.store(lambda a: stage_array(context, a))
-                for name, sample in record.arrays.items()
-            }
-            context.event(Preview(schema=2, task=record.task, time=record.time, arrays=arrays))
-        else:
-            context.event(msgspec.convert(progress.to_json(record), type=Event))
 
     def diagnostic(pointer: str, data: Any) -> Array:
         a = np.asarray(data)
@@ -80,22 +81,40 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
     for snapshot in sample():
         context.snapshot(snapshot)
     with progress.watch(
-        event,
+        partial(report_event, context),
         control=cast("progress.Control", context.control),
         previews=isinstance(command, op.Run) and command.previews,
     ):
+        if isinstance(operation, op.Python):
+            from tomojax.cli._python import run_python
+
+            try:
+                return run_python(operation, context)
+            except Exception:
+                raise
+            except BaseException as err:
+                raise ValueError(str(err)) from err
+        manifest = provenance(command, operation, context)
         if isinstance(operation, op.Plane):
             if not isinstance(command, op.Validate):
                 return ex.browse_plane(operation, context)
             ex.plane_source(operation, context)
             item = p.Validated()
         else:
-            work = Admission(context, manifest, isinstance(command, op.Plan)).prepare(operation)
-            item = p.Validated() if isinstance(command, op.Validate) else work()
+            admission = Admission(
+                context,
+                manifest,
+                isinstance(command, op.Plan),
+                isinstance(command, op.Validate),
+            )
+            work = admission.prepare(operation)
+            item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
         context.control.checkpoint()
         for snapshot in sample():
             context.snapshot(snapshot)
-        info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+        info = result_info(item)
+        if isinstance(item, p.Files):
+            info = admission.details
         summary = ex.summarise(info, externalise=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
             storage = None
@@ -103,6 +122,63 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 storage = saved_storage(operation.path)
             return ex.Success(handle(item, volume_storage=storage), summary, manifest)
         return ex.Success(item, summary, manifest)
+
+
+def report_event(context: ex.ExecutionContext, record: progress.Event) -> None:
+    if isinstance(record, progress.Preview):
+        arrays = {
+            name: sample.store(lambda a: stage_array(context, a))
+            for name, sample in record.arrays.items()
+        }
+        context.event(Preview(schema=2, task=record.task, time=record.time, arrays=arrays))
+    else:
+        context.event(msgspec.convert(progress.to_json(record), type=Event))
+
+
+def result_info(item):
+    """Geometric registration and solver diagnostics for the public product."""
+    info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+    if isinstance(item, tj.Alignment):
+        poses = np.asarray(item.poses)
+        info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
+    if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
+        info = {**info, "geometry": geometry_summary(item)}
+        if calibration := info["geometry"].get("calibration"):
+            info["calibration"] = calibration
+    return info
+
+
+def geometry_summary(item: Root, *, measured_angles: bool = True) -> dict[str, Any]:
+    scan = item if isinstance(item, tj.Scan | tj.Frames) else item.scan
+    geometry = (
+        item.scan.geometry if isinstance(item, tj.Alignment | tj.Simulation) else item.geometry
+    )
+    angles = np.asarray(geometry.angles)
+    summary: dict[str, Any] = {
+        "kind": describe(geometry)[0],
+        "center_uv": list(geometry.detector.center),
+        "center_unit": unit_of(item if isinstance(item, tj.Reconstruction) else scan),
+        "views": len(angles),
+    }
+    if measured_angles:
+        summary["angle_range_degree"] = [float(angles.min()), float(angles.max())]
+    metadata = scan.source.geometry_metadata if scan is not None and scan.source else {}
+    info = (
+        item.info
+        if isinstance(item, tj.Alignment | tj.Reconstruction)
+        else metadata.get("alignment_info", {})
+    )
+    calibration = info.get("calibration", {})
+    if isinstance(calibration, dict) and calibration:
+        summary["calibration"] = {
+            key: {
+                **entry,
+                "unit": summary["center_unit"] if key == "center" else "degree",
+                "change_unit": "pixel" if key == "center" else "degree",
+            }
+            for key, entry in calibration.items()
+        }
+    return summary
 
 
 def saved_storage(path: str) -> Hdf5 | None:
@@ -121,10 +197,18 @@ class Admission:
     context: ex.ExecutionContext
     manifest: p.Provenance
     plan: bool
+    validating: bool
+    details: dict[str, Any] = field(default_factory=dict)
 
     @singledispatchmethod
     def prepare(self, operation: Record) -> Work:
         raise ValueError(f"operation unavailable: {operation.__struct_config__.tag}")
+
+    @prepare.register
+    def browse(self, operation: op.Read | op.Statistics) -> Work:
+        from tomojax.cli._browse import browse
+
+        return partial(browse, operation, self.context)
 
     @prepare.register
     def inspect(self, operation: op.Inspect) -> Work:
@@ -132,7 +216,9 @@ class Admission:
 
     @prepare.register
     def open(self, operation: op.Open) -> Work:
-        options = arguments(operation, self.context, omit=("path", "kind"))
+        options = arguments(
+            operation, self.context, omit=("path", "kind"), layout_only=self.validating
+        )
         declared = options.pop("geometry")
         if operation.kind in ("scan", "frames"):
             loader = (
@@ -140,7 +226,14 @@ class Admission:
                 if operation.kind == "scan"
                 else load_raw_frames_with_declaration
             )
-            item = loader(operation.path, declared=declared, **options)
+            work = partial(loader, operation.path, declared=declared, **options)
+            if self.validating:
+                item, _ = projection_frames(
+                    Path(operation.path),
+                    require_raw=operation.kind == "frames",
+                    declared=declared,
+                    **options,
+                )
         else:
             for field in msgspec.structs.fields(operation):
                 if (
@@ -155,18 +248,50 @@ class Admission:
                 "alignment": tj.load_alignment,
                 "simulation": tj.load_simulation,
             }[operation.kind]
-            item = load(operation.path)
-        return lambda: item
+            work = partial(load, operation.path)
+            if self.validating:
+                from tomojax.io.projection_layout import saved_projection_layout
+
+                record, _ = saved_projection_layout(Path(operation.path))
+
+                def stored_scan(path):
+                    frames, raw = projection_frames(Path(path))
+                    return scan_layout(frames, raw=raw)
+
+                build = {
+                    "reconstruction": reconstruction_from_record,
+                    "alignment": alignment_from_record,
+                    "simulation": simulation_from_record,
+                }[operation.kind]
+                item = build(operation.path, record, stored_scan)
+        if self.validating:
+            self.details.update(
+                path=operation.path,
+                kind=operation.kind,
+                geometry=geometry_summary(item, measured_angles=operation.angles is None),
+            )
+        return work
 
     @prepare.register
     def simulate(self, operation: op.Simulate) -> Work:
         grid, detector, cfg = build_sim_config(**arguments(operation, self.context))
+        self.details.update(
+            views=cfg.n_views,
+            phantom_shape=grid.shape,
+            projection_shape=(cfg.n_views, detector.nv, detector.nu),
+        )
         return partial(simulate_config, cfg, grid=grid, detector=detector)
 
     @prepare.register
     def combine(self, operation: op.Combine) -> Work:
         scans = [
-            source(ref, self.context, kinds=(tj.Scan,), field=f"sources[{i}]")
+            source(
+                ref,
+                self.context,
+                kinds=(tj.Scan,),
+                layout_only=self.validating,
+                field=f"sources[{i}]",
+            )
             for i, ref in enumerate(operation.sources)
         ]
         try:
@@ -176,9 +301,74 @@ class Admission:
         return lambda: tj.Scan.combine(scans, name=operation.name)
 
     @prepare.register
+    def evaluate(self, operation: op.Evaluate) -> Work:
+        from tomojax._evaluation import local_motion, partition_layout, partitions, score_candidate
+
+        if isinstance(operation.source, op.PathInput):
+            data, raw = projection_frames(Path(operation.source.path))
+        else:
+            data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames), raw=None)
+            raw = isinstance(data, tj.Frames)
+        steps = arguments(
+            operation, self.context, omit=("source", "split", "reference", "candidates")
+        )["corrections"]
+        spec = msgspec.to_builtins(operation.split)
+        kind = spec.pop("type")
+        if not operation.candidates:
+            raise InvalidParameter("candidates", "supply at least one setting")
+        if operation.reference.grid is not None or operation.reference.region is not None:
+            raise InvalidParameter("reference", "alignment reference uses the scan's default grid")
+        try:
+            domain = (
+                partition_layout(data, kind, spec, steps, raw=raw)
+                if self.validating
+                else partitions(data, kind, spec, steps, raw=raw)
+            )
+        except InvalidParameter:
+            raise
+        except ValueError as err:
+            raise InvalidParameter("split", str(err)) from err
+        reference = partial(arguments, operation.reference, self.context)
+        train = domain[1].scan
+        for setting in operation.candidates:
+            settings = arguments(setting, self.context, layout_only=True)
+            if isinstance(setting, op.AlignSettings):
+                local_motion(settings)
+                resolve_alignment(train, **settings)
+                settings = reference(layout_only=True)
+            resolve_reconstruction(train, metadata_only=self.validating, **settings)
+        self.details.update(
+            split_fingerprint=domain[0].fingerprint,
+            training_views=len(domain[1].indices),
+            test_views=len(domain[2].indices),
+        )
+        return lambda: p.Evaluation(
+            domain[0].fingerprint,
+            msgspec.to_builtins(operation.reference),
+            tuple(
+                score_candidate(
+                    domain,
+                    setting.__struct_config__.tag,
+                    arguments(setting, self.context),
+                    msgspec.to_builtins(setting),
+                    reference,
+                )
+                for setting in operation.candidates
+            ),
+        )
+
+    @prepare.register
     def fit(self, operation: op.Reconstruct | op.Align) -> Work:
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
-        options = arguments(operation, self.context, omit=("source", "axis", "index", "centres"))
+        layout_only = self.validating or self.plan
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=layout_only)
+        options = arguments(
+            operation,
+            self.context,
+            omit=("source", "axis", "index", "centres"),
+            layout_only=layout_only,
+        )
+        if not isinstance(operation, op.Align):
+            options["metadata_only"] = layout_only
         if isinstance(operation, op.Align):
             alignment = resolve_alignment(scan, **options)
 
@@ -220,14 +410,15 @@ class Admission:
     def region(self, operation: op.RegionPreview) -> Work:
         from tomojax._region import check_region_geometry
 
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=self.validating)
         check_region_geometry(scan)
         return partial(region_product, scan, self.context)
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
-        scan = source(operation.source, self.context, kinds=(tj.Scan,))
-        options = arguments(operation, self.context, omit=("source",))
+        """Apply an operator in the source's geometry; a path source never loads its pixels."""
+        options = arguments(operation, self.context, omit=("source",), layout_only=self.validating)
+        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=True)
         grid = options["grid"] or scan.grid
         forward = isinstance(operation, op.Project)
         name = "volume" if forward else "projections"
@@ -276,7 +467,7 @@ class Admission:
         from tomojax.core.validation import view_indices
 
         kinds = (tj.Scan, tj.Frames) if isinstance(operation, op.Select | op.Crop) else (tj.Scan,)
-        item = source(operation.source, self.context, kinds=kinds)
+        item = source(operation.source, self.context, kinds=kinds, layout_only=self.validating)
         detector = item.geometry.detector
         if isinstance(operation, op.Select):
             try:
@@ -295,7 +486,9 @@ class Admission:
         if isinstance(operation, op.Bin):
             check_binning(operation.binning, detector.nv, detector.nu)
             return partial(item.binned, operation.binning)
-        poses = arguments(operation, self.context, omit=("source",))["poses"]
+        poses = arguments(operation, self.context, omit=("source",), layout_only=self.validating)[
+            "poses"
+        ]
         try:
             posed = item.with_poses(poses)
         except ValueError as err:
@@ -304,7 +497,6 @@ class Admission:
 
     @prepare.register
     def correct(self, operation: op.Correct | op.ReconstructSlabs) -> Work:
-        from tomojax._loading import is_raw_input
         from tomojax.corrections.api import (
             check_rows,
             check_scan_steps,
@@ -313,41 +505,61 @@ class Admission:
         )
 
         raw = isinstance(operation, op.ReconstructSlabs)
-        if isinstance(operation.source, op.PathInput) and not raw:
-            raw = is_raw_input(operation.source.path)
         item = source(
             operation.source,
             self.context,
             kinds=(tj.Frames,) if raw else (tj.Frames, tj.Scan),
-            raw=raw,
+            raw=True if raw else None,
+            layout_only=self.validating,
         )
         if isinstance(operation, op.ReconstructSlabs):
-            settings = arguments(operation, self.context, omit=("source",))
+            from tomojax._scan import geometry_record
             from tomojax._workflow import slab_settings
+            from tomojax.io.api import dataset_output_format, slab_volume
             from tomojax.recon.api import validate_slab_grid
 
+            settings = arguments(
+                operation,
+                self.context,
+                omit=("source", "path", "force"),
+                layout_only=self.validating,
+            )
             grid, _, _ = slab_settings(item, **settings)
             validate_slab_grid(operation.method, item.geometry, grid, item.geometry.detector)
+            path = Path(operation.path)
+            if dataset_output_format(path) != "hdf5":
+                raise InvalidParameter(
+                    "path", "slab reconstruction requires a NeXus/HDF5 destination"
+                )
+            sidecar = path.with_name(path.name + ".manifest.json")
+            inputs = set(ancestor_paths((self.manifest,)))
+            check_destinations(inputs, (path, sidecar), force=operation.force)
 
             def fill():
-                with tj.reconstruct_slabs(item, **settings) as slabs:
-                    stage = self.context.staging.array()
-                    volume = np.lib.format.open_memmap(
-                        stage.path, mode="w+", dtype=np.float32, shape=grid.shape
-                    )
+                record = geometry_record(
+                    item.geometry, name=item.name, grid=grid, source=item.source
+                )
+                record.geometry_metadata.pop("volume_role", None)
+                record.geometry_metadata.update(
+                    reconstruction_method=operation.method,
+                    reconstruction_info={
+                        "host_slabs": True,
+                        "source": item.source.source_path if item.source else None,
+                    },
+                )
+                stage = self.context.staging.output(path, force=operation.force)
+                manifest = self.context.staging.output(sidecar, force=operation.force)
+                with (
+                    slab_volume(stage, record.to_nxtomo_metadata(), grid.shape) as volume,
+                    tj.reconstruct_slabs(item, **settings) as slabs,
+                ):
+                    volume.attrs["long_name"] = "volume"
                     for interval, slab in slabs:
                         volume[interval] = slab.volume
                         del slab
                         self.context.control.checkpoint()
-                    volume.flush()
-                return p.Volume(
-                    ex.volume_metadata(
-                        grid,
-                        storage=stage.reference,
-                        dtype=volume.dtype.str,
-                        length_unit=unit_of(item),
-                    )
-                )
+                manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
+                return p.Files((str(path), str(sidecar)))
 
             return fill
 
@@ -402,50 +614,57 @@ class Admission:
                 raise InvalidParameter("source", "alignment holds no working image to export")
             if raw:
                 paths.append(path.with_suffix(".json"))
-        check_destinations(set(ancestor_paths(self.manifest.inputs)), paths, force=operation.force)
+        self.details.update(
+            paths=[str(p) for p in paths], destination_exists=path.exists() or path.is_symlink()
+        )
+        if isinstance(operation, op.Export):
+            self.details.update(export_summary(operation, value, path, self.details["paths"]))
+        check_destinations(set(ancestor_paths((self.manifest,))), paths, force=operation.force)
 
         def write():
             staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}
             if isinstance(operation, op.Save):
                 tj.save(staged[path], value, include_scan=operation.include_scan)
             else:
-                tj.export(
+                from tomojax._files import export_volume
+
+                producer = self.context.leases[operation.source].provenance
+                export_volume(
                     staged[path],
                     value,
                     dtype=operation.dtype,
-                    range=operation.range,
+                    value_range=operation.range,
                     prefix=operation.prefix,
+                    source=producer.parameters["path"]
+                    if producer.operation == "open"
+                    else {
+                        "member": msgspec.to_builtins(operation.source),
+                        "manifest": sidecar.name if raw else "../" + sidecar.name,
+                    },
                 )
                 if raw:
                     staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
             staged[sidecar].write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-            outputs = [str(p) for p in paths]
-            if isinstance(operation, op.Export) and not raw:
-                outputs.append(str(path / f"{operation.prefix}.json"))
-            return p.Files(tuple(outputs))
+            return p.Files(tuple(self.details["paths"]))
 
         return write
 
 
-def ancestor_paths(ancestors: tuple[p.Provenance, ...]) -> Iterator[Path]:
-    """Identify caller-owned source files in a durable output's input history."""
-    for node in ancestors:
-        if node.operation == "open":
-            yield Path(node.parameters["path"]).resolve()
-            for field in ("flats", "darks"):
-                if isinstance(path := node.parameters.get(field), str):
-                    yield Path(path).resolve()
-        yield from storage_paths(node.parameters)
-        yield from ancestor_paths(node.inputs)
+def export_summary(operation: op.Export, value, path: Path, paths: list[str]) -> dict[str, Any]:
+    from tomojax._stack_files import slice_name
+
+    grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
+    assert grid is not None
+    first = last = path
+    if path.suffix.lower() != ".raw":
+        first = path / slice_name(operation.prefix, 0)
+        last = path / slice_name(operation.prefix, grid.nz - 1)
+        paths.append(str(path / f"{operation.prefix}.json"))
+    return {"slice_count": grid.nz, "first_file": str(first), "last_file": str(last)}
 
 
-def storage_paths(value: object) -> Iterator[Path]:
-    if isinstance(value, dict):
-        if value.get("type") in {"path", "npy", "hdf5"}:
-            yield Path(value["path"]).resolve()
-        else:
-            for option in value.values():
-                yield from storage_paths(option)
-    elif isinstance(value, tuple | list):
-        for option in value:
-            yield from storage_paths(option)
+def provenance(command, operation, context):
+    parameters = msgspec.to_builtins(
+        command if isinstance(command, op.Validate | op.Plan) else operation
+    )
+    return p.Provenance(parameters.pop("type"), parameters, context.lineage(command))

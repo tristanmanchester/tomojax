@@ -1,0 +1,6 @@
+{
+  "name": "tomojax",
+  "version": "1.0.0-rc.1",
+  "author": {"name": "Tristan Manchester"},
+  "description": "Reconstruct, align and inspect tomography scans with TomoJAX."
+}

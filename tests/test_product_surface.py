@@ -67,6 +67,7 @@ def test_cli_lists_the_product_commands(capsys: pytest.CaptureFixture[str]) -> N
         "export",
         "simulate",
         "serve",
+        "mcp",
     )
     assert all(command.name in product_command_names() for command in PRODUCT_COMMANDS)
     assert main(["--help"]) == 0
@@ -91,6 +92,9 @@ def test_every_command_takes_input_and_a_guarded_output(
         usage = captured.out.split("\n\n", 1)[0]
         if command == "serve":
             assert usage == "usage: tomojax serve [-h]"
+            continue
+        if command == "mcp":
+            assert usage == "usage: tomojax mcp [-h]"
             continue
         if command != "simulate":
             assert "INPUT" in usage

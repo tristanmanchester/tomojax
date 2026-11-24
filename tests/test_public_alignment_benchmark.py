@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 from pathlib import Path
 
 import numpy as np
@@ -94,3 +95,41 @@ def test_independent_integrator_uses_zyx_field_and_xyz_rays(benchmark, axis):
         field, [[1.4, 1.1, 1.3]], np.eye(3)[axis], spacing=[0.7, 1.1, 1.3], origin=[0, 0, 0]
     )
     np.testing.assert_allclose(actual, expected, atol=1e-12)
+
+
+def test_command_line_runs_one_cell_with_its_motion_bounds(benchmark, monkeypatch, tmp_path):
+    output = tmp_path / "run"
+    monkeypatch.setenv("JAX_PLATFORMS", "cpu")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "public_alignment_benchmark.py",
+            "--output",
+            str(output),
+            "--cells",
+            "parallel-clean",
+            "--fit",
+            "translations",
+            "--size",
+            "8",
+            "--views",
+            "7",
+            "--repeats",
+            "1",
+            "--rotation-deg",
+            "0",
+            "--shift-px",
+            "0.25",
+        ],
+    )
+    benchmark.main()
+    manifest = json.loads((output / "manifest.json").read_text())
+    assert manifest["fixture"]["motion_rotation_bound_deg"] == 0
+    assert manifest["fixture"]["motion_translation_bound_px"] == 0.25
+    [record] = manifest["records"]
+    assert record["case"] == "parallel-clean"
+    # An 8-voxel cell cannot meet the pilot's accuracy gates; it must run and be verified.
+    assert record["status"] in {"accepted", "target_not_reached"}, record.get("log_tail")
+    assert len(record["runs"]) == 2
+    assert all(run["fit"] == ["translations"] for run in record["runs"])
+    assert np.load(output / "parallel-clean.npz")["truth_params"][:, :3].max() == 0

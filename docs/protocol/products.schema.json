@@ -51,6 +51,18 @@
             {
               "anyOf": [
                 {
+                  "$ref": "#/$defs/Layout"
+                },
+                {
+                  "$ref": "#/$defs/DisplayPlanes"
+                },
+                {
+                  "$ref": "#/$defs/ArrayResult"
+                },
+                {
+                  "$ref": "#/$defs/StatisticsResult"
+                },
+                {
                   "$ref": "#/$defs/PlaneResult"
                 },
                 {
@@ -67,6 +79,12 @@
                 },
                 {
                   "$ref": "#/$defs/Files"
+                },
+                {
+                  "$ref": "#/$defs/PythonResult"
+                },
+                {
+                  "$ref": "#/$defs/Evaluation"
                 },
                 {
                   "$ref": "#/$defs/Inspection"
@@ -87,12 +105,18 @@
               "discriminator": {
                 "propertyName": "type",
                 "mapping": {
+                  "layout": "#/$defs/Layout",
+                  "display_planes": "#/$defs/DisplayPlanes",
+                  "array": "#/$defs/ArrayResult",
+                  "statistics": "#/$defs/StatisticsResult",
                   "plane": "#/$defs/PlaneResult",
                   "projections": "#/$defs/Projections",
                   "volume": "#/$defs/Volume",
                   "sweep": "#/$defs/Sweep",
                   "correction_preview": "#/$defs/CorrectionResult",
                   "files": "#/$defs/Files",
+                  "python": "#/$defs/PythonResult",
+                  "evaluation": "#/$defs/Evaluation",
                   "inspection": "#/$defs/Inspection",
                   "reconstruction_plan": "#/$defs/ReconPlan",
                   "joint_plan": "#/$defs/JointPlan",
@@ -361,6 +385,183 @@
       ],
       "additionalProperties": false
     },
+    "Layout": {
+      "title": "Layout",
+      "description": "Dimensions, units and coordinate sampling, without allocating or issuing pixels.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "layout"
+          ]
+        },
+        "array": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "array"
+      ],
+      "additionalProperties": false
+    },
+    "DisplayPlanes": {
+      "title": "DisplayPlanes",
+      "description": "Requested preview planes from a single source registration.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "display_planes"
+          ]
+        },
+        "planes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DisplayPlane"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "planes"
+      ],
+      "additionalProperties": false
+    },
+    "DisplayPlane": {
+      "title": "DisplayPlane",
+      "description": "A sampled plane and its position on the original axes.",
+      "type": "object",
+      "properties": {
+        "array": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "dimension": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "index": {
+          "type": "integer"
+        },
+        "sampling": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "array",
+        "dimension",
+        "index",
+        "sampling"
+      ],
+      "additionalProperties": false
+    },
+    "ArrayResult": {
+      "title": "ArrayResult",
+      "description": "Registered hyperslab or metadata for the original source.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "array"
+          ]
+        },
+        "array": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        }
+      },
+      "required": [
+        "type",
+        "array"
+      ],
+      "additionalProperties": false
+    },
+    "StatisticsResult": {
+      "title": "StatisticsResult",
+      "description": "Distribution over finite samples. Empty finite populations have null moments.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "statistics"
+          ]
+        },
+        "count": {
+          "type": "integer"
+        },
+        "non_finite": {
+          "type": "integer"
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "percentiles": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "histogram": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "count",
+        "non_finite",
+        "mean",
+        "std",
+        "percentiles",
+        "edges",
+        "histogram",
+        "unit"
+      ],
+      "additionalProperties": false
+    },
     "PlaneResult": {
       "title": "PlaneResult",
       "description": "One registered plane.",
@@ -490,6 +691,114 @@
       "required": [
         "type",
         "paths"
+      ],
+      "additionalProperties": false
+    },
+    "PythonResult": {
+      "title": "PythonResult",
+      "description": "Captured streams, last expression, registered products and rendered images.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "python"
+          ]
+        },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "value": {},
+        "handles": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "$ref": "#/$defs/Scan"
+                  },
+                  {
+                    "$ref": "#/$defs/Frames"
+                  },
+                  {
+                    "$ref": "#/$defs/Reconstruction"
+                  },
+                  {
+                    "$ref": "#/$defs/Alignment"
+                  },
+                  {
+                    "$ref": "#/$defs/Simulation"
+                  },
+                  {
+                    "$ref": "#/$defs/Region"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "type",
+                  "mapping": {
+                    "scan": "#/$defs/Scan",
+                    "frames": "#/$defs/Frames",
+                    "reconstruction": "#/$defs/Reconstruction",
+                    "alignment": "#/$defs/Alignment",
+                    "simulation": "#/$defs/Simulation",
+                    "region": "#/$defs/Region"
+                  }
+                }
+              },
+              {
+                "$ref": "#/$defs/ArrayResult"
+              }
+            ]
+          }
+        },
+        "images": {
+          "type": "array",
+          "items": {
+            "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "stdout",
+        "stderr",
+        "value",
+        "handles",
+        "images"
+      ],
+      "additionalProperties": false
+    },
+    "Evaluation": {
+      "title": "Evaluation",
+      "description": "Additive held-out scores on a frozen native detector split.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "evaluation"
+          ]
+        },
+        "split_fingerprint": {
+          "type": "string"
+        },
+        "reference": {
+          "type": "object"
+        },
+        "scores": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "type",
+        "split_fingerprint",
+        "reference",
+        "scores"
       ],
       "additionalProperties": false
     },
@@ -756,13 +1065,17 @@
     },
     "Validated": {
       "title": "Validated",
-      "description": "Successful shared preflight.",
+      "description": "Successful shared preflight, including resolved inputs and destinations.",
       "type": "object",
       "properties": {
         "type": {
           "enum": [
             "validated"
           ]
+        },
+        "details": {
+          "type": "object",
+          "default": {}
         }
       },
       "required": [

@@ -68,7 +68,8 @@ class _ZeissFrames(FrameStack):
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
         source: Any
-        with _OleFile(self.path) if self.fat is None else Path(self.path).open("rb") as source:
+        path = self.path
+        with _OleFile(path) if self.fat is None else Path(path).open("rb") as source:
             row_bytes = self.image_shape[1] * self.dtype.itemsize
             for destination, index in enumerate(indices):
                 offset, size = rows.start * row_bytes, self.rows * row_bytes
@@ -485,7 +486,9 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         view_positions=view_positions,
         exposure_times=counts.exposure_times,
         flat_exposure_times=None if flats is None else flats.exposure_times,
-        darks=None if dark_source is None else np.zeros((1, *counts.image_shape), np.float32),
+        darks=None
+        if dark_source is None
+        else np.broadcast_to(np.float32(0), (1, *counts.image_shape)),
         dark_source=dark_source,
         linear_limit=linear_limit,
     )

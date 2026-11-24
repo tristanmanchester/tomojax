@@ -77,6 +77,7 @@ def resolve_reconstruction(
     warm_start: bool | None = None,
     devices: Any = None,
     plane: tuple[str, int] | None = None,
+    metadata_only: bool = False,
     shape: tuple[int, int, int] | None = None,
     **settings: Any,
 ) -> ResolvedReconstruction:
@@ -132,6 +133,7 @@ def resolve_reconstruction(
         cfg,
         warm_start=bool(warm_start),
         projections=scan.projections,
+        check_samples=not metadata_only,
         axial_index=axial_index,
     )
     return ResolvedReconstruction(

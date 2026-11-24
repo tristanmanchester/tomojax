@@ -16,6 +16,25 @@ if TYPE_CHECKING:
     from .sirt import SIRTConfig
 
 
+def prediction_block_views(geometry: ScanGeometry, config: MethodConfig) -> int | None:
+    """JAX forward block width to preserve when changing the prediction output shape."""
+    from tomojax.core.devices import as_devices
+    from tomojax.core.geometry.cone import is_cone_beam
+
+    from ._backend import reconstruction_backend
+    from ._operators import PROJECTOR_BLOCK_VIEWS
+    from .fbp import FBPConfig
+    from .fourier import FourierConfig
+
+    # Analytic inverses predict with the ordinary single-device Projector.
+    analytic = isinstance(config, FBPConfig | FourierConfig)
+    backend = "auto" if analytic else config.backend
+    if reconstruction_backend(backend, cone=is_cone_beam(geometry), context="evaluate") == "cuda":
+        return None
+    devices = None if analytic else as_devices(getattr(config, "devices", None))
+    return PROJECTOR_BLOCK_VIEWS * (len(devices) if devices else 1)
+
+
 def inversion_storage(
     method: str,
     cfg: MethodConfig,

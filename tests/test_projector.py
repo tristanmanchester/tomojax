@@ -215,7 +215,7 @@ def test_private_storage_calls_give_the_public_bits(kind, monkeypatch):
             )
     # The transpose fills 32-plane bands in one call, adding the batches' sums in turn,
     # through a partial last band and a last batch shifted back over earlier views.
-    monkeypatch.setattr("tomojax.recon._operators._BATCH", 3)
+    monkeypatch.setattr("tomojax.recon._operators.PROJECTOR_BLOCK_VIEWS", 3)
     monkeypatch.setattr("tomojax.recon._operators._AXIAL_STACK_BYTES", 0)
     grid = tj.Grid(7, 5, 37, 0.8, 1.1, 1.3, vol_center=(0.2, -0.1, 0.3))
     tall = replace(geometry, grid=grid, detector=tj.Detector(9, 40, 0.9, 1.2, (0.17, -0.23)))

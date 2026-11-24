@@ -384,7 +384,9 @@ def main() -> None:
         default=["translations", "rotations"],
     )
     parser.add_argument("--views", type=int, default=VIEWS)
-    parser.add_argument("--rotation", type=float, default=0.25, help="Uniform motion bound")
+    parser.add_argument(
+        "--rotation-deg", type=float, default=0.25, help="Uniform motion bound in degrees"
+    )
     parser.add_argument("--shift-px", type=float, default=0.5, help="Uniform motion bound")
     parser.add_argument("--noise", type=float, default=0.001, help="Noise std / data RMS")
     parser.add_argument("--cells", nargs="+", help="Subset such as lamino-noisy; default all six")

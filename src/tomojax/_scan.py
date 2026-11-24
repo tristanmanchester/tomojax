@@ -214,13 +214,7 @@ class Scan:
             If indices are empty, unordered, repeated or out of bounds.
         """
         kept = view_indices(views, self.projections.shape[0])
-        return replace(
-            self,
-            projections=np.asarray(self.projections)[kept],
-            geometry=views_of(self.geometry, kept),
-            view_positions=_positions(self)[kept],
-            corrections=(*self.corrections, cut("selected", views=kept.tolist())),
-        )
+        return selected_scan(self, kept, np.asarray(self.projections)[kept])
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:
@@ -304,7 +298,8 @@ class Scan:
         Parameters
         ----------
         poses : numpy.ndarray or None
-            Replacement (views, 6) correction table; None removes all corrections.
+            Replacement table (alpha, beta, phi in degrees, then x, z, y in geometry length units).
+            None clears poses.
 
         Returns
         -------
@@ -929,6 +924,8 @@ class Reconstruction:
     length_unit : str or None, optional
         Unit of grid coordinates and poses. An attached scan supplies its recorded
         unit. A standalone volume retains the unit stored in its file.
+    source_path : str or None, optional
+        File from which the volume was loaded, when present.
     """
 
     volume: np.ndarray | jax.Array
@@ -937,6 +934,7 @@ class Reconstruction:
     info: Mapping[str, object]
     scan: Scan | None = None
     length_unit: str | None = field(default=None, kw_only=True)
+    source_path: str | None = field(default=None, kw_only=True)
 
     def __post_init__(self) -> None:
         from tomojax.errors import InvalidParameter
@@ -1007,6 +1005,17 @@ class Alignment:
 
 
 __all__ = ["Alignment", "Reconstruction", "Scan"]
+
+
+def selected_scan(scan: Scan, kept: np.ndarray, projections: np.ndarray) -> Scan:
+    """Pair selected projections with their original geometry, positions and history."""
+    return replace(
+        scan,
+        projections=projections,
+        geometry=views_of(scan.geometry, kept),
+        view_positions=_positions(scan)[kept],
+        corrections=(*scan.corrections, cut("selected", views=kept.tolist())),
+    )
 
 
 def _positions(scan: Scan) -> np.ndarray:

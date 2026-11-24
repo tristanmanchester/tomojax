@@ -25,6 +25,7 @@ from tomojax.io.api import (
     saved_volume_axes,
     saved_without_frames,
 )
+from tomojax.io.projection_layout import saved_projection_layout
 from tomojax.wire.arrays import Axis as Registered, Uniform
 
 if TYPE_CHECKING:
@@ -96,18 +97,16 @@ def projection_image(path: Path) -> np.ndarray | None:
         return None
     raw = read_acquisition(path)
     if raw is not None:
-        return np.asarray(raw.counts[raw.counts.shape[0] // 2], np.float32)
-    located = locate_frames(str(path))
-    samples = (
-        located.stack.frames
-        if located.image_key is None
-        else np.flatnonzero(located.image_key == 0)
-    )
-    if not len(samples):
+        samples = raw.counts
+    elif path.suffix.lower() in (".mat", ".npz"):
+        record, samples = saved_projection_layout(path)
+        if samples is not None and record.image_key is not None:
+            samples = samples[record.image_key == 0]
+    else:
+        samples = locate_frames(str(path)).samples  # (view, v, u), a single row included
+    if samples is None or not samples.shape[0]:
         raise ValueError(f"{path} holds no sample projections")
-    with h5py.File(path, "r") as file:
-        stack = cast("h5py.Dataset", file[located.stack.dataset])
-        return np.asarray(stack[int(samples[len(samples) // 2])], np.float32)
+    return np.asarray(samples[samples.shape[0] // 2], np.float32)
 
 
 def _saved_shape(path: Path) -> tuple[str, tuple[int, ...]]:

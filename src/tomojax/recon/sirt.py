@@ -6,7 +6,6 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-import operator
 from typing import TYPE_CHECKING, Any, NamedTuple, cast
 
 import jax
@@ -33,7 +32,7 @@ from tomojax.recon._projection import (
     resolve_geometry_projector,
     subset_operators,
 )
-from tomojax.recon._solver_validation import SIRT_CONTROL_ERROR, check_subset_count
+from tomojax.recon._solver_validation import check_count, check_subset_count
 from tomojax.recon._volume_storage import (
     Model,
     pack_volume,
@@ -109,8 +108,7 @@ class SIRTConfig:
     def __post_init__(self) -> None:
         check_backend(self.backend, "sirt")
         for name, minimum in (("iterations", 0), ("views_per_batch", 1), ("subsets", 1)):
-            if operator.index(getattr(self, name)) < minimum:
-                raise InvalidParameter(name, SIRT_CONTROL_ERROR)
+            check_count(getattr(self, name), name, minimum=minimum, context="sirt")
         if not math.isfinite(self.relaxation) or not 0 < self.relaxation < 2:
             raise InvalidParameter("relaxation", "sirt: relaxation must be finite and in (0, 2)")
         if self.acceleration and (self.subsets != 1 or self.relaxation > 1):

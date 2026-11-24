@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import h5py
 import numpy as np
 import pytest
@@ -386,7 +388,7 @@ def test_npz_detector_without_center_keeps_its_pitches_and_takes_the_middle(tmp_
         path,
         projections=np.ones((2, 2, 3), np.float32),
         thetas_deg=[0, 90],
-        detector={"nu": 3, "nv": 2, "du": 0.2, "dv": 0.3},
+        detector=json.dumps({"nu": 3, "nv": 2, "du": 0.2, "dv": 0.3}),
     )
     frames = tj.load_frames(path, flats=100, darks=0)
     assert frames.geometry.detector == tj.Detector(3, 2, 0.2, 0.3, (0.0, 0.0))
@@ -401,7 +403,9 @@ def test_container_conversion_does_not_create_absent_rotation_measurements(tmp_p
 
     path = tmp_path / "without_angles.npz"
     np.savez(
-        path, projections=np.ones((2, 2, 3), np.float32), detector=tj.Detector(3, 2, 1, 1).to_dict()
+        path,
+        projections=np.ones((2, 2, 3), np.float32),
+        detector=json.dumps(tj.Detector(3, 2, 1, 1).to_dict()),
     )
     output = tmp_path / "converted.nxs"
     convert_dataset(path, output)

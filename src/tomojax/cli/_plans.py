@@ -38,7 +38,11 @@ def plan_product(
             )
             for level in work.schedule.levels
         )
-        return p.JointPlan(("Joint image and selected geometry fit.",), levels, placement)
+        return p.JointPlan(
+            ("Joint fit. Working grids extending beyond the volume include padding.",),
+            levels,
+            placement,
+        )
     from tomojax.geometry.api import is_cone_beam
 
     return p.ReconPlan(

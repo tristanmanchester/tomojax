@@ -102,10 +102,14 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     >>> import tomojax as tj
     >>> recon = tj.load_reconstruction("recon.nxs")  # doctest: +SKIP
     """
-    from tomojax._files import saved_volume_grid
     from tomojax.io import load_dataset
 
-    record = load_dataset(os.fspath(path))
+    return reconstruction_from_record(path, load_dataset(os.fspath(path)), load)
+
+
+def reconstruction_from_record(path, record, read_scan):
+    from tomojax._files import saved_volume_grid
+
     if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
     meta = record.geometry_metadata
@@ -114,7 +118,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
             f"{path} holds a simulation phantom, not a reconstruction; "
             "load it with tomojax.load_simulation"
         )
-    scan = None if record.projections is None else load(path)
+    scan = None if record.projections is None else read_scan(path)
     if scan is None:
         warn(
             f"{path} holds the reconstruction without its scan (saved without "
@@ -138,6 +142,7 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         info=dict(info) if isinstance(info, dict) else {},
         scan=scan,
         length_unit=recorded_length_unit(meta),
+        source_path=str(Path(path).resolve()),
     )
 
 
@@ -166,13 +171,15 @@ def load_simulation(path: str | PathLike[str]) -> Simulation:
     >>> import tomojax as tj
     >>> scan, phantom = tj.load_simulation("synthetic.nxs")  # doctest: +SKIP
     """
-    from tomojax._simulate import Simulation
     from tomojax.io import load_dataset
 
-    record = load_dataset(os.fspath(path))
+    return simulation_from_record(path, load_dataset(os.fspath(path)), load)
+
+
+def simulation_from_record(path, record, read_scan):
     if record.volume is None or record.geometry_metadata.get("volume_role") != "phantom":
         raise ValueError(f"{path} holds no simulation phantom")
-    return Simulation(load(path), np.asarray(record.volume))
+    return Simulation(read_scan(path), np.asarray(record.volume))
 
 
 def load_alignment(path: str | PathLike[str]) -> Alignment:
@@ -204,15 +211,17 @@ def load_alignment(path: str | PathLike[str]) -> Alignment:
     >>> import tomojax as tj
     >>> result = tj.load_alignment("aligned.nxs")  # doctest: +SKIP
     """
-    from tomojax.geometry import Grid
     from tomojax.io import load_dataset
 
-    record = load_dataset(os.fspath(path))
+    return alignment_from_record(path, load_dataset(os.fspath(path)), load)
+
+
+def alignment_from_record(path, record, read_scan):
     meta = record.geometry_metadata
     raw_info = meta.get("alignment_info")
     if not isinstance(raw_info, dict):
         raise ValueError(f"{path} holds no alignment record")
-    scan = load(path)
+    scan = read_scan(path)
     info = dict(raw_info)
     raw_working_grid = info.pop("working_grid", None)
     image = None if record.volume is None else np.asarray(record.volume)
@@ -618,7 +627,7 @@ def reconstruct_resolved(
     if plan.cylinder is not None:
         from tomojax._field_of_view import zero_outside_cylinder
 
-        volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=out is not None)
+        volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=True)
     return Reconstruction(volume, scan.geometry, method, {**info, **plan.info}, scan)
 
 
@@ -1037,7 +1046,7 @@ def align_resolved(
     if cylinder is not None and image is not None and result.grid is not None:
         from tomojax._field_of_view import zero_outside_cylinder
 
-        image = zero_outside_cylinder(image, result.grid, cylinder)
+        image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.
     corrected = with_grid(result.scan, scan.grid if grid is None else grid)
     info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}

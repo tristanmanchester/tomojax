@@ -12,7 +12,12 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
-from tomojax._data import ROTATION_ANGLE_PATHS, LocatedFrames, locate_frames, saved_without_frames
+from tomojax._data import (
+    ROTATION_ANGLE_PATHS,
+    LocatedFrames,
+    locate_frames,
+    saved_without_frames,
+)
 from tomojax._typed_arrays import (
     any_true,
     finite_values_float64,
@@ -30,7 +35,7 @@ from tomojax._typed_arrays import (
     unique_int_count_map,
 )
 from tomojax.io._acquisition import read_acquisition
-from tomojax.io._datasets import ProjectionDataset, load_dataset
+from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
     AlignmentReport,
     AnglesReport,
@@ -45,6 +50,7 @@ from tomojax.io._inspection_types import (
     VolumeReport,
     WorkingSetEstimate,
 )
+from tomojax.io.projection_layout import saved_npz_layout, saved_projection_layout
 
 type PathLike = str | Path
 
@@ -219,37 +225,41 @@ def projection_stats(dataset: _ProjectionStack) -> tuple[ProjectionStatsReport, 
     return stats, nonfinite
 
 
-def _projection_report(path: str | None, dataset: _ProjectionStack | None) -> ProjectionReport:
+def _projection_report(
+    path: str | None, dataset: _ProjectionStack | None, *, statistics: bool = True
+) -> ProjectionReport:
+    report: ProjectionReport = {
+        "found": False,
+        "path": None,
+        "shape": None,
+        "dtype": None,
+        "n_views": None,
+        "detector_shape": None,
+        "storage_bytes": None,
+        "stats": {
+            "min": None,
+            "p01": None,
+            "mean": None,
+            "p50": None,
+            "p99": None,
+            "max": None,
+        },
+        "nonfinite": {
+            "nan_count": None,
+            "posinf_count": None,
+            "neginf_count": None,
+            "inf_count": None,
+        },
+    }
     if dataset is None:
-        return {
-            "found": False,
-            "path": None,
-            "shape": None,
-            "dtype": None,
-            "n_views": None,
-            "detector_shape": None,
-            "storage_bytes": None,
-            "stats": {
-                "min": None,
-                "p01": None,
-                "mean": None,
-                "p50": None,
-                "p99": None,
-                "max": None,
-            },
-            "nonfinite": {
-                "nan_count": None,
-                "posinf_count": None,
-                "neginf_count": None,
-                "inf_count": None,
-            },
-        }
+        return report
     if dataset.ndim not in (2, 3):
         raise ValueError(
             f"projection dataset must be (view, u) or (view, v, u), got {dataset.shape}"
         )
 
-    stats, nonfinite = projection_stats(dataset)
+    if statistics:
+        report["stats"], report["nonfinite"] = projection_stats(dataset)
     n_views, nu = int(dataset.shape[0]), int(dataset.shape[-1])
     nv = 1 if dataset.ndim == 2 else int(dataset.shape[1])
     return {
@@ -260,8 +270,8 @@ def _projection_report(path: str | None, dataset: _ProjectionStack | None) -> Pr
         "n_views": n_views,
         "detector_shape": {"nv": nv, "nu": nu},
         "storage_bytes": math.prod(dataset.shape) * dataset.dtype.itemsize,
-        "stats": stats,
-        "nonfinite": nonfinite,
+        "stats": report["stats"],
+        "nonfinite": report["nonfinite"],
     }
 
 
@@ -274,27 +284,24 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
     else:
         path, values, keys = located.angles_path, located.angles, located.image_key
         dataset = None if path is None else _dataset_at(file, path)
-    if dataset is None or values is None:
-        return {
-            "found": False,
-            "path": None,
-            "count": None,
-            "units": None,
-            "min": None,
-            "max": None,
-            "coverage": None,
-        }
+    units = None if dataset is None else _attr_to_str(dataset.attrs.get("units"))
+    return _angle_summary(values, keys, path, units)
 
-    # Discovery has already converted radians and known GDA command units.
-    samples = np.ones(values.shape, dtype=bool) if keys is None else keys == 0
-    finite = values[np.isfinite(values) & samples]
-    units = _attr_to_str(dataset.attrs.get("units"))
+
+def _angle_summary(
+    values: np.ndarray | None, keys: np.ndarray | None, path: str | None, units: str | None
+) -> AnglesReport:
+    """Summarise sample angles, recorded either for every frame or for sample views only."""
+    samples = np.asarray([]) if values is None else values
+    if keys is not None and samples.size == keys.size:
+        samples = samples[keys == 0]
+    finite = samples[np.isfinite(samples)]
     low = float(finite.min()) if finite.size else None
     high = float(finite.max()) if finite.size else None
     return {
-        "found": True,
+        "found": bool(values is not None and values.size),
         "path": path,
-        "count": int(values.size),
+        "count": None if values is None else int(values.size),
         "units": units,
         "min": low,
         "max": high,
@@ -401,7 +408,10 @@ def _corrections_report(file: h5py.File) -> list[str]:
         if isinstance(geom, h5py.Group)
         else None
     )
-    saved = cast("object", None if meta is None else meta.get("corrections"))
+    return recorded_corrections(None if meta is None else meta.get("corrections"))
+
+
+def recorded_corrections(saved: object) -> list[str]:
     if not isinstance(saved, list):
         return []
     from tomojax.corrections import Correction
@@ -415,21 +425,18 @@ def _corrections_report(file: h5py.File) -> list[str]:
 def _alignment_report(file: h5py.File | None) -> AlignmentReport:
     align = None if file is None else file.get(_ALIGN_PATH)
     if not isinstance(align, h5py.Group):
-        return {
-            "found": False,
-            "params_found": False,
-            "params_shape": None,
-            "angle_offset_found": False,
-            "angle_offset_shape": None,
-            "misalign_spec_found": False,
-            "gauge_fix_found": False,
-        }
-    params = align.get("thetas")
-    angle_offset = align.get("angle_offset")
-    misalign_spec = _json_attr_to_mapping(align.attrs.get("misalign_spec_json"))
-    gauge_fix = _json_attr_to_mapping(align.attrs.get("gauge_fix_json"))
-    params_found = isinstance(params, h5py.Dataset)
-    angle_offset_found = isinstance(angle_offset, h5py.Dataset)
+        return alignment_fields(None, None, None, None)
+    return alignment_fields(
+        align.get("thetas"),
+        align.get("angle_offset"),
+        _json_attr_to_mapping(align.attrs.get("misalign_spec_json")),
+        _json_attr_to_mapping(align.attrs.get("gauge_fix_json")),
+    )
+
+
+def alignment_fields(params, angle_offset, misalign_spec, gauge_fix) -> AlignmentReport:
+    params_found = isinstance(params, h5py.Dataset | np.ndarray)
+    angle_offset_found = isinstance(angle_offset, h5py.Dataset | np.ndarray)
     return {
         "found": bool(
             params_found or angle_offset_found or misalign_spec is not None or gauge_fix is not None
@@ -546,17 +553,27 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
 def _record_report(
     path: PathLike,
     record: ProjectionDataset,
-    counts: _ProjectionStack,
+    counts: _ProjectionStack | None,
     *,
     flat_count: int = 0,
     dark_count: int = 0,
+    statistics: bool = True,
 ) -> InspectionReport:
     """A report on a record read whole: a vendor acquisition's frames, or line integrals."""
-    projection = _projection_report(getattr(counts, "dataset", str(path)), counts)
-    n, nv, nu = counts.shape
+    projection = _projection_report(
+        getattr(counts, "member", getattr(counts, "dataset", str(path))),
+        counts,
+        statistics=statistics,
+    )
+    n, nv, nu = (0, 0, 0) if counts is None else counts.shape
     angles = record.angles
     detector = record.detector
     acquisition = record.geometry_metadata.get("acquisition", {})
+    key_path = acquisition.get("image_key_path")
+    key_counts = acquisition.get("image_key_counts", {})
+    if record.image_key is not None:
+        key_counts = unique_int_count_map(record.image_key)
+        key_path = key_path or "image_key.npy"
     pitches = acquisition.get("detector_pixel_size", [None, None])
     grid_shape = (
         [nu, nu, nv] if record.grid is None else [record.grid.nx, record.grid.ny, record.grid.nz]
@@ -565,15 +582,7 @@ def _record_report(
         "schema_version": 1,
         "input_path": str(path),
         "projection": projection,
-        "angles": {
-            "found": bool(len(angles)),
-            "path": acquisition.get("angles_path"),
-            "count": len(angles),
-            "units": "deg",
-            "min": float(angles.min()) if len(angles) else None,
-            "max": float(angles.max()) if len(angles) else None,
-            "coverage": float(np.ptp(angles)) if len(angles) else None,
-        },
+        "angles": _angle_summary(angles, record.image_key, acquisition.get("angles_path"), "deg"),
         "geometry": {
             "found": True,
             "type": record.geometry_type,
@@ -589,18 +598,29 @@ def _record_report(
             "center": None if detector is None else list(detector.center),
         },
         "flats_darks": {
-            "image_key_found": bool(acquisition.get("image_key_path")),
-            "image_key_path": acquisition.get("image_key_path"),
-            "image_key_counts": acquisition.get("image_key_counts", {}),
-            "sample_count": n,
+            "image_key_found": bool(key_path),
+            "image_key_path": key_path,
+            "image_key_counts": key_counts,
+            "sample_count": n
+            if record.image_key is None
+            else int(np.count_nonzero(record.image_key == 0)),
             "flats_present": flat_count > 0,
             "darks_present": dark_count > 0,
             "flat_count": flat_count,
             "dark_count": dark_count,
         },
-        "corrections": [],
-        "alignment": _alignment_report(None),
-        "volume": _volume_report(None),
+        "corrections": recorded_corrections(record.geometry_metadata.get("corrections")),
+        "alignment": alignment_fields(
+            record.align_params, record.angle_offset, record.misalign_spec, record.align_gauge
+        ),
+        "volume": _volume_report(None)
+        if record.volume is None
+        else {
+            "found": True,
+            "shape": list(record.volume.shape),
+            "axes": "zyx",
+            "method": record.geometry_metadata.get("reconstruction_method"),
+        },
         "memory_estimates": _memory_estimates(grid_shape, projection),
     }
 
@@ -627,9 +647,20 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     OSError
         If the input cannot be opened.
     """
+    if Path(path).suffix.lower() == ".npz":
+        record, arrays = saved_npz_layout(Path(path))
+        key = record.image_key
+        return _record_report(
+            path,
+            record,
+            arrays.get("projections"),
+            statistics=False,
+            flat_count=int(np.count_nonzero(key == 1)),
+            dark_count=int(np.count_nonzero(key == 2)),
+        )
     if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
-        record = load_dataset(path)
-        return _record_report(path, record, cast("_ProjectionStack", record.projections))
+        record, samples = saved_projection_layout(Path(path))
+        return _record_report(path, record, samples)
     raw = read_acquisition(path)
     if raw is None:
         return inspect_nxtomo(Path(path))

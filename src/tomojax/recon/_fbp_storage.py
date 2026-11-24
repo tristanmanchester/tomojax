@@ -44,13 +44,13 @@ def fbp_volume(
     return volume, {"config": config}
 
 
-def first_device(cfg: FBPConfig) -> AbstractContextManager[object]:
+def first_device(cfg: object) -> AbstractContextManager[object]:
     """Make the configuration's first device the default, or leave JAX's own."""
     import jax
 
     from tomojax.core.devices import as_devices
 
-    devices = as_devices(cfg.devices)
+    devices = as_devices(getattr(cfg, "devices", None))
     return jax.default_device(devices[0]) if devices else nullcontext()
 
 

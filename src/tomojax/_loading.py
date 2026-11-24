@@ -22,7 +22,13 @@ from typing import TYPE_CHECKING, Annotated, Any, cast
 import numpy as np
 
 from tomojax import progress
-from tomojax._data import calibration_issues, views_of
+from tomojax._data import calibration_issues, read_nxtomo, views_of
+from tomojax._frame_sources import (
+    acquisition_frames,
+    line_integral_frames,
+    selected_frames,
+    tiff_frames,
+)
 from tomojax._loading_geometry import centre_of, centred, frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
@@ -41,6 +47,7 @@ from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.registration import registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
+from tomojax.io.projection_layout import saved_projection_layout
 
 if TYPE_CHECKING:
     from tomojax import corrections
@@ -72,7 +79,8 @@ def is_raw_input(
     paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
     if read_acquisition(file, **paths) is not None:
         return True
-    return _line_integrals(file, **paths) is None
+    located = _located(file, **paths) if file.suffix.lower() in _HDF5 else None
+    return _line_integrals(file, located) is None
 
 
 def load(
@@ -163,20 +171,15 @@ def load_scan_with_declaration(
     *,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
-    angles: Sequence[float] | np.ndarray | None = None,
-    detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
     apply_poses: bool = True,
-    declared: DeclaredGeometry | None = None,
+    **overrides: Any,
 ) -> Scan:
-    centre, declared = centre_of(declared)
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs:
         progress.check_cancelled()
         file = Path(path)
@@ -188,17 +191,10 @@ def load_scan_with_declaration(
             "image_key_path": image_key_path,
             "angles_path": angles_path,
         }
-        overrides: dict[str, Any] = {
-            "angles": angles,
-            "detector": detector,
-            "pixel_size": pixel_size,
-            "grid": grid,
-            "geometry": geometry,
-            "declared": declared,
-        }
-        discovered = _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
+        overrides.setdefault("angles", None)
+        discovered, located = discover_frames(file, apply_poses=apply_poses, **paths, **overrides)
         if discovered is None:
-            found = _line_integrals(file, **paths)
+            found = _line_integrals(file, located)
             if found is not None:
                 outputs.own(found[0].projections)
                 scan = _record_scan(file, *found, apply_poses=apply_poses, **overrides)
@@ -216,14 +212,107 @@ def load_scan_with_declaration(
         return centred(scan, centre)
 
 
-def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset, np.ndarray] | None:
+def discover_frames(
+    file: Path,
+    *,
+    apply_poses: bool,
+    layout_only: bool = False,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    **overrides: Any,
+) -> tuple[Frames | None, LocatedFrames | None]:
+    """Discover vendor frames first, then labelled HDF5 frames, before reading pixels."""
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
+    frames = acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
+    if frames is None and (file.is_dir() or file.suffix.lower() in {".tif", ".tiff"}):
+        frames = tiff_frames(file, **overrides)
+    if frames is not None or file.suffix.lower() not in _HDF5:
+        return frames, None
+    located = _located(file, **paths)
+    if located is not None and located.raw:
+        frames = _hdf5_frames(
+            file, located, apply_poses=apply_poses, layout_only=layout_only, **overrides
+        )
+    return frames, located
+
+
+def projection_frames(
+    file: Path,
+    *,
+    require_raw=False,
+    apply_poses=True,
+    flats=None,
+    darks=None,
+    exposure_times=None,
+    flat_exposure_times=None,
+    data_path=None,
+    image_key_path=None,
+    angles_path=None,
+    angles=None,
+    **overrides: Any,
+) -> tuple[Frames, bool]:
+    """Resolve geometry and calibration for a scan without reading its detector pixels."""
+    if not file.exists():
+        raise FileNotFoundError(f"no such file: {file}")
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
+    settings = dict(apply_poses=apply_poses, angles=angles, **overrides)
+    frames, located = discover_frames(
+        file,
+        layout_only=True,
+        data_path=data_path,
+        image_key_path=image_key_path,
+        angles_path=angles_path,
+        **settings,
+    )
+    if frames is None:
+        frames, raw = stored_frames(file, located, require_raw=require_raw, **settings)
+        if not raw:
+            return centred(frames, centre), False
+    fields = _with_fields(
+        frames,
+        flats=flats,
+        darks=darks,
+        exposure_times=exposure_times,
+        flat_exposure_times=flat_exposure_times,
+    )
+    from tomojax.corrections.calibration import check_calibration_layout
+
+    _require_calibration(fields)
+    check_calibration_layout(fields)
+    return centred(fields, centre), True
+
+
+def stored_frames(file, located, *, require_raw, apply_poses, **overrides: Any):
+    settings = dict(apply_poses=apply_poses, **overrides)
+    if located is not None and require_raw:
+        return _hdf5_frames(file, located, layout_only=True, **settings), True
+    try:
+        record, stack = saved_projection_layout(file)
+    except KeyError:
+        if located is None:
+            raise
+        return _hdf5_frames(file, located, layout_only=True, **settings), True
+    _frames_in(record, file)
+    record.volume = None
+    key, raw = sample_key(record, located)
+    if raw and located is not None:
+        return _hdf5_frames(file, located, layout_only=True, **settings), True
+    if raw or require_raw or any(value is not None for value in overrides.values()):
+        return _record_frames(file, record, stack=stack, **settings), raw or require_raw
+    scan = scan_from_record(record, apply_poses=apply_poses)
+    return line_integral_frames(scan, stack, key), False
+
+
+def _line_integrals(
+    file: Path, located: LocatedFrames | None
+) -> tuple[ProjectionDataset, np.ndarray] | None:
     """A TomoJAX dataset of line integrals and its discovered key, or None for frames."""
     from tomojax.io import load_dataset
 
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
         return None
-    located = _located(file, **paths) if suffix in _HDF5 else None
     if located is not None and located.raw:
         return None
     try:
@@ -232,13 +321,17 @@ def _line_integrals(file: Path, **paths: str | None) -> tuple[ProjectionDataset,
         if progress.handler_failed(exc):
             raise
         return None
+    key, raw = sample_key(record, located)
+    return None if raw else (record, key)
+
+
+def sample_key(record: ProjectionDataset, located: LocatedFrames | None) -> tuple[np.ndarray, bool]:
     discovered = None if located is None else located.image_key
     key = _saved_image_key(record) if discovered is None else discovered
-    if np.isin(key, (1, 2)).any() or np.issubdtype(
+    raw = np.isin(key, (1, 2)).any() or np.issubdtype(
         np.asarray(record.projections).dtype, np.integer
-    ):
-        return None  # detector counts: corrected like other frames
-    return record, key
+    )
+    return key, bool(raw)
 
 
 def _frames_in(record: ProjectionDataset, file: Path) -> np.ndarray:
@@ -523,23 +616,11 @@ class Frames:
             If the selection is empty, out of bounds or not ordered as required.
         """
         kept = view_indices(views, self.views)
-        at = np.arange(self.views) + 0.5 if self.view_positions is None else self.view_positions
         counts = self.counts
         counts = (
             counts.frames_at(kept) if hasattr(counts, "frames_at") else np.asarray(counts)[kept]
         )
-        return replace(
-            self,
-            counts=counts,
-            geometry=views_of(self.geometry, kept),
-            view_positions=np.asarray(at, np.float64)[kept],
-            exposure_times=(
-                None
-                if self.exposure_times is None
-                else np.broadcast_to(self.exposure_times, (self.views,))[kept]
-            ),
-            corrections=(*self.corrections, cut("selected", views=kept.tolist())),
-        )
+        return selected_frames(self, kept, counts)
 
 
 def corrected_data(
@@ -710,20 +791,15 @@ def load_raw_frames_with_declaration(
     *,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
-    angles: Sequence[float] | np.ndarray | None = None,
-    detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
     exposure_times: np.ndarray | float | None = None,
     flat_exposure_times: np.ndarray | float | None = None,
     data_path: str | None = None,
     image_key_path: str | None = None,
     angles_path: str | None = None,
     apply_poses: bool = True,
-    declared: DeclaredGeometry | None = None,
+    **overrides: Any,
 ) -> Frames:
-    centre, declared = centre_of(declared)
+    centre, overrides["declared"] = centre_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
         file = Path(path)
         if not file.exists():
@@ -733,17 +809,10 @@ def load_raw_frames_with_declaration(
             "image_key_path": image_key_path,
             "angles_path": angles_path,
         }
-        overrides: dict[str, Any] = {
-            "angles": angles,
-            "detector": detector,
-            "pixel_size": pixel_size,
-            "grid": grid,
-            "geometry": geometry,
-            "declared": declared,
-        }
+        overrides.setdefault("angles", None)
         frames = _frames(
             file,
-            _acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
+            acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
             apply_poses=apply_poses,
             **paths,
             **overrides,
@@ -774,7 +843,7 @@ def _frames(
         return discovered
     suffix = file.suffix.lower()
     if file.is_dir() or suffix in {".tif", ".tiff"}:
-        return _tiff_frames(file, **overrides)
+        return tiff_frames(file, **overrides)
     if suffix in _HDF5:
         from tomojax.io.api import locate_frames
 
@@ -817,7 +886,7 @@ def _with_fields(
             "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
         }
     if isinstance(darks, numbers.Real):
-        changes |= {"darks": np.full((1, *shape), float(darks), np.float32), "dark_source": None}
+        changes |= {"darks": np.broadcast_to(np.float32(darks), (1, *shape)), "dark_source": None}
     elif darks is not None:
         changes |= {"darks": _frames_of(darks, "darks", frames.counts), "dark_source": None}
     if exposure_times is not None:
@@ -864,6 +933,7 @@ def _hdf5_frames(
     *,
     angles: Sequence[float] | np.ndarray | None,
     apply_poses: bool,
+    layout_only: bool = False,
     detector: Detector | None = None,
     pixel_size: float | tuple[float, float] | None = None,
     grid: Grid | None = None,
@@ -876,7 +946,7 @@ def _hdf5_frames(
     else incomplete until the caller supplies detector/geometry metadata.
     """
     from tomojax.io import ProjectionDataset
-    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata, load_nxtomo
+    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata
 
     stack = located.stack
     key = located.image_key
@@ -899,7 +969,7 @@ def _hdf5_frames(
     if view_angles.shape != (views,):
         raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
     try:
-        metadata = load_nxtomo(str(file), lazy=True).metadata
+        metadata = read_nxtomo(str(file), lazy=True, layout_only=layout_only).metadata
     except KeyError:  # not laid out as NXtomo: the frames alone
         metadata = NXTomoMetadata(
             geometry_meta={"detector_center_status": "not_recorded"},
@@ -955,6 +1025,7 @@ def _record_frames(
     record: ProjectionDataset,
     *,
     apply_poses: bool,
+    stack: Any = None,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
     pixel_size: float | tuple[float, float] | None = None,
@@ -967,10 +1038,11 @@ def _record_frames(
     sample = key == 0
     if not sample.any():
         raise ValueError(f"{file} holds no sample frames (image_key 0)")
-    stack = samples = _frames_in(record, file)
+    stack = _frames_in(record, file) if stack is None else stack
+    samples = stack
     if not sample.all():
         frames = len(key)
-        samples = stack[sample]
+        samples = stack.frames_at(sample) if hasattr(stack, "frames_at") else stack[sample]
 
         def views(values: np.ndarray | None) -> np.ndarray | None:
             if values is None or np.ndim(values) == 0 or len(values) != frames:
@@ -983,7 +1055,9 @@ def _record_frames(
         metadata.image_key = None
         record = replace_dataset(
             record,
-            projections=samples,
+            projections=np.broadcast_to(np.zeros((), stack.dtype), samples.shape)
+            if hasattr(stack, "frames_at")
+            else samples,
             angles=views(record.angles),
             angle_offset=views(record.angle_offset),
             align_params=views(record.align_params),
@@ -999,87 +1073,23 @@ def _record_frames(
         apply_poses=apply_poses,
         declared=declared,
     )
-    flats = stack[key == 1] if (key == 1).any() else None
+
+    def labelled(label):
+        mask = key == label
+        if not mask.any():
+            return None
+        return stack.frames_at(mask) if hasattr(stack, "frames_at") else stack[mask]
+
+    flats = labelled(1)
     return Frames(
         samples,
         resolved,
         flats=flats,
-        darks=stack[key == 2] if (key == 2).any() else None,
+        darks=labelled(2),
         flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
         name=record.sample_name or "sample",
         source=record,
     )
-
-
-def _acquisition_frames(
-    file: Path,
-    *,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    **overrides: Any,
-) -> Frames | None:
-    from tomojax.io.api import read_acquisition
-
-    found = read_acquisition(
-        file, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-    )
-    if found is None:
-        return None
-    record, resolved = frame_geometry(found.record, **overrides)
-    return Frames(
-        counts=found.counts,
-        geometry=resolved,
-        flats=found.flats,
-        darks=found.darks,
-        flat_positions=found.flat_positions,
-        white_level=found.white_level,
-        view_positions=found.view_positions,
-        exposure_times=found.exposure_times,
-        flat_exposure_times=found.flat_exposure_times,
-        dark_source=found.dark_source,
-        linear_limit=found.linear_limit,
-        name=record.sample_name or "sample",
-        source=record,
-    )
-
-
-def _tiff_frames(
-    file: Path,
-    *,
-    angles: Sequence[float] | np.ndarray | None,
-    detector: Detector | None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
-    declared: DeclaredGeometry | None = None,
-) -> Frames:
-    from tomojax.io import ProjectionDataset
-    from tomojax.io.api import read_tiff_frames
-
-    if geometry is not None and angles is None:
-        angles = np.asarray(cast("Any", geometry).angles)
-    if angles is None:
-        raise ValueError(
-            f"{file} is a TIFF stack, which holds no angles: pass angles=... (degrees), "
-            "or use tomojax correct --angles"
-        )
-    counts = read_tiff_frames(file, lazy=True)
-    views, rows, cols = counts.shape
-    angles = np.asarray(angles, np.float32)
-    if angles.shape != (views,):
-        raise ValueError(f"{file} has {views} frames but {angles.size} angles")
-    record = ProjectionDataset(
-        projections=np.broadcast_to(np.float32(0), counts.shape),
-        angles=angles,
-        detector=detector,
-        source_path=str(file),
-        source_format="tiff_stack",
-    )
-    record, resolved = frame_geometry(
-        record, pixel_size=pixel_size, grid=grid, geometry=geometry, declared=declared
-    )
-    return Frames(counts, resolved, source=record)
 
 
 __all__ = ["Frames", "load", "load_frames"]

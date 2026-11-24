@@ -18,6 +18,7 @@ Columns below name accepted input kinds in addition to the options defined by th
 | Command or `run.operation` | Input and principal parameters | Published result and ownership |
 |---|---|---|
 | `describe`, `devices`, `status` | No input | Cached `description`, `devices` or `status`. Status includes request state, logical bytes by handle and sampled allocator counters. |
+| `python` | Trusted code and admitted aliases | `python.images` contains session npy references to display-scaled rasters from `show()`. Read each raster and release its artifact token. The encoded output must fit within 8 MiB before the worker publishes any registrations. |
 | `inspect` | Path | `inspection.report`, as in Python. |
 | `open` | Path and kind. Scan and frames accept loader geometry, calibration and dataset paths. Saved results use their recorded metadata. | Session handle. Scan exposes projections, frames exposes counts. Reconstruction exposes volume, actual method and nullable scan. Alignment exposes scan, poses and nullable image. Simulation exposes scan and phantom. |
 | `close`, `release` | Handle ID or session-issued artifact ID, respectively | `ack`. Release accepts an ID issued by this session. |
@@ -31,7 +32,7 @@ Columns below name accepted input kinds in addition to the options defined by th
 | `run.select`, `run.crop` | Scan, frames or path (scan). Ordered view indices or half-open detector row/column intervals | New handle of the input kind. |
 | `run.bin`, `run.poses` | Scan or path, integer detector binning or six-column pose reference (null clears) | New scan handle. |
 | `run.combine` | Ordered paths or scan members, optional name | Combined cone scan. The manifest retains each input's own path and transformations in order. |
-| `run.reconstruct_slabs` | Raw path or frames, slab method, optional grid, corrections, config, warm start and epsilon | `volume.volume`, session npy. Fill the disk-backed volume at each yielded z interval before advancing. Read it with an npy memory map, then release its artifact ID. |
+| `run.reconstruct_slabs` | Raw path or frames, slab method, NeXus destination `path`, optional `force`, grid, corrections, config, warm start and epsilon | `files.paths` contains the reconstruction and manifest. Read the saved reconstruction with `open` or the registered volume at `/entry/processing/tomojax/volume`. |
 | `run.save` | Scan, reconstruction, alignment or simulation member, path, include_scan, force | `files.paths` includes the dataset and manifest. Caller owns committed destinations. |
 | `run.export` | Reconstruction, alignment or simulation member, path, dtype, range, prefix, force | `files.paths` includes the raw file or TIFF stack and sidecars. Caller owns committed destinations. |
 | `plane` | Volume member (including phantom or alignment image), axis and index | `plane.plane`, session npy. Works with a saved volume that has no scan. |
@@ -41,7 +42,7 @@ Columns below name accepted input kinds in addition to the options defined by th
 | `region_preview` | Scan or path | Region handle for subsequent region parameters, physical XYZ bound pairs, selected grid and registered overlay arrays. |
 | `control`, `shutdown` | Request ID and pause/resume/cancel, or no input for shutdown | `ack`. A paused request holds the execution queue. Cancel it to run other work. |
 
-Execution results include bounded `info` and an input manifest. Each manifest node identifies the operation, its parameters and its ordered inputs. File roots retain the source path. Include all contributing inputs even when two distinct members come from the same root. Save and export write the returned manifest at `<destination>.manifest.json`. A raw export also writes its scaling sidecar at `<stem>.json`. The owner commits these paths together. Force permits replacement of an existing output. Every input and its containing directories remain protected from replacement. Handle registration, durable commit and terminal publication belong to the session owner. Session artifacts live until release, owning-handle close or shutdown. Input files and committed durable destinations belong to their caller.
+Execution results include bounded `info` and an input manifest. Each manifest node identifies the operation, its parameters and its ordered inputs. File roots retain the source path. The optional `files` list records resolved input files, including HDF5 external-link targets, virtual dataset sources and external raw storage. Include all contributing inputs even when two distinct members come from the same root. Save and export write the returned manifest at `<destination>.manifest.json`. A raw export also writes its scaling sidecar at `<stem>.json`. The owner commits these paths together. Force permits replacement of an existing output. Every input and its containing directories remain protected from replacement. The worker registers handles and publishes terminals. Its committer owns durable destinations. Session artifacts live until release, owning-handle close or shutdown. Input files and committed durable destinations belong to their caller.
 
 ## Progress and array registration
 
@@ -77,7 +78,7 @@ On shutdown or stdin EOF, the worker closes admission, cancels outstanding work,
 
 ## Durable files
 
-Save and export adapters reserve a private staging location on the destination filesystem for each file or directory, including sidecars and manifests. The session serialises admission and publication. Cancellation or a higher channel revision admitted before the commit check discards the entire group and preserves existing destinations even with `force`. Once the session enters commit, it finishes the group and queues its terminal before admitting another command. Sending bytes on stdin alone does not establish which command won.
+Save, export and slab reconstruction adapters reserve a private staging location on the destination filesystem for each file or directory, including sidecars and manifests. The session serialises admission and publication. Cancellation or a higher channel revision admitted before the commit check discards the entire group and preserves existing destinations even with `force`. Once the session enters commit, it finishes the group and queues its terminal before admitting another command. Sending bytes on stdin alone does not establish which command won.
 
 Without `force`, an existing group member causes the commit to fail. With `force`, originals move to private backups while the group is installed. A missing manifest, failed rename or other install error rolls back earlier group members and returns an error. A failed restoration reports the location of the retained original for recovery. Use the successful terminal as the point to open all files. Other filesystem readers can observe individual renames during a group commit. Concurrent external writers and process or machine crashes have no multi-file transaction guarantee.
 

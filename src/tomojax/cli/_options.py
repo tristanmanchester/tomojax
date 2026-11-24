@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 
     from tomojax.cli._progress import ProgressParser
+    from tomojax.cli.products import Provenance
 
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
@@ -203,6 +204,30 @@ def check_paths(
         parser.fail(str(exc), hint="pass --force to replace it")
     except ValueError as exc:
         parser.error(str(exc))
+
+
+def ancestor_paths(ancestors: tuple[Provenance, ...]) -> Iterator[Path]:
+    """Identify caller-owned source files in a durable output's input history."""
+    for node in ancestors:
+        if node.operation == "open":
+            yield Path(node.parameters["path"]).resolve()
+            for field in ("flats", "darks"):
+                if isinstance(path := node.parameters.get(field), str):
+                    yield Path(path).resolve()
+        yield from storage_paths(node.parameters)
+        yield from ancestor_paths(node.inputs)
+
+
+def storage_paths(value: object) -> Iterator[Path]:
+    if isinstance(value, dict):
+        if value.get("type") in {"path", "npy", "hdf5"}:
+            yield Path(value["path"]).resolve()
+        else:
+            for option in value.values():
+                yield from storage_paths(option)
+    elif isinstance(value, tuple | list):
+        for option in value:
+            yield from storage_paths(option)
 
 
 def check_destinations(inputs: set[Path], outputs: Iterable[Path], *, force: bool) -> None:

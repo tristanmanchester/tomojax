@@ -250,13 +250,11 @@ def _load_processing_metadata(
     entry: h5py.Group,
     *,
     path: str,
-) -> tuple[np.ndarray | None, str | None]:
-    processing_grp = entry.get("processing")
-    tomojax_grp = None if processing_grp is None else processing_grp.get("tomojax")
-    if tomojax_grp is None:
+) -> tuple[h5py.Dataset | None, str | None]:
+    tomojax_grp = entry.get("processing/tomojax")
+    if not isinstance(tomojax_grp, h5py.Group):
         return None, None
-
-    volume_raw = tomojax_grp["volume"][...] if "volume" in tomojax_grp else None
+    volume = cast("h5py.Dataset | None", tomojax_grp.get("volume"))
     volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
 
     frame_attr = tomojax_grp.attrs.get("frame")
@@ -279,7 +277,7 @@ def _load_processing_metadata(
         if mapping is not None:
             out[key] = mapping
 
-    return volume_raw, volume_axes_attr
+    return volume, volume_axes_attr
 
 
 def _load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:

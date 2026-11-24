@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
-_BATCH = 32
+PROJECTOR_BLOCK_VIEWS = 32
 _AXIAL_STACK_BYTES = 64 * 1024**2
 
 
@@ -56,7 +56,7 @@ def _view_batch_size(
     problems retain the existing cap rather than introduce overlapping large
     tails; CPU and non-axial projectors retain their existing batching too.
     """
-    batch = max(1, min(_BATCH, n_views))
+    batch = max(1, min(PROJECTOR_BLOCK_VIEWS, n_views))
     workspace = 4 * n_views * detector.nu * (detector.nv + grid.nz)
     if axial_cuda and workspace <= _AXIAL_STACK_BYTES:
         batch = max(1, n_views)
@@ -68,6 +68,9 @@ def matched_operators(
     grid: Grid | None,
     context: str,
     devices: Device | Sequence[Device] | None = None,
+    *,
+    interpolation: str = "linear",
+    backend: str = "auto",
 ):
     """The grid, the split of the views among ``devices`` and builders of their operators.
 
@@ -79,14 +82,23 @@ def matched_operators(
     detector = geometry.detector
     det_grid = detector_grid_from_geometry_inputs(detector, geometry)
     model, backend = resolve_geometry_projector(
-        geometry, "auto", detector=detector, det_grid=det_grid, context=context
+        geometry, backend, detector=detector, det_grid=det_grid, context=context
     )
     n_views = len(geometry.angles)
     poses = stack_view_poses(geometry, n_views)
     axial_cuda = backend == "cuda" and model == "joseph" and isinstance(geometry, ParallelGeometry)
     batch = _view_batch_size(grid, detector, n_views, axial_cuda=axial_cuda)
     split = view_split(devices, n_views)
-    build = functools.partial(projection_operators, poses, grid, detector, det_grid, backend, batch)
+    build = functools.partial(
+        projection_operators,
+        poses,
+        grid,
+        detector,
+        det_grid,
+        backend,
+        batch,
+        interpolation=interpolation,
+    )
     private = resident_model(model, backend)
     if split is not None or not isinstance(private, PrivateJoseph):
         return grid, split, functools.partial(build, model, split=split), None

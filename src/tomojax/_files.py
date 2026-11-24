@@ -16,6 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax._scan import Alignment, Reconstruction
 from tomojax._simulate import Simulation
+from tomojax._stack_files import slice_name, tiff_stack_entry
 from tomojax.io.api import Inspection
 
 if TYPE_CHECKING:
@@ -135,6 +136,15 @@ def export(
     >>> import tomojax as tj
     >>> tj.export("slices", tj.load_reconstruction("recon.nxs"))  # doctest: +SKIP
     """
+    scan = reconstruction.scan
+    source = scan.source.source_path if scan is not None and scan.source else None
+    export_volume(
+        path, reconstruction, dtype=dtype, value_range=range, prefix=prefix, source=source
+    )
+
+
+def export_volume(path, reconstruction, *, dtype, value_range, prefix, source):
+    """Export registered pixels with the durable source known to the caller."""
     from tomojax._scan import Alignment
     from tomojax._simulate import Simulation
 
@@ -155,9 +165,10 @@ def export(
         (int(volume.shape[0]), int(volume.shape[1]), int(volume.shape[2])),
         (grid.vx, grid.vy, grid.vz),
         dtype=dtype,
-        value_range=range,
+        value_range=value_range,
         prefix=prefix,
         grid=grid,
+        source=source,
     )
 
 
@@ -193,25 +204,6 @@ def validate_export_range(
     return low, high
 
 
-def _slice_name(prefix: str, index: int) -> str:
-    return f"{prefix}_{index:05d}.tif"
-
-
-def tiff_stack_entry(path: Path, staged: Path) -> bool:
-    """Replace staged entries and stale numbered slices belonging to their stack sidecar."""
-    if not (path.is_file() or path.is_symlink()):
-        return False
-    if (staged / path.name).is_file():
-        return True
-    prefix, _, digits = path.stem.rpartition("_")
-    return (
-        digits.isascii()
-        and digits.isdigit()
-        and path.name == _slice_name(prefix, int(digits))
-        and (staged / f"{prefix}.json").is_file()
-    )
-
-
 def _write_tiff_directory(
     out: Path,
     plane: Callable[[int], np.ndarray],
@@ -231,7 +223,7 @@ def _write_tiff_directory(
     try:
         for z in range(nz):
             progress.check_cancelled()
-            iio.imwrite(staging / _slice_name(prefix, z), convert(plane(z)), extension=".tif")
+            iio.imwrite(staging / slice_name(prefix, z), convert(plane(z)), extension=".tif")
             progress.step("slices")
         _ = (staging / f"{prefix}.json").write_text(sidecar_text)
         if not out.exists():
@@ -258,7 +250,7 @@ def write_volume(
     dtype: str,
     value_range: Sequence[float] | None,
     prefix: str,
-    source: str | None = None,
+    source: str | dict[str, object] | None = None,
     grid: Grid | None = None,
 ) -> Path:
     """Write ``shape`` (z, y, x) z-planes, each ``plane(z)``, as TIFFs or one raw file.

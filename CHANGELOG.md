@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+`tomojax mcp` runs a Model Context Protocol server over stdio, so an AI agent such
+as Claude Code can inspect, open, correct, align, reconstruct, simulate, evaluate
+and export scans, see results as labelled slice panels, and run Python against the
+loaded data. Install it with the `mcp` extra. See [Use TomoJAX from an AI
+agent](docs/mcp.md).
+
+New TomoJAX NPZ files store metadata as JSON. For safety, the reader rejects
+pickled object arrays, so it can no longer open older NPZ files with pickled
+metadata. To convert one, load it with the previous TomoJAX release and save
+it again as NeXus, for example with `tj.save("scan.nxs", tj.load("scan.npz"))`.
+
 Loading, correction, reconstruction, and alignment report completed work through
 `tomojax.progress.watch`. A `progress.Cancel` token stops an operation at its
 next work boundary. The `correct`, `reconstruct`, and `align` commands support
