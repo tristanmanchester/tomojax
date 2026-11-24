@@ -10,7 +10,6 @@ from tomojax._parameters import GeometryName, Phantom
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
-from tomojax.core import log_jax_env, setup_logging
 from tomojax.datasets import SimConfig, SimulationArtefacts
 
 from ._runtime import transfer_guard_context
@@ -228,8 +227,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
         artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
         phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
-        setup_logging()
-        log_jax_env()
         with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
             resolved_grid, resolved_detector, cfg = build_sim_config(
                 cast("Phantom", args.phantom),

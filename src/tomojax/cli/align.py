@@ -33,6 +33,8 @@ if TYPE_CHECKING:
     from tomojax.alignment import AlignConfig
     from tomojax.wire.progress import Result
 
+LOG = logging.getLogger(__name__)
+
 
 class _Args(argparse.Namespace):
     data: str
@@ -257,7 +259,7 @@ def _write_manifest(
     }
     manifest = build_manifest("tomojax align", list(sys.argv), args, payload)
     save_manifest(str(args.manifest), manifest)
-    logging.info("Saved alignment manifest to %s", args.manifest)
+    LOG.info("Saved alignment manifest to %s", args.manifest)
 
 
 def _validate_align_args(
@@ -329,7 +331,6 @@ def _run(
     config: AlignConfig | None,
 ) -> Result | None:
     import tomojax as tj
-    from tomojax.core import log_jax_env, setup_logging
 
     if not Path(args.data).exists():
         raise FileNotFoundError(f"input not found: {args.data}")
@@ -346,8 +347,6 @@ def _run(
     if args.dry_run:
         print(json.dumps(_dry_run_plan(args, fit, scan, grid, config), indent=2, sort_keys=True))
         return None
-    setup_logging()
-    log_jax_env()
     if args.method == "opposite-views":
         result = tj.align(scan, fit=fit, method="opposite-views")
     elif args.grid is None:
@@ -360,7 +359,6 @@ def _run(
     progress.check_cancelled()
     assert args.out is not None
     tj.save(args.out, result)
-    logging.info("Saved alignment results to %s", args.out)
     if args.manifest is not None:
         progress.check_cancelled()
         _write_manifest(args, metadata, scan, result, masked=cylinder is not None)
@@ -369,6 +367,7 @@ def _run(
 
         outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
         return saved_result(args.out, result, method=args.method, outputs=outputs)
+    print(f"wrote {args.out}: {', '.join(fit)} fit, {len(scan.angles)} views")
     return None
 
 

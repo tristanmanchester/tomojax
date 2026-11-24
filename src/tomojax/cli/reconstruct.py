@@ -40,11 +40,14 @@ if TYPE_CHECKING:
     from tomojax.recon.api import MethodConfig
     from tomojax.wire.progress import Result
 
+LOG = logging.getLogger(__name__)
+
 _METHODS = get_args(Method.__value__)[1:]
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
 _NOT_SETTINGS = frozenset({"support", "devices"})
+
 
 _PUBLIC = (
     "--method",
@@ -338,7 +341,7 @@ def _write_manifest(
     }
     manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
     save_manifest(str(run.manifest), manifest)
-    logging.info("Saved reproducibility manifest to %s", run.manifest)
+    LOG.info("Saved reproducibility manifest to %s", run.manifest)
 
 
 def main() -> int:
@@ -358,12 +361,9 @@ def _run(
     import tomojax as tj
     from tomojax import progress
     from tomojax.cli._runtime import report_automatic
-    from tomojax.core import log_jax_env, setup_logging
 
     run = _Run.of(args)
     config = run.validate(parser, args, metadata)
-    setup_logging()
-    log_jax_env()
     progress.check_cancelled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
@@ -392,7 +392,7 @@ def _run(
         source is not None
         and source.geometry_metadata.get("detector_center_status") == "not_recorded"
     ):
-        logging.warning(
+        LOG.warning(
             "%s records no rotation centre; the detector middle was used. "
             "Fit one with tomojax align --fit center before reconstructing.",
             run.data,

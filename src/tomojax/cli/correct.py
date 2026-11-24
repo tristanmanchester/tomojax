@@ -283,7 +283,6 @@ def _steps(args: argparse.Namespace, settings: Mapping[str, object]) -> list[Ste
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax correct``."""
     import tomojax as tj
-    from tomojax.core import setup_logging
     from tomojax.io.api import save_projection_quicklook
 
     parser = build_parser()
@@ -312,7 +311,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             outputs=[output, preview],
             force=cast("bool", args.force),
         )
-        setup_logging()
         progress.check_cancelled()
         scan = _corrected(source, args, declared, steps, crop_slices)
         progress.check_cancelled()

@@ -56,11 +56,11 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
   },
   "code_lines": {
-    "(modules)": 5606,
+    "(modules)": 5608,
     "_data": 2153,
     "alignment": 4670,
     "backends": 273,
-    "cli": 5752,
+    "cli": 6006,
     "core": 9917,
     "corrections": 3139,
     "datasets": 1069,
@@ -69,7 +69,7 @@
     "io": 3947,
     "motion": 153,
     "nuisance": 232,
-    "recon": 14912,
+    "recon": 14914,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -97,7 +97,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 64,
     "forwarders": 5,
     "chained": 4
   },

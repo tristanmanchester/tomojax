@@ -176,7 +176,9 @@ def _host_fbp(
     from .fbp_host import FBPHostConfig, fbp_host
     from .fdk import FDKHostConfig, fdk_host
 
-    logging.info("Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz)
+    logging.getLogger(__name__).info(
+        "Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz
+    )
     if is_cone_beam(geometry):
         data = np.asarray(projections, np.float32)
         host = FDKHostConfig(slices_per_batch=slab_planes, fdk=fdk_config(cfg))

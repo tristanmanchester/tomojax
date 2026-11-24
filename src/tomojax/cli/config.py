@@ -8,7 +8,9 @@ import sys
 import tomllib
 from typing import TYPE_CHECKING, cast
 
+from tomojax.cli import _console
 from tomojax.cli._options import config_settings, options
+from tomojax.cli._progress import ProgressParser
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -32,8 +34,6 @@ def parse_args_with_config(
     have no option; they are returned as written, under ``"settings"``.
     """
     raw_argv = list(sys.argv[1:] if argv is None else argv)
-    from tomojax.cli._progress import ProgressParser
-
     if isinstance(parser, ProgressParser):
         parser.set_invocation(raw_argv)
     config_path = _discover_config_path(parser, raw_argv)
@@ -72,8 +72,6 @@ def _discover_config_path(
     parser: argparse.ArgumentParser,
     argv: Sequence[str],
 ) -> Path | None:
-    from tomojax.cli._progress import ProgressParser
-
     config_parser = ProgressParser(add_help=False, prog=parser.prog, allow_abbrev=False)
     config_parser.set_invocation(list(argv))
     _ = config_parser.add_argument("--config", default=None)
@@ -137,10 +135,14 @@ def _validate_config_keys(
             parser.error(f"config key '{key}' in {path} was renamed '{new}'")
     unknown = sorted(str(key) for key in values if str(key) not in valid_keys)
     if unknown:
-        parser.error(
-            f"unknown config key(s) in {path}: {', '.join(unknown)}. "
-            f"Valid keys: {', '.join(sorted(valid_keys))}"
-        )
+        message = f"unknown config key(s) in {path}: {', '.join(unknown)}"
+        listing = f"{parser.prog} --config-keys lists every key"
+        close = _console.suggest(unknown[0], valid_keys)
+        hint = f"did you mean {close}? {listing}" if close else listing
+        full = f"{message}. Valid keys: {', '.join(sorted(valid_keys))}"
+        if isinstance(parser, ProgressParser):
+            parser.fail(full, hint=hint, display=message)
+        parser.error(full)
 
 
 def _coerce_config_defaults(

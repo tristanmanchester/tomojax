@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import argparse
 from contextlib import contextmanager
 import importlib
 import sys
 from typing import TYPE_CHECKING, cast
 
+from tomojax.cli import _console
 from tomojax.cli.api import PRODUCT_COMMANDS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
+
+    from tomojax.cli._progress import ProgressParser
 
 _MODULES = {c.name: c.name for c in PRODUCT_COMMANDS}
 
@@ -29,21 +31,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
     command, *tail = args
     if command not in _MODULES:
-        _build_parser().error(f"unknown command {command!r}")
+        close = _console.suggest(command, _MODULES)
+        hint = f"did you mean {close}?" if close else "tomojax --help lists the commands"
+        _build_parser().fail(f"unknown command {command!r}", hint=hint)
     module = importlib.import_module(f"tomojax.cli.{_MODULES[command]}")
-    run = cast("Callable[[], int | None]", module.main)
+    run_module = cast("Callable[[], int | None]", module.main)
     with _temporary_argv([f"tomojax {command}", *tail]):
         try:
-            return int(run() or 0)
+            return int(run_module() or 0)
         except (OSError, ValueError, KeyError) as exc:
-            print(f"tomojax {command}: error: {exc}", file=sys.stderr)
+            message = exc.args[0] if isinstance(exc, KeyError) and len(exc.args) == 1 else exc
+            _console.report_error(f"tomojax {command}", str(message))
             return 1
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def run() -> int:
+    """The ``tomojax`` console script: :func:`main`, with a TomoJAX bug reported briefly."""
+    args = sys.argv[1:]
+    prog = f"tomojax {args[0]}" if args and args[0] in _MODULES else "tomojax"
+    try:
+        return main()
+    except KeyboardInterrupt:
+        _console.report_cancelled(prog)
+        return 130
+    except Exception as exc:
+        _console.report_internal(prog, exc)
+        return 1
+
+
+def _build_parser() -> ProgressParser:
+    from tomojax.cli._progress import ProgressParser
+
     width = max(len(c.name) for c in PRODUCT_COMMANDS)
     commands = "\n".join(f"  {c.name:<{width}}  {c.help}" for c in PRODUCT_COMMANDS)
-    parser = argparse.ArgumentParser(
+    parser = ProgressParser(
         prog="tomojax",
         usage="tomojax [--version] <command> [options]",
         description=(
@@ -66,7 +87,6 @@ def _build_parser() -> argparse.ArgumentParser:
             "  tomojax inspect recon.nxs --preview-dir previews\n"
             "  tomojax export recon.nxs -o slices/"
         ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     _ = parser.add_argument("--version", action="store_true", help="Print the version and exit")
     return parser
@@ -83,4 +103,4 @@ def _temporary_argv(argv: list[str]) -> Generator[None, None, None]:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(run())
