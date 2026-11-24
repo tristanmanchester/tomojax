@@ -4,7 +4,7 @@
 //! sizes or uncorrected file pixels into a registered reconstruction or scan.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{Value, json};
 
@@ -167,73 +167,10 @@ pub fn is_hdf5(path: &Path) -> bool {
     })
 }
 
-/// A file that an HDF5 file reads through an external link or a virtual dataset.
-#[derive(Debug)]
-pub struct LinkedFile {
-    /// The file on disk.
-    pub path: PathBuf,
-    /// Its path relative to the first file's folder, when every link on the way
-    /// names it relatively without leaving that folder: such links keep working
-    /// in a copy of the folder.
-    pub within: Option<PathBuf>,
-}
-
-/// Every other file an HDF5 file reads through external links or virtual datasets,
-/// following links in the linked files too: an NXtomo master's detector files.
-pub fn linked_files(path: &Path) -> Result<Vec<LinkedFile>, String> {
-    let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-    let mut found: BTreeMap<PathBuf, Option<PathBuf>> = BTreeMap::new();
-    let mut pending = vec![(own.clone(), own.file_name().map(PathBuf::from))];
-    while let Some((file, within)) = pending.pop() {
-        let direct = if file == own {
-            direct_links(&file)?
-        } else {
-            // A linked file that is not HDF5 has no links of its own.
-            direct_links(&file).unwrap_or_default()
-        };
-        for (named, target) in direct {
-            if target == own {
-                continue;
-            }
-            let inside = within.as_ref().and_then(|within| {
-                inside_folder(&within.parent().unwrap_or(Path::new("")).join(&named))
-            });
-            match found.get(&target) {
-                Some(Some(_)) => continue,
-                Some(None) if inside.is_none() => continue,
-                _ => {}
-            }
-            found.insert(target.clone(), inside.clone());
-            pending.push((target, inside));
-        }
-    }
-    Ok(found
-        .into_iter()
-        .map(|(path, within)| LinkedFile { path, within })
-        .collect())
-}
-
-/// `path` without `.` and `..`, if it is relative and stays inside its root.
-fn inside_folder(path: &Path) -> Option<PathBuf> {
-    use std::path::Component;
-    let mut inside = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Normal(part) => inside.push(part),
-            Component::CurDir => {}
-            Component::ParentDir if inside.pop() => {}
-            _ => return None,
-        }
-    }
-    Some(inside)
-}
-
-/// The links in one file, as (the file name the link stores, the file on disk).
-fn direct_links(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+/// Whether an HDF5 file reads any of its data from other files: through external
+/// links, virtual datasets or external raw storage, as NXtomo masters often do.
+pub fn reads_other_files(path: &Path) -> Result<bool, String> {
     let file = hdf5::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-    let folder = own.parent().unwrap_or(Path::new("/")).to_owned();
-    let mut found = std::collections::BTreeSet::new();
     let mut groups = vec![(*file).clone()];
     let mut visited = 0usize;
     while let Some(group) = groups.pop() {
@@ -251,24 +188,16 @@ fn direct_links(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
             .map_err(|e| e.to_string())?;
         for (name, kind) in links {
             match kind {
-                hdf5::LinkType::External => {
-                    if let Some(target) = external_target(&group, &name, &folder) {
-                        found.insert(target);
-                    }
-                }
+                hdf5::LinkType::External => return Ok(true),
                 hdf5::LinkType::Hard => {
                     if let Ok(child) = group.group(&name) {
                         groups.push(child);
-                    } else if let Ok(dataset) = group.dataset(&name)
-                        && let Ok(create) = dataset.dcpl()
-                    {
-                        for mapping in create.virtual_map() {
-                            if mapping.src_filename != "."
-                                && let Ok(source) =
-                                    std::fs::canonicalize(folder.join(&mapping.src_filename))
-                            {
-                                found.insert((mapping.src_filename, source));
-                            }
+                    } else if let Ok(dataset) = group.dataset(&name) {
+                        let create = dataset.dcpl().map_err(|e| e.to_string())?;
+                        if create.layout() == hdf5::dataset::Layout::Virtual
+                            || !create.external().is_empty()
+                        {
+                            return Ok(true);
                         }
                     }
                 }
@@ -276,53 +205,7 @@ fn direct_links(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
             }
         }
     }
-    found.retain(|(_, target)| *target != own);
-    Ok(found.into_iter().collect())
-}
-
-/// The file an external link names (not the end of a chain of links), resolved
-/// as HDF5 does: relative names against the linking file's folder.
-fn external_target(group: &hdf5::Group, name: &str, folder: &Path) -> Option<(String, PathBuf)> {
-    use hdf5_sys::{h5l, h5p::H5P_DEFAULT};
-    let name = std::ffi::CString::new(name).ok()?;
-    let mut value = vec![0u8; 4096];
-    let file = hdf5::sync::sync(|| {
-        // SAFETY: `value` outlives both calls, its length bounds the read, and the
-        // unpacked filename points into `value`, copied out before it is dropped.
-        unsafe {
-            let id = group.id();
-            let length = value.len();
-            if h5l::H5Lget_val(
-                id,
-                name.as_ptr(),
-                value.as_mut_ptr().cast(),
-                length,
-                H5P_DEFAULT,
-            ) < 0
-            {
-                return None;
-            }
-            let (mut flags, mut file, mut object) = (0, std::ptr::null(), std::ptr::null());
-            if h5l::H5Lunpack_elink_val(
-                value.as_ptr().cast(),
-                length,
-                &mut flags,
-                &mut file,
-                &mut object,
-            ) < 0
-                || file.is_null()
-            {
-                return None;
-            }
-            Some(
-                std::ffi::CStr::from_ptr(file)
-                    .to_string_lossy()
-                    .into_owned(),
-            )
-        }
-    })?;
-    let target = std::fs::canonicalize(folder.join(&file)).ok()?;
-    Some((file, target))
+    Ok(false)
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {

@@ -430,7 +430,10 @@ impl AppState {
                                 .retain(|measurement| measurement.asset != id);
                             match metadata::inspection_arrays(&report, &path) {
                                 Ok(arrays) => {
-                                    for (key, array) in arrays {
+                                    for (key, mut array) in arrays {
+                                        // Paths inside the project stay relative, so a
+                                        // moved project still finds its managed data.
+                                        array.relative_to(&root);
                                         asset.arrays.insert(key, array);
                                     }
                                 }
@@ -1020,22 +1023,35 @@ impl AppState {
     }
 }
 
-/// The registered volume or projections that forward or back projection reads,
-/// from the last opened input that holds one. Preflight and execution share it.
+/// The volume or projections that forward or back projection reads. A selected
+/// array result (a saved volume or forward projection) wins over the arrays a
+/// scan holds; otherwise the last input that holds one. Preflight and execution
+/// share it.
 pub(super) fn array_member<'a>(
-    products: impl DoubleEndedIterator<Item = &'a Product>,
+    products: impl Iterator<Item = &'a Product> + Clone,
     key: &str,
 ) -> Option<crate::protocol::Storage> {
-    products.rev().find_map(|product| match product {
-        Product::Volume { volume } if key == "volume" => Some(volume.storage.clone()),
-        Product::Projections { projections } if key == "projections" => {
-            Some(projections.storage.clone())
-        }
-        _ if key == "volume" => ["volume", "phantom", "image"]
-            .iter()
-            .find_map(|key| product.members().get(*key).cloned()),
-        _ => product.members().get("projections").cloned(),
-    })
+    products
+        .clone()
+        .find_map(|product| match product {
+            Product::Volume { volume } if key == "volume" => Some(volume.storage.clone()),
+            Product::Projections { projections } if key == "projections" => {
+                Some(projections.storage.clone())
+            }
+            _ => None,
+        })
+        .or_else(|| {
+            products.fold(None, |found, product| {
+                let member = if key == "volume" {
+                    ["volume", "phantom", "image"]
+                        .iter()
+                        .find_map(|key| product.members().get(*key).cloned())
+                } else {
+                    product.members().get("projections").cloned()
+                };
+                member.or(found)
+            })
+        })
 }
 
 /// An array-only result (a saved volume or projections) is used as registered,

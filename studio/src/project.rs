@@ -121,6 +121,27 @@ pub struct Fingerprint {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tree_digest: Option<String>,
 }
+const LOCK: &str = ".tomojax.lock";
+
+/// Whether a folder also holds a Studio project (its lock exists from the moment
+/// the project is opened, before the first manifest is written).
+fn holds_project(folder: &Path) -> bool {
+    folder.join(MANIFEST).exists() || folder.join(LOCK).exists()
+}
+
+/// Whether `relative`, inside a folder that also holds a project, belongs to that
+/// project (its manifest and the files it writes) rather than to the acquisition.
+fn is_project_entry(relative: &Path) -> bool {
+    let mut components = relative.components();
+    let Some(first) = components.next() else {
+        return false;
+    };
+    let first = first.as_os_str().to_string_lossy();
+    let nested = components.next().is_some();
+    (first.starts_with(MANIFEST) || first == LOCK) && !nested
+        || matches!(first.as_ref(), "inputs" | "derived" | "cache")
+}
+
 impl Fingerprint {
     /// The other files in `file`'s folder and its subfolders, which a header
     /// file's loader reads (Nikon can keep projections in a subfolder). A project
@@ -132,17 +153,13 @@ impl Fingerprint {
         let mut bytes = 0u64;
         // A project kept in the acquisition's own folder writes its manifest and
         // its inputs, results and cache there; those are not acquisition files.
-        let project_here = folder.join(MANIFEST).exists();
+        let project_here = holds_project(folder);
         let mut pending = vec![PathBuf::new()];
         while let Some(relative) = pending.pop() {
             let current = folder.join(&relative);
-            let in_project = project_here
-                && relative.components().next().is_some_and(|first| {
-                    ["inputs", "derived", "cache"]
-                        .map(std::ffi::OsStr::new)
-                        .contains(&first.as_os_str())
-                });
-            if in_project || (!relative.as_os_str().is_empty() && current.join(MANIFEST).exists()) {
+            if (project_here && is_project_entry(&relative))
+                || (!relative.as_os_str().is_empty() && current.join(MANIFEST).exists())
+            {
                 continue;
             }
             let mut entries = fs::read_dir(&current)
@@ -158,9 +175,7 @@ impl Fingerprint {
                     pending.push(name);
                     continue;
                 }
-                if relative.as_os_str().is_empty()
-                    && entry.file_name().to_string_lossy().starts_with(MANIFEST)
-                {
+                if project_here && is_project_entry(&relative.join(entry.file_name())) {
                     continue;
                 }
                 let name = name.as_os_str().as_encoded_bytes();
@@ -213,9 +228,13 @@ impl Fingerprint {
         }
         let mut hash = blake3::Hasher::new();
         hash.update(b"tomojax-directory-metadata-v1\0");
+        let project_here = holds_project(path);
         let mut pending = vec![PathBuf::new()];
         let mut bytes = 0u64;
         while let Some(relative) = pending.pop() {
+            if project_here && is_project_entry(&relative) {
+                continue;
+            }
             let current = path.join(&relative);
             let meta = fs::symlink_metadata(&current)
                 .map_err(|e| format!("{}: {e}", current.display()))?;
@@ -237,9 +256,12 @@ impl Fingerprint {
             hash.update(&[u8::from(meta.is_dir())]);
             let size = if meta.is_file() { meta.len() } else { 0 };
             hash.update(&size.to_le_bytes());
+            // File times only: a folder's time changes whenever an entry is added,
+            // and the entry names already record that.
             let modified = meta
                 .modified()
                 .ok()
+                .filter(|_| meta.is_file())
                 .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
                 .map(|d| d.as_nanos());
             hash.update(&[u8::from(modified.is_some())]);
@@ -263,7 +285,7 @@ impl Fingerprint {
         }
         Ok(Self {
             bytes,
-            modified_ns,
+            modified_ns: None,
             directory: true,
             tree_digest: Some(hash.finalize().to_hex().to_string()),
         })
@@ -331,17 +353,6 @@ impl CapturedInput {
         } else {
             None
         };
-        // An HDF5 file's external links and virtual datasets read other files.
-        if path.is_file() && crate::metadata::is_hdf5(&path) {
-            for linked in crate::metadata::linked_files(&path).unwrap_or_default() {
-                if let std::collections::btree_map::Entry::Vacant(entry) =
-                    storage_fingerprints.entry(linked.path)
-                {
-                    let fingerprint = Fingerprint::read(entry.key())?;
-                    entry.insert(fingerprint);
-                }
-            }
-        }
         Self {
             asset: asset.id.clone(),
             name: asset.name.clone(),
@@ -710,7 +721,11 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or("A project manifest needs a parent directory")?;
-    let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    // Named after the file it replaces, so folder fingerprints can skip it.
+    let mut temp = tempfile::Builder::new()
+        .prefix(path.file_name().unwrap_or_default())
+        .tempfile_in(parent)
+        .map_err(|e| e.to_string())?;
     temp.write_all(bytes)
         .and_then(|()| temp.as_file().sync_all())
         .map_err(|e| e.to_string())?;
@@ -743,7 +758,7 @@ impl Project {
             .write(true)
             .create(true)
             .truncate(false)
-            .open(root.join(".tomojax.lock"))
+            .open(root.join(LOCK))
             .map_err(|e| e.to_string())?;
         lock.try_lock()
             .map_err(|_| "This project is already open in another TomoJAX window".to_string())?;
@@ -1161,30 +1176,41 @@ mod tests {
     }
 
     #[test]
-    fn files_an_hdf5_master_links_to_are_captured_inputs() {
+    fn a_project_kept_in_a_tiff_folder_is_not_part_of_the_acquisition() {
         let directory = tempfile::tempdir().unwrap();
-        let pixels = directory.path().join("pixels.h5");
-        hdf5::File::create(&pixels)
-            .unwrap()
-            .new_dataset_builder()
-            .with_data(&[1.0f32])
-            .create("data")
-            .unwrap();
-        let master = directory.path().join("scan.nxs");
-        hdf5::File::create(&master)
-            .unwrap()
-            .link_external("pixels.h5", "/data", "data")
-            .unwrap();
-        let job = Job::new(
-            "correct",
-            json!({}),
-            vec![
-                CapturedInput::from_asset(&Asset::input(master, false), directory.path()).unwrap(),
-            ],
-        );
+        let folder = directory.path().join("tiffs");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("view_0001.tif"), "pixels").unwrap();
+        let mut project = Project::open(&folder, true).unwrap();
+        let asset = Asset::input(folder.clone(), false);
+        project.document.assets.push(asset.clone());
+        let job = Job::new("open", json!({}), vec![project.capture(&asset.id).unwrap()]);
+        project.document.jobs.push(job.clone());
+        project.changed().unwrap();
+        project.flush().unwrap();
+        fs::write(folder.join("derived/result.nxs"), "result").unwrap();
         assert!(job.check_inputs().is_ok());
-        fs::write(&pixels, "replaced detector file").unwrap();
+        fs::write(folder.join("view_0001.tif"), "re-exported pixels").unwrap();
         assert!(job.check_inputs().is_err());
+    }
+
+    #[test]
+    fn array_paths_inside_the_project_are_stored_relative() {
+        let mut descriptor: ArrayDescriptor = serde_json::from_value(json!({
+            "shape":[2], "dtype":"<f4", "unit":"1", "domain":"attenuation",
+            "storage":{"type":"hdf5","path":"/data/project/inputs/a/scan.h5","dataset":"/data"},
+            "axes":[{"name":"z","frame":"sample","unit":"mm","coordinates":{
+                "type":"coordinates","values":{"type":"npy","path":"/elsewhere/z.npy"}}}],
+            "fixed":[],"columns":[]
+        }))
+        .unwrap();
+        descriptor.relative_to(Path::new("/data/project"));
+        let value = serde_json::to_value(&descriptor).unwrap();
+        assert_eq!(value["storage"]["path"], "inputs/a/scan.h5");
+        assert_eq!(
+            value["axes"][0]["coordinates"]["values"]["path"],
+            "/elsewhere/z.npy"
+        );
     }
 
     #[test]

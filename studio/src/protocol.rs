@@ -80,6 +80,22 @@ pub struct ArrayDescriptor {
 }
 
 impl ArrayDescriptor {
+    /// Stores file paths inside `root` relative to it.
+    pub fn relative_to(&mut self, root: &std::path::Path) {
+        let relative = |storage: &mut Storage| {
+            if let Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } = storage
+                && let Ok(inside) = std::path::Path::new(path.as_str()).strip_prefix(root)
+            {
+                *path = inside.to_string_lossy().into();
+            }
+        };
+        relative(&mut self.storage);
+        for axis in &mut self.axes {
+            if let Coordinates::Coordinates { values } = &mut axis.coordinates {
+                relative(values);
+            }
+        }
+    }
     pub fn artifacts(&self) -> impl Iterator<Item = &str> {
         self.storage
             .artifact()

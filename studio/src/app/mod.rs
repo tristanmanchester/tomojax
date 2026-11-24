@@ -900,82 +900,29 @@ impl AppState {
     }
 }
 
-/// Copies everything a chosen input is read from into `inputs` and returns the
-/// copy to open. A header file brings its folder; an HDF5 file brings the files
-/// it links to, at the same relative paths.
+/// Copies a chosen input into `inputs` and returns the copy to open. A header
+/// file brings its folder, whose frames it reads. An HDF5 file that reads data
+/// from other files can't be copied: its links would still reach the originals.
 fn copy_acquisition(
     path: &Path,
     inputs: &Path,
     cancelled: &std::sync::atomic::AtomicBool,
 ) -> Result<PathBuf, String> {
     let name = path.file_name().unwrap_or_default();
-    let folder = path.parent().filter(|_| path.is_file());
-    let Some(folder) = folder else {
-        let copy = inputs.join(name);
-        return stage_copy_input(path, &copy, cancelled).map(|()| copy);
-    };
-    if !project::holds_whole_acquisition(path) {
+    if let Some(folder) = path.parent().filter(|_| path.is_file())
+        && !project::holds_whole_acquisition(path)
+    {
         let copy = inputs.join(folder.file_name().unwrap_or_default());
         return stage_copy_input(folder, &copy, cancelled).map(|()| copy.join(name));
     }
-    let mut linked = Vec::new();
-    let links = if crate::metadata::is_hdf5(path) {
-        crate::metadata::linked_files(path).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    for file in links {
-        // A copy keeps only relative links inside the folder pointing at its data.
-        let within = file.within.ok_or_else(|| {
-            format!(
-                "{} reads data from {} through a link a copy can't keep. Import it without copying.",
-                name.to_string_lossy(),
-                file.path.display()
-            )
-        })?;
-        linked.push(within);
+    if crate::metadata::is_hdf5(path) && crate::metadata::reads_other_files(path).unwrap_or(false) {
+        return Err(format!(
+            "{} reads data from other files, so it can't be copied. Import it without copying.",
+            name.to_string_lossy()
+        ));
     }
-    if linked.is_empty() {
-        let copy = inputs.join(name);
-        return stage_copy_input(path, &copy, cancelled).map(|()| copy);
-    }
-    let copy = inputs.join(folder.file_name().unwrap_or_default());
-    let members: Vec<PathBuf> = std::iter::once(PathBuf::from(name)).chain(linked).collect();
-    stage_copy_members(folder, &members, &copy, cancelled).map(|()| copy.join(name))
-}
-
-/// Copies `members` (relative to `folder`) into a new `destination` folder.
-fn stage_copy_members(
-    folder: &Path,
-    members: &[PathBuf],
-    destination: &Path,
-    cancelled: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    check_cancel(cancelled)?;
-    let before = members
-        .iter()
-        .map(|member| project::Fingerprint::read(&folder.join(member)))
-        .collect::<Result<Vec<_>, _>>()?;
-    let staging = destination.with_extension(format!("{}-partial", project::new_id("copy")));
-    let result = members
-        .iter()
-        .try_for_each(|member| copy_input(&folder.join(member), &staging.join(member), cancelled))
-        .and_then(|()| {
-            for (member, before) in members.iter().zip(&before) {
-                if project::Fingerprint::read(&folder.join(member))? != *before {
-                    return Err("The acquisition changed while it was being copied. Import it again after acquisition has finished.".into());
-                }
-            }
-            check_cancel(cancelled)?;
-            if destination.exists() {
-                return Err("The copy destination already exists".into());
-            }
-            std::fs::rename(&staging, destination).map_err(|e| e.to_string())
-        });
-    if result.is_err() {
-        let _ = std::fs::remove_dir_all(&staging);
-    }
-    result
+    let copy = inputs.join(name);
+    stage_copy_input(path, &copy, cancelled).map(|()| copy)
 }
 
 fn stage_copy_input(

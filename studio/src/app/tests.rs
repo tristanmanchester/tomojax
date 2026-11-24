@@ -375,6 +375,27 @@ fn switching_projects_saves_the_latest_workspace_or_stays() {
     }
 }
 
+#[test]
+fn backprojection_reads_a_selected_projection_result_before_a_scans_own() {
+    let directory = tempfile::tempdir().unwrap();
+    let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
+    let selected = Product::Projections {
+        projections: saved.clone(),
+    };
+    let scan = Product::Scan {
+        handle: "scan-handle".into(),
+        projections: saved.clone(),
+    };
+    for products in [[&selected, &scan], [&scan, &selected]] {
+        assert_eq!(
+            jobs::array_member(products.into_iter(), "projections"),
+            Some(saved.storage.clone())
+        );
+    }
+    let member = jobs::array_member([&scan].into_iter(), "projections").unwrap();
+    assert!(matches!(member, crate::protocol::Storage::Member { .. }));
+}
+
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {
     let limit = Instant::now() + Duration::from_secs(45);
     while !condition(state) {
@@ -926,63 +947,55 @@ fn copying_a_parameter_file_brings_its_frames_and_a_container_comes_alone() {
 }
 
 #[test]
-fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
+fn hdf5_copies_only_files_that_hold_all_their_data() {
     let directory = tempfile::tempdir().unwrap();
     let raw = directory.path().join("raw");
-    std::fs::create_dir_all(raw.join("detector")).unwrap();
-    hdf5::File::create(raw.join("detector/pixels.h5"))
+    std::fs::create_dir_all(&raw).unwrap();
+    let pixels = raw.join("pixels.h5");
+    hdf5::File::create(&pixels)
         .unwrap()
         .new_dataset_builder()
         .with_data(&[1.0f32, 2., 3.])
         .create("data")
         .unwrap();
-    // The master reaches the pixels through an intermediate file.
-    hdf5::File::create(raw.join("detector/frames.h5"))
+    // An NXtomo master that reaches its pixels through an external link.
+    hdf5::File::create(raw.join("linked.nxs"))
         .unwrap()
         .link_external("pixels.h5", "/data", "data")
         .unwrap();
-    hdf5::File::create(raw.join("scan.nxs"))
+    // A virtual dataset assembled from the detector file.
+    hdf5::File::create(raw.join("virtual.nxs"))
         .unwrap()
-        .link_external("detector/frames.h5", "/data", "data")
-        .unwrap();
-    hdf5::File::create(directory.path().join("elsewhere.h5"))
-        .unwrap()
-        .new_dataset_builder()
-        .with_data(&[4.0f32])
+        .new_dataset::<f32>()
+        .shape(3)
+        .with_dcpl(|plist| plist.virtual_map("pixels.h5", "/data", 3, .., 3, ..))
         .create("data")
         .unwrap();
-    hdf5::File::create(raw.join("escaping.nxs"))
+    // Raw pixels kept in a sidecar file.
+    std::fs::write(raw.join("pixels.raw"), [0u8; 12]).unwrap();
+    hdf5::File::create(raw.join("external.h5"))
         .unwrap()
-        .link_external("../elsewhere.h5", "/data", "data")
+        .new_dataset::<f32>()
+        .shape(3)
+        .external("pixels.raw", 0, 12)
+        .create("data")
         .unwrap();
-    // An absolute link to a file beside it would still read the original.
-    hdf5::File::create(raw.join("absolute.nxs"))
-        .unwrap()
-        .link_external(
-            raw.join("detector/pixels.h5").to_str().unwrap(),
-            "/data",
-            "data",
-        )
-        .unwrap();
-    std::fs::write(raw.join("other-scan.nxs"), b"another acquisition").unwrap();
+
     let mut state = AppState::init();
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
     state.ui.import_copy = true;
-    state.import_paths(vec![raw.join("scan.nxs")]);
+    state.import_paths(vec![pixels.clone()]);
     drive(&mut state, |state| {
         state.copying == 0 && !state.project.as_ref().unwrap().document.assets.is_empty()
     });
     let project = state.project.as_ref().unwrap();
-    let master = project.resolve(&project.document.assets[0].path);
-    assert!(master.starts_with(&project.root));
-    assert!(!master.with_file_name("other-scan.nxs").exists());
-    let linked = hdf5::File::open(&master).unwrap().dataset("data").unwrap();
-    assert!(std::path::Path::new(&linked.filename()).starts_with(&project.root));
-    assert_eq!(linked.read_raw::<f32>().unwrap(), [1., 2., 3.]);
-    drop(linked);
+    assert!(
+        project
+            .resolve(&project.document.assets[0].path)
+            .starts_with(&project.root)
+    );
 
-    // A copy could not keep these links pointing at the copied data.
-    for refused in ["escaping.nxs", "absolute.nxs"] {
+    for refused in ["linked.nxs", "virtual.nxs", "external.h5"] {
         state.model.error = None;
         state.import_paths(vec![raw.join(refused)]);
         drive(&mut state, |state| state.copying == 0);
@@ -992,7 +1005,7 @@ fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
                 .model
                 .error
                 .as_ref()
-                .is_some_and(|e| e.contains("a copy can't keep")),
+                .is_some_and(|e| e.contains("can't be copied")),
             "{refused}: {:?}",
             state.model.error
         );
