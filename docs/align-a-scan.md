@@ -63,6 +63,8 @@ A centre sweep reconstructs one slice at each of several detector centres, so yo
 tomojax inspect scan.nxs --preview-dir sweep --centres -20:20:2 --slice z=300
 ```
 
+![The same slice of the APS 2-BM test scan at three detector centres. At −24 px the grains are smeared; at −15 px their edges are sharp; at −6 px each grain trails a dark tail.](images/centre-sweep-aps.png)
+
 `--centres` takes `START:STOP:STEP` or a comma list, in detector pixels from the detector middle. `sweep/centre_sweep.png` shows every candidate on the same grey scale, with the centre the file records outlined. `inspect` lists each candidate with its centre in the pixel size's unit, and the command that applies one:
 
 ```bash
@@ -234,6 +236,13 @@ Both phantoms are closed meshes simulated with gVXR at 120 keV and 10⁴ photons
 uv run --no-project --with numpy --with scipy --with scikit-image \
     python bench/phantoms/spark_plug.py PLUG_MESHES
 uv run python examples/gallery/alignment_ladder.py PLUG_MESHES docs/images
+```
+
+The centre sweep uses tomocupy's test scan from APS 2-BM (720 views over a half turn on 22 rows of 1536 pixels), which records no rotation centre:
+
+```bash
+uv run --with matplotlib python examples/gallery/centre_sweep.py test_data.h5 \
+    docs/images/centre-sweep-aps.png
 ```
 
 See [bench/README.md](../bench/README.md#alignment-fit-settings) for analytic verification of each `fit=` setting.
