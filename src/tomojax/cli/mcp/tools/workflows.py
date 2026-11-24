@@ -104,6 +104,9 @@ def form(model: type[Record], *, tagged: bool = False) -> type[Record]:
                 entry = (field.name, recon)
                 default = msgspec.convert(msgspec.to_builtins(default), type=recon)
         fields.append(entry if field.required else (*entry, default))
+    if model in (op.Slice, op.CentreSweep):
+        interval = tuple[int, int]
+        fields.append(("roi", tuple[interval, interval, interval] | None, None))
     if not tagged:
         fields.extend([DRY, DETAIL])
     return cast(
@@ -147,6 +150,8 @@ def forms() -> dict[str, type[Record]]:
             namespace={
                 "__doc__": (
                     "Preview a slice, sweep the centre or compare corrections. "
+                    "For a slice or sweep, zoom in on detail with operation.roi: three half-open "
+                    "volume index intervals in (z, y, x) order containing the slice index. "
                     "A region preview returns a handle for reconstruction."
                 )
             },

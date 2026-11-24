@@ -20,6 +20,11 @@ class Panel:
     domain: str = ""
 
 
+def label_number(value: float) -> str:
+    """Format panel annotations without displaying roundoff around zero."""
+    return "0" if abs(value) < 1e-12 else f"{value:.5g}"
+
+
 def limits(panels: list[Panel]) -> tuple[float, float]:
     finite = np.concatenate([p.pixels[np.isfinite(p.pixels)] for p in panels])
     if not finite.size:
@@ -38,10 +43,26 @@ def png(image: Image.Image) -> bytes:
 
 def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
     """Draw up to three planes side by side, mapping equal intensities to equal greys."""
+
+    def raster(panel: Panel, lo: float, hi: float) -> Image.Image:
+        data = panel.pixels.astype(float)
+        scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
+        grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
+        return Image.fromarray(grey)
+
+    if len(panels) == 1 and not panels[0].labels:
+        image = raster(panels[0], *scales[0])
+        image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+        return png(image)
+
     labels = [
         [
             line
-            for label in (p.title, *p.labels, f"limits [{lo:.5g}, {hi:.5g}] {p.unit}")
+            for label in (
+                p.title,
+                *p.labels,
+                f"limits [{label_number(lo)}, {label_number(hi)}] {p.unit}",
+            )
             for line in wrap(label, 49, max_lines=3, placeholder="...")
         ]
         for p, (lo, hi) in zip(panels, scales, strict=True)
@@ -50,13 +71,9 @@ def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
     image = Image.new("L", (width * len(panels), height + 18 * max(map(len, labels)) + 10), 28)
     draw = ImageDraw.Draw(image)
     for i, (panel, lines) in enumerate(zip(panels, labels, strict=True)):
-        lo, hi = scales[i]
-        data = panel.pixels.astype(float)
-        scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
-        grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
         h, w = panel.pixels.shape[:2]
         scale = min((width - 12) / w, height / (h * panel.aspect))
-        resized = Image.fromarray(grey).resize(
+        resized = raster(panel, *scales[i]).resize(
             (max(1, round(w * scale)), max(1, round(h * panel.aspect * scale))),
             Image.Resampling.NEAREST,
         )
@@ -78,7 +95,11 @@ def pose_plot(values: np.ndarray, columns: list[dict], views: np.ndarray, view_u
         left, top = 12 + (i % 3) * 276, 36 + (i // 3) * 196
         series = values[:, i]
         lo, hi = float(series.min()), float(series.max())
-        draw.text((left, top), f"{col['name']}   [{lo:.4g}, {hi:.4g}] {col['unit']}", fill="black")
+        draw.text(
+            (left, top),
+            f"{col['name']}   [{label_number(lo)}, {label_number(hi)}] {col['unit']}",
+            fill="black",
+        )
         x = (views - start) / (stop - start) if stop > start else np.full(len(views), 0.5)
         y = (series - lo) / (hi - lo) if hi > lo else np.full(len(views), 0.5)
         box = (left + 2, top + 22, left + 256, top + 146)
@@ -88,5 +109,9 @@ def pose_plot(values: np.ndarray, columns: list[dict], views: np.ndarray, view_u
             draw.line(points, fill="#0b557d", width=2)
         else:
             draw.point(points[0], fill="#0b557d")
-        draw.text((left, top + 151), f"view [{start:.5g}, {stop:.5g}] {view_unit}", fill="black")
+        draw.text(
+            (left, top + 151),
+            f"view [{label_number(start)}, {label_number(stop)}] {view_unit}",
+            fill="black",
+        )
     return png(image)

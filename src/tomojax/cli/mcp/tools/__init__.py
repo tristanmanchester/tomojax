@@ -262,12 +262,14 @@ class Tools:
         state = await g.request({"type": "status"})
         handles = {}
         for ref, record in self.ledger.live.items():
-            handles[ref] = {
-                **record["summary"],
-                "bytes": record.get("bytes", state["handles"].get(record.get("worker"))),
-            }
-            if args.detail == "full":
-                handles[ref]["manifest"] = record.get("manifest")
+            summary = record["summary"]
+            entry = (
+                {**summary, "manifest": record.get("manifest")}
+                if args.detail == "full"
+                else {k: summary.get(k) for k in ("kind", "shape", "unit")}
+            )
+            entry["bytes"] = record.get("bytes", state["handles"].get(record.get("worker")))
+            handles[ref] = entry
         return result(
             {
                 "versions": ready["versions"],
@@ -364,6 +366,11 @@ class Tools:
         if "path" in command:
             destination = self.supervisor.base / Path(command["path"]).expanduser()
             command["path"] = str(destination.parent.resolve() / destination.name)
+        roi = command.pop("roi", None) if model in (op.Slice, op.CentreSweep) else None
+        if roi is not None:
+            lo, hi = roi["zyx".index(command["axis"])]
+            if not 0 <= lo <= command["index"] < hi:
+                raise ValueError("slice index outside volume roi")
         tag_configs(command, model)
         command = wire_arguments(command, model, base=self.supervisor.base, ledger=self.ledger)
         # Validate nested expert keys here too, preserving their full field paths.
@@ -387,7 +394,9 @@ class Tools:
                 r.content.extend(reply.content[1:])
                 return r
             async with seeing.temporary(g, command) as value:
-                return await asyncio.to_thread(lambda: seeing.render(seeing.preview_panels(value)))
+                return await asyncio.to_thread(
+                    lambda: seeing.render(seeing.preview_panels(value, roi))
+                )
         if dry:
             return await self.dry_run(command, detail=detail)
         if model is op.Evaluate:
@@ -466,6 +475,12 @@ class Tools:
             summary.extend(auto.get("reasons", []))
         if recovery := data.get("recovery"):
             summary.append(f"Commit recovery {recovery}")
+        if (poses := data.get("poses")) and poses["rms"] is not None:
+            rms = ", ".join(
+                f"{column['name']} {value:.4g} {column['unit']}"
+                for column, value in zip(poses["columns"], poses["rms"], strict=True)
+            )
+            summary.append(f"pose RMS {rms}")
         summary.extend(data.get("paths", []))
         summary.extend(data.get("devices", []))
         summary.append(f"{data['wall_seconds']:g} s")
@@ -477,7 +492,7 @@ class Tools:
                 ResourceLink(type="resource_link", uri=path.as_uri(), name=path.name)
             )
         if command["type"] in ("align", "reconstruct"):
-            await seeing.default_panels(self, data, reply)
+            await seeing.default_panels(self, data, reply, fit=command.get("fit", ()))
         return reply
 
     def publish_handle(

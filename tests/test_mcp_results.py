@@ -17,7 +17,7 @@ import pytest
 from tomojax.cli import operations as op
 from tomojax.cli.mcp import tasks, tools
 from tomojax.cli.mcp.supervisor import Activity
-from tomojax.cli.mcp.tools import budget
+from tomojax.cli.mcp.tools import budget, seeing
 
 pytestmark = pytest.mark.surface
 
@@ -170,3 +170,31 @@ def test_comparison_panels_use_one_pixel_mapping_and_label_each_plane():
     assert picture[80, 220] == picture[80, 328 + 100] == 127
     assert picture[80, 100] == 0 and picture[80, 328 + 220] == 255
     assert (picture[240:, :328] > 128).any() and (picture[240:, 328:] > 128).any()
+
+
+def test_roundoff_in_panel_labels():
+    from tomojax.cli._images import label_number  # check-public-imports: allow-private
+
+    assert label_number(-3.5527e-15) == "0"
+    assert label_number(-0.000025) == "-2.5e-05"
+
+
+@pytest.mark.parametrize(
+    ("fit", "modes"),
+    [
+        (("center", "roll"), ["planes"]),
+        ("translations", ["pose_plot", "planes"]),
+        (("center", "rotations"), ["pose_plot", "planes"]),
+    ],
+)
+def test_alignment_default_panels(monkeypatch, fit, modes):
+    requested = []
+
+    async def view(_, args):
+        requested.append(args.mode)
+        return tools.result({})
+
+    monkeypatch.setattr(seeing, "view", view)
+    alignment = {"members": {"poses": "@align.poses", "image": "@align.image"}}
+    asyncio.run(seeing.default_panels(None, alignment, tools.result({}), fit=fit))
+    assert requested == modes

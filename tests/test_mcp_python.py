@@ -1,10 +1,13 @@
 """Exercise worker ownership, native streams and admission over real stdio."""
 
+import base64
+from io import BytesIO
 import json
 import subprocess
 import sys
 import time
 
+from PIL import Image
 import pytest
 
 from tests.test_mcp_stdio import connection
@@ -253,3 +256,13 @@ scan=register(tj.Scan(data[::2],geometry))
         assert python(c, f"float(handles[{scan!r}].projections.sum())")["value"] == 12 * 8**2
         assert not c.call("control", action="close", target=scan)["isError"]
         assert not file.exists()
+
+
+def test_show_preserves_detail_up_to_panel_limit(tmp_path):
+    with connection(tmp_path) as c:
+        for width, height in ((1512, 1006), (700, 400)):
+            reply = c.call("python", code=f"show(np.ones(({height}, {width})))")
+            block = next(block for block in reply["content"] if block["type"] == "image")
+            picture = Image.open(BytesIO(base64.b64decode(block["data"])))
+            assert picture.width == min(width, 1024)
+            assert picture.height == round(height * picture.width / width)

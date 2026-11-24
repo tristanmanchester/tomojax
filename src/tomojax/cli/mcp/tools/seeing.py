@@ -13,7 +13,7 @@ from mcp_types import ImageContent, TextContent
 import numpy as np
 
 from tomojax.cli import operations as op
-from tomojax.cli._images import Panel, limits, montage, pose_plot
+from tomojax.cli._images import Panel, label_number, limits, montage, pose_plot
 from tomojax.cli.mcp.tools.references import resolve
 
 if TYPE_CHECKING:
@@ -29,7 +29,8 @@ class View(op.Window, kw_only=True):
     """View volume slices, projections, sinograms, pose plots or differences on matching grids.
 
     Inspect statistics, profiles and pose tables for a handle, saved file or HDF5 dataset.
-    Select a plane with axis and index, or a half-open ROI in storage order.
+    Select a plane with axis and index, and zoom in on detail with a half-open ROI in storage
+    order (z, y, x for a volume).
     """
 
     source: str
@@ -96,23 +97,30 @@ def plane(
     dim: int | None = None,
     index: int = 0,
     source_index: int | None = None,
+    roi: tuple[tuple[int, int], ...] | None = None,
 ) -> Panel:
     """Label the sampled plane in its own registration."""
     axes = array["axes"]
     labels = [
-        f"{a['name']}[{a['index']}] = {a['coordinate']:.5g} {a['unit']}" for a in array["fixed"]
+        f"{a['name']}[{a['index']}] = {label_number(a['coordinate'])} {a['unit']}"
+        for a in array["fixed"]
     ]
     if dim is not None:
         a = axes[dim]
         at = coordinates(a, array["shape"][dim])[index]
-        labels.append(
-            f"{a['name']}[{index if source_index is None else source_index}] = {at:.5g} {a['unit']}"
-        )
+        position = index if source_index is None else source_index
+        labels.append(f"{a['name']}[{position}] = {label_number(at)} {a['unit']}")
         axes = axes[:dim] + axes[dim + 1 :]
         pixels = np.take(pixels, index, axis=dim)
+    windows = []
     for a, n in zip(axes, pixels.shape, strict=True):
         c = coordinates(a, n)
-        labels.append(f"{a['name']} [{c[0]:.5g}, {c[-1]:.5g}] {a['unit']}")
+        lo, hi = (0, n) if roi is None else roi["zyx".index(a["name"])]
+        if not 0 <= lo < hi <= n:
+            raise ValueError(f"roi outside {a['name']} extent [0, {n})")
+        windows.append(slice(lo, hi))
+        labels.append(f"{a['name']} [{label_number(c[lo])}, {label_number(c[hi - 1])}] {a['unit']}")
+    pixels = pixels[tuple(windows)]
     aspect = 1.0
     if axes[0]["unit"] == axes[1]["unit"] and all(
         a["coordinates"]["type"] == "uniform" for a in axes
@@ -147,7 +155,7 @@ def load(array: Object) -> np.ndarray:
     return np.load(array["storage"]["path"], mmap_mode="r", allow_pickle=False)
 
 
-def preview_panels(value: Object) -> list[Panel]:
+def preview_panels(value: Object, roi: tuple[tuple[int, int], ...] | None = None) -> list[Panel]:
     """Select registered planes from an interactive worker product."""
     kind = value["type"]
     if kind == "region":
@@ -155,7 +163,9 @@ def preview_panels(value: Object) -> list[Panel]:
     if kind == "sweep":
         a = value["planes"]
         pixels = load(a)
-        return [plane(a, pixels, "Centre sweep", dim=0, index=i) for i in range(len(pixels))]
+        return [
+            plane(a, pixels, "Centre sweep", dim=0, index=i, roi=roi) for i in range(len(pixels))
+        ]
     if kind == "correction_preview":
         views = load(value["views"])
         middle = len(views) // 2
@@ -167,7 +177,7 @@ def preview_panels(value: Object) -> list[Panel]:
             )
         ]
     a = value["plane"]
-    return [plane(a, load(a), "Reconstructed slice")]
+    return [plane(a, load(a), "Reconstructed slice", roi=roi)]
 
 
 def reference(tools: Tools, name: str, mode: str) -> Object:
@@ -330,12 +340,16 @@ async def plane_views(
     return await asyncio.to_thread(render, panels)
 
 
-async def default_panels(tools: Tools, data: Object, reply: CallToolResult) -> None:
+async def default_panels(
+    tools: Tools, data: Object, reply: CallToolResult, *, fit: str | tuple[str, ...]
+) -> None:
     """Render each published image or pose member of a completed fit."""
     from tomojax.cli.mcp.supervisor import WorkerLost
 
+    blocks = (fit,) if isinstance(fit, str) else fit
+    poses = bool({"translations", "rotations"}.intersection(blocks))
     for field in ("poses", "image", "volume"):
-        if field not in data["members"]:
+        if field not in data["members"] or (field == "poses" and not poses):
             continue
         try:
             visual = await view(

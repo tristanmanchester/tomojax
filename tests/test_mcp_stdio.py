@@ -420,7 +420,10 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
     def data(name, **params):
         reply = c.call(name, **params)
         assert not reply["isError"], reply["content"][0]["text"]
-        if name in ("align", "reconstruct") and not params.get("dry_run"):
+        if name == "align" and not params.get("dry_run"):
+            assert [block["type"] for block in reply["content"]] == ["text"]
+            assert "pose RMS" in reply["content"][0]["text"]
+        if name == "reconstruct" and not params.get("dry_run"):
             assert any(block["type"] == "image" for block in reply["content"])
         return reply["structuredContent"]
 
@@ -480,10 +483,20 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
 
 
 def check_chain_panels_and_evaluation(data, volume, recon, scan, size):
-    assert data("view", source=volume["handle"])["panels"]
-    assert data("preview", operation=dict(type="slice", axis="z", index=size // 2, **recon))[
-        "panels"
-    ]
+    index = size // 2
+    window = dict(axis="y", index=index, roi=[[1, 7], [index, index + 1], [5, 10]])
+    view = data("view", source=volume["handle"], **window)["panels"][0]
+    preview = data("preview", operation=dict(type="slice", **window, **recon))["panels"][0]
+    assert preview["labels"] == view["labels"]
+    assert preview["intensity_limits"] == pytest.approx(view["intensity_limits"], abs=1e-5)
+    handle = volume["handle"]
+    compact = data("status")["handles"][handle]
+    assert compact == {
+        **{k: volume[k] for k in ("kind", "shape", "unit")},
+        "bytes": compact["bytes"],
+    }
+    assert compact["bytes"] > 0
+    assert "manifest" in data("status", detail="full")["handles"][handle]
     candidates = [
         dict(type="reconstruct", method="cgls", iterations=2),
         dict(type="reconstruct", method="cgls", iterations=3, config=dict(interpolation="cubic")),
@@ -794,12 +807,18 @@ def check_sweep_and_difference(c, data, scan, volume):
             axis="z",
             index=8,
             centres=[-1, 0, 1],
+            roi=[[8, 9], [1, 7], [5, 10]],
             source=scan,
             method="fbp",
         ),
     )
     assert [b["type"] for b in sweep["content"]] == ["text", "image"]
     assert len(sweep["structuredContent"]["panels"]) == 3
+    cropped = data(
+        "view", source=volume["handle"], axis="z", index=8, roi=[[8, 9], [1, 7], [5, 10]]
+    )
+    for panel in sweep["structuredContent"]["panels"]:
+        assert panel["labels"][-2:] == cropped["panels"][0]["labels"][-2:]
     same = data("view", source=volume["handle"], other="result.nxs", mode="difference")
     assert same["intensity_limits"] == [0, 0]
     smaller = data("simulate", size=16, n_views=16)
