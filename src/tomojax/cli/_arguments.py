@@ -82,10 +82,14 @@ def source(
     *,
     kinds: tuple[type, ...],
     field: str = "source",
-    raw: bool = False,
+    raw: bool | None = False,
 ) -> Any:
-    """Open a path on the execution queue or check the pinned member's domain kind."""
+    """Resolve a pinned input or file. With raw=None keep the file's native domain."""
     if isinstance(ref, op.PathInput):
+        if raw is None:
+            from tomojax._loading import is_raw_input
+
+            raw = is_raw_input(ref.path)
         return tj.load_frames(ref.path) if raw else tj.load(ref.path)
     item = context.leases[ref].value
     if not isinstance(item, kinds):

@@ -253,7 +253,7 @@ class Admission:
     def evaluate(self, operation: op.Evaluate) -> Work:
         from tomojax._evaluation import evaluate, local_motion, partitions
 
-        data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames))
+        data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames), raw=None)
         steps = arguments(
             operation, self.context, omit=("source", "split", "reference", "candidates")
         )["corrections"]
@@ -426,7 +426,6 @@ class Admission:
 
     @prepare.register
     def correct(self, operation: op.Correct | op.ReconstructSlabs) -> Work:
-        from tomojax._loading import is_raw_input
         from tomojax.corrections.api import (
             check_rows,
             check_scan_steps,
@@ -435,13 +434,11 @@ class Admission:
         )
 
         raw = isinstance(operation, op.CorrectionPreview | op.ReconstructSlabs)
-        if isinstance(operation.source, op.PathInput) and not raw:
-            raw = is_raw_input(operation.source.path)
         item = source(
             operation.source,
             self.context,
             kinds=(tj.Frames,) if raw else (tj.Frames, tj.Scan),
-            raw=raw,
+            raw=True if raw else None,
         )
         if isinstance(operation, op.ReconstructSlabs):
             from tomojax._scan import geometry_record

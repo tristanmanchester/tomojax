@@ -141,3 +141,36 @@ def test_orbit_boundaries_follow_trajectories_not_calibration_segments():
         evaluation.partitions(
             segmented, "angular", dict(start=165, width=30, guard=0, period=360), ()
         )
+
+
+def test_raw_path_and_frames_handle_use_the_same_transmission_pipeline(tmp_path):
+    from tests.test_mcp_stdio import connection
+    from tomojax.io import ProjectionDataset, save_dataset
+    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata
+
+    scan = tj.simulate(size=8, n_views=20).scan
+    counts = np.exp(-0.1 * np.asarray(scan.projections))
+    counts[:, 4, 4] = 2
+    raw = np.concatenate([np.ones_like(counts[:1]), counts, np.zeros_like(counts[:1])])
+    metadata = NXTomoMetadata(
+        angles=np.r_[0, scan.angles, 0],
+        image_key=np.r_[1, np.zeros(len(counts), dtype=np.int32), 2],
+        grid=scan.grid,
+        detector=scan.detector,
+    )
+    save_dataset(tmp_path / "raw.nxs", ProjectionDataset.from_nxtomo(LoadedNXTomo(raw, metadata)))
+    with connection(tmp_path) as c:
+        handle = c.call("open", path="raw.nxs", kind="frames")["structuredContent"]["handle"]
+        args = dict(
+            candidates=[dict(type="reconstruct", method="cgls", iterations=2)],
+            corrections=[dict(type="Zingers", threshold=0.5)],
+        )
+        scores = []
+        for source in ("raw.nxs", handle):
+            result = c.call("evaluate", source=source, **args)
+            assert not result["isError"], result
+            scores.append(result["structuredContent"]["scores"])
+        (path_score,), (handle_score,) = scores
+        assert path_score["count"] == handle_score["count"] == 4 * 8**2
+        assert path_score["target_energy"] == pytest.approx(handle_score["target_energy"])
+        assert path_score["mse"] == pytest.approx(handle_score["mse"], rel=2e-6)
