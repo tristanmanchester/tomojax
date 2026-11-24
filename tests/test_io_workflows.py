@@ -538,3 +538,15 @@ def test_npz_inspection_reports_finite_sample_angle_range(tmp_path):
     )
     angles = tj.inspect(path)["angles"]
     assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (5, 5, 90, 85)
+
+
+def test_npz_inspection_accepts_angles_recorded_only_for_sample_views(tmp_path):
+    path = tmp_path / "raw.npz"
+    np.savez_compressed(
+        path,
+        projections=np.zeros((6, 1, 8), np.float32),
+        thetas_deg=[0, 30, 60, 90],
+        image_key=[1, 0, 0, 0, 0, 2],
+    )
+    angles = tj.inspect(path)["angles"]
+    assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (4, 0, 90, 90)

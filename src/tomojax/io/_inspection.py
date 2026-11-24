@@ -292,8 +292,9 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
 def _angle_summary(
     values: np.ndarray | None, keys: np.ndarray | None, path: str | None, units: str | None
 ) -> AnglesReport:
+    """Summarise sample angles, recorded either for every frame or for sample views only."""
     samples = np.asarray([]) if values is None else values
-    if keys is not None and samples.size:
+    if keys is not None and samples.size == keys.size:
         samples = samples[keys == 0]
     finite = samples[np.isfinite(samples)]
     low = float(finite.min()) if finite.size else None
