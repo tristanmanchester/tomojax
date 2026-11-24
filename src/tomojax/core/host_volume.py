@@ -110,6 +110,16 @@ def host_available_memory_bytes() -> int | None:
     return min(known, default=None)
 
 
+def mapped_storage(array: object) -> np.memmap | None:
+    """Find mapped ownership through NumPy and buffer-protocol views, without reading pixels."""
+    current: object = array
+    while isinstance(current, np.ndarray | memoryview):
+        if isinstance(current, np.memmap):
+            return current
+        current = current.obj if isinstance(current, memoryview) else current.base
+    return None
+
+
 def scratch_directory(array: object) -> Path | None:
     """The directory of a file-backed array, where work volumes beside it belong; else None."""
     name = getattr(array, "filename", None)

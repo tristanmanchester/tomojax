@@ -1,6 +1,10 @@
 """Held-out prediction must respect independent acquisitions and input poses."""
 
 from dataclasses import replace
+import os
+from pathlib import Path
+import subprocess
+import sys
 
 import numpy as np
 import pytest
@@ -88,7 +92,8 @@ def test_fits_ignore_every_excluded_observation(tmp_path, monkeypatch, predictio
         assert before.scores[i]["diagnostic"] == after.scores[i]["diagnostic"]
 
 
-def test_segments_and_noncommuting_local_rotations(tmp_path, monkeypatch, predictions):
+@pytest.mark.parametrize("file_backed", [False, True])
+def test_segments_and_noncommuting_local_rotations(tmp_path, monkeypatch, predictions, file_backed):
     scan = tj.simulate(size=8, n_views=12).scan
     angles = np.tile(scan.angles, 2)
     positions = np.tile(np.arange(12, dtype=float) ** 1.1, 2)
@@ -98,6 +103,10 @@ def test_segments_and_noncommuting_local_rotations(tmp_path, monkeypatch, predic
         replace(scan.geometry, angles=angles),
         view_positions=positions,
     ).with_poses(old)
+
+    if file_backed:
+        np.save(tmp_path / "posed.npy", scan.projections)
+        scan = replace(scan, projections=np.load(tmp_path / "posed.npy", mmap_mode="r"))
 
     def expected(ids):
         # Rotate about local x by a linear function of acquisition position, with
@@ -237,3 +246,52 @@ def test_cgls_predicts_odd_held_out_views_on_two_devices(tmp_path, predictions):
     assert y2.shape == (3, 8, 8)
     np.testing.assert_allclose(y2, y1, atol=1e-5)
     np.testing.assert_allclose(v2, v1, atol=1e-5)
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="uses Linux RLIMIT_DATA accounting")
+def test_evaluate_file_backed_scan_under_memory_limit(tmp_path):
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "from tests.test_mcp_evaluate import run_limited_evaluation; "
+            "import sys; run_limited_evaluation(sys.argv[1])",
+            str(tmp_path),
+        ],
+        env={**os.environ, "JAX_PLATFORMS": "cpu", "JAX_NUM_CPU_DEVICES": "1"},
+        check=True,
+    )
+
+
+def run_limited_evaluation(directory):
+    import resource
+
+    root = Path(directory)
+    shape = (128, 4096, 32)
+    geometry = tj.ParallelGeometry(
+        tj.Grid(8, 8, 1, 1.0, 1.0, 1.0),
+        tj.Detector(shape[2], shape[1], 1.0, 1.0),
+        np.linspace(0, 180, shape[0], endpoint=False),
+    )
+    # View-dependent data on a tall detector. Fourier fits just the central row.
+    signal = np.arange(1, shape[0] + 1, dtype=np.float32)[:, None, None] / shape[0]
+    scan = tj.Scan(np.broadcast_to(signal, shape), geometry)
+    args = dict(
+        candidates=(op.ReconstructSettings(method="fourier"),),
+        split=op.Interleaved(stride=shape[0], offset=64),
+    )
+    reference = evaluate(scan, root, **args)
+    mapped = np.memmap(root / "scan.bin", mode="w+", dtype=np.float32, shape=shape)
+    mapped[:] = scan.projections
+    scan = replace(scan, projections=np.asarray(mapped))
+
+    # Limit additional anonymous memory, while allowing file-backed mappings.
+    vmdata = next(
+        line
+        for line in Path("/proc/self/status").read_text().splitlines()
+        if line.startswith("VmData:")
+    )
+    limit = int(vmdata.split()[1]) * 1024 + (24 << 20)
+    resource.setrlimit(resource.RLIMIT_DATA, (limit, resource.getrlimit(resource.RLIMIT_DATA)[1]))
+    result = evaluate(scan, root, **args)
+    assert result.scores == reference.scores

@@ -1,15 +1,19 @@
 """Fit and predict on disjoint acquisition partitions."""
 
 from dataclasses import asdict, dataclass, replace
+from pathlib import Path
+import tempfile
 
 import numpy as np
 
 import tomojax as tj
+from tomojax import progress
 from tomojax._planning import resolve_reconstruction
-from tomojax._scan import with_grid
+from tomojax._scan import selected_scan, with_grid
 from tomojax._smooth_alignment import transfer_alignment
 from tomojax._workflow import reconstruct_resolved
 from tomojax.core.geometry.cone import segments_of
+from tomojax.core.host_volume import host_volume, mapped_storage, release_planes
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
 from tomojax.recon import api
@@ -70,12 +74,26 @@ def native_split(data, kind, settings):
     return split, segments
 
 
+def _select_views(data, ids):
+    if not isinstance(data, tj.Scan) or mapped_storage(data.projections) is None:
+        return data.selected(ids)
+    source = data.projections
+    target = host_volume(
+        (len(ids), *source.shape[1:]), Path(tempfile.gettempdir()), dtype=source.dtype
+    )
+    for row, view in enumerate(ids):
+        progress.check_cancelled()
+        target[row] = source[view]
+        release_planes(target, row, row + 1)
+    return selected_scan(data, ids, target)
+
+
 def partitions(data, kind, settings, steps):
     split, segments = native_split(data, kind, settings)
 
     def partition(mask):
         ids = np.flatnonzero(mask)
-        selected = data.selected(ids)
+        selected = _select_views(data, ids)
         scan = (
             selected.corrected(*(step.retained(ids) for step in steps))
             if steps or isinstance(selected, tj.Frames)

@@ -51,16 +51,6 @@ def check_measurements(projections: np.ndarray | jax.Array, method: str) -> None
             raise InvalidParameter("source", f"{method}: projections must be {domain}")
 
 
-def _mapped_storage(array: np.ndarray) -> np.memmap | None:
-    """Find mapped ownership through NumPy and buffer-protocol views, without reading pixels."""
-    current: object = array
-    while isinstance(current, np.ndarray | memoryview):
-        if isinstance(current, np.memmap):
-            return current
-        current = current.obj if isinstance(current, memoryview) else current.base
-    return None
-
-
 def validate_host_arrays(
     projections: np.ndarray | jax.Array,
     out: np.ndarray | None,
@@ -102,7 +92,9 @@ def validate_host_arrays(
         return out
     if np.may_share_memory(projections, out):
         raise ValueError(f"{context}: input and output storage must not overlap")
-    input_map, output_map = _mapped_storage(projections), _mapped_storage(out)
+    from tomojax.core.host_volume import mapped_storage
+
+    input_map, output_map = mapped_storage(projections), mapped_storage(out)
     if input_map is not None and output_map is not None:
         from tomojax.core.host_volume import file_identity
 
