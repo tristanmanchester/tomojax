@@ -466,30 +466,7 @@ impl AppState {
                 self.metadata_pending = self.metadata_pending.saturating_sub(1);
                 match result {
                     Ok(Some((kind, arrays, report))) => {
-                        if let Some(project) = &mut self.project {
-                            let root = project.root.clone();
-                            if let Some(asset) = project.document.asset_mut(&id) {
-                                let previous = asset.kind.clone();
-                                asset.inspection = report;
-                                asset.issue = None;
-                                asset.register_read(&kind, arrays, &root);
-                                // An Open & calibrate form still on the old kind follows.
-                                if self.model.active_asset.as_ref() == Some(&id)
-                                    && self.ui.operation == "open"
-                                    && self.ui.parameter_choices.get("kind") == Some(&previous)
-                                {
-                                    self.ui
-                                        .parameter_choices
-                                        .insert("kind".into(), asset.kind.clone());
-                                }
-                                self.model
-                                    .measurements
-                                    .retain(|measurement| measurement.asset != id);
-                            }
-                        }
-                        self.imaging.invalidate();
-                        self.mark_dirty();
-                        self.refresh_images();
+                        self.record_read(&id, Ok((kind, arrays)), report);
                     }
                     Ok(None) => self.imports.push_back(id),
                     Err(error) => {

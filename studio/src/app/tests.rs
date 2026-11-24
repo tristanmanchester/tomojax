@@ -665,6 +665,34 @@ fn a_copied_import_opens_with_its_own_kind_and_a_fresh_window() {
 }
 
 #[test]
+fn a_read_updates_the_calibration_kind_and_opens_a_volume_on_its_slices() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
+    let volume = ramp_volume(directory.path(), "volume", 4);
+    let arrays = volume.arrays.clone();
+    let mut imported = Asset::input(volume.path.clone(), false);
+    imported.kind = "scan".into();
+    let id = imported.id.clone();
+    state
+        .project
+        .as_mut()
+        .unwrap()
+        .document
+        .assets
+        .push(imported);
+    state.model.selected_assets = [id.clone()].into();
+    state.activate(id.clone());
+    state.set_operation("open", None);
+    assert_eq!(state.ui.parameter_choices["kind"], "scan");
+    // The read finds a reconstruction holding only a volume.
+    state.record_read(&id, Ok(("reconstruction".into(), arrays)), json!({}));
+    assert_eq!(state.ui.parameter_choices["kind"], "reconstruction");
+    assert_ne!(state.ui.main_view, PlaneKind::Projection);
+    assert_eq!(state.ui.display.indices[0], 2);
+}
+
+#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();

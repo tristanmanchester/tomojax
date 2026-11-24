@@ -405,32 +405,17 @@ impl AppState {
         match pending {
             Pending::Inspect(id) => {
                 if let Product::Inspection { report } = output.value {
-                    if let Some(project) = &mut self.project {
-                        let root = project.root.clone();
-                        if let Some(asset) = project.document.asset_mut(&id) {
-                            let path = if asset.path.is_absolute() {
-                                asset.path.clone()
-                            } else {
-                                root.join(&asset.path)
-                            };
-                            self.model
-                                .measurements
-                                .retain(|measurement| measurement.asset != id);
-                            match metadata::inspection_arrays(&report, &path) {
-                                Ok(arrays) => asset.register_read(
-                                    metadata::suggested_kind(&report),
-                                    arrays,
-                                    &root,
-                                ),
-                                Err(error) => asset.issue = Some(error),
-                            }
-                            asset.inspection = report;
-                        }
+                    let path = self.project.as_ref().and_then(|project| {
+                        project
+                            .document
+                            .asset(&id)
+                            .map(|asset| project.resolve(&asset.path))
+                    });
+                    if let Some(path) = path {
+                        let read = metadata::inspection_arrays(&report, &path)
+                            .map(|arrays| (metadata::suggested_kind(&report).to_owned(), arrays));
+                        self.record_read(&id, read, report);
                     }
-                    self.imaging.invalidate();
-                    self.mark_dirty();
-                    self.image_key.clear();
-                    self.refresh_images();
                 }
             }
             Pending::OpenInput { job, index } => {

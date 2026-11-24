@@ -127,6 +127,56 @@ impl AppState {
         self.refresh_images();
     }
 
+    /// Records what a read of asset `id`'s file found (the header reader or the
+    /// worker's inspection), then brings the view up to date: an Open & calibrate
+    /// form still on the old kind follows the new one, and an active asset seen
+    /// for the first time opens on its default view at its central slices.
+    pub(super) fn record_read(
+        &mut self,
+        id: &str,
+        read: Result<(String, std::collections::BTreeMap<String, ArrayDescriptor>), String>,
+        report: Value,
+    ) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        let root = project.root.clone();
+        let Some(asset) = project.document.asset_mut(id) else {
+            return;
+        };
+        let previous = asset.kind.clone();
+        let first = asset.arrays.is_empty();
+        asset.inspection = report;
+        match read {
+            Ok((kind, arrays)) => {
+                asset.issue = None;
+                asset.register_read(&kind, arrays, &root);
+            }
+            Err(error) => asset.issue = Some(error),
+        }
+        let kind = asset.kind.clone();
+        self.model
+            .measurements
+            .retain(|measurement| measurement.asset != id);
+        if self.model.active_asset.as_deref() == Some(id) {
+            if self.ui.operation == "open"
+                && self.ui.parameter_choices.get("kind") == Some(&previous)
+            {
+                self.ui.parameter_choices.insert("kind".into(), kind);
+            }
+            if first {
+                self.ui.display.indices = self
+                    .volume_dimensions()
+                    .map_or([0; 3], |shape| shape.map(|n| n / 2));
+                self.ui.main_view = self.default_view();
+            }
+        }
+        self.imaging.invalidate();
+        self.image_key.clear();
+        self.mark_dirty();
+        self.refresh_images();
+    }
+
     pub(super) fn refresh_images(&mut self) {
         if let Some(volume) = self.active_volume().cloned() {
             let volume = self.resolved(&volume);
@@ -287,9 +337,18 @@ impl AppState {
         let requested = self.ui.display.indices[self.ui.compare_plane.axis().unwrap_or(0)];
         self.model.comparison_planes = [6, 7].map(|slot| {
             self.imaging.plane(slot).map(|plane| {
-                let mut view = plane_view(plane);
-                view.available &= view.index == requested;
-                view
+                let view = plane_view(plane);
+                if view.index == requested {
+                    view
+                } else {
+                    // Nothing of the previous slice (pixels, coordinate, statistics)
+                    // is shown under the requested slice number.
+                    PlaneView {
+                        index: requested,
+                        count: view.count,
+                        ..PlaneView::default()
+                    }
+                }
             })
         });
         for slot in [6, 7] {

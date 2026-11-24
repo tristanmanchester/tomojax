@@ -132,12 +132,18 @@ impl AppState {
                 if !extend {
                     self.model.selected_assets.clear();
                 }
-                if extend && self.model.selected_assets.contains(&id) {
-                    self.model.selected_assets.remove(&id);
+                // The active asset is always one of the selected ones: removing it
+                // from the selection makes the next selected asset active.
+                if extend && self.model.selected_assets.remove(&id) {
+                    if self.model.active_asset.as_ref() == Some(&id)
+                        && let Some(next) = self.selected_inputs().first().cloned()
+                    {
+                        self.activate(next);
+                    }
                 } else {
                     self.model.selected_assets.insert(id.clone());
+                    self.activate(id);
                 }
-                self.activate(id);
             }
             UiAction::SelectAllAssets => {
                 self.model.selected_assets = self

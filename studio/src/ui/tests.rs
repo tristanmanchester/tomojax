@@ -837,3 +837,28 @@ fn an_asset_used_by_a_queued_job_cannot_be_removed() {
             .is_some_and(|e| e.contains("Cancel the job first"))
     );
 }
+
+#[test]
+fn the_active_asset_stays_in_the_selection() {
+    let (directory, state) = viewing_state();
+    let mut rt = runtime(state, (1180., 780.));
+    let first = rt.state.model.active_asset.clone().unwrap();
+    let path = directory.path().join("second.nxs");
+    std::fs::write(&path, []).unwrap();
+    let second = Asset::input(path, false);
+    let second_id = second.id.clone();
+    rt.update(|s, _| s.project.as_mut().unwrap().document.assets.push(second));
+    let select = |rt: &mut Runtime<AppState>, id: &str| {
+        let id = id.to_owned();
+        rt.update(move |s, tx| s.dispatch(UiAction::SelectAsset { id, extend: true }, tx));
+    };
+    select(&mut rt, &second_id);
+    assert_eq!(
+        rt.state.model.active_asset.as_deref(),
+        Some(second_id.as_str())
+    );
+    // Taking the active asset out of the selection activates what remains.
+    select(&mut rt, &second_id);
+    assert_eq!(rt.state.model.selected_assets.len(), 1);
+    assert_eq!(rt.state.model.active_asset.as_deref(), Some(first.as_str()));
+}
