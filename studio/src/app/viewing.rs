@@ -923,12 +923,20 @@ impl AppState {
             saving: p.dirty() && p.save_error.is_none(),
             save_error: p.save_error.clone(),
         });
+        let names = &mut self.recent_names;
         self.model.recent_projects = self
             .preferences
             .recent
             .iter()
             .map(|p| RecentProject {
-                name: p.file_name().unwrap_or_default().to_string_lossy().into(),
+                name: names
+                    .entry(p.clone())
+                    .or_insert_with(|| {
+                        project::manifest_name(p).unwrap_or_else(|| {
+                            p.file_name().unwrap_or_default().to_string_lossy().into()
+                        })
+                    })
+                    .clone(),
                 path: p.to_string_lossy().into(),
                 available: p.join(project::MANIFEST).is_file(),
             })

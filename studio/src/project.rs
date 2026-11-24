@@ -16,6 +16,17 @@ use serde_json::Value;
 
 use crate::protocol::{ArrayDescriptor, Provenance};
 
+/// The project's own name, from its manifest, without opening the project.
+pub fn manifest_name(root: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(root.join(MANIFEST)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value
+        .get("name")?
+        .as_str()
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
 pub const MANIFEST: &str = "project.tomojax.json";
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -803,6 +814,21 @@ fn validate_document(document: &Document) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_recent_project_is_listed_by_its_own_name() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_eq!(super::manifest_name(directory.path()), None);
+        std::fs::write(
+            directory.path().join(super::MANIFEST),
+            r#"{"version":1,"name":"Shepp review"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            super::manifest_name(directory.path()).as_deref(),
+            Some("Shepp review")
+        );
+    }
+
     use super::*;
     use serde_json::json;
 

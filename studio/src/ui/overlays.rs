@@ -721,16 +721,18 @@ pub fn shortcuts(state: &AppState) -> El {
                 .py(12.),
         );
     }
-    panel = panel.child(separator()).child(
-        label(
-            "Format: mod+shift+r. mod is Ctrl, or Cmd on macOS.",
-            11.,
-            muted(),
-        )
-        .wrap()
-        .px(24.)
-        .py(14.),
-    );
+    if state.ui.editing_shortcut.is_some() {
+        panel = panel.child(separator()).child(
+            label(
+                "Format: mod+shift+r. mod is Ctrl, or Cmd on macOS.",
+                11.,
+                muted(),
+            )
+            .wrap()
+            .px(24.)
+            .py(14.),
+        );
+    }
     el().w_full()
         .h_full()
         .absolute(0., 0.)

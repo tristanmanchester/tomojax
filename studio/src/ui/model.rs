@@ -464,6 +464,8 @@ pub struct ParameterView {
     pub advanced: bool,
     pub required: bool,
     pub choices: Vec<Choice>,
+    /// Shown in an empty field: what the worker uses when the field is left blank.
+    pub placeholder: String,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ParameterKind {

@@ -396,19 +396,15 @@ fn operation_selector(state: &AppState) -> El {
             for op in group.operations {
                 let id = op.id;
                 options = options.child(
-                    button(
+                    menu_option(
                         &format!("operation-{}", op.id),
                         op.title,
-                        false,
-                        true,
+                        state.ui.operation == op.id,
                         move |s, tx| {
                             s.ui.operation_menu = false;
                             s.dispatch(UiAction::SetOperation(id.into()), tx);
                         },
                     )
-                    .h(31.)
-                    .w_full()
-                    .justify_start()
                     .help(op.help),
                 );
             }
@@ -416,7 +412,7 @@ fn operation_selector(state: &AppState) -> El {
         selector = selector.child(
             col()
                 .key("operation-menu")
-                .h(224.)
+                .max_h(260.)
                 .w_full()
                 .scroll(ScrollSpec {
                     stick_bottom: false,
@@ -456,11 +452,12 @@ fn parameter_field(state: &AppState, parameter: &ParameterView) -> El {
         _ => {
             let fallback = TextEdit::default();
             let value = state.ui.parameter_edits.get(&key).unwrap_or(&fallback);
-            field(
+            field_hint(
                 &format!("parameter-{key}"),
                 value,
                 &parameter.label,
                 &parameter.unit,
+                &parameter.placeholder,
                 move |s| s.ui.parameter_edits.entry(key.clone()).or_default(),
             )
         }
@@ -518,21 +515,21 @@ fn parameter_choice(state: &AppState, parameter: &ParameterView) -> El {
         for option in &parameter.choices {
             let key = key.clone();
             let value = option.value.clone();
-            choices = choices.child(
-                button(
-                    &format!("parameter-{key}-{}", option.value),
-                    &option.label,
-                    false,
-                    true,
-                    move |s, _| {
-                        s.ui.parameter_choices.insert(key.clone(), value.clone());
-                        s.ui.choice_menu = None;
-                    },
-                )
-                .w_full()
-                .justify_start()
-                .h(31.),
-            );
+            let chosen = option.value
+                == state
+                    .ui
+                    .parameter_choices
+                    .get(&key)
+                    .map_or("", String::as_str);
+            choices = choices.child(menu_option(
+                &format!("parameter-{key}-{}", option.value),
+                &option.label,
+                chosen,
+                move |s, _| {
+                    s.ui.parameter_choices.insert(key.clone(), value.clone());
+                    s.ui.choice_menu = None;
+                },
+            ));
         }
         picker = picker.child(
             col()
@@ -963,34 +960,12 @@ fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&s
             } else {
                 UiAction::SetCompareRight(asset.id.clone())
             };
-            options = options.child(
-                row()
-                    .key(format!("compare-{key}-{}", asset.id))
-                    .role("option")
-                    .label(&asset.name)
-                    .checked(chosen)
-                    .focusable(true)
-                    .h(32.)
-                    .px(8.)
-                    .gap(8.)
-                    .items_center()
-                    .radius(4.)
-                    .fill(if chosen { sage() } else { paper() })
-                    .hover(forest().alpha(0.06))
-                    .focus_ring(1.5, 0., forest())
-                    .on_press_tx(move |s: &mut AppState, tx| s.dispatch(action.clone(), tx))
-                    .child(
-                        strong(&asset.name, 12., ink())
-                            .grow(1.)
-                            .min_w(0.)
-                            .truncate(),
-                    )
-                    .child(if chosen {
-                        icon(Icon::Check, 13., forest())
-                    } else {
-                        el()
-                    }),
-            );
+            options = options.child(menu_option(
+                &format!("compare-{key}-{}", asset.id),
+                &asset.name,
+                chosen,
+                move |s, tx| s.dispatch(action.clone(), tx),
+            ));
         }
         picker = picker.child(options);
     }
@@ -1065,34 +1040,34 @@ fn footer(state: &AppState) -> El {
                 content = content.child(help(reason).key("queue-unavailable").role("status"));
             }
             content = content.child(
-                action_button(
+                action_button_icon(
                     "queue-operation",
                     name,
+                    Icon::Play,
                     true,
                     available,
                     UiAction::QueueOperation(state.ui.operation.clone()),
                 )
                 .w_full()
-                .h(40.)
-                .child(icon(Icon::Play, 14., paper())),
+                .h(40.),
             );
         }
         Workspace::Explore => {
             content = content.child(
-                action_button(
+                action_button_icon(
                     "export-result",
                     match state.ui.export_format.as_str() {
                         "float32" => "Export TIFF (float32)",
                         "uint16" => "Export TIFF (uint16)",
                         _ => "Export NXtomo",
                     },
+                    Icon::Export,
                     true,
                     state.model.active().is_some(),
                     UiAction::Export(state.ui.export_format.clone()),
                 )
                 .w_full()
-                .h(40.)
-                .child(icon(Icon::Export, 15., paper())),
+                .h(40.),
             );
         }
         Workspace::Compare | Workspace::Jobs => return el(),

@@ -11,7 +11,6 @@ pub enum Icon {
     Search,
     Cube,
     Layers,
-    Sinogram,
     Compare,
     Jobs,
     Play,
@@ -72,20 +71,6 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
             vec![[3., 8.], [12., 13.], [21., 8.]],
             vec![[12., 13.], [12., 22.]],
         ],
-        Icon::Sinogram => [-0.9, 0.25, 1.6]
-            .into_iter()
-            .map(|phase| {
-                (0..=24)
-                    .map(|step| {
-                        let view = step as f32 / 24.;
-                        [
-                            12. + 8. * (std::f32::consts::PI * view + phase).cos(),
-                            3. + 18. * view,
-                        ]
-                    })
-                    .collect()
-            })
-            .collect(),
         Icon::Layers => vec![
             vec![[3., 7.], [12., 2.], [21., 7.], [12., 12.], [3., 7.]],
             vec![[3., 12.], [12., 17.], [21., 12.]],
@@ -215,7 +200,33 @@ pub fn button(
     enabled: bool,
     f: impl Fn(&mut AppState, &mut Tx) + 'static,
 ) -> El {
-    row()
+    button_with(key, title, None, primary, enabled, f)
+}
+
+/// An action button whose verb icon leads its label.
+pub fn action_button_icon(
+    key: &str,
+    title: &str,
+    glyph: Icon,
+    primary: bool,
+    enabled: bool,
+    action: UiAction,
+) -> El {
+    button_with(key, title, Some(glyph), primary, enabled, move |s, tx| {
+        s.dispatch(action.clone(), tx)
+    })
+}
+
+fn button_with(
+    key: &str,
+    title: &str,
+    glyph: Option<Icon>,
+    primary: bool,
+    enabled: bool,
+    f: impl Fn(&mut AppState, &mut Tx) + 'static,
+) -> El {
+    let foreground = if primary { paper() } else { ink() };
+    let mut body = row()
         .key(key)
         .role("button")
         .label(title)
@@ -240,13 +251,42 @@ pub fn button(
             if enabled {
                 f(s, tx)
             }
+        });
+    if let Some(glyph) = glyph {
+        body = body.child(icon(glyph, 14., if primary { paper() } else { forest() }));
+    }
+    body.child(strong(title, 12., foreground).min_w(0.).shrink().truncate())
+}
+
+/// One option in a drop-down list; the current choice is filled and ticked.
+pub fn menu_option(
+    key: &str,
+    title: &str,
+    selected: bool,
+    f: impl Fn(&mut AppState, &mut Tx) + 'static,
+) -> El {
+    row()
+        .key(key)
+        .role("option")
+        .label(title)
+        .checked(selected)
+        .focusable(true)
+        .w_full()
+        .h(32.)
+        .px(8.)
+        .gap(8.)
+        .items_center()
+        .radius(4.)
+        .fill(if selected { sage() } else { Color::TRANSPARENT })
+        .hover(forest().alpha(0.06))
+        .focus_ring(1.5, 0., forest())
+        .on_press_tx(f)
+        .child(strong(title, 12., ink()).grow(1.).min_w(0.).truncate())
+        .child(if selected {
+            icon(Icon::Check, 13., forest())
+        } else {
+            el()
         })
-        .child(
-            strong(title, 12., if primary { paper() } else { ink() })
-                .min_w(0.)
-                .shrink()
-                .truncate(),
-        )
 }
 
 /// A borderless text button for secondary chrome such as the top bar.
@@ -449,6 +489,21 @@ pub fn submit_input(
     text_field(key, value, title, "", "", Some(submit), edit)
 }
 
+/// A labelled field with placeholder text shown while it is empty.
+pub fn field_hint(
+    key: &str,
+    value: &TextEdit,
+    title: &str,
+    suffix: &str,
+    placeholder: &str,
+    edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
+) -> El {
+    labelled(
+        title,
+        input_hint(key, value, title, suffix, placeholder, edit),
+    )
+}
+
 /// A labelled field that runs `submit` when Enter is pressed.
 pub fn submit_field(
     key: &str,
@@ -646,7 +701,7 @@ pub fn status_dot(colour: Color) -> El {
 
 pub fn unit_name(unit: &str) -> &str {
     match unit {
-        "scan_length" => "scan unit",
+        "scan_length" | "geometry_length" => "scan unit",
         "1/scan_length" => "1/scan unit",
         other => other,
     }

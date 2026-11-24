@@ -242,10 +242,15 @@ pub fn initialise(
             } else {
                 p.description
             },
-            unit: p.unit.unwrap_or_default(),
+            unit: crate::ui::unit_name(&p.unit.unwrap_or_default()).to_owned(),
             kind,
             advanced,
             required: p.required,
+            placeholder: if p.required || !matches!(p.default, None | Some(Value::Null)) {
+                String::new()
+            } else {
+                "Default".into()
+            },
             choices: choices
                 .iter()
                 .map(|v| Choice {
@@ -264,7 +269,7 @@ pub fn initialise(
                             other => other,
                         }
                         .into(),
-                        Value::String(s) => s.replace('_', " "),
+                        Value::String(s) => sentence(&s.replace('_', " ")),
                         Value::Null => "Default".into(),
                         Value::Bool(true) => "Enabled".into(),
                         Value::Bool(false) => "Disabled".into(),
@@ -474,6 +479,14 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_values_and_units_read_as_labels() {
+        assert_eq!(sentence("reconstruction"), "Reconstruction");
+        assert_eq!(sentence(""), "");
+        assert_eq!(crate::ui::unit_name("geometry_length"), "scan unit");
+        assert_eq!(crate::ui::unit_name("degree"), "degree");
+    }
 
     #[test]
     fn catalog_refresh_preserves_unfinished_drafts_and_initialises_only_new_fields() {
@@ -691,4 +704,13 @@ mod tests {
             .replace_text("7");
         assert_ne!(plan_signature(&ui, &catalog), before);
     }
+}
+
+/// "reconstruction" → "Reconstruction": schema values shown as labels.
+fn sentence(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
 }

@@ -248,15 +248,15 @@ fn project_tree(state: &AppState) -> El {
                 row()
                     .gap(7.)
                     .child(
-                        action_button(
+                        action_button_icon(
                             "import-files",
                             "Add scans",
+                            Icon::Add,
                             false,
                             true,
                             UiAction::ImportFiles,
                         )
-                        .grow(1.)
-                        .child(icon(Icon::Add, 13., forest())),
+                        .grow(1.),
                     )
                     .child(icon_button(
                         "import-folder",
@@ -609,7 +609,7 @@ fn welcome(state: &AppState) -> El {
         .w(520.)
         .max_w(650.)
         .gap(20.)
-        .child(icon(Icon::Sinogram, 42., forest()))
+        .child(icon(Icon::Layers, 42., forest()))
         .child(strong("TomoJAX Studio", 30., ink()))
         .child(
             row()

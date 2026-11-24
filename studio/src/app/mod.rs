@@ -126,6 +126,8 @@ pub struct AppState {
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
     /// The Split composite and the (left, right, curtain) it was built from.
     split: Option<(([u64; 2], u32), std::sync::Arc<crate::imaging::PlaneData>)>,
+    /// Project names read once from each recent project's manifest.
+    recent_names: std::collections::HashMap<PathBuf, String>,
     applied_window: Option<[f32; 2]>,
     window_prefill: Option<[String; 2]>,
     centre_sinogram: bool,
@@ -178,6 +180,7 @@ impl AppState {
             last_context: Value::Null,
             difference: None,
             split: None,
+            recent_names: Default::default(),
             applied_window: None,
             window_prefill: Some([String::new(), String::new()]),
             centre_sinogram: true,

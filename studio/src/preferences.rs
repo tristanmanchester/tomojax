@@ -112,6 +112,12 @@ impl Preferences {
         if let Some(path) = std::env::var_os("TOMOJAX_STUDIO_SETTINGS") {
             return path.into();
         }
+        // Tests never read or write the user's own settings.
+        if cfg!(test) {
+            return std::env::temp_dir()
+                .join(format!("tomojax-studio-test-{}", std::process::id()))
+                .join("studio.json");
+        }
         let base = if cfg!(target_os = "windows") {
             std::env::var_os("APPDATA").map(PathBuf::from)
         } else {
