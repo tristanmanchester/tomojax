@@ -645,17 +645,6 @@ impl AppState {
         asset.id = id.into();
         asset.kind = output.value.kind().into();
         asset.parent = job.inputs.first().map(|i| i.asset.clone());
-        asset.name = format!(
-            "{} · {}",
-            job.inputs
-                .first()
-                .map(|i| i.name.as_str())
-                .unwrap_or("Phantom"),
-            match &output.value {
-                Product::Reconstruction { method, .. } => method.as_str(),
-                _ => job.operation.as_str(),
-            }
-        );
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
                 self.project
@@ -670,6 +659,7 @@ impl AppState {
         } else {
             None
         };
+        asset.name = job.result_name(&job.subject(), asset.method.as_deref());
         asset.provenance = Some(output.manifest.clone());
         asset
     }
@@ -886,7 +876,7 @@ impl AppState {
             job.finished = Some(now_ms());
             job.result = result;
             job.progress = Some(1.);
-            self.model.status = format!("{} complete", job.name);
+            self.model.status = format!("{} complete", job.display_operation());
             if !matches!(job.operation.as_str(), "plan") {
                 job.stage = "Complete".into();
             }

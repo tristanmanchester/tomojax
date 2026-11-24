@@ -174,7 +174,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
         state.engine.is_none(),
         "Keep must not resubmit numerical work"
     );
-    assert_eq!(state.model.status, "slice complete");
+    assert_eq!(state.model.status, "Slice preview complete");
 }
 
 #[test]

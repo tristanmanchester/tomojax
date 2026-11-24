@@ -2,6 +2,7 @@ pub mod engine;
 pub mod imaging;
 pub mod live;
 pub mod metadata;
+pub mod operations;
 pub mod previews;
 pub mod progress;
 pub mod project;
