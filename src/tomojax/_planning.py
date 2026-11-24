@@ -71,6 +71,7 @@ def resolve_reconstruction(
     warm_start: bool | None = None,
     devices: Any = None,
     plane: tuple[str, int] | None = None,
+    metadata_only: bool = False,
     **settings: Any,
 ) -> ResolvedReconstruction:
     """Select the inverse, its grid and all solver settings once for plan and run."""
@@ -124,7 +125,7 @@ def resolve_reconstruction(
         scan.grid,
         cfg,
         warm_start=bool(warm_start),
-        projections=scan.projections,
+        projections=None if metadata_only else scan.projections,
         axial_index=axial_index,
     )
     return ResolvedReconstruction(

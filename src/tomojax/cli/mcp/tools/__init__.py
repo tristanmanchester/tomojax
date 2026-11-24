@@ -123,6 +123,7 @@ def result(data: Object, *, text: str | None = None, error: bool = False) -> Cal
 
 
 DRY_HELP = {
+    "Evaluate": "Validate settings and report split sizes before data-dependent view rejection.",
     "Open": "Validate the file and report the object kind, path and geometry.",
     "Simulate": "Report the resolved view count, phantom shape and projection shape.",
     "Align": "Resolve the fit method, working grids, budgets and placement.",

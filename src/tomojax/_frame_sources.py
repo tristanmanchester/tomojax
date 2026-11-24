@@ -1,7 +1,8 @@
-"""Construct lazy detector frames from a recognised acquisition or TIFF stack."""
+"""Construct lazy detector frames from saved scans, recognised acquisitions or TIFF stacks."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
@@ -14,7 +15,25 @@ if TYPE_CHECKING:
 
     from tomojax._loading import Frames
     from tomojax._loading_geometry import DeclaredGeometry
+    from tomojax._scan import Scan
     from tomojax.geometry import Detector, Grid, ScanGeometry
+
+
+def line_integral_frames(scan: Scan, stack: Any, key: np.ndarray) -> Frames:
+    """Pair lazy sample storage with the saved scan's geometry and acquisition positions."""
+    from tomojax._loading import Frames
+
+    frames = Frames(
+        stack,
+        scan.geometry,
+        name=scan.name,
+        source=scan.source,
+        view_positions=scan.view_positions,
+        corrections=scan.corrections,
+    )
+    if np.any(key != 0):
+        frames = replace(frames.selected(key == 0), corrections=scan.corrections)
+    return frames
 
 
 def acquisition_frames(

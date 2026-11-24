@@ -32,7 +32,7 @@ def arguments(
     context: ex.ExecutionContext,
     *,
     omit: tuple[str, ...] = (),
-    calibration_layout: bool = False,
+    layout_only: bool = False,
 ) -> dict[str, Any]:
     """Construct option objects at their enclosing field and resolve bulk inputs."""
 
@@ -41,11 +41,16 @@ def arguments(
             return None
         if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
             return read_reference(
-                name, value, context, shape_only=calibration_layout and name in ("flats", "darks")
+                name,
+                value,
+                context,
+                shape_only=layout_only and name in ("flats", "darks", "support"),
             )
         if isinstance(value, Record):
             with within(name):
-                return _constructors()[type(value).__name__](**arguments(value, context))
+                return _constructors()[type(value).__name__](
+                    **arguments(value, context, layout_only=layout_only)
+                )
         if name == "devices":
             inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
             if any(d not in inventory for d in value):

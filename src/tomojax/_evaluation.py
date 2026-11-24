@@ -8,8 +8,9 @@ import numpy as np
 
 import tomojax as tj
 from tomojax import progress
+from tomojax._data import views_of
 from tomojax._planning import resolve_reconstruction
-from tomojax._scan import selected_scan, with_grid
+from tomojax._scan import bind_step_geometry, frame_output_grid, selected_scan, with_grid
 from tomojax._smooth_alignment import transfer_alignment
 from tomojax._workflow import reconstruct_resolved
 from tomojax.core.geometry.cone import segments_of
@@ -17,6 +18,7 @@ from tomojax.core.host_volume import host_volume, mapped_storage, release_planes
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
 from tomojax.recon import api
+from tomojax.recon.planning import prediction_block_views
 
 
 @dataclass
@@ -86,6 +88,38 @@ def _select_views(data, ids):
         target[row] = source[view]
         release_planes(target, row, row + 1)
     return selected_scan(data, ids, target)
+
+
+def partition_layout(data, kind, settings, steps, *, raw):
+    """Validate the native split before any data-dependent rejection or calibration."""
+    from tomojax.corrections.api import check_scan_steps
+    from tomojax.corrections.tiles import check_calibration_layout
+
+    if raw:
+        check_calibration_layout(data)
+    else:
+        check_scan_steps(steps)
+    split, segments = native_split(data, kind, settings)
+    positions = (
+        np.arange(len(segments)) + 0.5 if data.view_positions is None else data.view_positions
+    )
+
+    def layout(mask):
+        ids = np.flatnonzero(mask)
+        geometry = views_of(data.geometry, ids)
+        bind_step_geometry(tuple(step.retained(ids) for step in steps), geometry)
+        shape = (len(ids), *split.shape[1:])
+        scan = tj.Scan(
+            np.broadcast_to(np.float32(0), shape),
+            frame_output_grid(geometry, data.source) if raw else geometry,
+            data.name,
+            data.corrections,
+            data.source,
+            positions[ids],
+        )
+        return Partition(scan, ids, segments[ids])
+
+    return split, layout(split.train), layout(split.test)
 
 
 def partitions(data, kind, settings, steps):
@@ -180,25 +214,45 @@ def fit_candidate(train, test, kind, settings, reference):
     )
 
 
+_PREDICTION_BYTES = 32 << 20
+
+
+def prediction_score(split, test, held, recon, config):
+    """Project one bounded batch at a time, summing views in acquisition order."""
+    detector = held.detector
+    batch = max(1, _PREDICTION_BYTES // (detector.nv * detector.nu * np.dtype(np.float32).itemsize))
+    views = len(test.indices)
+    # XLA may round the same rays differently at a different vector width.
+    # Keep the native block and shift its tail as the one-shot forward does.
+    native = prediction_block_views(held.geometry, config) if batch < views else None
+    batch = native or batch
+    score = Score(0, 0, 0, 0)
+    for first in range(0, views, batch):
+        progress.check_cancelled()
+        stop = min(views, first + batch)
+        start = max(0, stop - batch) if native else first
+        geometry = views_of(held.geometry, np.arange(start, stop))
+        predicted = np.asarray(
+            api.predict_projections(geometry, recon.volume, grid=recon.grid, config=config)
+        )
+        for i in range(first, stop):
+            row = i - start
+            k = int(test.indices[i])
+            score += split.score(
+                predicted[row : row + 1],
+                test.scan.projections[i : i + 1],
+                views=slice(k, k + 1),
+            )
+        del predicted
+    return score
+
+
 def evaluate(domain, candidates, reference):
     split, train, test = domain
     rows = []
     for kind, settings, description in candidates:
         recon, held, config, diagnostics = fit_candidate(train, test, kind, settings, reference)
-        predicted = np.asarray(
-            api.predict_projections(held.geometry, recon.volume, grid=recon.grid, config=config)
-        )
-        score: Score = sum(
-            (
-                split.score(
-                    predicted[i : i + 1],
-                    test.scan.projections[i : i + 1],
-                    views=slice(int(k), int(k) + 1),
-                )
-                for i, k in enumerate(test.indices)
-            ),
-            start=Score(0, 0, 0, 0),
-        )
+        score = prediction_score(split, test, held, recon, config)
         rows.append(
             dict(
                 candidate=description,

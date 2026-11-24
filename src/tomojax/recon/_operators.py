@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Device
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
-_BATCH = 32
+PROJECTOR_BLOCK_VIEWS = 32
 _AXIAL_STACK_BYTES = 64 * 1024**2
 
 
@@ -56,7 +56,7 @@ def _view_batch_size(
     problems retain the existing cap rather than introduce overlapping large
     tails; CPU and non-axial projectors retain their existing batching too.
     """
-    batch = max(1, min(_BATCH, n_views))
+    batch = max(1, min(PROJECTOR_BLOCK_VIEWS, n_views))
     workspace = 4 * n_views * detector.nu * (detector.nv + grid.nz)
     if axial_cuda and workspace <= _AXIAL_STACK_BYTES:
         batch = max(1, n_views)

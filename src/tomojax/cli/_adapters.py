@@ -222,7 +222,7 @@ class Admission:
     @prepare.register
     def open(self, operation: op.Open) -> Work:
         options = arguments(
-            operation, self.context, omit=("path", "kind"), calibration_layout=self.validating
+            operation, self.context, omit=("path", "kind"), layout_only=self.validating
         )
         declared = options.pop("geometry")
         if operation.kind in ("scan", "frames"):
@@ -300,9 +300,13 @@ class Admission:
 
     @prepare.register
     def evaluate(self, operation: op.Evaluate) -> Work:
-        from tomojax._evaluation import evaluate, local_motion, partitions
+        from tomojax._evaluation import evaluate, local_motion, partition_layout, partitions
 
-        data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames), raw=None)
+        if self.validating and isinstance(operation.source, op.PathInput):
+            data, raw = projection_frames(Path(operation.source.path))
+        else:
+            data = source(operation.source, self.context, kinds=(tj.Scan, tj.Frames), raw=None)
+            raw = isinstance(data, tj.Frames)
         steps = arguments(
             operation, self.context, omit=("source", "split", "reference", "candidates")
         )["corrections"]
@@ -313,7 +317,11 @@ class Admission:
         if operation.reference.grid is not None or operation.reference.region is not None:
             raise InvalidParameter("reference", "alignment reference uses the scan's default grid")
         try:
-            domain = partitions(data, kind, spec, steps)
+            domain = (
+                partition_layout(data, kind, spec, steps, raw=raw)
+                if self.validating
+                else partitions(data, kind, spec, steps)
+            )
         except InvalidParameter:
             raise
         except ValueError as err:
@@ -321,20 +329,20 @@ class Admission:
         candidates = [
             (
                 setting.__struct_config__.tag,
-                arguments(setting, self.context),
+                arguments(setting, self.context, layout_only=self.validating),
                 msgspec.to_builtins(setting),
             )
             for setting in operation.candidates
         ]
-        reference = arguments(operation.reference, self.context)
+        reference = arguments(operation.reference, self.context, layout_only=self.validating)
         train = domain[1].scan
         for action, settings, _ in candidates:
             if action == "align":
                 local_motion(settings)
                 resolve_alignment(train, **settings)
-                resolve_reconstruction(train, **reference)
+                resolve_reconstruction(train, metadata_only=self.validating, **reference)
             else:
-                resolve_reconstruction(train, **settings)
+                resolve_reconstruction(train, metadata_only=self.validating, **settings)
         self.details.update(
             split_fingerprint=domain[0].fingerprint,
             training_views=len(domain[1].indices),

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import weakref
 
 import numpy as np
 import pytest
@@ -26,6 +27,76 @@ def evaluate(data, tmp_path, *, split=STRIDE, candidates=(CGLS,), corrections=()
     ref = Member("input", "self")
     cmd = op.Evaluate(ref, candidates, split, corrections, CGLS)
     return admitted(op.Run(cmd), data, Stage(tmp_path), ref)
+
+
+def test_dry_run_validates_partitions_without_reading_detector(tmp_path, monkeypatch):
+    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_worker_adapters import trace_detector_reads
+    from tomojax.io import save_dataset
+
+    scan = tj.simulate(size=8, n_views=24).scan
+    path = tmp_path / "scan.nxs"
+    # The acquisition restarts before view 8, leaving view 7 unbracketed.
+    tj.save(path, replace(scan, view_positions=np.r_[0:8, 0:16]))
+    reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
+    ref = op.PathInput(str(path))
+
+    def validate(step, candidate=CGLS, split=STRIDE):
+        cmd = op.Evaluate(ref, (candidate,), split, (step,), CGLS)
+        return admitted(op.Validate(operation=cmd), None, Stage(tmp_path), None)
+
+    def forbid(*args, **kwargs):
+        pytest.fail("dry run applied a correction")
+
+    monkeypatch.setattr(tj.Scan, "corrected", forbid)
+    monkeypatch.setattr(tj.Frames, "corrected", forbid)
+    assert validate(wire_options.Stripes(width=3)).details["test_views"] == 3
+    with pytest.raises(ValueError, match="width"):
+        validate(wire_options.Stripes(width=0))
+    with pytest.raises(ValueError, match="counts|transmission"):
+        validate(wire_options.Zingers())
+    with pytest.raises(ValueError, match="motion|poses"):
+        validate(wire_options.Stripes(), op.AlignSettings(fit="rotations"))
+    with pytest.raises(ValueError, match="guard"):
+        validate(wire_options.Stripes(), split=op.Interleaved(stride=2, guard=1))
+    save_dataset(path, _labelled_dataset([8, *([4] * 24), 2], [1, *([0] * 24), 2]))
+    assert validate(wire_options.Zingers()).details["test_views"] == 4
+    assert reads == []
+
+
+@pytest.mark.parametrize("geometry", ["parallel", "cone"])
+def test_prediction_batches_match_single_batch_and_release_before_next(
+    tmp_path, monkeypatch, geometry
+):
+    scan = tj.simulate(size=8, n_views=124, geometry=geometry).scan
+    candidate = op.ReconstructSettings(
+        method="cgls",
+        config=wire_options.CGLSConfig(
+            interpolation="cubic" if geometry == "parallel" else "linear", iterations=2
+        ),
+    )
+    settings = dict(candidates=(candidate,), split=op.Interleaved(stride=2, offset=1))
+    reference = evaluate(scan, tmp_path, **settings)
+    predict = api.predict_projections
+    batches = []
+    previous = None
+
+    def measured(geometry, volume, **kwargs):
+        nonlocal previous
+        assert previous is None or previous() is None
+        # Track the host view owned by the scorer, independent of JAX transfer caches.
+        block = np.asarray(predict(geometry, volume, **kwargs)).view()
+        batches.append(block.shape[0])
+        previous = weakref.ref(block)
+        return block
+
+    monkeypatch.setattr(api, "predict_projections", measured)
+    monkeypatch.setattr(
+        "tomojax._evaluation._PREDICTION_BYTES", 32 * scan.detector.nv * scan.detector.nu * 4
+    )
+    assert evaluate(scan, tmp_path, **settings).scores == reference.scores
+    assert len(batches) == 2 and max(batches) == 32
+    assert previous() is None
 
 
 @pytest.fixture

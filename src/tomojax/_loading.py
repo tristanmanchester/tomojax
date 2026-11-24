@@ -23,7 +23,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, read_nxtomo, views_of
-from tomojax._frame_sources import acquisition_frames, tiff_frames
+from tomojax._frame_sources import acquisition_frames, line_integral_frames, tiff_frames
 from tomojax._loading_geometry import frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
@@ -294,11 +294,8 @@ def stored_frames(file, located, *, require_raw, apply_poses, layout=None, **ove
         return _hdf5_frames(file, located, layout_only=True, **settings), True
     if raw or require_raw or any(value is not None for value in overrides.values()):
         return _record_frames(file, record, stack=stack, **settings), raw or require_raw
-    geometry = scan_from_record(record, apply_poses=apply_poses).geometry
-    if np.any(key != 0):
-        kept = np.flatnonzero(key == 0)
-        stack, geometry = stack.frames_at(kept), views_of(geometry, kept)
-    return Frames(stack, geometry, source=record), False
+    scan = scan_from_record(record, apply_poses=apply_poses)
+    return line_integral_frames(scan, stack, key), False
 
 
 def _line_integrals(
