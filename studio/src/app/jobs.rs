@@ -729,7 +729,7 @@ impl AppState {
                 self.retire_output(&output);
                 self.fail_job(
                     job,
-                    "This array uses storage that cannot yet be copied into a project",
+                    "This array's storage can't be copied into a project",
                     false,
                 );
                 return;

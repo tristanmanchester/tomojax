@@ -85,8 +85,7 @@ source identity, so relinking an asset cannot reuse the old grid.
 Errors retain the worker's complete `path`. A nested object error highlights its
 JSON editor; an indexed correction path targets the appropriate guided control
 when one exists, otherwise the ordered JSON editor. Correction drafts preserve
-explicit JSON null separately from omission. Conditional method/geometry visibility needs
-worker applicability metadata: the schema in this checkout does not express it.
+explicit JSON null separately from omission.
 
 ### Solver checkpoints and progress
 
@@ -190,17 +189,8 @@ transfer function reuse the rendered volume frame. Interaction uses reduced
 rendering effort and a later frame refines it. Rendering remains independent of
 the numerical worker's execution queue.
 
-## Deliberate prototype boundaries
+## Build
 
-Structured uncommon parameters use the public JSON schema rather than a complete
-specialised editor for every numerical type. Comparisons share an index and
-optionally a display window; they do not implicitly register mismatched grids.
-Orthogonal distance/ROI tools are quantitative within their labelled sampling;
-the volume view is a display preview. Arbitrary oblique reslicing, segmentation
-editing, distributed scheduling and a tiled multiresolution volume store are
-outside this draft.
-
-The native renderer depends on HDF5 and platform graphics libraries. The Python
-launcher is part of TomoJAX; the native binary is built separately from the source
-checkout. Installation packages and platform signing are not supplied by this
-prototype.
+The native binary depends on HDF5 and the platform graphics libraries and is
+built from the source checkout. The Python launcher, `tomojax studio`, is part of
+TomoJAX.

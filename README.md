@@ -35,7 +35,7 @@ For this axial parallel scan, `reconstruct` selects the Fourier-slice inverse au
 
 Numerical commands that write data take `-o OUTPUT` and refuse to overwrite existing files without `--force` (`inspect` prints a report and optionally writes PNGs to `--preview-dir DIR`; `simulate` takes no input). Run `tomojax <command> --help` for flags, or see the [CLI overview](https://github.com/tristanmanchester/tomojax/blob/main/src/tomojax/cli/README.md). For CUDA 12 installation see [installation](https://tomojax.dev/installation/); for real data start with the [quickstart](https://tomojax.dev/quickstart/).
 
-## Studio prototype
+## Studio
 
 [TomoJAX Studio](studio/README.md) is a native [Rune](https://github.com/anomalyco/rune) workspace for persistent tomography projects. Keep several acquisitions, derived results, recipes and job records together; prepare and queue operations through the public TomoJAX engine, then inspect linked slices, projections, sinograms and GPU volume renderings. The viewer remains independent of the numerical worker while jobs run.
 
@@ -48,13 +48,13 @@ uv run --no-sync tomojax studio --build
 
 Choose **Create a project**, select its directory and add scans, or start with a simulation. Later, `uv run --no-sync tomojax studio /path/to/project` reopens the saved workspace. The launcher uses the same Python environment as the CLI; the Python wheel alone does not include the native binary.
 
-This is a source prototype. Scientific views use bounded previews, uncommon structured parameters use JSON fields, and comparison does not register mismatched grids. Native installers and macOS/Windows validation are not supplied. See the [Studio guide](studio/README.md) for calibration, batch jobs, measurements, recovery, exports and verification, and the [architecture notes](studio/ARCHITECTURE.md) for its persistence and rendering boundaries.
+See the [Studio guide](studio/README.md) for calibration, batch jobs, measurements, recovery, exports and verification, and the [architecture notes](studio/ARCHITECTURE.md) for its persistence and rendering boundaries.
 
 ## Choose a workflow
 
 | Task | Guide |
 | --- | --- |
-| Manage persistent projects, queue work and explore results in the native GUI | [Studio prototype](studio/README.md) |
+| Manage persistent projects, queue work and explore results in the native GUI | [Studio](studio/README.md) |
 | Load, correct, and reconstruct NXtomo, Data Exchange, Nikon, or TIFF scans | [Quickstart](https://tomojax.dev/quickstart/) |
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
