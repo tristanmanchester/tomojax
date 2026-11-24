@@ -195,16 +195,17 @@ class Admission:
             work = alignment
         elif isinstance(operation, op.Slice):
             if isinstance(operation, op.CentreSweep):
-                sweep = interactive.resolve_sweep(
+                plans = interactive.resolve_sweep(
                     scan, operation.axis, operation.index, operation.centres, **options
                 )
-                compute = partial(slice_product, operation, sweep, self.context)
-                work = sweep.template
             else:
-                work = resolve_reconstruction(
-                    scan, plane=(operation.axis, operation.index), **options
+                plans = (
+                    resolve_reconstruction(
+                        scan, plane=(operation.axis, operation.index), **options
+                    ),
                 )
-                compute = partial(slice_product, operation, work, self.context)
+            compute = partial(slice_product, operation, plans, self.context)
+            work = plans[0]
         else:
             work = resolve_reconstruction(scan, **options)
             compute = partial(reconstruct_resolved, work)

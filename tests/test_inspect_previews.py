@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-import gc
 import json
-import weakref
 
 import numpy as np
 import pytest
@@ -60,8 +58,7 @@ def test_a_sweep_writes_every_candidate_in_order_and_a_sheet(tmp_path, capsys):
 
 def test_the_sweep_plane_at_the_true_centre_is_the_plane_of_the_corrected_scan():
     off, true = _scan(recorded=3.0), _scan()
-    sweep = interactive.resolve_sweep(off, "z", 4, [0.0], method="fbp")
-    (plane,) = interactive.sweep_planes(sweep)
+    (plane,) = interactive.centre_sweep(off, "z", 4, [0.0], method="fbp")
     np.testing.assert_array_equal(plane, interactive.reconstruct_slice(true, "z", 4, method="fbp"))
 
 
@@ -81,8 +78,7 @@ def test_the_printed_command_applies_the_chosen_centre_in_length_units(tmp_path,
     assert main([*command[1:3], "-o", str(out), *command[5:], "--progress", "none"]) == 0
     centred = tj.load(out)
     assert centred.detector.center == pytest.approx((u, 0.75))
-    sweep = interactive.resolve_sweep(tj.load(path), "z", 4, [2.0])
-    swept = next(interactive.sweep_planes(sweep))
+    (swept,) = interactive.centre_sweep(tj.load(path), "z", 4, [2.0])
     np.testing.assert_allclose(interactive.reconstruct_slice(centred, "z", 4), swept, atol=1e-6)
 
 
@@ -133,12 +129,13 @@ def test_a_plane_needing_the_whole_volume_validates_the_whole_volume(monkeypatch
     data[3, 32, 5] = np.nan  # outside the axial slab of plane 0
     scan = tj.Scan(data, tj.ParallelGeometry(grid, detector, np.arange(9) * 20.0))
     monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **kw: 1)
-    assert interactive.plan_planes(scan, [("z", 0)], method="fbp").full is None
+    (plane,) = interactive.reconstruct_slices(scan, [("z", 0)], method="fbp")
+    assert np.isfinite(plane).all()
     with pytest.raises(tj.InvalidParameter):
-        interactive.plan_planes(scan, [("z", 0), ("y", 3)], method="fbp")
+        interactive.reconstruct_slices(scan, [("z", 0), ("y", 3)], method="fbp")
 
 
-def test_planning_solves_nothing_and_planes_share_one_solve(monkeypatch):
+def test_planes_that_need_the_volume_share_one_solve(monkeypatch):
     calls = []
     solve = interactive.reconstruct_resolved
 
@@ -147,73 +144,18 @@ def test_planning_solves_nothing_and_planes_share_one_solve(monkeypatch):
         return solve(plan, **kwargs)
 
     monkeypatch.setattr(interactive, "reconstruct_resolved", counted)
-    plan = interactive.plan_planes(
-        _scan(), [("y", 2), ("x", 3), ("z", 4)], method="sirt", iterations=2
-    )
-    assert calls == [] and plan.full is not None
-    images = interactive.planes_of(plan)
+    requests = [("y", 2), ("x", 3), ("z", 4)]
+    images = interactive.reconstruct_slices(_scan(), requests, method="sirt", iterations=2)
     assert calls == ["sirt"] and [i.shape for i in images] == [(8, 16), (8, 16), (16, 16)]
-
-
-def test_the_route_chosen_in_planning_is_the_route_run(monkeypatch):
-    import importlib
-
-    fbp_host = importlib.import_module("tomojax.recon.fbp_host")
-
-    grid = tj.Grid(6, 6, 33, 0.3, 0.3, 0.3)
-    detector = tj.Detector(8, 33, 0.3, 0.3)
-    data = np.random.default_rng(3).uniform(size=(9, 33, 8)).astype(np.float32)
-    scan = tj.Scan(data, tj.ParallelGeometry(grid, detector, np.arange(9) * 20.0))
-    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **kw: 1)
-    plan = interactive.plan_planes(scan, [("z", 5)], method="fbp")
-    assert plan.plans[0].route.kind == "slab"
-    # Memory frees up before the run: the plane still comes from its planned host slab.
-    monkeypatch.setattr("tomojax.backends.device_free_memory_bytes", lambda **kw: 2**40)
-    slabs, whole = [], []
-    host = fbp_host.fbp_host
-    monkeypatch.setattr(fbp_host, "fbp_host", lambda *a, **k: slabs.append(1) or host(*a, **k))
-    monkeypatch.setattr(interactive, "reconstruct_resolved", lambda *a, **k: whole.append(1))
-    (image,) = interactive.planes_of(plan)
-    assert slabs == [1] and whole == [] and image.shape == (6, 6)
-
-
-def test_a_sweep_keeps_one_candidate_geometry_alive(monkeypatch):
-    from tomojax.geometry import ConeSegments
-
-    detector = tj.Detector(16, 8, 1.0, 1.0)
-    grid = tj.Grid(16, 16, 8, 1.0, 1.0, 1.0)
-    turn = np.linspace(0.0, 360.0, 48, endpoint=False)
-    parts = tuple(
-        tj.ConeGeometry(grid, detector, list(turn[i::4]), tj.ConeBeam(60.0, 120.0))
-        for i in range(4)
-    )
-    scan = tj.Scan(np.ones((48, 8, 16), np.float32), ConeSegments(parts))
-    alive = []
-
-    def plane(plan, axis, index):
-        alive[:] = [ref for ref in alive if ref() is not None]
-        alive.append(weakref.ref(plan.scan.geometry))
-        return np.zeros((16, 16), np.float32)
-
-    monkeypatch.setattr(interactive, "resolved_slice", plane)
-    sweep = interactive.resolve_sweep(scan, "z", 4, list(np.linspace(-2, 2, 9)), method="fbp")
-    peak = 0
-    for _ in interactive.sweep_planes(sweep):
-        gc.collect()
-        peak = max(peak, sum(ref() is not None for ref in alive))
-    assert peak <= 2  # the template's own geometry and the candidate being made
 
 
 def test_a_thousand_candidates_list_to_a_file_not_the_summary(monkeypatch, tmp_path, capsys):
     path, directory = tmp_path / "scan.nxs", tmp_path / "pv"
     tj.save(path, _scan())
 
-    class Stub:
-        full_solves = 0
-
-    monkeypatch.setattr(interactive, "resolve_sweep", lambda *a, **k: Stub())
+    monkeypatch.setattr(interactive, "resolve_sweep", lambda *a, **k: ())
     monkeypatch.setattr(
-        interactive, "sweep_planes", lambda _p: (np.zeros((4, 4), np.float32) for _ in range(1000))
+        interactive, "sweep_planes", lambda *a: (np.zeros((4, 4), np.float32) for _ in range(1000))
     )
     argv = ["inspect", str(path), "--preview-dir", str(directory), "--centres", "0:999:1"]
     assert main([*argv, "--progress", "json"]) == 0

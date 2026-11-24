@@ -502,25 +502,11 @@ class tomojax.interactive.CorrectionBand(
         detector: 'Detector',
         domain: "Literal['counts', 'line_integrals']" = 'counts',
     ) -> None
-class tomojax.interactive.PlanePlan(
-        requests: 'tuple[tuple[Axis, int], ...]',
-        plans: 'tuple[ResolvedReconstruction, ...]',
-        full: 'ResolvedReconstruction | None',
-    ) -> None
 class tomojax.interactive.RegionOverlay(
         estimate: 'RegionEstimate',
         bounds: 'tuple[tuple[float, float], tuple[float, float], tuple[float, float]]',
         images: 'dict[str, progress.Sample]',
     ) -> None
-class tomojax.interactive.SweepPlan(
-        template: 'ResolvedReconstruction',
-        axis: 'Axis',
-        index: 'int',
-        centres: 'tuple[float, ...]',
-        routes: 'tuple[AxialRoute | None, ...]',
-    ) -> None
-    .candidate(self, i: 'int') -> 'ResolvedReconstruction'
-    .full_solves
 def tomojax.interactive.centre_sweep(
         scan: 'Scan',
         axis: 'Axis',
@@ -539,14 +525,6 @@ def tomojax.interactive.correction_preview(
         epsilon: 'float' = 1e-06,
         views_per_batch: 'int | None' = None,
     ) -> 'CorrectionBand'
-def tomojax.interactive.plan_planes(
-        scan: 'Scan',
-        requests: 'Sequence[tuple[Axis, int]]',
-        *,
-        method: 'Method' = 'auto',
-        **options: 'Any',
-    ) -> 'PlanePlan'
-def tomojax.interactive.planes_of(plan: 'PlanePlan') -> 'list[Any]'
 def tomojax.interactive.reconstruct_slice(
         scan: 'Scan',
         axis: 'Axis',
@@ -555,19 +533,14 @@ def tomojax.interactive.reconstruct_slice(
         method: 'Method' = 'auto',
         **options: 'Any',
     ) -> 'Any'
-def tomojax.interactive.region_preview(scan: 'Scan') -> 'RegionOverlay'
-def tomojax.interactive.resolve_sweep(
+def tomojax.interactive.reconstruct_slices(
         scan: 'Scan',
-        axis: 'Axis',
-        index: 'int',
-        centres: 'Sequence[float]',
+        requests: 'Sequence[tuple[Axis, int]]',
         *,
         method: 'Method' = 'auto',
-        grid: 'Grid | None' = None,
-        region: 'RegionName | RegionEstimate | None' = None,
         **options: 'Any',
-    ) -> 'SweepPlan'
-def tomojax.interactive.sweep_planes(plan: 'SweepPlan') -> 'Iterator[Any]'
+    ) -> 'list[Any]'
+def tomojax.interactive.region_preview(scan: 'Scan') -> 'RegionOverlay'
 
 # tomojax.corrections
 class tomojax.corrections.BeamHardening(

@@ -5,9 +5,9 @@ r"""A centre sweep on a raw synchrotron scan: the same slice at three detector c
 
 The input is tomocupy's test scan from APS 2-BM (720 views over a half turn on
 22 rows of 1536 pixels, with flats and darks), which records no rotation
-centre. ``tj.load`` corrects it; ``tj.interactive.resolve_sweep`` and
-``sweep_planes`` reconstruct the central slice at each centre given in pixels
-from the detector middle, as ``tomojax inspect --centres`` does. The figure
+centre. ``tj.load`` corrects it; ``tj.interactive.centre_sweep`` reconstructs
+the central slice at each centre given in pixels from the detector middle, as
+``tomojax inspect --centres`` does. The figure
 shows the same region of the slice on one grey scale at each centre.
 """
 
@@ -42,12 +42,9 @@ def main() -> None:
     )
     args = parser.parse_args()
     scan = tj.load(args.input)
-    sweep = interactive.resolve_sweep(scan, "z", args.plane, args.centres, method="fbp")
+    planes = interactive.centre_sweep(scan, "z", args.plane, args.centres, method="fbp")
     row0, row1, column0, column1 = args.region
-    crops = [
-        np.asarray(plane, np.float32)[row0:row1, column0:column1]
-        for plane in interactive.sweep_planes(sweep)
-    ]
+    crops = list(np.asarray(planes, np.float32)[:, row0:row1, column0:column1])
     low, high = np.percentile(crops[len(crops) // 2], (0.5, 99.5))
 
     style()

@@ -26,7 +26,6 @@ from tomojax._field_of_view import (
 )
 from tomojax._parameters import Filter, Method
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
-from tomojax.cli._plans import announce, dry_run
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
@@ -374,6 +373,7 @@ def _run(
     progress.check_cancelled()
     from tomojax._planning import resolve_reconstruction
     from tomojax._workflow import reconstruct_resolved
+    from tomojax.cli._plans import announce, dry_run, plan_product
 
     keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
     shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
@@ -381,8 +381,6 @@ def _run(
         scan, run.method, region=run.region, shape=shape, config=config, **keywords
     )
     if args.dry_run:
-        from tomojax.cli._plans import plan_product
-
         return dry_run(args.progress, run.data, plan_product(scan, work), scan, work)
     used = tuple(f for f, v in (("--region", run.region), ("--grid", run.grid)) if v is not None)
     _ = announce("reconstruct", scan, work, used=used)

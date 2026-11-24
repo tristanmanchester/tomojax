@@ -116,13 +116,17 @@ def test_running_out_of_memory_says_what_the_plan_needed(monkeypatch, tmp_path, 
 
 
 def _tree(events):
-    """(name, label, depth) of every task under the outer align task, in order."""
+    """(name, label, depth) of every task under the outer align task, in order.
+
+    Compilation ("prepare") happens only on a cold cache, so it is left out.
+    """
     depth, rows = {}, []
     for event in events:
         outer = isinstance(event, progress.Started) and event.name == "align" and not depth
         if isinstance(event, progress.Started) and (outer or event.parent in depth):
             depth[event.task] = 0 if event.parent not in depth else depth[event.parent] + 1
-            rows.append((event.name, event.label, depth[event.task]))
+            if event.name != "prepare":
+                rows.append((event.name, event.label, depth[event.task]))
     return rows
 
 

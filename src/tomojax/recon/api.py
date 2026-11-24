@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     import numpy as np
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, ScanGeometry
-    from tomojax.recon._fbp_storage import AxialRoute, axial_plane_route, device_free
     from tomojax.recon._operators import Projector, backproject, project
     from tomojax.recon.cgls import CGLSConfig
     from tomojax.recon.fbp import FBPConfig, default_fbp_scale
@@ -54,9 +53,6 @@ _CONFIGS = {
 }
 
 _SOURCES = {
-    "AxialRoute": "_fbp_storage",
-    "axial_plane_route": "_fbp_storage",
-    "device_free": "_fbp_storage",
     "Projector": "_operators",
     "backproject": "_operators",
     "clear_filter_caches": "filters",
@@ -195,7 +191,6 @@ def validate_reconstruction(
     warm_start: bool = False,
     axial_index: int | None = None,
     projections: jnp.ndarray | np.ndarray | None = None,
-    host: bool | None = None,
 ) -> None:
     """Check resolved solver settings against the actual acquisition before dispatch.
 
@@ -215,8 +210,6 @@ def validate_reconstruction(
         Requested axial plane when validating a slice or sweep.
     projections : array-like or None, optional
         Loaded measurements for data-dependent checks and resident backend placement.
-    host : bool or None, optional
-        Whether FBP runs in host slabs, decided earlier; None decides it now.
 
     Raises
     ------
@@ -279,7 +272,6 @@ def validate_reconstruction(
             projections,
             cast("FBPConfig", config),
             axial_index=axial_index,
-            host=host,
         )
     if method == "fourier":
         from tomojax.recon.fourier import check_fourier_inputs
@@ -703,7 +695,6 @@ def axial_fbp_plane(
     projections: np.ndarray | jnp.ndarray,
     cfg: FBPConfig,
     index: int,
-    route: AxialRoute | None = None,
 ) -> jnp.ndarray | np.ndarray | None:
     """Use the full solver's view batches when a voxel plane takes one detector row.
 
@@ -721,23 +712,23 @@ def axial_fbp_plane(
         Full reconstruction's algorithm and device settings.
     index : int
         Requested axial plane on the output grid.
-    route : AxialRoute or None, optional
-        How the plane is made, decided earlier (:func:`axial_plane_route`); None decides
-        it now from free device memory.
 
     Returns
     -------
     array or None
         Requested attenuation plane, or None when other rows can contribute.
     """
-    from ._fbp_storage import axial_plane_route, device_free
+    import numpy as np
+
+    from tomojax.geometry import grid_volume_origin
+
+    from ._axial_slabs import independent_planes
+    from ._fbp_storage import too_large_for_the_device
     from .fbp import parallel_fbp
 
-    if route is None:
-        route = axial_plane_route(geometry, grid, detector, index, device_free(cfg))
-    if route.kind == "full":
+    if not independent_planes(geometry, grid, detector):
         return None
-    if route.kind == "slab":
+    if too_large_for_the_device(geometry, grid, cfg):
         from ._fbp_storage import first_device, selected_slab
         from .fbp_host import FBPHostConfig, fbp_host
 
@@ -751,6 +742,18 @@ def axial_fbp_plane(
                 config=FBPHostConfig(fbp=cfg, slices_per_batch=slab.nz),
             )
         return volume[index - first].copy()
+    # Compilers can fuse the z multiply-add and replace division by a reciprocal.
+    # Prove each operation exact in FP32 before removing interpolation neighbours.
+    pitch = float(np.float32(detector.dv))
+    z = index * pitch + float(np.float32(grid_volume_origin(grid)[2]))
+    centered = z - float(np.float32(detector.center[1]))
+    if (
+        np.frexp(pitch)[0] != 0.5
+        or float(np.float32(z)) != z
+        or float(np.float32(centered)) != centered
+        or centered / pitch != index - (detector.nv - 1) / 2
+    ):
+        return None
     return parallel_fbp(geometry, grid, detector, projections, cfg, None, row=index)[0]
 
 
@@ -763,15 +766,12 @@ def _detector_grid(
 
 
 __all__ = [
-    "AxialRoute",
     "MethodConfig",
     "Projector",
     "axial_fbp_plane",
-    "axial_plane_route",
     "backproject",
     "clear_filter_caches",
     "default_fbp_scale",
-    "device_free",
     "method_config",
     "project",
     "reconstruct_arrays",

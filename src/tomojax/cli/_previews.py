@@ -200,18 +200,15 @@ def write_scan_slices(
     from tomojax.cli._results import unit_of
     from tomojax.core.registration import registered_plane, volume_axes
 
-    plan = interactive.plan_planes(scan, wanted, method="fbp")
-    if plan.full is not None:
-        progress.note("info", "slice previews: one full reconstruction makes every plane")
-    resolved = plan.full or plan.plans[0]
-    grid, unit = resolved.scan.grid, unit_of(scan)
-    method = resolved.method
-    for (axis, index), pixels in zip(plan.requests, interactive.planes_of(plan), strict=True):
+    distinct = list(dict.fromkeys(wanted))
+    grid, unit = scan.grid, unit_of(scan)
+    planes = interactive.reconstruct_slices(scan, distinct, method="fbp")
+    for (axis, index), pixels in zip(distinct, planes, strict=True):
         dim = "zyx".index(axis)
         sample = registered_plane(np.asarray(pixels), volume_axes(grid, unit), dim, index, unit)
         name = slice_name(axis, index)
         image = _images.sample_image(sample)
-        label = f"{axis} = {index} · {method} reconstruction of the scan"
+        label = f"{axis} = {index} · fbp reconstruction of the scan"
         _images.save_png(
             _images.labelled(_images.to_uint8(image, _images.limits(image)), label),
             directory / name,
@@ -236,23 +233,18 @@ def write_sweep(
     from tomojax.cli._results import unit_of
 
     axis, index = plane or ("z", scan.grid.nz // 2)
-    sweep = interactive.resolve_sweep(scan, axis, index, centres, method="fbp")
+    plans = interactive.resolve_sweep(scan, axis, index, centres, method="fbp")
     count, du = len(centres), scan.detector.du
     unit = unit_of(scan)
     shown_unit = "scan units" if unit == "scan_length" else unit
     recorded = scan.detector.center[0] / du
-    full = sweep.full_solves
-    progress.note(
-        "info",
-        f"centre sweep: {count} candidates on the {axis} = {index} plane"
-        + (f", {full} of them a full reconstruction each" if full else ""),
-    )
+    progress.note("info", f"centre sweep: {count} candidates on the {axis} = {index} plane")
     columns = math.ceil(math.sqrt(count))
     cell = max(32, min(256, _images.SHEET_SIDE // columns))
     thumbs: list[np.ndarray] = []
     bounds: list[tuple[float, float]] = []
     for ordinal, (centre, pixels) in enumerate(
-        zip(centres, interactive.sweep_planes(sweep), strict=True)
+        zip(centres, interactive.sweep_planes(plans, axis, index), strict=True)
     ):
         image = np.asarray(pixels, np.float32)
         name = centre_name(ordinal, count, centre)
