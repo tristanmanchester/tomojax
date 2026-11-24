@@ -5,13 +5,13 @@ from __future__ import annotations
 from functools import cache
 from typing import Any
 
-import h5py
 import jax
 import msgspec
 import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, operations as op
+from tomojax.cli._browse import source_array
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
 from tomojax.errors import InvalidParameter, within
@@ -72,8 +72,8 @@ def read_reference(name: str, value: Member | Hdf5 | Npy, context: ex.ExecutionC
                 raise InvalidParameter(name, "expected an admitted NumPy file")
             value = pinned
         return np.load(value.path, mmap_mode="r", allow_pickle=False)
-    with h5py.File(value.path, "r") as file:
-        return np.asarray(file[value.dataset])
+    with source_array(value, context) as (data, meta, _):
+        return np.asarray(data[(slice(None),) * len(meta.shape)])
 
 
 def source(

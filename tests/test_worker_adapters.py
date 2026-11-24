@@ -838,3 +838,38 @@ def test_saved_file_registered_reads(worker, tmp_path, ext):
         a = output(worker("read", source=source, stride=[2, 1, 2]))["value"]["array"]
         assert [axis["name"] for axis in a["axes"]] == list(names)
         np.testing.assert_allclose(np.load(a["storage"]["path"]), np.asarray(pixels)[::2, :, ::2])
+
+
+@pytest.mark.parametrize("axes", ["xyz", "yzx"])
+def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
+    sim = tj.simulate(size=8, n_views=8)
+    x = np.arange(8**3, dtype=np.float32).reshape((8,) * 3) / 64
+    path = tmp_path / "asymmetric.nxs"
+    tj.save(path, tj.Reconstruction(x, sim.scan.geometry, "example", {}, sim.scan))
+    with h5py.File(path, "r+") as file:
+        group = file["/entry/processing/tomojax"]
+        group["volume"][:] = x.transpose(tuple("zyx".index(a) for a in axes))
+        group.attrs["volume_axes_order"] = axes
+        ref = dict(type="hdf5", path=str(path), dataset=group["volume"].name)
+    source = dict(type="path", path=str(tmp_path / "scan.nxs"))
+    tj.save(source["path"], sim.scan)
+    expected = tj.project(sim.scan.geometry, x)
+    projected = output(worker("run", operation=dict(type="project", source=source, volume=ref)))
+    np.testing.assert_allclose(
+        np.load(projected["value"]["projections"]["storage"]["path"]), expected, atol=1e-5
+    )
+    back = output(worker("run", operation=dict(type="backproject", source=source, projections=ref)))
+    np.testing.assert_allclose(
+        np.load(back["value"]["volume"]["storage"]["path"]),
+        tj.backproject(sim.scan.geometry, x),
+        atol=1e-5,
+    )
+    args = dict(
+        source=dict(type="path", path=str(path)), roi=[[2, 4], [0, 7], [3, 4]], stride=[1, 2, 1]
+    )
+    read = output(worker("read", **args))["value"]["array"]
+    assert [axis["name"] for axis in read["axes"]] == list("zyx")
+    np.testing.assert_equal(np.load(read["storage"]["path"]), x[2:4, :7:2, 3:4])
+    assert output(worker("statistics", **args))["value"]["mean"] == pytest.approx(
+        x[2:4, :7:2, 3:4].mean()
+    )

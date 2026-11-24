@@ -28,6 +28,20 @@ from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage,
 READ_BYTES = 16 << 20
 
 
+class SavedVolume:
+    """Translate logical (z, y, x) slices to HDF5 hyperslabs before reading."""
+
+    def __init__(self, data: h5py.Dataset, axes: str) -> None:
+        self.data = data
+        self.axes = axes
+        self.to_zyx = tuple(axes.index(axis) for axis in "zyx")
+        self.shape = tuple(data.shape[i] for i in self.to_zyx)
+
+    def __getitem__(self, key: tuple[slice, ...]) -> np.ndarray:
+        stored = tuple(key["zyx".index(axis)] for axis in self.axes)
+        return np.asarray(self.data[stored]).transpose(self.to_zyx)
+
+
 @contextmanager
 def source_array(
     source: Storage | op.PathInput, context: ex.ExecutionContext
@@ -52,9 +66,14 @@ def source_array(
             data = file.get(source.dataset)
             if not isinstance(data, h5py.Dataset):
                 raise InvalidParameter("source", f"no dataset {source.dataset} in {path}")
-            if source.dataset == p.VOLUME_DATASET:
+            if "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET:
                 grid, _, geom_meta, axes = stored_grid(file, path)
-                yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta), {}
+                volume = SavedVolume(data, axes)
+                yield (
+                    volume,
+                    disk_volume(path, grid, "zyx", volume.shape, data.dtype.str, geom_meta),
+                    {},
+                )
             else:
                 yield data, indexed(source, data), {}
         return
