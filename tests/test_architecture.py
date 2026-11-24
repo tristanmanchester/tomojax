@@ -143,7 +143,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--pixel-size": ("load", "pixel_size"),
         "--geometry": ("load", "geometry"),
         "--tilt": "a field of the geometry --geometry declares",
-        "--apply-poses": ("load", "apply_poses"),
+        "--dry-run": "prints what would be written (and writes --preview) without correcting",
         "--binning": "Frames.corrected(binning=), or Scan.binned",
         "--views": "index ranges; Python calls Frames.selected",
         "--crop": "Y0:Y1,X0:X1; Python calls Frames.cropped",

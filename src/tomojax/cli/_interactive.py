@@ -58,12 +58,15 @@ def slice_product(
 
 def correction_product(
     command: op.CorrectionPreview,
-    frames: tj.Frames,
+    frames: tj.Frames | tj.Scan,
     steps: tuple[Step, ...],
     settings: dict[str, Any],
     context: ex.ExecutionContext,
 ) -> p.CorrectionResult:
-    """Publish native and binned rows in their own detector and acquisition coordinates."""
+    """Publish native and binned rows in their own detector and acquisition coordinates.
+
+    A scan's input rows are line integrals; raw frames' are counts.
+    """
     band = interactive.correction_preview(frames, command.rows, *steps, **settings)
     write = partial(stage_array, context)
     angles = np.asarray(frames.geometry.angles)
@@ -81,8 +84,8 @@ def correction_product(
             band.before.shape,
             band.before.dtype.str,
             scan_axes(before, native, unit),
-            "count",
-            "counts",
+            "count" if band.domain == "counts" else "1",
+            band.domain,
         ),
         Array(
             write(band.after),

@@ -500,6 +500,7 @@ class tomojax.interactive.CorrectionBand(
         after: 'np.ndarray',
         views: 'np.ndarray',
         detector: 'Detector',
+        domain: "Literal['counts', 'line_integrals']" = 'counts',
     ) -> None
 class tomojax.interactive.PlanePlan(
         requests: 'tuple[tuple[Axis, int], ...]',
@@ -530,7 +531,7 @@ def tomojax.interactive.centre_sweep(
         **options: 'Any',
     ) -> 'Any'
 def tomojax.interactive.correction_preview(
-        frames: 'Frames',
+        source: 'Frames | Scan',
         rows: 'tuple[int, int]',
         *steps: 'Step',
         *,

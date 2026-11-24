@@ -99,12 +99,13 @@ def display_shape(shape: tuple[int, int], axes: Sequence[Axis], side: int) -> tu
     return max(1, rows // factor), max(1, columns // factor)
 
 
-def resample(image: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    """``image`` (float) at ``shape``, bilinearly."""
+def resample(image: np.ndarray, shape: tuple[int, int], *, nearest: bool = False) -> np.ndarray:
+    """``image`` (float) at ``shape``: bilinearly, or by nearest sample to keep rows sharp."""
     data = np.asarray(image, np.float32)
     if data.shape == shape:
         return data
-    resized = Image.fromarray(data).resize((shape[1], shape[0]), Image.Resampling.BILINEAR)
+    method = Image.Resampling.NEAREST if nearest else Image.Resampling.BILINEAR
+    resized = Image.fromarray(data).resize((shape[1], shape[0]), method)
     return np.asarray(resized, np.float32)
 
 
