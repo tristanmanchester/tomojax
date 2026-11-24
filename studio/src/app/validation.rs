@@ -434,12 +434,7 @@ impl AppState {
         };
         let mut sources = Vec::new();
         for input in &inputs {
-            if array_key.is_some()
-                && !matches!(
-                    input.kind.as_str(),
-                    "scan" | "frames" | "reconstruction" | "alignment" | "simulation"
-                )
-            {
+            if array_key.is_some() && super::jobs::registered_array(input).is_some() {
                 continue;
             }
             self.previews
@@ -470,9 +465,12 @@ impl AppState {
         {
             let products = inputs
                 .iter()
-                .filter_map(|input| self.previews.source_product(input).ok().flatten())
+                .filter_map(|input| {
+                    super::jobs::registered_array(input)
+                        .or_else(|| self.previews.source_product(input).ok().flatten().cloned())
+                })
                 .collect::<Vec<_>>();
-            if let Some(member) = super::jobs::array_member(products.into_iter(), key) {
+            if let Some(member) = super::jobs::array_member(products.iter(), key) {
                 value.insert(
                     key.into(),
                     serde_json::to_value(member)

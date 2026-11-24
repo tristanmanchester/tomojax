@@ -167,29 +167,69 @@ pub fn is_hdf5(path: &Path) -> bool {
     })
 }
 
+/// A file that an HDF5 file reads through an external link or a virtual dataset.
+#[derive(Debug)]
+pub struct LinkedFile {
+    /// The file on disk.
+    pub path: PathBuf,
+    /// Its path relative to the first file's folder, when every link on the way
+    /// names it relatively without leaving that folder: such links keep working
+    /// in a copy of the folder.
+    pub within: Option<PathBuf>,
+}
+
 /// Every other file an HDF5 file reads through external links or virtual datasets,
 /// following links in the linked files too: an NXtomo master's detector files.
-pub fn linked_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn linked_files(path: &Path) -> Result<Vec<LinkedFile>, String> {
     let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
-    let mut found = std::collections::BTreeSet::new();
-    let mut pending = vec![own.clone()];
-    while let Some(file) = pending.pop() {
+    let mut found: BTreeMap<PathBuf, Option<PathBuf>> = BTreeMap::new();
+    let mut pending = vec![(own.clone(), own.file_name().map(PathBuf::from))];
+    while let Some((file, within)) = pending.pop() {
         let direct = if file == own {
             direct_links(&file)?
         } else {
             // A linked file that is not HDF5 has no links of its own.
             direct_links(&file).unwrap_or_default()
         };
-        for linked in direct {
-            if linked != own && found.insert(linked.clone()) {
-                pending.push(linked);
+        for (named, target) in direct {
+            if target == own {
+                continue;
             }
+            let inside = within.as_ref().and_then(|within| {
+                inside_folder(&within.parent().unwrap_or(Path::new("")).join(&named))
+            });
+            match found.get(&target) {
+                Some(Some(_)) => continue,
+                Some(None) if inside.is_none() => continue,
+                _ => {}
+            }
+            found.insert(target.clone(), inside.clone());
+            pending.push((target, inside));
         }
     }
-    Ok(found.into_iter().collect())
+    Ok(found
+        .into_iter()
+        .map(|(path, within)| LinkedFile { path, within })
+        .collect())
 }
 
-fn direct_links(path: &Path) -> Result<Vec<PathBuf>, String> {
+/// `path` without `.` and `..`, if it is relative and stays inside its root.
+fn inside_folder(path: &Path) -> Option<PathBuf> {
+    use std::path::Component;
+    let mut inside = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(part) => inside.push(part),
+            Component::CurDir => {}
+            Component::ParentDir if inside.pop() => {}
+            _ => return None,
+        }
+    }
+    Some(inside)
+}
+
+/// The links in one file, as (the file name the link stores, the file on disk).
+fn direct_links(path: &Path) -> Result<Vec<(String, PathBuf)>, String> {
     let file = hdf5::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
     let folder = own.parent().unwrap_or(Path::new("/")).to_owned();
@@ -227,7 +267,7 @@ fn direct_links(path: &Path) -> Result<Vec<PathBuf>, String> {
                                 && let Ok(source) =
                                     std::fs::canonicalize(folder.join(&mapping.src_filename))
                             {
-                                found.insert(source);
+                                found.insert((mapping.src_filename, source));
                             }
                         }
                     }
@@ -236,13 +276,13 @@ fn direct_links(path: &Path) -> Result<Vec<PathBuf>, String> {
             }
         }
     }
-    found.remove(&own);
+    found.retain(|(_, target)| *target != own);
     Ok(found.into_iter().collect())
 }
 
 /// The file an external link names (not the end of a chain of links), resolved
 /// as HDF5 does: relative names against the linking file's folder.
-fn external_target(group: &hdf5::Group, name: &str, folder: &Path) -> Option<PathBuf> {
+fn external_target(group: &hdf5::Group, name: &str, folder: &Path) -> Option<(String, PathBuf)> {
     use hdf5_sys::{h5l, h5p::H5P_DEFAULT};
     let name = std::ffi::CString::new(name).ok()?;
     let mut value = vec![0u8; 4096];
@@ -281,7 +321,8 @@ fn external_target(group: &hdf5::Group, name: &str, folder: &Path) -> Option<Pat
             )
         }
     })?;
-    std::fs::canonicalize(folder.join(file)).ok()
+    let target = std::fs::canonicalize(folder.join(&file)).ok()?;
+    Some((file, target))
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {
@@ -488,7 +529,7 @@ fn projection_arrays(
 }
 
 fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>, String> {
-    use hdf5::types::{VarLenAscii, VarLenUnicode};
+    use hdf5::types::{FixedAscii, FixedUnicode, VarLenAscii, VarLenUnicode};
     if !group
         .attr_names()
         .map_err(|error| error.to_string())?
@@ -498,13 +539,19 @@ fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>
         return Ok(None);
     }
     let attribute = group.attr(name).map_err(|error| error.to_string())?;
-    let text = match attribute.read_scalar::<VarLenUnicode>() {
-        Ok(value) => value.as_str().to_owned(),
-        Err(_) => attribute
-            .read_scalar::<VarLenAscii>()
+    // NeXus writers use variable- and fixed-length strings alike.
+    let text = if let Ok(value) = attribute.read_scalar::<VarLenUnicode>() {
+        value.as_str().to_owned()
+    } else if let Ok(value) = attribute.read_scalar::<VarLenAscii>() {
+        value.as_str().to_owned()
+    } else if let Ok(value) = attribute.read_scalar::<FixedUnicode<4096>>() {
+        value.as_str().to_owned()
+    } else {
+        attribute
+            .read_scalar::<FixedAscii<4096>>()
             .map_err(|error| format!("Cannot decode {name}: {error}"))?
             .as_str()
-            .to_owned(),
+            .to_owned()
     };
     if text.len() > 1024 * 1024 {
         return Err(format!("The {name} metadata exceed 1 MiB"));
@@ -749,6 +796,29 @@ mod tests {
         assert!(report.get("valid").is_none());
         assert!(report["projection"].get("stats").is_none());
         assert!(!unavailable.exists());
+    }
+
+    #[test]
+    fn fixed_length_string_attributes_are_read() {
+        use hdf5::types::FixedAscii;
+        let directory = tempfile::tempdir().unwrap();
+        let file = hdf5::File::create(directory.path().join("angles.h5")).unwrap();
+        let angles = file
+            .new_dataset_builder()
+            .with_data(&[0.0f32, 1.])
+            .create("angles")
+            .unwrap();
+        angles
+            .new_attr::<FixedAscii<6>>()
+            .shape(())
+            .create("units")
+            .unwrap()
+            .write_scalar(&FixedAscii::<6>::from_ascii("degree").unwrap())
+            .unwrap();
+        assert_eq!(
+            string_attribute(&angles, "units").unwrap().as_deref(),
+            Some("degree")
+        );
     }
 
     #[test]

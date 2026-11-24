@@ -955,6 +955,15 @@ fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
         .unwrap()
         .link_external("../elsewhere.h5", "/data", "data")
         .unwrap();
+    // An absolute link to a file beside it would still read the original.
+    hdf5::File::create(raw.join("absolute.nxs"))
+        .unwrap()
+        .link_external(
+            raw.join("detector/pixels.h5").to_str().unwrap(),
+            "/data",
+            "data",
+        )
+        .unwrap();
     std::fs::write(raw.join("other-scan.nxs"), b"another acquisition").unwrap();
     let mut state = AppState::init();
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
@@ -972,19 +981,22 @@ fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
     assert_eq!(linked.read_raw::<f32>().unwrap(), [1., 2., 3.]);
     drop(linked);
 
-    // A copy could not keep a link that leaves the folder, so it is refused.
-    state.import_paths(vec![raw.join("escaping.nxs")]);
-    drive(&mut state, |state| state.copying == 0);
-    assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 1);
-    assert!(
-        state
-            .model
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("outside its folder")),
-        "{:?}",
-        state.model.error
-    );
+    // A copy could not keep these links pointing at the copied data.
+    for refused in ["escaping.nxs", "absolute.nxs"] {
+        state.model.error = None;
+        state.import_paths(vec![raw.join(refused)]);
+        drive(&mut state, |state| state.copying == 0);
+        assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 1);
+        assert!(
+            state
+                .model
+                .error
+                .as_ref()
+                .is_some_and(|e| e.contains("a copy can't keep")),
+            "{refused}: {:?}",
+            state.model.error
+        );
+    }
 }
 
 #[test]

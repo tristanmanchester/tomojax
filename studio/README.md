@@ -54,8 +54,9 @@ project** before importing when you want managed copies. Copies are staged in
 the background and the originals are preserved. Choosing a parameter or header
 file, such as a Nikon `.xtekct` or SkyScan `.log`, copies its whole folder, because
 the frames beside it belong to the same acquisition. An HDF5 or NXtomo file is
-copied with the files it links to in its folder, such as separate detector files;
-one that reads data from outside its folder is imported without copying.
+copied with the files it links to in its folder, such as separate detector files.
+A file that reads data through absolute links or from outside its folder can't
+be copied; import it without copying.
 
 Standard NXtomo/HDF5 metadata and the first scientific views load independently
 of the numerical worker. **Inspect dataset** requests TomoJAX's full inspection,

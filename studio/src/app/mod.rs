@@ -925,15 +925,15 @@ fn copy_acquisition(
         Vec::new()
     };
     for file in links {
-        // A copy could not keep such a link pointing at the same data.
-        let inside = file.strip_prefix(folder).map_err(|_| {
+        // A copy keeps only relative links inside the folder pointing at its data.
+        let within = file.within.ok_or_else(|| {
             format!(
-                "{} reads data from {}, outside its folder. Import it without copying.",
+                "{} reads data from {} through a link a copy can't keep. Import it without copying.",
                 name.to_string_lossy(),
-                file.display()
+                file.path.display()
             )
         })?;
-        linked.push(inside.to_owned());
+        linked.push(within);
     }
     if linked.is_empty() {
         let copy = inputs.join(name);

@@ -226,21 +226,7 @@ impl AppState {
         }
         if !matches!(job.operation.as_str(), "open" | "inspect") && index < job.inputs.len() {
             let input = &job.inputs[index];
-            if !matches!(
-                input.kind.as_str(),
-                "scan" | "frames" | "reconstruction" | "simulation" | "alignment"
-            ) {
-                let product = if let Some(array) = input.arrays.get("volume") {
-                    Product::Volume {
-                        volume: array.clone(),
-                    }
-                } else if let Some(array) = input.arrays.get("projections") {
-                    Product::Projections {
-                        projections: array.clone(),
-                    }
-                } else {
-                    Product::Validated
-                };
+            if let Some(product) = registered_array(input) {
                 let running = self.running.as_mut().unwrap();
                 running.handles.push(String::new());
                 running.products.push(product);
@@ -1049,5 +1035,27 @@ pub(super) fn array_member<'a>(
             .iter()
             .find_map(|key| product.members().get(*key).cloned()),
         _ => product.members().get("projections").cloned(),
+    })
+}
+
+/// An array-only result (a saved volume or projections) is used as registered,
+/// without opening it in the worker; `None` for inputs the worker opens.
+pub(super) fn registered_array(input: &crate::project::CapturedInput) -> Option<Product> {
+    if matches!(
+        input.kind.as_str(),
+        "scan" | "frames" | "reconstruction" | "simulation" | "alignment"
+    ) {
+        return None;
+    }
+    Some(if let Some(array) = input.arrays.get("volume") {
+        Product::Volume {
+            volume: array.clone(),
+        }
+    } else if let Some(array) = input.arrays.get("projections") {
+        Product::Projections {
+            projections: array.clone(),
+        }
+    } else {
+        Product::Validated
     })
 }

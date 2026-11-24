@@ -130,10 +130,19 @@ impl Fingerprint {
         let mut hash = blake3::Hasher::new();
         hash.update(b"tomojax-sibling-metadata-v2\0");
         let mut bytes = 0u64;
+        // A project kept in the acquisition's own folder writes its manifest and
+        // its inputs, results and cache there; those are not acquisition files.
+        let project_here = folder.join(MANIFEST).exists();
         let mut pending = vec![PathBuf::new()];
         while let Some(relative) = pending.pop() {
             let current = folder.join(&relative);
-            if !relative.as_os_str().is_empty() && current.join(MANIFEST).exists() {
+            let in_project = project_here
+                && relative.components().next().is_some_and(|first| {
+                    ["inputs", "derived", "cache"]
+                        .map(std::ffi::OsStr::new)
+                        .contains(&first.as_os_str())
+                });
+            if in_project || (!relative.as_os_str().is_empty() && current.join(MANIFEST).exists()) {
                 continue;
             }
             let mut entries = fs::read_dir(&current)
@@ -326,7 +335,7 @@ impl CapturedInput {
         if path.is_file() && crate::metadata::is_hdf5(&path) {
             for linked in crate::metadata::linked_files(&path).unwrap_or_default() {
                 if let std::collections::btree_map::Entry::Vacant(entry) =
-                    storage_fingerprints.entry(linked)
+                    storage_fingerprints.entry(linked.path)
                 {
                     let fingerprint = Fingerprint::read(entry.key())?;
                     entry.insert(fingerprint);
@@ -1124,9 +1133,11 @@ mod tests {
         let job = Job::new("open", settings, vec![input]);
         assert!(job.check_inputs().is_ok());
         fs::write(directory.path().join("project.tomojax.json"), "{}").unwrap();
+        fs::create_dir(directory.path().join("derived")).unwrap();
+        fs::write(directory.path().join("derived/corrected.nxs"), "result").unwrap();
         assert!(
             job.check_inputs().is_ok(),
-            "a project manifest is not a frame"
+            "a project kept beside the scan writes files that are not frames"
         );
         fs::write(&frame, "re-exported pixels").unwrap();
         assert!(job.check_inputs().is_err());
