@@ -376,24 +376,49 @@ fn switching_projects_saves_the_latest_workspace_or_stays() {
 }
 
 #[test]
-fn backprojection_reads_a_selected_projection_result_before_a_scans_own() {
+fn projection_arrays_come_from_a_selected_result_or_the_geometry_scan() {
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
     let selected = Product::Projections {
         projections: saved.clone(),
     };
-    let scan = Product::Scan {
-        handle: "scan-handle".into(),
+    let scan = |handle: &str| Product::Scan {
+        handle: handle.into(),
         projections: saved.clone(),
     };
-    for products in [[&selected, &scan], [&scan, &selected]] {
-        assert_eq!(
-            jobs::array_member(products.into_iter(), "projections"),
-            Some(saved.storage.clone())
-        );
+    let (first, second) = (scan("first"), scan("second"));
+    let chosen = |products: &[&Product]| {
+        jobs::array_member(products.iter().copied(), "projections").map(|(storage, _)| storage)
+    };
+    // A selected result wins wherever it sits in project order.
+    for products in [[&selected, &first], [&first, &selected]] {
+        assert_eq!(chosen(&products), Some(saved.storage.clone()));
     }
-    let member = jobs::array_member([&scan].into_iter(), "projections").unwrap();
-    assert!(matches!(member, crate::protocol::Storage::Member { .. }));
+    // Otherwise the projections belong to the scan that supplies the geometry.
+    assert!(matches!(
+        chosen(&[&first, &second]),
+        Some(crate::protocol::Storage::Member { handle, .. }) if handle == "first"
+    ));
+
+    // Forward projection keeps the volume's own registered grid.
+    let mut volume = saved.clone();
+    for (axis, origin) in volume.axes.iter_mut().zip([-1.5, 2., 0.25]) {
+        axis.coordinates = crate::protocol::Coordinates::Uniform {
+            origin,
+            spacing: 0.5,
+        };
+    }
+    let volume = Product::Volume { volume };
+    let mut operation = serde_json::Map::new();
+    operation.insert("grid".into(), Value::Null);
+    assert!(
+        jobs::fill_projection_array(&mut operation, [&first, &volume].into_iter(), "volume")
+            .unwrap()
+    );
+    assert_eq!(
+        operation["grid"],
+        json!({"nx":4,"ny":4,"nz":2,"vx":0.5,"vy":0.5,"vz":0.5,"vol_origin":[0.25,2.,-1.5]})
+    );
 }
 
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {

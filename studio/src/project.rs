@@ -158,7 +158,7 @@ impl Fingerprint {
         while let Some(relative) = pending.pop() {
             let current = folder.join(&relative);
             if (project_here && is_project_entry(&relative))
-                || (!relative.as_os_str().is_empty() && current.join(MANIFEST).exists())
+                || (!relative.as_os_str().is_empty() && holds_project(&current))
             {
                 continue;
             }
@@ -232,10 +232,13 @@ impl Fingerprint {
         let mut pending = vec![PathBuf::new()];
         let mut bytes = 0u64;
         while let Some(relative) = pending.pop() {
-            if project_here && is_project_entry(&relative) {
+            let current = path.join(&relative);
+            // A project kept in the folder, or in a subfolder, is not acquisition data.
+            if (project_here && is_project_entry(&relative))
+                || (!relative.as_os_str().is_empty() && current.is_dir() && holds_project(&current))
+            {
                 continue;
             }
-            let current = path.join(&relative);
             let meta = fs::symlink_metadata(&current)
                 .map_err(|e| format!("{}: {e}", current.display()))?;
             if meta.file_type().is_symlink() {
@@ -1192,6 +1195,22 @@ mod tests {
         assert!(job.check_inputs().is_ok());
         fs::write(folder.join("view_0001.tif"), "re-exported pixels").unwrap();
         assert!(job.check_inputs().is_err());
+    }
+
+    #[test]
+    fn a_project_in_a_subfolder_of_a_tiff_folder_is_not_part_of_the_acquisition() {
+        let directory = tempfile::tempdir().unwrap();
+        let folder = directory.path().join("tiffs");
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("view_0001.tif"), "pixels").unwrap();
+        let mut project = Project::open(&folder.join("studio"), true).unwrap();
+        let asset = Asset::input(folder.clone(), false);
+        project.document.assets.push(asset.clone());
+        let job = Job::new("open", json!({}), vec![project.capture(&asset.id).unwrap()]);
+        project.document.jobs.push(job.clone());
+        project.changed().unwrap();
+        project.flush().unwrap();
+        assert!(job.check_inputs().is_ok());
     }
 
     #[test]

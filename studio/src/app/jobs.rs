@@ -342,14 +342,12 @@ impl AppState {
             } else {
                 "projections"
             };
-            if !operation.contains_key(key) {
-                let member = array_member(running.products.iter(), key).ok_or_else(|| {
-                    format!("Select an input containing {key}, or provide its storage reference")
-                })?;
-                operation.insert(
-                    key.into(),
-                    serde_json::to_value(member).map_err(|e| e.to_string())?,
-                );
+            if !operation.contains_key(key)
+                && !fill_projection_array(&mut operation, running.products.iter(), key)?
+            {
+                return Err(format!(
+                    "Select an input containing {key}, or provide its storage reference"
+                ));
             }
         }
         if matches!(
@@ -1023,35 +1021,89 @@ impl AppState {
     }
 }
 
-/// The volume or projections that forward or back projection reads. A selected
-/// array result (a saved volume or forward projection) wins over the arrays a
-/// scan holds; otherwise the last input that holds one. Preflight and execution
-/// share it.
+/// The volume or projections that forward or back projection reads, with its
+/// registration when known. A selected array result (a saved volume or forward
+/// projection) wins; otherwise the arrays of the first input that holds them,
+/// which is also the input that supplies the geometry.
 pub(super) fn array_member<'a>(
-    products: impl Iterator<Item = &'a Product> + Clone,
+    mut products: impl Iterator<Item = &'a Product> + Clone,
     key: &str,
-) -> Option<crate::protocol::Storage> {
+) -> Option<(
+    crate::protocol::Storage,
+    Option<crate::protocol::ArrayDescriptor>,
+)> {
     products
         .clone()
         .find_map(|product| match product {
-            Product::Volume { volume } if key == "volume" => Some(volume.storage.clone()),
+            Product::Volume { volume } if key == "volume" => {
+                Some((volume.storage.clone(), Some(volume.clone())))
+            }
             Product::Projections { projections } if key == "projections" => {
-                Some(projections.storage.clone())
+                Some((projections.storage.clone(), Some(projections.clone())))
             }
             _ => None,
         })
         .or_else(|| {
-            products.fold(None, |found, product| {
-                let member = if key == "volume" {
-                    ["volume", "phantom", "image"]
-                        .iter()
-                        .find_map(|key| product.members().get(*key).cloned())
-                } else {
-                    product.members().get("projections").cloned()
+            products.find_map(|product| {
+                let members = product.members();
+                if key == "projections" {
+                    let descriptor = match product {
+                        Product::Scan { projections, .. } => Some(projections.clone()),
+                        _ => None,
+                    };
+                    return Some((members.get("projections")?.clone(), descriptor));
+                }
+                let (member, descriptor) = match product {
+                    Product::Reconstruction { volume, .. } => ("volume", Some(volume)),
+                    Product::Simulation { phantom, .. } => ("phantom", Some(phantom)),
+                    Product::Alignment { image, .. } => ("image", image.as_ref()),
+                    _ => ("volume", None),
                 };
-                member.or(found)
+                Some((members.get(member)?.clone(), descriptor.cloned()))
             })
         })
+}
+
+/// Puts the volume or projections into a projection command. Forward projection
+/// also takes the volume's own grid, unless one is given, so its voxels keep
+/// their registered positions. Returns whether an array was found.
+pub(super) fn fill_projection_array<'a>(
+    operation: &mut serde_json::Map<String, Value>,
+    products: impl Iterator<Item = &'a Product> + Clone,
+    key: &str,
+) -> Result<bool, String> {
+    let Some((storage, descriptor)) = array_member(products, key) else {
+        return Ok(false);
+    };
+    operation.insert(
+        key.into(),
+        serde_json::to_value(storage).map_err(|e| e.to_string())?,
+    );
+    if key == "volume"
+        && operation.get("grid").is_none_or(Value::is_null)
+        && let Some(grid) = descriptor.as_ref().and_then(registered_grid)
+    {
+        operation.insert("grid".into(), grid);
+    }
+    Ok(true)
+}
+
+/// The grid of a volume registered with uniform (z, y, x) voxel-centre axes.
+fn registered_grid(volume: &crate::protocol::ArrayDescriptor) -> Option<Value> {
+    let names: Vec<_> = volume.axes.iter().map(|axis| axis.name.as_str()).collect();
+    if names != ["z", "y", "x"] || volume.shape.len() != 3 {
+        return None;
+    }
+    let mut uniform = volume.axes.iter().map(|axis| match axis.coordinates {
+        crate::protocol::Coordinates::Uniform { origin, spacing } => Some((origin, spacing)),
+        crate::protocol::Coordinates::Coordinates { .. } => None,
+    });
+    let (z, y, x) = (uniform.next()??, uniform.next()??, uniform.next()??);
+    Some(json!({
+        "nx": volume.shape[2], "ny": volume.shape[1], "nz": volume.shape[0],
+        "vx": x.1, "vy": y.1, "vz": z.1,
+        "vol_origin": [x.0, y.0, z.0],
+    }))
 }
 
 /// An array-only result (a saved volume or projections) is used as registered,

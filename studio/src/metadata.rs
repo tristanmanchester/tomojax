@@ -332,16 +332,33 @@ fn projection_arrays(
     if shape.len() != 3 || shape.contains(&0) {
         return Err("Projection shape must be nonempty (view, v, u)".into());
     }
+    let stored = hdf5::File::open(path).map_err(|error| error.to_string())?;
+    // The report describes the sample frames the loader selects. When the stored
+    // dataset holds more (interleaved flats and darks), it is not the projections
+    // as stored; the scan becomes viewable once opened and calibrated.
+    if stored.dataset(dataset).map(|d| d.shape()).ok() != Some(shape.clone()) {
+        return Ok(arrays);
+    }
     let file = path.to_string_lossy().into_owned();
     let angles = &report["angles"];
-    let view = match (angles["path"].as_str(), angles["units"].as_str()) {
+    // The unit the stored angles carry, not the report's converted one.
+    let stored_unit = angles["path"]
+        .as_str()
+        .and_then(|dataset| stored.dataset(dataset).ok())
+        .and_then(|dataset| string_attribute(&dataset, "units").ok().flatten())
+        .map(|unit| match unit.as_str() {
+            "deg" | "degrees" => "degree".to_owned(),
+            "rad" | "radians" => "radian".to_owned(),
+            _ => unit,
+        });
+    let view = match (angles["path"].as_str(), stored_unit) {
         (Some(dataset), Some(unit))
             if dataset.starts_with('/') && angles["count"].as_u64() == Some(shape[0] as u64) =>
         {
             Axis {
                 name: "view".into(),
                 frame: "acquisition".into(),
-                unit: unit.into(),
+                unit,
                 coordinates: Coordinates::Coordinates {
                     values: Storage::Hdf5 {
                         path: file.clone(),
@@ -766,10 +783,49 @@ mod tests {
 
     #[test]
     fn direct_measurements_do_not_claim_loader_corrections_or_unrecorded_units() {
-        let report = json!({"projection":{"found":true,"path":"/raw","shape":[3,2,4],"dtype":"uint16"},
-            "angles":{"path":"/theta","units":"radian","count":3},
-            "detector_metadata":{"du":0.1,"dv":0.4,"center":[0.3,-0.2]}});
-        let arrays = projection_arrays(&report, Path::new("scan.h5")).unwrap();
+        use hdf5::types::VarLenUnicode;
+        use std::str::FromStr;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("scan.h5");
+        let file = hdf5::File::create(&path).unwrap();
+        file.new_dataset::<u16>()
+            .shape((3, 2, 4))
+            .create("raw")
+            .unwrap();
+        file.new_dataset::<u16>()
+            .shape((5, 2, 4))
+            .create("with_flats")
+            .unwrap();
+        file.new_dataset_builder()
+            .with_data(&[0.0f32, 0.5, 1.0])
+            .create("theta")
+            .unwrap()
+            .new_attr::<VarLenUnicode>()
+            .shape(())
+            .create("units")
+            .unwrap()
+            .write_scalar(&VarLenUnicode::from_str("rad").unwrap())
+            .unwrap();
+        file.new_dataset_builder()
+            .with_data(&[0.0f32, 0.5, 1.0])
+            .create("unlabelled")
+            .unwrap();
+        drop(file);
+        // The worker reports converted degrees; the stored angles are radians.
+        let report = |data: &str, angles: &str| {
+            json!({"projection":{"found":true,"path":data,"shape":[3,2,4],"dtype":"uint16"},
+            "angles":{"path":angles,"units":"degree","count":3},
+            "detector_metadata":{"du":0.1,"dv":0.4,"center":[0.3,-0.2]}})
+        };
+        // Sample frames interleaved with flats and darks are not the stored array.
+        assert!(
+            projection_arrays(&report("/with_flats", "/theta"), &path)
+                .unwrap()
+                .is_empty()
+        );
+        let unlabelled = projection_arrays(&report("/raw", "/unlabelled"), &path).unwrap();
+        assert_eq!(unlabelled["projections"].axes[0].unit, "index");
+        let arrays = projection_arrays(&report("/raw", "/theta"), &path).unwrap();
         let array = &arrays["projections"];
         assert_eq!(array.domain, "stored_measurements");
         assert_eq!(array.axes[0].unit, "radian");

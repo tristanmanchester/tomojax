@@ -470,13 +470,8 @@ impl AppState {
                         .or_else(|| self.previews.source_product(input).ok().flatten().cloned())
                 })
                 .collect::<Vec<_>>();
-            if let Some(member) = super::jobs::array_member(products.iter(), key) {
-                value.insert(
-                    key.into(),
-                    serde_json::to_value(member)
-                        .map_err(|error| DraftError::new(key, error.to_string()))?,
-                );
-            }
+            super::jobs::fill_projection_array(&mut value, products.iter(), key)
+                .map_err(|error| DraftError::new(key, error))?;
         }
         if combined {
             value.insert("sources".into(), json!(sources));
