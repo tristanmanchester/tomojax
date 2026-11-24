@@ -157,9 +157,39 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
 }
 
 /// A suggested loader, still editable when an acquisition's domain is ambiguous.
-/// The other files an HDF5 file reads through external links or virtual datasets,
-/// such as an NXtomo master's detector files.
+/// Whether `path` names an HDF5 file (NXtomo and other HDF5 layouts).
+pub fn is_hdf5(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "nx" | "nxs" | "h5" | "hdf" | "hdf5"
+        )
+    })
+}
+
+/// Every other file an HDF5 file reads through external links or virtual datasets,
+/// following links in the linked files too: an NXtomo master's detector files.
 pub fn linked_files(path: &Path) -> Result<Vec<PathBuf>, String> {
+    let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    let mut found = std::collections::BTreeSet::new();
+    let mut pending = vec![own.clone()];
+    while let Some(file) = pending.pop() {
+        let direct = if file == own {
+            direct_links(&file)?
+        } else {
+            // A linked file that is not HDF5 has no links of its own.
+            direct_links(&file).unwrap_or_default()
+        };
+        for linked in direct {
+            if linked != own && found.insert(linked.clone()) {
+                pending.push(linked);
+            }
+        }
+    }
+    Ok(found.into_iter().collect())
+}
+
+fn direct_links(path: &Path) -> Result<Vec<PathBuf>, String> {
     let file = hdf5::File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let own = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
     let folder = own.parent().unwrap_or(Path::new("/")).to_owned();
@@ -181,15 +211,8 @@ pub fn linked_files(path: &Path) -> Result<Vec<PathBuf>, String> {
             .map_err(|e| e.to_string())?;
         for (name, kind) in links {
             match kind {
-                // Opening the linked object reports the file it lives in.
                 hdf5::LinkType::External => {
-                    let target = group
-                        .dataset(&name)
-                        .map(|d| d.filename())
-                        .or_else(|_| group.group(&name).map(|g| g.filename()));
-                    if let Ok(target) = target
-                        && let Ok(target) = std::fs::canonicalize(&target)
-                    {
+                    if let Some(target) = external_target(&group, &name, &folder) {
                         found.insert(target);
                     }
                 }
@@ -215,6 +238,50 @@ pub fn linked_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     }
     found.remove(&own);
     Ok(found.into_iter().collect())
+}
+
+/// The file an external link names (not the end of a chain of links), resolved
+/// as HDF5 does: relative names against the linking file's folder.
+fn external_target(group: &hdf5::Group, name: &str, folder: &Path) -> Option<PathBuf> {
+    use hdf5_sys::{h5l, h5p::H5P_DEFAULT};
+    let name = std::ffi::CString::new(name).ok()?;
+    let mut value = vec![0u8; 4096];
+    let file = hdf5::sync::sync(|| {
+        // SAFETY: `value` outlives both calls, its length bounds the read, and the
+        // unpacked filename points into `value`, copied out before it is dropped.
+        unsafe {
+            let id = group.id();
+            let length = value.len();
+            if h5l::H5Lget_val(
+                id,
+                name.as_ptr(),
+                value.as_mut_ptr().cast(),
+                length,
+                H5P_DEFAULT,
+            ) < 0
+            {
+                return None;
+            }
+            let (mut flags, mut file, mut object) = (0, std::ptr::null(), std::ptr::null());
+            if h5l::H5Lunpack_elink_val(
+                value.as_ptr().cast(),
+                length,
+                &mut flags,
+                &mut file,
+                &mut object,
+            ) < 0
+                || file.is_null()
+            {
+                return None;
+            }
+            Some(
+                std::ffi::CStr::from_ptr(file)
+                    .to_string_lossy()
+                    .into_owned(),
+            )
+        }
+    })?;
+    std::fs::canonicalize(folder.join(file)).ok()
 }
 
 pub fn suggested_kind(report: &Value) -> &'static str {

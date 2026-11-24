@@ -432,26 +432,6 @@ impl AppState {
         } else {
             vec![input.clone()]
         };
-        if let Some(key) = array_key
-            && !value.contains_key(key)
-        {
-            let names = if key == "volume" {
-                ["volume", "phantom", "image"]
-            } else {
-                ["projections", "counts", "projections"]
-            };
-            if let Some(array) = inputs
-                .iter()
-                .rev()
-                .find_map(|input| names.iter().find_map(|name| input.arrays.get(*name)))
-            {
-                value.insert(
-                    key.into(),
-                    serde_json::to_value(&array.storage)
-                        .map_err(|error| DraftError::new(key, error.to_string()))?,
-                );
-            }
-        }
         let mut sources = Vec::new();
         for input in &inputs {
             if array_key.is_some()
@@ -481,6 +461,23 @@ impl AppState {
             match source {
                 Some(source) => sources.push(source),
                 None => return Ok(None),
+            }
+        }
+        // The volume or projections as execution passes them: from the opened
+        // inputs, in the worker's canonical axis order.
+        if let Some(key) = array_key
+            && !value.contains_key(key)
+        {
+            let products = inputs
+                .iter()
+                .filter_map(|input| self.previews.source_product(input).ok().flatten())
+                .collect::<Vec<_>>();
+            if let Some(member) = super::jobs::array_member(products.into_iter(), key) {
+                value.insert(
+                    key.into(),
+                    serde_json::to_value(member)
+                        .map_err(|error| DraftError::new(key, error.to_string()))?,
+                );
             }
         }
         if combined {

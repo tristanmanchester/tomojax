@@ -357,32 +357,9 @@ impl AppState {
                 "projections"
             };
             if !operation.contains_key(key) {
-                let member = running
-                    .products
-                    .iter()
-                    .rev()
-                    .find_map(|product| match product {
-                        Product::Volume { volume } if key == "volume" => {
-                            Some(volume.storage.clone())
-                        }
-                        Product::Projections { projections } if key == "projections" => {
-                            Some(projections.storage.clone())
-                        }
-                        _ => {
-                            if key == "volume" {
-                                ["volume", "phantom", "image"]
-                                    .iter()
-                                    .find_map(|key| product.members().get(*key).cloned())
-                            } else {
-                                product.members().get("projections").cloned()
-                            }
-                        }
-                    })
-                    .ok_or_else(|| {
-                        format!(
-                            "Select an input containing {key}, or provide its storage reference"
-                        )
-                    })?;
+                let member = array_member(running.products.iter(), key).ok_or_else(|| {
+                    format!("Select an input containing {key}, or provide its storage reference")
+                })?;
                 operation.insert(
                     key.into(),
                     serde_json::to_value(member).map_err(|e| e.to_string())?,
@@ -1055,4 +1032,22 @@ impl AppState {
                 .retire_resources(std::collections::BTreeSet::new(), Some(handle.into()));
         }
     }
+}
+
+/// The registered volume or projections that forward or back projection reads,
+/// from the last opened input that holds one. Preflight and execution share it.
+pub(super) fn array_member<'a>(
+    products: impl DoubleEndedIterator<Item = &'a Product>,
+    key: &str,
+) -> Option<crate::protocol::Storage> {
+    products.rev().find_map(|product| match product {
+        Product::Volume { volume } if key == "volume" => Some(volume.storage.clone()),
+        Product::Projections { projections } if key == "projections" => {
+            Some(projections.storage.clone())
+        }
+        _ if key == "volume" => ["volume", "phantom", "image"]
+            .iter()
+            .find_map(|key| product.members().get(*key).cloned()),
+        _ => product.members().get("projections").cloned(),
+    })
 }

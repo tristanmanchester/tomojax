@@ -227,7 +227,7 @@ impl AppState {
             .map(|(descriptor, axis)| descriptor.shape[*axis].saturating_sub(1))
             .fold(self.ui.display.indices[plane_axis], usize::min);
         // Keep the stored index on the shown slice, so the next step starts from it.
-        if compared.iter().any(Option::is_some) {
+        if self.ui.workspace == Workspace::Compare && compared.iter().any(Option::is_some) {
             self.ui.display.indices[plane_axis] = index;
         }
         for (slot, compared) in [6, 7].into_iter().zip(compared) {
@@ -618,14 +618,15 @@ impl AppState {
             .plane(plane.mark())
             .ok_or("Wait for the slice to load")?;
         let points = [self.data_uv(start), self.data_uv(end)];
-        let pixels = points.map(|p| {
+        // Sample-centre coordinates: sample i is centred at i.
+        let unclamped = points.map(|p| {
             [
-                (p[1] as f64 * data.shape[0] as f64 - 0.5)
-                    .clamp(0., data.shape[0].saturating_sub(1) as f64),
-                (p[0] as f64 * data.shape[1] as f64 - 0.5)
-                    .clamp(0., data.shape[1].saturating_sub(1) as f64),
+                p[1] as f64 * data.shape[0] as f64 - 0.5,
+                p[0] as f64 * data.shape[1] as f64 - 0.5,
             ]
         });
+        let last = [data.shape[0], data.shape[1]].map(|n| n.saturating_sub(1) as f64);
+        let pixels = unclamped.map(|p| [p[0].clamp(0., last[0]), p[1].clamp(0., last[1])]);
         let (name, value, detail) = match self.ui.inspect_tool {
             InspectTool::Distance => {
                 let distance = data.distance(pixels[0], pixels[1])?;
@@ -652,13 +653,16 @@ impl AppState {
                     return Ok(());
                 }
                 // The samples whose centres lie inside the drawn box.
-                let a: [usize; 2] =
-                    std::array::from_fn(|i| pixels[0][i].min(pixels[1][i]).ceil() as usize);
-                let b: [usize; 2] =
-                    std::array::from_fn(|i| pixels[0][i].max(pixels[1][i]).floor() as usize);
-                if a[0] > b[0] || a[1] > b[1] {
+                let low: [f64; 2] =
+                    std::array::from_fn(|i| unclamped[0][i].min(unclamped[1][i]).ceil().max(0.));
+                let high: [f64; 2] = std::array::from_fn(|i| {
+                    unclamped[0][i].max(unclamped[1][i]).floor().min(last[i])
+                });
+                if low[0] > high[0] || low[1] > high[1] {
                     return Err("Drag a box that covers at least one sample".into());
                 }
+                let a = low.map(|v| v as usize);
+                let b = high.map(|v| v as usize);
                 let (mut n, mut mean, mut m2, mut min, mut max) =
                     (0usize, 0f64, 0f64, f32::INFINITY, f32::NEG_INFINITY);
                 for row in a[0]..=b[0].min(data.shape[0] - 1) {

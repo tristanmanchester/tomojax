@@ -3397,6 +3397,7 @@ dependencies = [
  "glam",
  "half",
  "hdf5-metno",
+ "hdf5-metno-sys",
  "image",
  "memmap2",
  "ndarray",

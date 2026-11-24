@@ -294,6 +294,11 @@ fn compared_volumes_of_different_depth_show_the_same_slice() {
         state.ui.display.indices[0], 2,
         "the next step starts from the shown slice"
     );
+    // Outside Compare, the shorter compared volume no longer limits the slice.
+    state.ui.workspace = Workspace::Explore;
+    state.ui.display.indices[0] = 4;
+    state.refresh_images();
+    assert_eq!(state.ui.display.indices[0], 4);
 }
 
 #[test]
@@ -334,6 +339,40 @@ fn region_statistics_use_only_samples_whose_centres_are_inside_the_box() {
             .measure(PlaneKind::Axial, [uv(0.2); 2], [uv(0.8); 2], true)
             .is_err()
     );
+    // A box in the outer half of the first sample holds no sample centre.
+    assert!(
+        state
+            .measure(PlaneKind::Axial, [uv(-0.45); 2], [uv(-0.1); 2], true)
+            .is_err()
+    );
+}
+
+#[test]
+fn switching_projects_saves_the_latest_workspace_or_stays() {
+    let directory = tempfile::tempdir().unwrap();
+    let first = directory.path().join("first");
+    let second = directory.path().join("second");
+    let mut state = AppState::init();
+    state.open_project(&first, true).unwrap();
+    state.ui.display.indices = [7, 8, 9];
+    state.open_project(&second, true).unwrap();
+    let saved = Project::open(&first, false).unwrap();
+    assert_eq!(saved.document.workspace.indices, [7, 8, 9]);
+    drop(saved);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let read_only = std::fs::Permissions::from_mode(0o555);
+        std::fs::set_permissions(&second, read_only).unwrap();
+        let error = state.open_project(&first, false).unwrap_err();
+        std::fs::set_permissions(&second, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(error.contains("stays open"), "{error}");
+        assert_eq!(
+            state.project.as_ref().unwrap().root,
+            std::fs::canonicalize(&second).unwrap()
+        );
+    }
 }
 
 fn drive(state: &mut AppState, condition: impl Fn(&AppState) -> bool) {
@@ -897,9 +936,24 @@ fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
         .with_data(&[1.0f32, 2., 3.])
         .create("data")
         .unwrap();
+    // The master reaches the pixels through an intermediate file.
+    hdf5::File::create(raw.join("detector/frames.h5"))
+        .unwrap()
+        .link_external("pixels.h5", "/data", "data")
+        .unwrap();
     hdf5::File::create(raw.join("scan.nxs"))
         .unwrap()
-        .link_external("detector/pixels.h5", "/data", "data")
+        .link_external("detector/frames.h5", "/data", "data")
+        .unwrap();
+    hdf5::File::create(directory.path().join("elsewhere.h5"))
+        .unwrap()
+        .new_dataset_builder()
+        .with_data(&[4.0f32])
+        .create("data")
+        .unwrap();
+    hdf5::File::create(raw.join("escaping.nxs"))
+        .unwrap()
+        .link_external("../elsewhere.h5", "/data", "data")
         .unwrap();
     std::fs::write(raw.join("other-scan.nxs"), b"another acquisition").unwrap();
     let mut state = AppState::init();
@@ -916,6 +970,21 @@ fn copying_an_nxtomo_master_brings_the_detector_files_it_links_to() {
     let linked = hdf5::File::open(&master).unwrap().dataset("data").unwrap();
     assert!(std::path::Path::new(&linked.filename()).starts_with(&project.root));
     assert_eq!(linked.read_raw::<f32>().unwrap(), [1., 2., 3.]);
+    drop(linked);
+
+    // A copy could not keep a link that leaves the folder, so it is refused.
+    state.import_paths(vec![raw.join("escaping.nxs")]);
+    drive(&mut state, |state| state.copying == 0);
+    assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 1);
+    assert!(
+        state
+            .model
+            .error
+            .as_ref()
+            .is_some_and(|e| e.contains("outside its folder")),
+        "{:?}",
+        state.model.error
+    );
 }
 
 #[test]

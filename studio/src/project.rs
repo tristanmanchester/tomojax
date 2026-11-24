@@ -122,36 +122,50 @@ pub struct Fingerprint {
     pub tree_digest: Option<String>,
 }
 impl Fingerprint {
-    /// The other entries in `file`'s folder, without descending into subfolders.
+    /// The other files in `file`'s folder and its subfolders, which a header
+    /// file's loader reads (Nikon can keep projections in a subfolder). A project
+    /// kept inside the folder is skipped, since it rewrites its own files.
     pub fn read_siblings(file: &Path) -> Result<Self, String> {
         let folder = file.parent().ok_or("The input has no containing folder")?;
-        let mut entries = fs::read_dir(folder)
-            .map_err(|e| format!("{}: {e}", folder.display()))?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
-        entries.sort_by_key(|entry| entry.file_name());
         let mut hash = blake3::Hasher::new();
-        hash.update(b"tomojax-sibling-metadata-v1\0");
+        hash.update(b"tomojax-sibling-metadata-v2\0");
         let mut bytes = 0u64;
-        for entry in entries {
-            let meta = fs::symlink_metadata(entry.path())
-                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
-            // A project kept in the acquisition's folder rewrites its manifest.
-            if meta.is_dir() || entry.file_name().to_string_lossy().starts_with(MANIFEST) {
+        let mut pending = vec![PathBuf::new()];
+        while let Some(relative) = pending.pop() {
+            let current = folder.join(&relative);
+            if !relative.as_os_str().is_empty() && current.join(MANIFEST).exists() {
                 continue;
             }
-            let name = entry.file_name();
-            let name = name.as_encoded_bytes();
-            hash.update(&(name.len() as u64).to_le_bytes());
-            hash.update(name);
-            hash.update(&meta.len().to_le_bytes());
-            let modified = meta
-                .modified()
-                .ok()
-                .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos());
-            hash.update(&modified.unwrap_or_default().to_le_bytes());
-            bytes = bytes.saturating_add(meta.len());
+            let mut entries = fs::read_dir(&current)
+                .map_err(|e| format!("{}: {e}", current.display()))?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            entries.sort_by_key(|entry| entry.file_name());
+            for entry in entries.into_iter().rev() {
+                let meta = fs::symlink_metadata(entry.path())
+                    .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+                let name = relative.join(entry.file_name());
+                if meta.is_dir() {
+                    pending.push(name);
+                    continue;
+                }
+                if relative.as_os_str().is_empty()
+                    && entry.file_name().to_string_lossy().starts_with(MANIFEST)
+                {
+                    continue;
+                }
+                let name = name.as_os_str().as_encoded_bytes();
+                hash.update(&(name.len() as u64).to_le_bytes());
+                hash.update(name);
+                hash.update(&meta.len().to_le_bytes());
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos());
+                hash.update(&modified.unwrap_or_default().to_le_bytes());
+                bytes = bytes.saturating_add(meta.len());
+            }
         }
         Ok(Self {
             bytes,
@@ -308,6 +322,17 @@ impl CapturedInput {
         } else {
             None
         };
+        // An HDF5 file's external links and virtual datasets read other files.
+        if path.is_file() && crate::metadata::is_hdf5(&path) {
+            for linked in crate::metadata::linked_files(&path).unwrap_or_default() {
+                if let std::collections::btree_map::Entry::Vacant(entry) =
+                    storage_fingerprints.entry(linked)
+                {
+                    let fingerprint = Fingerprint::read(entry.key())?;
+                    entry.insert(fingerprint);
+                }
+            }
+        }
         Self {
             asset: asset.id.clone(),
             name: asset.name.clone(),
@@ -1104,6 +1129,50 @@ mod tests {
             "a project manifest is not a frame"
         );
         fs::write(&frame, "re-exported pixels").unwrap();
+        assert!(job.check_inputs().is_err());
+
+        // Nikon can keep its projections in a subfolder.
+        let header = directory.path().join("nested/scan.xtekct");
+        fs::create_dir_all(directory.path().join("nested/Projections")).unwrap();
+        fs::write(&header, "header").unwrap();
+        let frame = directory.path().join("nested/Projections/scan_0001.tif");
+        fs::write(&frame, "pixels").unwrap();
+        let job = Job::new(
+            "correct",
+            json!({}),
+            vec![
+                CapturedInput::from_asset(&Asset::input(header, false), directory.path()).unwrap(),
+            ],
+        );
+        assert!(job.check_inputs().is_ok());
+        fs::write(&frame, "re-exported pixels").unwrap();
+        assert!(job.check_inputs().is_err());
+    }
+
+    #[test]
+    fn files_an_hdf5_master_links_to_are_captured_inputs() {
+        let directory = tempfile::tempdir().unwrap();
+        let pixels = directory.path().join("pixels.h5");
+        hdf5::File::create(&pixels)
+            .unwrap()
+            .new_dataset_builder()
+            .with_data(&[1.0f32])
+            .create("data")
+            .unwrap();
+        let master = directory.path().join("scan.nxs");
+        hdf5::File::create(&master)
+            .unwrap()
+            .link_external("pixels.h5", "/data", "data")
+            .unwrap();
+        let job = Job::new(
+            "correct",
+            json!({}),
+            vec![
+                CapturedInput::from_asset(&Asset::input(master, false), directory.path()).unwrap(),
+            ],
+        );
+        assert!(job.check_inputs().is_ok());
+        fs::write(&pixels, "replaced detector file").unwrap();
         assert!(job.check_inputs().is_err());
     }
 

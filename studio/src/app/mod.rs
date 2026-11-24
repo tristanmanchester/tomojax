@@ -665,6 +665,21 @@ impl AppState {
                 return Ok(());
             }
         }
+        // Save the current project, including its latest workspace, before leaving
+        // it; a project that cannot be saved stays open.
+        let workspace = self.capture_workspace();
+        if let Some(current) = &mut self.project {
+            current.document.workspace = workspace;
+            current
+                .changed()
+                .and_then(|()| current.flush())
+                .map_err(|error| {
+                    format!(
+                        "{} could not be saved, so it stays open: {error}",
+                        current.document.name
+                    )
+                })?;
+        }
         let project = Project::open(path, create)?;
         let context = project.document.workspace.clone();
         self.preferences.visit(&project.root)?;
@@ -903,12 +918,23 @@ fn copy_acquisition(
         let copy = inputs.join(folder.file_name().unwrap_or_default());
         return stage_copy_input(folder, &copy, cancelled).map(|()| copy.join(name));
     }
-    // Links outside the file's folder are left to resolve to the originals.
-    let linked: Vec<PathBuf> = crate::metadata::linked_files(path)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|file| Some(file.strip_prefix(folder).ok()?.to_owned()))
-        .collect();
+    let mut linked = Vec::new();
+    let links = if crate::metadata::is_hdf5(path) {
+        crate::metadata::linked_files(path).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    for file in links {
+        // A copy could not keep such a link pointing at the same data.
+        let inside = file.strip_prefix(folder).map_err(|_| {
+            format!(
+                "{} reads data from {}, outside its folder. Import it without copying.",
+                name.to_string_lossy(),
+                file.display()
+            )
+        })?;
+        linked.push(inside.to_owned());
+    }
     if linked.is_empty() {
         let copy = inputs.join(name);
         return stage_copy_input(path, &copy, cancelled).map(|()| copy);
