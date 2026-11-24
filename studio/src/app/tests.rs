@@ -797,6 +797,16 @@ fn slice_shortcuts_step_the_plane_on_screen() {
 }
 
 #[test]
+fn the_zoom_readout_is_the_zoom_the_3d_camera_shows() {
+    let mut state = AppState::init();
+    state.ui.main_view = PlaneKind::Volume;
+    state.ui.display.zoom = 10.;
+    assert_eq!(state.shown_zoom(), crate::volume::ZOOM[1]);
+    state.ui.main_view = PlaneKind::Axial;
+    assert_eq!(state.shown_zoom(), 10.);
+}
+
+#[test]
 fn view_undo_stays_with_its_project() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();

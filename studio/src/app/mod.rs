@@ -210,10 +210,11 @@ impl AppState {
                     .file_name()
                     .is_some_and(|name| name == project::MANIFEST))
         {
+            // A project is opened, never imported, even when it can't be opened
+            // (another window holds it).
+            state.startup_input = None;
             if let Err(error) = state.open_project(&path, false) {
                 state.model.error = Some(error);
-            } else {
-                state.startup_input = None;
             }
         }
         state.refresh_model();

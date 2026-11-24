@@ -63,6 +63,13 @@ impl AppState {
         }
         let parameters = forms::parameters(&self.ui, &self.catalog)?;
         let selected = self.selected_inputs();
+        // The form already captured these inputs on an I/O thread; capturing again
+        // here would walk large acquisitions on the UI thread.
+        let captured: Vec<_> = if self.form_inputs_pending() {
+            Vec::new()
+        } else {
+            self.current_form_inputs().to_vec()
+        };
         let project = self
             .project
             .as_mut()
@@ -72,6 +79,15 @@ impl AppState {
         }
         let inputs = if operation == "simulate" {
             vec![]
+        } else if captured
+            .iter()
+            .map(|input| &input.asset)
+            .eq(selected.iter())
+        {
+            captured
+                .into_iter()
+                .map(|input| input.with_files_named_in(&parameters))
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             selected
                 .iter()

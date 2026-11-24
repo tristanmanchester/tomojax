@@ -504,7 +504,10 @@ impl AppState {
             }
             UiAction::Zoom(factor) => {
                 if factor.is_finite() && factor > 0. {
-                    self.ui.display.zoom = (self.ui.display.zoom * factor).clamp(0.1, 20.);
+                    // Zoom from what is on screen, so the 3D readout never runs
+                    // past what the camera shows.
+                    self.ui.display.zoom = (self.shown_zoom() * factor).clamp(0.1, 20.);
+                    self.ui.display.zoom = self.shown_zoom();
                     self.last_interaction = Instant::now();
                 }
             }
@@ -630,9 +633,19 @@ impl AppState {
             "export" => UiAction::Export(self.model.export_format(&self.ui.export_format).into()),
             "fit" => UiAction::FitView,
             "window" => UiAction::AutoWindow,
-            "axial" => UiAction::SetMainView(PlaneKind::Axial),
-            "coronal" => UiAction::SetMainView(PlaneKind::Coronal),
-            "sagittal" => UiAction::SetMainView(PlaneKind::Sagittal),
+            // In Compare the plane shortcuts choose Compare's plane.
+            "axial" | "coronal" | "sagittal" => {
+                let plane = match id {
+                    "axial" => PlaneKind::Axial,
+                    "coronal" => PlaneKind::Coronal,
+                    _ => PlaneKind::Sagittal,
+                };
+                if self.ui.workspace == Workspace::Compare {
+                    UiAction::ComparePlane(plane)
+                } else {
+                    UiAction::SetMainView(plane)
+                }
+            }
             "volume" => UiAction::SetMainView(PlaneKind::Volume),
             "previous" | "next" => UiAction::StepSlice {
                 axis: self.shown_axis().unwrap_or(0),

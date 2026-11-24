@@ -337,7 +337,7 @@ fn zoom_controls(state: &AppState) -> El {
         ))
         .child(
             number(
-                format!("{:.0}%", state.ui.display.zoom * 100.),
+                format!("{:.0}%", state.shown_zoom() * 100.),
                 11.,
                 canvas_muted(),
             )

@@ -284,7 +284,7 @@ fn camera(data: &VolumeData, settings: &VolumeSettings, size: (u32, u32)) -> Ray
     let radius = Vec3::from_array(extent).length() * 0.5;
     let limiting_angle = (tangent * aspect.min(1.)).atan();
     let distance = radius / limiting_angle.sin();
-    let eye = direction * (distance * 1.08 / settings.zoom.clamp(0.25, 5.));
+    let eye = direction * (distance * 1.08 / settings.zoom.clamp(super::ZOOM[0], super::ZOOM[1]));
     let range = data.scalar_range;
     let span = (range[1] - range[0]).max(f32::EPSILON);
     let window = settings

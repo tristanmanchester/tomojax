@@ -165,6 +165,16 @@ impl AppState {
         self.refresh_images();
     }
 
+    /// The zoom in effect on screen: the 3D camera keeps to its own range.
+    pub(crate) fn shown_zoom(&self) -> f32 {
+        let zoom = self.ui.display.zoom;
+        if self.ui.main_view == PlaneKind::Volume && self.ui.workspace != Workspace::Compare {
+            zoom.clamp(crate::volume::ZOOM[0], crate::volume::ZOOM[1])
+        } else {
+            zoom
+        }
+    }
+
     /// The slice axis on screen: Compare's plane in Compare, else the main view's.
     pub(super) fn shown_axis(&self) -> Option<usize> {
         if self.ui.workspace == Workspace::Compare {

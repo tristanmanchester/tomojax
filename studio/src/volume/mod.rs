@@ -8,6 +8,9 @@ use std::sync::Arc;
 
 pub use compositor::ScientificCompositor;
 
+/// The 3D camera's zoom range; the view's controls keep to it.
+pub const ZOOM: [f32; 2] = [0.25, 5.];
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct TransferPoint {
     /// Position within the selected scalar window, from zero to one.
