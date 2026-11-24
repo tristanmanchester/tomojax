@@ -135,8 +135,11 @@ def test_product_command_help_has_no_dev_story(capsys: pytest.CaptureFixture[str
         assert "par" + "ity" not in lowered
         # One shape for every command: INPUT, then -o OUTPUT guarded by --force.
         usage = captured.out.split("\n\n", 1)[0]
-        if command in {"serve", "mcp"}:
-            assert usage == f"usage: tomojax {command} [-h]"
+        if command == "serve":
+            assert usage == "usage: tomojax serve [-h] [--commit {self,supervisor}]"
+            continue
+        if command == "mcp":
+            assert usage == "usage: tomojax mcp [-h]"
             continue
         if command != "simulate":
             assert "INPUT" in usage
