@@ -296,13 +296,6 @@ fn only_per_frame(file: &hdf5::File, name: &str, frames: usize) -> Option<Vec<St
     })
 }
 
-/// Whether a dataset is virtual: assembled from datasets in other files.
-pub fn is_virtual(dataset: &hdf5::Dataset) -> bool {
-    dataset
-        .dcpl()
-        .is_ok_and(|create| create.layout() == hdf5::dataset::Layout::Virtual)
-}
-
 pub fn suggested_kind(report: &Value) -> &'static str {
     let keys = report
         .pointer("/geometry/meta_keys")
@@ -433,13 +426,9 @@ fn projection_arrays(
         .and_then(Value::as_u64);
     let stored = hdf5::File::open(path).map_err(|error| error.to_string())?;
     let squeezed = |dims: &[usize]| dims.iter().copied().filter(|&n| n != 1).collect::<Vec<_>>();
-    let stored_dataset = stored.dataset(dataset).ok();
-    let stored_shape = stored_dataset.as_ref().map(|d| d.shape());
-    // A virtual stack is assembled from other files, which TomoJAX checks when
-    // it opens the scan; it is viewed from there, not read here directly.
+    let stored_shape = stored.dataset(dataset).map(|d| d.shape()).ok();
     if samples.is_some_and(|n| n != shape[0] as u64)
         || stored_shape.as_deref().map(squeezed) != Some(squeezed(&shape))
-        || stored_dataset.as_ref().is_some_and(is_virtual)
     {
         return Ok(arrays);
     }

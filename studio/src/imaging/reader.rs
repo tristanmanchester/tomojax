@@ -63,13 +63,6 @@ fn selection(
             let source = file
                 .dataset(dataset)
                 .map_err(|e| format!("Cannot read dataset {dataset}: {e}"))?;
-            // HDF5 fills a virtual dataset's missing sources with its fill value,
-            // which is not a measurement; TomoJAX reads (and checks) those.
-            if crate::metadata::is_virtual(&source) {
-                return Err(format!(
-                    "{dataset} is a virtual dataset; open the scan to view it through TomoJAX"
-                ));
-            }
             let stored_shape = source.shape();
             // TomoJAX registers a line detector as (view,1,u), while its HDF5 source can be (view,u).
             let singleton_v =
@@ -438,36 +431,4 @@ pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
         histogram,
         window,
     })
-}
-
-#[cfg(test)]
-mod virtual_tests {
-    use super::*;
-
-    #[test]
-    fn a_virtual_dataset_is_read_through_tomojax_not_directly() {
-        let directory = tempfile::tempdir().unwrap();
-        let pixels = directory.path().join("pixels.h5");
-        hdf5::File::create(&pixels)
-            .unwrap()
-            .new_dataset_builder()
-            .with_data(&[1.0f32, 2., 3., 4.])
-            .create("data")
-            .unwrap();
-        let master = directory.path().join("scan.nxs");
-        hdf5::File::create(&master)
-            .unwrap()
-            .new_dataset::<f32>()
-            .shape((1, 1, 4))
-            .with_dcpl(|plist| plist.virtual_map("pixels.h5", "/data", 4, .., (1, 1, 4), ..))
-            .create("data")
-            .unwrap();
-        let storage = Storage::Hdf5 {
-            path: master.to_string_lossy().into(),
-            dataset: "/data".into(),
-        };
-        let error =
-            selection(&storage, &[1, 1, 4], &[0, 0, 0], &[1, 1, 1], &[1, 1, 4]).unwrap_err();
-        assert!(error.contains("virtual"), "{error}");
-    }
 }
