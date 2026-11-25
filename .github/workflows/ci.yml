@@ -2,7 +2,7 @@ name: CI
 
 # `just ci` and `just test-cuda` run locally before each push. Here the CPU gate runs on
 # pull requests to main and on demand (`gh workflow run CI`): the static checks and smoke
-# workflows in product-spine, and the CPU tests of `just ci` split among four jobs. The
+# workflows in product-spine, and the CPU tests of `just ci` split among eight jobs. The
 # release workflow calls this one first, with the installed-package matrix, before
 # anything is published. The alignment fits marked `slow` run only in `just test-cuda`.
 on:
@@ -91,14 +91,14 @@ jobs:
           uv run --no-sync python bench/reconstruction_benchmark.py --sizes 32 --views 60 --repeats 1
           uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1
 
-  # A hosted runner has four cores, so the CPU tests are split among four of them.
+  # A hosted runner has four slow cores, so the CPU tests are split among eight of them.
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -118,7 +118,8 @@ jobs:
         run: uv sync --locked --extra cpu --dev
 
       # Compiling every program from nothing takes three times as long as the tests do
-      # with JAX's persistent cache. Each run saves the cache it ends with.
+      # with JAX's persistent cache. Each run saves the cache it ends with. An entry is
+      # reused only on the CPU model that compiled it, which the log names.
       - name: JAX compilation cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -129,8 +130,10 @@ jobs:
 
       - name: Tests
         env:
-          TOMOJAX_TEST_SHARD: ${{ matrix.shard }}/4
-        run: uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1 --durations=15
+          TOMOJAX_TEST_SHARD: ${{ matrix.shard }}/8
+        run: |
+          lscpu | grep "Model name"
+          uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1 --durations=15
 
   installed-package:
     if: github.event_name != 'pull_request'
