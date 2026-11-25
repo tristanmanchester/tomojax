@@ -4529,6 +4529,7 @@
         "kind": {
           "enum": [
             "alignment",
+            "feature",
             "frames",
             "reconstruction",
             "scan",

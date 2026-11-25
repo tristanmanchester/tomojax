@@ -45,7 +45,7 @@ class PathInput(Record, tag="path"):
 
 
 type Source = PathInput | Member
-type RootKind = Literal["frames", "scan", "reconstruction", "alignment", "simulation"]
+type RootKind = Literal["frames", "scan", "reconstruction", "alignment", "simulation", "feature"]
 
 
 class Open(Record, tag="open"):

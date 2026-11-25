@@ -66,7 +66,7 @@
     "_data": 2231,
     "alignment": 5435,
     "backends": 269,
-    "cli": 12629,
+    "cli": 12755,
     "core": 10115,
     "corrections": 3232,
     "datasets": 1087,
@@ -90,6 +90,7 @@
   "complex_functions": [
     "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
+    "src/tomojax/cli/_adapters.py::C901::durable",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_python.py::C901::registered",
     "src/tomojax/cli/_staging.py::C901::install",
@@ -109,7 +110,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 68,
+    "tiny": 69,
     "forwarders": 7,
     "chained": 4
   },

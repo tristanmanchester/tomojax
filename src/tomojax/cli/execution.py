@@ -106,7 +106,7 @@ class Feature:
         """The whole mask, for NumPy functions."""
         return self.mask if dtype is None else self.mask.astype(dtype)
 
-    def __getitem__(self, key: tuple[int | slice, ...]) -> np.ndarray:
+    def __getitem__(self, key: int | slice | tuple[int | slice, ...]) -> np.ndarray:
         """Read a window of the mask, building only that window."""
         key = key if isinstance(key, tuple) else (key,)
         key += (slice(None),) * (self.ndim - len(key))

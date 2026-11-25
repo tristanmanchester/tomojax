@@ -205,3 +205,34 @@ def test_features_on_a_diamond_size_volume_touch_only_their_windows(tmp_path):
         assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
         peak = python(c, "import resource\nresource.getrusage(resource.RUSAGE_SELF).ru_maxrss")
         assert peak["value"] < 4 << 20  # kB: the worker never held more than 4 GB
+
+
+def test_a_feature_saves_reopens_and_exports(session, tmp_path):
+    import h5py
+    import tifffile
+
+    c, (volume, _, _) = session
+    box = feature(
+        c,
+        source=volume,
+        name="block",
+        recipe={"type": "box", "corners": [[8, 10, 12], [13, 17, 21]]},
+    )
+    path = tmp_path / "block.h5"
+    saved = c.call("save", source=box["handle"], path=str(path))
+    assert not saved["isError"], saved["content"][0]["text"]
+    with h5py.File(path) as file:
+        mask = file["/entry/feature/mask"][...]
+    assert mask.shape == (24, 24, 24) and mask.sum() == 480 and mask[8:14, 10:18, 12:22].all()
+    reopened = c.call("open", path=str(path), kind="feature")["structuredContent"]
+    assert reopened["kind"] == "feature" and reopened["voxels"] == 480
+    assert reopened["name"] == "block" and reopened["bounds"] == box["bounds"]
+    shown = c.call("view", source=volume, axis="z", index=10, features=[reopened["handle"]])
+    assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
+    exported = c.call("export", source=box["handle"], path=str(tmp_path / "slices"))
+    assert not exported["isError"], exported["content"][0]["text"]
+    slices = sorted((tmp_path / "slices").glob("*.tif"))
+    assert len(slices) == 24
+    assert tifffile.imread(slices[10]).sum() == 8 * 10 and tifffile.imread(slices[0]).sum() == 0
+    wrong = c.call("save", source=box["handle"], path=str(tmp_path / "block.tif"))
+    assert wrong["isError"] and ".h5" in wrong["content"][0]["text"]

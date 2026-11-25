@@ -20,10 +20,11 @@ from scipy import ndimage
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._handles import stage_array
 from tomojax.errors import InvalidParameter
-from tomojax.wire.arrays import Array, Coordinates, Member, Npy
+from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member, Npy, Uniform
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
     from tomojax.wire.arrays import Storage
 
@@ -248,7 +249,7 @@ def owned(
     axes = []
     for axis in registration.axes:
         c = axis.coordinates
-        if isinstance(c, Coordinates) and isinstance(c.values, Member | Npy):
+        if isinstance(c, Coordinates):
             c = Coordinates(stage_array(context, values(c.values)))
         axes.append(msgspec.structs.replace(axis, coordinates=c))
     return msgspec.structs.replace(registration, axes=tuple(axes))
@@ -329,3 +330,97 @@ def feature_work(operation: op.Feature, context: ex.ExecutionContext) -> Callabl
             return feature_handle(ex.Feature(name, inside, box, grid, resolved), data)
 
     return make
+
+
+FEATURE_GROUP = "/entry/feature"
+SAVED_SUFFIXES = (".h5", ".hdf5", ".nxs")
+
+
+def save_feature(path: Path, feature: ex.Feature) -> None:
+    """Write the mask as uint8 on its whole grid, with its registration, name and recipe.
+
+    Only chunks that meet the feature's box are written; the rest read as zero.
+    """
+    import h5py
+
+    with h5py.File(path, "w") as file:
+        group = file.create_group(FEATURE_GROUP)
+        mask = group.create_dataset(
+            "mask", shape=feature.shape, dtype="u1", chunks=True, compression="gzip", fillvalue=0
+        )
+        if feature.inside.size:
+            mask[feature.box] = feature.inside
+        axes = []
+        for axis in feature.registration.axes:
+            c = axis.coordinates
+            if isinstance(c, Coordinates):
+                name = f"coordinates/{axis.name}"
+                group[name] = _load_storage(c.values)
+                c = Coordinates(Hdf5(str(path), f"{FEATURE_GROUP}/{name}"))
+            axes.append(msgspec.structs.replace(axis, coordinates=c))
+        registration = msgspec.structs.replace(feature.registration, axes=tuple(axes))
+        group.attrs["registration"] = msgspec.json.encode(registration).decode()
+        group.attrs["box"] = msgspec.json.encode([[b.start, b.stop] for b in feature.box]).decode()
+        group.attrs["name"] = feature.name
+        group.attrs["recipe"] = msgspec.json.encode(feature.recipe).decode()
+
+
+def _load_storage(ref: Storage) -> np.ndarray:
+    if not isinstance(ref, Npy):
+        raise InvalidParameter("source", f"coordinate vector {ref} is not a published array")
+    return np.load(ref.path, allow_pickle=False)
+
+
+def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
+    """Reopen a saved feature, reading only its box and copying its coordinates."""
+    import h5py
+
+    with h5py.File(path, "r") as file:
+        group = file.get(FEATURE_GROUP)
+        if not isinstance(group, h5py.Group) or "mask" not in group:
+            raise InvalidParameter("path", f"{path} holds no saved TomoJAX feature")
+        registration = msgspec.json.decode(str(group.attrs["registration"]), type=Array)
+        box = tuple(slice(a, b) for a, b in msgspec.json.decode(str(group.attrs["box"])))
+        mask = group["mask"]
+        assert isinstance(mask, h5py.Dataset)
+        inside = np.asarray(mask[box], dtype=bool) if box else np.zeros((0,) * mask.ndim, bool)
+
+        def coordinate(ref: Storage) -> np.ndarray:
+            assert isinstance(ref, Hdf5)
+            return np.asarray(file[ref.dataset])
+
+        grid = owned(registration, coordinate, context)
+        recipe = msgspec.json.decode(str(group.attrs["recipe"]))
+        feature = ex.Feature(str(group.attrs["name"]), inside, box, grid, recipe)
+    return feature_handle(feature, None)
+
+
+def export_feature(
+    path: Path,
+    feature: ex.Feature,
+    *,
+    dtype: str,
+    value_range: tuple[float, float] | None,
+    prefix: str,
+    source: dict[str, object],
+) -> None:
+    """Write the mask as 0/1 planes along its first axis, as TIFFs or one raw file."""
+    from tomojax._files import write_volume
+
+    if feature.ndim != 3:
+        raise InvalidParameter("source", "export needs a three-dimensional feature")
+    spacing = [
+        abs(a.coordinates.spacing) if isinstance(a.coordinates, Uniform) else 1.0
+        for a in feature.registration.axes
+    ]
+    shape = cast("tuple[int, int, int]", feature.shape)
+    write_volume(
+        path,
+        lambda z: feature[z].astype(np.float32),
+        shape,
+        (spacing[2], spacing[1], spacing[0]),
+        dtype=dtype,
+        value_range=value_range,
+        prefix=prefix,
+        source=source,
+    )
