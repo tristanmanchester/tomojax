@@ -8,6 +8,9 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  # A push to main also saves the compilation cache that pull requests start from.
+  push:
+    branches: [main]
   workflow_dispatch:
   workflow_call:
 
@@ -114,10 +117,20 @@ jobs:
       - name: Sync dependencies
         run: uv sync --locked --extra cpu --dev
 
+      # Compiling every program from nothing takes three times as long as the tests do
+      # with JAX's persistent cache. Each run saves the cache it ends with.
+      - name: JAX compilation cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tomojax/jax_cache
+          key: jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-
+
       - name: Tests
         env:
           TOMOJAX_TEST_SHARD: ${{ matrix.shard }}/4
-        run: uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1
+        run: uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1 --durations=15
 
   installed-package:
     if: github.event_name != 'pull_request'
