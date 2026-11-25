@@ -31,7 +31,7 @@ On the command line:
 tomojax align corrected.nxs -o aligned.nxs --fit translations roll
 ```
 
-Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. Note that after a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
+Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. After a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |
@@ -145,7 +145,23 @@ When the rotation axis wobbles between views, translations remove most blur but 
 
 Add `"rotations"` only when a residual remains after translations and setup angles. When no wobble is present, extra rotational degrees of freedom degrade accuracy (on the 96 × 96 drift test, 0.080 px versus 0.022 px with translations alone), and on periodic structures such as a TEM grid they can lock onto a false orientation. Their size prior is in radians, independent of voxel size or binning.
 
+## Try alignment on a synthetic scan
+
+```bash
+tomojax simulate -o moving.nxs --size 32 --n-views 64 --translation-sigma 0.5
+tomojax align moving.nxs -o aligned.nxs
+```
+
+`--translation-sigma 0.5` shifts the object independently along the horizontal
+and vertical detector axes in each view, with a Gaussian standard deviation
+of half a voxel pitch along each axis. The saved scan declares the nominal
+geometry. In Python, read the true shifts with
+`tj.load_simulation("moving.nxs").true_poses`.
+
 ## Check the result
+
+The CLI prints the RMS and maximum absolute corrections for each fitted
+per-view component and the reason each fit stage stopped.
 
 1. **Compare reconstructions** against the unaligned baseline and simpler `fit=` choices; keep an extra parameter only when it removes a visible artefact.
 2. **Inspect fitted globals and poses.** `result.scan` carries both the updated geometry and per-view poses for reconstruction and saving. `result.info["calibration"]` holds `{"value": ..., "change": ...}` for each fitted global (`change` is in detector pixels for `center` and degrees for angles; segmented cone scans list values in segment order). Each `"value"` passes directly to constructors in another script:

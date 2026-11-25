@@ -11,7 +11,7 @@
     "MLEMConfig": 5,
     "SIRTConfig": 9,
     "SPDHGConfig": 16,
-    "SimConfig": 31
+    "SimConfig": 32
   },
   "exported_names": {
     "tomojax": 30,
@@ -37,7 +37,7 @@
     "reconstruct": 21,
     "align": 20,
     "export": 7,
-    "simulate": 19,
+    "simulate": 20,
     "serve": 1,
     "mcp": 1,
     "studio": 3
@@ -51,7 +51,7 @@
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 174,
     "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
-    "src/tomojax/cli/simulate.py::_build_parser": 104,
+    "src/tomojax/cli/simulate.py::_build_parser": 111,
     "src/tomojax/corrections/_engine.py::correct_frames": 129,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
@@ -60,14 +60,14 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 6528,
-    "_data": 2213,
+    "(modules)": 6586,
+    "_data": 2231,
     "alignment": 5435,
     "backends": 269,
-    "cli": 11203,
+    "cli": 11264,
     "core": 10115,
     "corrections": 3232,
-    "datasets": 1069,
+    "datasets": 1087,
     "forward": 403,
     "geometry": 916,
     "io": 4069,
@@ -105,7 +105,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 69,
+    "tiny": 68,
     "forwarders": 7,
     "chained": 4
   },

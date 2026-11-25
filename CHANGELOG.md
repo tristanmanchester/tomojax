@@ -6,6 +6,26 @@
   `tomojax align --method opposite-views` and the worker's `align` operation fit the centre
   without `fit="center"`; joint alignment still defaults to `"translations"`.
 
+## 1.0.0rc5 (2026-11-25)
+
+Synthetic scans support random per-view translations (`translation_sigma`,
+`--translation-sigma`), and `Simulation.true_poses` keeps the applied shifts through
+saving, view selection and view rejection. `tomojax align` reports the size of the
+fitted corrections and why the fit stopped. Automatic reconstruction checks half-turn
+coverage for plain and posed parallel scans alike, along each view's rays: poses alone
+no longer cause a warning, and a scan whose views leave gaps in the half turn or
+measure fewer than 16 directions is reported as limited, with `method='fista'` and
+`nonnegative=True` recommended.
+
+TomoJAX Studio has a demo project (**Try a demo project**, or `tomojax studio --demo`)
+and opens any operation from the command palette, keeping the draft of the one already
+open. Activity keeps a failed job listed with its error until you close it. Display
+window fields round for reading and still apply the exact window, a blank field shows
+the value TomoJAX will use (including one set through `config`), unit labels read
+`detector px` and `scan unit`, and Opposite Views alignment shows and sends only the
+settings it takes. A new project is created in the folder the Save dialog names, and
+a project folder named `project.tomojax.json` reopens.
+
 ## 1.0.0rc4 (2026-11-25)
 
 Fixes the PEP 639 `License-File` metadata path in the `tomojax-studio` wheel

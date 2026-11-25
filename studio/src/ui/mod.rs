@@ -12,8 +12,8 @@ mod tokens;
 mod viewer;
 
 use crate::AppState;
-pub(crate) use controls::unit_name;
 use controls::*;
+pub(crate) use controls::{compact_number, unit_name};
 use model::*;
 use rune::{Cx, El, ScrollSpec, col, el, row};
 use tokens::*;
@@ -77,7 +77,7 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
         .child(body)
         .child(separator())
         .child(statusbar(state));
-    if state.ui.jobs_open && state.ui.workspace != Workspace::Jobs {
+    if state.ui.activity.is_open() && state.ui.workspace != Workspace::Jobs {
         result = result.child(overlays::jobs_drawer(state));
     }
     if state.ui.palette_open {
@@ -186,9 +186,18 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         };
         bar = bar
             .child(
-                quiet_button("toggle-jobs", &title, state.ui.jobs_open, |s, _| {
-                    s.ui.jobs_open = !s.ui.jobs_open
-                })
+                quiet_button(
+                    "toggle-jobs",
+                    &title,
+                    state.ui.activity.is_open(),
+                    |s, _| {
+                        if s.ui.activity.is_open() {
+                            s.ui.activity = Activity::Closed;
+                        } else {
+                            s.show_activity();
+                        }
+                    },
+                )
                 .label("Activity"),
             )
             .child(icon_button(
@@ -632,6 +641,16 @@ fn welcome(state: &AppState) -> El {
                         false,
                         true,
                         UiAction::OpenProject,
+                    )
+                    .h(42.),
+                )
+                .child(
+                    action_button(
+                        "open-demo",
+                        "Try a demo project",
+                        false,
+                        state.model.backend.ready,
+                        UiAction::OpenDemo,
                     )
                     .h(42.),
                 ),

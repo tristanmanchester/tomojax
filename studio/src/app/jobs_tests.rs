@@ -60,7 +60,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     let path = directory.path().join("preview.npy");
     let mut writer = npyz::WriteOptions::new()
@@ -241,7 +241,7 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     // The input stays selected, as it is when the job is submitted.
     state.model.active_asset = Some(input.asset.clone());
@@ -292,7 +292,8 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     state.applied_window = Some([-100., 100.]);
     state.ui.display.window_low.replace_text("-100");
     state.ui.display.window_high.replace_text("100");
-    state.window_prefill = None;
+    // The user typed the window: the fields no longer show what Studio wrote.
+    state.window_prefill = Default::default();
     state.complete_asset(&id, result);
     let until = Instant::now() + Duration::from_secs(3);
     while state.imaging.plane(5).is_none() || state.imaging.plane(4).is_none() {
@@ -305,12 +306,12 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     assert!(state.applied_window.is_none());
     let window = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text.parse::<f32>().unwrap(),
-        window[0]
+        state.ui.display.window_low.text,
+        crate::ui::compact_number(f64::from(window[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text.parse::<f32>().unwrap(),
-        window[1]
+        state.ui.display.window_high.text,
+        crate::ui::compact_number(f64::from(window[1]))
     );
 }
 
@@ -323,7 +324,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.project.as_mut().unwrap().document.name = "Alignment checkpoint verification".into();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
@@ -441,7 +442,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
         );
     }
     state.ui.workspace = Workspace::Jobs;
-    state.ui.jobs_open = false;
+    state.ui.activity = crate::ui::model::Activity::Closed;
     state.ui.selected_job = Some(id.clone());
     state.refresh_model();
     for mark in [40, 41, 42] {

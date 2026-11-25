@@ -128,6 +128,8 @@ def test_canonical_choices_and_physically_distinct_units(description):
     def p(owner, field):
         return description[owner]["properties"][field]
 
+    assert p("Simulate", "translation_sigma")["x-unit"] == "geometry_length"
+    assert p("Simulate", "translation_sigma")["default"] == 0.0
     assert p("Paganin", "energy_kev")["x-unit"] == "keV"
     assert p("Paganin", "pixel_size")["x-unit"] == "m"
     assert p("Grid", "vz")["x-unit"] == "geometry_length"
@@ -175,3 +177,12 @@ def test_each_method_config_names_its_method():
     assert sorted(kind.method for kind in get_args(MethodConfig.__value__)) == sorted(names)
     for name in names:
         assert method_config(name).method == name
+
+
+def test_parameter_help_is_plain_text(description):
+    props = description["Simulate"]["properties"]
+    assert "tomojax.datasets.SimulationArtefacts" in props["artefacts"]["description"]
+    assert "grid" in props["size"]["description"]
+    for model in description.values():
+        for prop in model.get("properties", {}).values():
+            assert "`" not in prop.get("description", "")

@@ -496,7 +496,7 @@ def fit_poses(
             with (
                 scaled_images(scale),
                 progress.task(
-                    "level", f"binning {level.binning}", level.budget.iterations, "steps"
+                    "level", f"resolution 1/{level.binning}", level.budget.iterations, "steps"
                 ),
             ):
                 y, precision, g, ops, cal = _level(

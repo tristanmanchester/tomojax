@@ -81,6 +81,8 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
 - `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.
+  Use `--translation-sigma DIST` to simulate independent object shifts with standard
+  deviation `DIST` voxel pitches along each detector axis.
 - `serve`: run the local JSON Lines worker over stdin/stdout for GUI and automation clients.
   See the [local worker protocol](../../../docs/protocol.md).
 - `mcp`: run the Model Context Protocol server over stdio so AI agents such as Claude Code or

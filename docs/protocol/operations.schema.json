@@ -2831,6 +2831,10 @@
           "type": "number",
           "default": 0.0
         },
+        "translation_sigma": {
+          "type": "number",
+          "default": 0.0
+        },
         "artefacts": {
           "anyOf": [
             {

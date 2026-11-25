@@ -37,13 +37,24 @@ def native(tmp_path, monkeypatch):
 def test_selected_project_and_python_reach_native_process(native, tmp_path):
     project = tmp_path / "My tomography project"
     project.mkdir()
-    assert main(["studio", str(project), "--demo"]) == 0
+    assert main(["studio", str(project)]) == 0
     launched = json.loads(native.read_text())
     assert launched == {
         "TOMOJAX_STUDIO_PYTHON": sys.executable,
         "TOMOJAX_STUDIO_INPUT": str(project.resolve()),
-        "TOMOJAX_STUDIO_DEMO": "1",
+        "TOMOJAX_STUDIO_DEMO": None,
     }
+
+
+def test_demo_starts_its_own_project(native, tmp_path, capsys):
+    assert main(["studio", "--demo"]) == 0
+    assert json.loads(native.read_text())["TOMOJAX_STUDIO_DEMO"] == "1"
+    project = tmp_path / "My tomography project"
+    project.mkdir()
+    with pytest.raises(SystemExit) as error:
+        main(["studio", str(project), "--demo"])
+    assert error.value.code == 2
+    assert "--demo creates its own project" in capsys.readouterr().err
 
 
 def test_new_workspace_does_not_inherit_an_unrelated_input(native, monkeypatch):

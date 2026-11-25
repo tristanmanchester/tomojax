@@ -109,8 +109,8 @@ def test_automatic_segmented_cone_preserves_calibration():
     actual = tj.reconstruct(scan)
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=2e-6, atol=1e-7)
     assert actual.scan is scan and actual.method == "cgls"
-    assert actual.info["automatic"]["status"] == "limited"
-    assert "Segmented cone" in actual.info["automatic"]["reasons"][0]
+    assert actual.info["automatic"]["status"] == "ok"
+    assert actual.info["automatic"]["reasons"] == []
 
 
 def _phantom(n=16):
@@ -233,3 +233,73 @@ def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
     )
     blank = tj.Scan(np.zeros((len(_ANGLES), 24, 24), np.float32), two)
     assert tj.reconstruct(blank).method == "cgls"
+
+
+def test_automatic_reconstruction_of_a_posed_parallel_scan_is_ordinary(tmp_path, capsys):
+    from tomojax.cli.main import main
+
+    sim = tj.simulate("sphere", size=8, n_views=16, translation_sigma=0.5)
+    scan = sim.scan.with_poses(sim.true_poses)
+    expected = tj.reconstruct(scan, "fbp")
+    path, out = tmp_path / "posed.nxs", tmp_path / "recon.nxs"
+    tj.save(path, scan)
+    assert main(["reconstruct", str(path), "-o", str(out), "--dry-run"]) == 0
+    assert "FBP uses the scan's per-view geometry." in capsys.readouterr().out
+    assert main(["reconstruct", str(path), "-o", str(out), "--progress", "none"]) == 0
+    assert "Automatic workflow is limited" not in capsys.readouterr().err
+    actual = tj.load_reconstruction(out)
+    assert actual.info["automatic"]["status"] == "ok"
+    np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("posed", [False, True])
+@pytest.mark.parametrize(("n_views", "rotation"), [(16, 120.0), (8, 180.0)])
+def test_automatic_reconstruction_flags_incomplete_or_sparse_views(posed, n_views, rotation):
+    # A third of the half turn missing, or 8 views over it: FBP, reported as limited.
+    sim = tj.simulate("sphere", size=8, n_views=n_views, rotation=rotation)
+    scan = sim.scan.with_poses(np.zeros((n_views, 6))) if posed else sim.scan
+    actual = tj.reconstruct(scan)
+    assert actual.method == "fbp"
+    assert actual.info["automatic"]["status"] == "limited"
+    assert any(
+        "method='fista' with nonnegative=True" in reason
+        for reason in actual.info["automatic"]["reasons"]
+    )
+
+
+def test_automatic_reconstruction_counts_saved_rotation_corrections_in_coverage():
+    # 33 views 5 degrees apart leave a 20 degree gap; phi corrections from +4 to -4
+    # degrees widen it to 28, past the 22.5 degree limit.
+    sim = tj.simulate("sphere", size=8, n_views=33, rotation=165.0)
+    nominal = tj.reconstruct(sim.scan)
+    assert nominal.info["automatic"]["status"] == "ok"
+    poses = np.zeros((33, 6))
+    poses[:, 2] = np.linspace(4.0, -4.0, 33)
+    posed = tj.reconstruct(sim.scan.with_poses(poses))
+    assert posed.info["automatic"]["status"] == "limited"
+
+
+def test_automatic_reconstruction_measures_coverage_along_the_rays():
+    # Views 101.2 to 258.8 degrees leave a 22.4 degree gap. Tilting each view 10 degrees
+    # out of plane turns its ray: the rays leave a 22.7 degree gap, past the 22.5 degree
+    # limit, while the object's x axis still shows 22.4.
+    angles = np.linspace(101.2, 258.8, 33)
+    sim = tj.simulate("sphere", size=8, n_views=33)
+    geometry = replace(sim.scan.geometry, angles=tuple(angles))
+    scan = tj.Scan(np.asarray(sim.scan.projections), geometry)
+    assert tj.reconstruct(scan).info["automatic"]["status"] == "ok"
+    poses = np.zeros((33, 6))
+    poses[:, 1] = 10.0
+    posed = tj.reconstruct(scan.with_poses(poses))
+    assert posed.info["automatic"]["status"] == "limited"
+
+
+@pytest.mark.parametrize("posed", [False, True])
+def test_automatic_reconstruction_counts_opposite_views_as_one_direction(posed):
+    # 24 views over a full turn measure 12 directions: fewer than 16, so limited.
+    sim = tj.simulate("sphere", size=8, n_views=24, rotation=360.0)
+    scan = sim.scan.with_poses(np.zeros((24, 6))) if posed else sim.scan
+    actual = tj.reconstruct(scan)
+    assert actual.method == "fbp"
+    assert actual.info["automatic"]["status"] == "limited"
+    assert any("measure 12 directions" in r for r in actual.info["automatic"]["reasons"])

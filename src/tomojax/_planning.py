@@ -91,7 +91,8 @@ def resolve_reconstruction(
         info["cylindrical_output_mask"] = True
     settings = {k: v for k, v in settings.items() if v is not None}
     if method == "auto":
-        method, reasons = _select_automatic_method(scan)
+        method, reason, recommendation = _select_automatic_method(scan)
+        reasons = [] if recommendation is None else [recommendation]
         options = {
             k: v
             for k, v in {**settings, "config": config, "warm_start": warm_start}.items()
@@ -109,6 +110,7 @@ def resolve_reconstruction(
         center_status = _automatic_axial_setup(scan, method=method, reasons=reasons)
         info["automatic"] = {
             "method": method,
+            "reason": reason,
             "status": "limited" if reasons else "ok",
             "reasons": list(reasons),
             "center_status": center_status,
@@ -117,10 +119,7 @@ def resolve_reconstruction(
                 "Method selection does not validate geometry, support or detector artefacts."
             ),
         }
-        if not reasons:
-            reasons.append(
-                "Automatic selection from the declared acquisition and angular coverage."
-            )
+        reasons.insert(0, reason)
     else:
         reasons = ["Explicit method selection."]
     if devices is not None:
@@ -154,8 +153,12 @@ def _methods_taking(options: dict[str, Any]) -> list[str]:
     return taking
 
 
-def _select_automatic_method(scan: Scan) -> tuple[Method, list[str]]:
-    """Choose the default reconstruction method and any advisory reasons for ``scan``."""
+# Ray directions closer than this, in degrees, are one direction.
+_SAME_DIRECTION = 1e-3
+
+
+def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
+    """Choose a method with a reason and an optional recommendation."""
     from tomojax.geometry import (
         ConeSegments,
         LaminographyGeometry,
@@ -177,40 +180,56 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, list[str]]:
             "reconstruction requires declared acquisition geometry: this file records no "
             "rotation axis; pass geometry=... to tomojax.load"
         )
-    reasons: list[str] = []
-    method: Method = "fbp"
+    reason = "Filtered backprojection supports the declared acquisition geometry."
     if isinstance(base, ConeSegments):
-        # Per-view detector offsets (a Zeiss scan's shifts) make segments of one orbit, which
-        # FDK weights and backprojects view by view, exactly. Several trajectories, or
-        # arrangements that differ (a source at several heights), are not one circular orbit.
+        # Segments with detector offsets can still belong to one circular orbit.
         beams = [getattr(segment, "beam", None) for segment in base.segments]
         if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
-            method = "cgls"
-            reasons.append(
-                "Segmented cone geometry uses matched CGLS because FDK requires one arrangement; "
-                "iteration count and image quality are not automatically validated."
-            )
-    elif type(scan.geometry) is ParallelGeometry:
-        angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
-        gaps = np.diff(np.r_[angles, angles[0] + 180])
-        if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
-            method = "fourier"
-        else:
-            reasons.append(
-                "Sparse or incomplete half-turn coverage: Fourier inversion was not selected."
-            )
+            return "cgls", "CGLS fits the cone-beam segments jointly.", None
     elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
-        reasons.append(
-            "FBP leaves the frequencies no view measures (the missing cone of a tilted "
-            "axis) empty; method='fista' estimates them from nonnegativity and its "
-            "regulariser, at the cost of its iterations."
+        return (
+            "fbp",
+            "FBP follows the tilted rotation axis.",
+            "Use method='fista' with nonnegative=True to estimate the frequencies no view "
+            "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        reasons.append(
-            "Posed or custom parallel geometry uses FBP; "
-            "automatic iterative validation is unavailable."
+        recommendation = _coverage_advice(scan)
+        if type(scan.geometry) is not ParallelGeometry:
+            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+        if recommendation is None:
+            return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
+        reason = (
+            "FBP, because automatic selection takes Fourier inversion only for 16 or more "
+            "directions spread over the half turn."
         )
-    return method, reasons
+        return "fbp", reason, recommendation
+    return "fbp", reason, None
+
+
+def _coverage_advice(scan: Scan) -> str | None:
+    """What a parallel-beam scan's ray directions leave unmeasured, or None."""
+    # Parallel rays, as declared or with per-view poses, run along the lab's +y
+    # axis; in the object frame that is row 1 of each view's rotation, so saved
+    # rotation corrections count. Opposite views measure the same direction.
+    poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
+    directions = np.sort(np.mod(np.degrees(np.arctan2(poses[:, 1, 1], poses[:, 1, 0])), 180.0))
+    angles = directions[np.r_[True, np.diff(directions) > _SAME_DIRECTION]]
+    if len(angles) > 1 and angles[0] + 180.0 - angles[-1] <= _SAME_DIRECTION:
+        angles = angles[:-1]
+    gaps = np.diff(np.r_[angles, angles[0] + 180])
+    if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):
+        return (
+            "The views leave gaps in the half turn: expect streaks along the unmeasured "
+            "directions. method='fista' with nonnegative=True fills them from "
+            "nonnegativity and regularization."
+        )
+    if len(angles) < 16:
+        return (
+            f"The views measure {len(angles)} directions, fewer than 16: expect streaks. "
+            "method='fista' with nonnegative=True reduces them through regularization."
+        )
+    return None
 
 
 def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:
@@ -220,11 +239,10 @@ def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) ->
     )
     if method == "fourier" and any(step.name == "log" for step in scan.corrections):
         reasons.append(
-            "Corrected projections were already materialized; use reconstruct_slabs on raw "
-            "Frames to avoid that host round trip. Raw-workflow speed is not guaranteed here."
+            "Use reconstruct_slabs on raw Frames to avoid storing all corrected projections."
         )
         if not any(step.name in {"stripes", "rings"} for step in scan.corrections):
             reasons.append(
-                "No stripe correction is recorded; detector-ring suppression is unassessed."
+                "Apply stripe correction if detector rings appear in the reconstruction."
             )
     return status

@@ -3,7 +3,7 @@ use super::{controls::*, model::*, tokens::*};
 use crate::AppState;
 use crate::app::validation::Phase;
 use crate::protocol::{Grid, Placement, Product};
-use rune::{El, ScrollSpec, Shape, TextEdit, canvas, col, el, row};
+use rune::{El, ScrollSpec, Shape, Side, TextEdit, canvas, col, el, row};
 
 pub fn view(state: &AppState) -> El {
     let title = state.ui.workspace.title();
@@ -405,14 +405,15 @@ fn operation_selector(state: &AppState) -> El {
                             s.dispatch(UiAction::SetOperation(id.into()), tx);
                         },
                     )
-                    .help(op.help),
+                    .help(op.help)
+                    .help_side(Side::Left),
                 );
             }
         }
         selector = selector.child(
             col()
                 .key("operation-menu")
-                .max_h(260.)
+                .max_h(460.)
                 .w_full()
                 .scroll(ScrollSpec {
                     stick_bottom: false,
@@ -457,13 +458,14 @@ fn parameter_field(state: &AppState, parameter: &ParameterView) -> El {
                 value,
                 &parameter.label,
                 &parameter.unit,
-                &parameter.placeholder,
+                &crate::forms::default_label(&state.ui, parameter),
                 move |s| s.ui.parameter_edits.entry(key.clone()).or_default(),
             )
         }
     };
     if !parameter.help.is_empty() {
-        content = content.help(&parameter.help);
+        // To the left, over the image: below, it would cover the next field's label.
+        content = content.help(&parameter.help).help_side(Side::Left);
     }
     if parameter.required && matches!(parameter.kind, ParameterKind::Text | ParameterKind::Path) {
         content = col()
@@ -480,11 +482,20 @@ fn parameter_choice(state: &AppState, parameter: &ParameterView) -> El {
         .parameter_choices
         .get(&parameter.name)
         .map_or("", String::as_str);
+    // The blank choice names the value TomoJAX will use, when that is known.
+    let blank = crate::forms::default_label(&state.ui, parameter);
+    let label_of = |choice: &Choice| {
+        if choice.value.is_empty() && parameter.inherited.is_some() {
+            blank.clone()
+        } else {
+            choice.label.clone()
+        }
+    };
     let title = parameter
         .choices
         .iter()
         .find(|choice| choice.value == value)
-        .map_or(value, |choice| choice.label.as_str());
+        .map_or_else(|| value.to_owned(), label_of);
     let key = parameter.name.clone();
     let open = state.ui.choice_menu.as_deref() == Some(&key);
     let key_for_toggle = key.clone();
@@ -495,7 +506,11 @@ fn parameter_choice(state: &AppState, parameter: &ParameterView) -> El {
         .child(
             button(
                 &format!("parameter-{key}"),
-                if title.is_empty() { "Choose…" } else { title },
+                if title.is_empty() {
+                    "Choose…"
+                } else {
+                    &title
+                },
                 false,
                 true,
                 move |s, _| {
@@ -523,7 +538,7 @@ fn parameter_choice(state: &AppState, parameter: &ParameterView) -> El {
                     .map_or("", String::as_str);
             choices = choices.child(menu_option(
                 &format!("parameter-{key}-{}", option.value),
-                &option.label,
+                &label_of(option),
                 chosen,
                 move |s, _| {
                     s.ui.parameter_choices.insert(key.clone(), value.clone());

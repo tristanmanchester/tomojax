@@ -35,7 +35,7 @@ The launcher forwards the active Python interpreter to Studio and checks source 
 tomojax studio                        # open the start screen
 tomojax studio /path/to/project       # reopen a saved project
 tomojax studio /path/to/scan.nxs      # launch with an acquisition ready to import
-tomojax studio --demo                 # start a sample simulation project
+tomojax studio --demo                 # create a demo project and simulate a scan in it
 ```
 
 ## Workspaces at a glance
@@ -52,14 +52,14 @@ Five top-bar workspaces cover the full tomography loop, while the left sidebar k
 
 ## Start a project and import data
 
-Choose **Create a project**, pick a directory, and add acquisitions in **Prepare** using **Add scans**, **Add a scan folder**, or drag-and-drop. Drop multiple files or choose a directory containing several NXtomo files to import a batch.
+Choose **Create a project**, name its folder, and add acquisitions in **Prepare** using **Add scans**, **Add a scan folder**, or drag-and-drop. Drop multiple files or choose a directory containing several NXtomo files to import a batch.
 
 - **Referenced vs managed copies:** by default, Studio references files in place. Enable **Copy sources into the project** before importing to stage managed copies under `inputs/` while leaving originals untouched. For header-driven formats such as Nikon `.xtekct` or SkyScan `.log`, copying brings along the whole acquisition folder. Reference HDF5 files that use external links, virtual datasets, or external raw storage in place.
 - **Supported formats:** NXtomo/HDF5, Data Exchange, ESRF Bliss/EDF/PyHST, Nikon `.xtekct`, Zeiss `.txrm`, SkyScan logs, PSI cSAXS `.mat`, TIFF stacks, and numeric `.npy` arrays. Convert `.npz` archives to NXtomo with `tomojax correct scan.npz -o scan.nxs` before importing.
 - **Native preview and full inspection:** standard NXtomo/HDF5 metadata and initial views load directly in Studio's native I/O threads without waiting for the worker. Click **Inspect dataset** to run TomoJAX's full inspection report, including projection statistics across the stack.
 - **Calibration:** use **Open & calibrate** when an acquisition needs explicit loader settings (raw-frame kind, flats, darks, angles, pixel pitch, or declared geometry). The form is generated from the worker's parameter schema and reports any missing fields before queuing.
 
-To try Studio without scan files on disk, launch with `tomojax studio --demo` or choose **Simulation** in **Prepare** to generate a phantom scan and ground truth, then reconstruct it in **Reconstruct**.
+To try Studio without scan files on disk, choose **Try a demo project** on the start screen or launch with `tomojax studio --demo`. Studio creates a new project under its data folder (`~/.local/share/tomojax/Demo projects` on Linux) and simulates a phantom scan with its ground truth; reconstruct it in **Reconstruct**. In any project, **Simulation** in **Prepare** does the same, and **Per-view shift (SD)** adds random per-view motion to try **Alignment** on.
 
 ## Prepare, preview, and reconstruct
 
@@ -146,7 +146,7 @@ cache/                 # local viewer cache
 
 ## Shortcuts, preferences, and environment variables
 
-Press **Ctrl+K** or click **Search commands** to run any action from the keyboard. Open **Shortcuts** and click **Record** to rebind keys (conflicts and reserved keys are flagged immediately). View undo/redo steps through display and navigation changes without affecting queued or completed jobs.
+Press **Ctrl+K** or click **Search commands** to run any command or open any operation, such as **Alignment**, from the keyboard. Open **Shortcuts** and click **Record** to rebind keys (conflicts and reserved keys are flagged immediately). View undo/redo steps through display and navigation changes without affecting queued or completed jobs.
 
 | Environment variable | Purpose |
 | --- | --- |

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import TYPE_CHECKING, Literal, TypedDict
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._data.geometry_meta import AugmentedGeometry
 from tomojax._parameters import simulation_distances
 from tomojax.core.cone import cone_coefficients, cone_project
 from tomojax.core.geometry import (
@@ -35,6 +37,7 @@ from tomojax.datasets._impl.phantoms import (
     shepp_logan_3d,
     sphere,
 )
+from tomojax.errors import InvalidParameter
 from tomojax.recon.api import project
 
 if TYPE_CHECKING:
@@ -46,6 +49,7 @@ class SimMetadata(TypedDict, total=False):
 
     seed: int
     artefacts: ArtefactMetadata
+    true_poses: list[list[float]]
 
 
 class SimulatedData(TypedDict):
@@ -137,9 +141,12 @@ class SimConfig:
     artefacts : SimulationArtefacts or None, optional
         Projection-domain artefacts; None disables them.
     seed : int, optional
-        Random seed for the phantom and artefacts; default is 0.
+        Random seed for the phantom, motion and artefacts; default is 0.
     lamino_thickness_ratio : float, optional
         Central slab thickness relative to nz for lamino_disk; default is 0.2.
+    translation_sigma : float, optional
+        Standard deviation of independent horizontal and vertical object shifts per view,
+        in geometry length units. Zero adds no motion.
     """
 
     nx: int
@@ -175,6 +182,13 @@ class SimConfig:
     artefacts: SimulationArtefacts | None = None
     seed: int = 0
     lamino_thickness_ratio: float = 0.2
+    translation_sigma: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.translation_sigma) or self.translation_sigma < 0:
+            raise InvalidParameter(
+                "translation_sigma", "translation_sigma must be finite and non-negative"
+            )
 
 
 def make_phantom(cfg: SimConfig) -> jnp.ndarray:
@@ -351,6 +365,14 @@ def simulate(
     else:
         raise ValueError("geometry must be 'parallel', 'lamino' or 'cone'")
 
+    meta: SimMetadata = {"seed": cfg.seed}
+    if cfg.translation_sigma > 0:
+        rng = np.random.default_rng(np.random.SeedSequence(cfg.seed, spawn_key=(1,)))
+        poses = np.zeros((cfg.n_views, 6), dtype=np.float32)
+        poses[:, 3:5] = rng.normal(0.0, cfg.translation_sigma, (cfg.n_views, 2))
+        geom = AugmentedGeometry(geom, poses, translation_frame="detector")
+        meta["true_poses"] = poses.tolist()
+
     vol = make_phantom(cfg)
     proj = _project_phantom(geom, vol, beam)
 
@@ -363,7 +385,6 @@ def simulate(
             seed=cfg.seed,
         )
 
-    meta: SimMetadata = {"seed": cfg.seed}
     if artefact_metadata is not None:
         meta["artefacts"] = artefact_metadata
 

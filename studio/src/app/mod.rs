@@ -92,6 +92,17 @@ enum LocalEvent {
 /// Plane ids of the two compared images, the split fraction and both windows, as bits.
 type SplitKey = ([u64; 2], u32, Vec<u32>);
 
+/// The demo's progress: a demo project is created, then a scan simulated in it, never in
+/// a project the user opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Demo {
+    Off,
+    /// `tomojax studio --demo`: create a demo project once the worker is ready.
+    Create,
+    /// A demo project was just created; queue its simulation.
+    Simulate,
+}
+
 pub struct AppState {
     pub ui: UiState,
     pub model: UiModel,
@@ -116,7 +127,7 @@ pub struct AppState {
     pub(crate) copying: usize,
     metadata_pending: usize,
     started: bool,
-    auto_demo: bool,
+    demo: Demo,
     startup_input: Option<PathBuf>,
     last_context: Value,
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
@@ -125,7 +136,7 @@ pub struct AppState {
     /// Project names read once from each recent project's manifest.
     recent_names: std::collections::HashMap<PathBuf, String>,
     applied_window: Option<[f32; 2]>,
-    window_prefill: Option<[String; 2]>,
+    window_prefill: [viewing::Prefilled; 2],
     centre_sinogram: bool,
     form_context: editing::FormContext,
     last_autosave: Instant,
@@ -171,14 +182,18 @@ impl AppState {
             copying: 0,
             metadata_pending: 0,
             started: false,
-            auto_demo: std::env::var_os("TOMOJAX_STUDIO_DEMO").is_some(),
+            demo: if std::env::var_os("TOMOJAX_STUDIO_DEMO").is_some() {
+                Demo::Create
+            } else {
+                Demo::Off
+            },
             startup_input: std::env::var_os("TOMOJAX_STUDIO_INPUT").map(PathBuf::from),
             last_context: Value::Null,
             difference: None,
             split: None,
             recent_names: Default::default(),
             applied_window: None,
-            window_prefill: Some([String::new(), String::new()]),
+            window_prefill: Default::default(),
             centre_sinogram: true,
             form_context: editing::FormContext::default(),
             last_autosave: Instant::now(),
@@ -192,10 +207,9 @@ impl AppState {
         state.set_operation("reconstruct", None);
         state.model.error = preference_error;
         if let Some(path) = state.startup_input.clone()
-            && (path.join(project::MANIFEST).is_file()
-                || path
-                    .file_name()
-                    .is_some_and(|name| name == project::MANIFEST))
+            && project::folder(&path, false)
+                .join(project::MANIFEST)
+                .is_file()
         {
             // A project is opened, never imported, even when it can't be opened
             // (another window holds it).
@@ -272,18 +286,21 @@ impl AppState {
         if matches!(workspace, Workspace::Prepare | Workspace::Reconstruct)
             && Workspace::for_operation(&self.ui.operation) != workspace
         {
-            self.set_operation(
-                if workspace == Workspace::Prepare {
-                    "open"
-                } else {
-                    "reconstruct"
-                },
-                None,
-            );
+            let (last, first) = if workspace == Workspace::Prepare {
+                (&self.ui.prepare_operation, "open")
+            } else {
+                (&self.ui.reconstruct_operation, "reconstruct")
+            };
+            let operation = if last.is_empty() { first } else { last }.to_owned();
+            self.set_operation(&operation, None);
         }
     }
 
     pub fn set_operation(&mut self, operation: &str, values: Option<&Value>) {
+        match Workspace::for_operation(operation) {
+            Workspace::Reconstruct => self.ui.reconstruct_operation = operation.into(),
+            _ => self.ui.prepare_operation = operation.into(),
+        }
         self.model.parameters = forms::initialise(&mut self.ui, &self.catalog, operation, values);
         if operation == "open"
             && values.is_none()
@@ -349,8 +366,18 @@ impl AppState {
                     self.startup_input = Some(path);
                 }
             }
-            if self.auto_demo && self.project.is_some() {
-                self.auto_demo = false;
+            if self.demo == Demo::Create {
+                self.demo = match self.open_demo_project() {
+                    Ok(()) => Demo::Simulate,
+                    Err(error) => {
+                        self.model.error = Some(error);
+                        Demo::Off
+                    }
+                };
+                self.refresh_model();
+            }
+            if self.demo == Demo::Simulate && self.project.is_some() {
+                self.demo = Demo::Off;
                 self.set_operation("simulate", None);
                 let _ = self
                     .queue_operation("simulate")
@@ -580,6 +607,24 @@ impl AppState {
         }
     }
 
+    /// Create and open a new project under the demo folder, named "Demo project", "Demo
+    /// project 2" and so on, so earlier demos are kept.
+    fn open_demo_project(&mut self) -> Result<(), String> {
+        let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
+        let path = (1..)
+            .map(|n| match n {
+                1 => folder.join("Demo project"),
+                n => folder.join(format!("Demo project {n}")),
+            })
+            .find(|path| !path.exists())
+            .expect("an unused demo project name");
+        // A scan passed at launch belongs in the user's own project, not the demo.
+        let pending = self.startup_input.take();
+        let opened = self.open_project(&path, true);
+        self.startup_input = pending;
+        opened
+    }
+
     fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {
         // Kept previews copy their arrays on a local task while their job runs.
         let running_job = self.project.as_ref().is_some_and(|project| {
@@ -597,15 +642,13 @@ impl AppState {
         {
             return Err("Finish or cancel active work before switching projects".into());
         }
-        if let Some(current) = &self.project {
-            let candidate = if path.file_name().is_some_and(|n| n == project::MANIFEST) {
-                path.parent().unwrap_or(path)
-            } else {
-                path
-            };
-            if std::fs::canonicalize(candidate).ok().as_ref() == Some(&current.root) {
-                return Ok(());
-            }
+        if let Some(current) = &self.project
+            && std::fs::canonicalize(project::folder(path, create))
+                .ok()
+                .as_ref()
+                == Some(&current.root)
+        {
+            return Ok(());
         }
         // Save the current project, including its latest workspace, before leaving
         // it; a project that cannot be saved stays open.

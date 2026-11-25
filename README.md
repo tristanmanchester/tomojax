@@ -48,7 +48,7 @@ uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio
 tomojax studio
 ```
 
-Use `cpu` on CPU-only machines, or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`; see [install and run](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#install-and-run)). Choose **Create a project**, add scans or run `tomojax studio --demo`, and reopen saved workspaces later with `tomojax studio /path/to/project`.
+Use `cpu` on CPU-only machines, or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`; see [install and run](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#install-and-run)). Choose **Create a project** and add scans, or **Try a demo project** to simulate a scan and reconstruct it. Reopen a project later with `tomojax studio /path/to/project`.
 
 See the [Studio guide](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) for calibration, live previews, measurements, comparison modes, exports, and verification, and [studio/ARCHITECTURE.md](https://github.com/tristanmanchester/tomojax/blob/main/studio/ARCHITECTURE.md) for its persistence and rendering architecture.
 
@@ -76,11 +76,11 @@ import tomojax as tj
 scan = tj.load("scan.nxs")
 recon = tj.reconstruct(scan)                                # chooses method from geometry
 recon = tj.reconstruct(scan, "cgls", iterations=50)
-result = tj.align(scan, fit=("translations", "rotations"))  # result.scan holds the updated poses
+result = tj.align(scan, fit="translations")  # result.scan holds the updated poses
 tj.save("recon.nxs", tj.reconstruct(result.scan))
 ```
 
-CLI options use the same names: `tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50` and `tomojax align scan.nxs -o aligned.nxs --fit translations rotations`. Pass method-specific settings via config classes from `tomojax.recon` (such as `FISTAConfig(regularizer="huber_tv")`) or a TOML file passed to `--config`. See [align a scan](https://tomojax.dev/align-a-scan/#settings) for alignment settings.
+CLI options use the same names: `tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 50` and `tomojax align scan.nxs -o aligned.nxs --fit translations`. Pass method-specific settings via config classes from `tomojax.recon` (such as `FISTAConfig(regularizer="huber_tv")`) or a TOML file passed to `--config`. See [align a scan](https://tomojax.dev/align-a-scan/#settings) for alignment settings.
 
 Build a scan from arrays with `tj.Scan(projections, geometry)` and simulate projections with `tj.project(geometry, volume)`. Volumes use `(z, y, x)` and projections use `(view, v, u)`, with detector and voxel spacings in one consistent length unit. Lower-level interfaces live in `tomojax.recon`, `tomojax.alignment`, `tomojax.corrections`, `tomojax.geometry`, `tomojax.io`, `tomojax.forward`, and `tomojax.datasets`. Start with [examples/simulate_and_reconstruct.py](https://github.com/tristanmanchester/tomojax/blob/main/examples/simulate_and_reconstruct.py) or browse [tomojax.dev](https://tomojax.dev/).
 

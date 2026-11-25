@@ -73,7 +73,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
 def _warn_about_views(report: dict) -> None:
     """Name the views a user should look at before trusting the corrections."""
     isolated, unusual = report["isolated_views"], report["unusual_views"]
-    parts = list(report["advisories"])
+    parts = [text.rstrip(".") for text in report["advisories"]]
     if isolated:
         parts.append(f"{len(isolated)} views jump away from both neighbours ({_first(isolated)})")
     if unusual:
@@ -81,8 +81,8 @@ def _warn_about_views(report: dict) -> None:
     if not parts:
         return
     warn(
-        f"tj.align: {'; '.join(parts)}. The report is advisory: see info['report'] and "
-        "'Check the result' in docs/align-a-scan.md.",
+        f"tj.align: {'. '.join(parts)}. Review info['report'] and "
+        "https://tomojax.dev/align-a-scan/#check-the-result",
         stacklevel=3,
     )
 

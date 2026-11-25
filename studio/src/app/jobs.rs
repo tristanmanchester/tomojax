@@ -91,6 +91,7 @@ impl AppState {
                 "Raw frames can't be saved after cropping or selecting views. Run Corrections first, then crop or select views of the corrected scan.".into(),
             );
         }
+        let first = project.document.jobs.len();
         if operation == "simulate" {
             project
                 .document
@@ -109,8 +110,12 @@ impl AppState {
                     .push(Job::new(operation, parameters.clone(), vec![input]));
             }
         }
+        let queued = project.document.jobs[first..]
+            .iter()
+            .map(|job| job.id.clone())
+            .collect();
         self.mark_dirty();
-        self.ui.jobs_open = true;
+        self.open_activity(queued);
         self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())
@@ -935,8 +940,15 @@ impl AppState {
                 && matches!(job.operation.as_str(), "reconstruct" | "align")
                 && matches!(self.pending.get(request), Some(Pending::Execute(_)))
             {
-                let step = job.telemetry.task(request, task).map(|task| task.done);
-                self.live.accept(&id, request, task, time, step, arrays);
+                let position =
+                    job.telemetry
+                        .task(request, task)
+                        .map(|task| crate::live::CheckpointPosition {
+                            done: task.done,
+                            total: task.total,
+                            unit: task.unit.clone(),
+                        });
+                self.live.accept(&id, request, task, time, position, arrays);
             } else {
                 self.live.discard(arrays);
             }

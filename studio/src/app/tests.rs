@@ -6,7 +6,7 @@ use super::*;
 pub(crate) fn capture_native(mut state: AppState, path: &Path) {
     // Match the ordinary actions a reviewer would take before inspecting the
     // result. Numerical values and observed worker state remain untouched.
-    state.ui.jobs_open = false;
+    state.ui.activity = crate::ui::model::Activity::Closed;
     if let Some(control) = state
         .model
         .validation
@@ -218,12 +218,12 @@ fn window_fields_show_the_rendered_range_without_overwriting_unfinished_edits() 
     let (_directory, mut state) = registered_projection_fixture();
     let current = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text.parse::<f32>().unwrap(),
-        current[0]
+        state.ui.display.window_low.text,
+        crate::ui::compact_number(f64::from(current[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text.parse::<f32>().unwrap(),
-        current[1]
+        state.ui.display.window_high.text,
+        crate::ui::compact_number(f64::from(current[1]))
     );
     state.ui.display.window_low.replace_text("-");
     state.ui.display.window_high.replace_text("2.5");
@@ -929,7 +929,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     let mut state = AppState::init();
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.startup_input = None;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |s| s.model.backend.ready);
@@ -1179,7 +1179,7 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.project.as_mut().unwrap().document.name = "Interactive preview verification".into();
     state.startup_input = None;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |state| state.model.backend.ready);
@@ -1585,5 +1585,355 @@ fn reopening_uses_the_saved_view_or_centres_the_newest_result() {
             assert_eq!(reopened.ui.display.indices, [2, 2, 4]);
         }
         reopened.shutdown();
+    }
+}
+
+#[test]
+fn the_palette_opens_every_operation_in_its_own_workspace() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("project"), true)
+        .unwrap();
+    state.refresh_model();
+    let align = state
+        .model
+        .commands
+        .iter()
+        .find(|command| command.id == "operation:align")
+        .expect("Alignment is a command");
+    assert_eq!((align.title.as_str(), align.enabled), ("Alignment", true));
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:align".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.workspace, Workspace::Prepare);
+    assert_eq!(runtime.state.ui.operation, "align");
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:slice".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.workspace, Workspace::Reconstruct);
+    assert_eq!(runtime.state.ui.operation, "slice");
+    // Each processing workspace returns to the operation it last showed.
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Prepare), tx));
+    assert_eq!(runtime.state.ui.operation, "align");
+
+    runtime
+        .state
+        .ui
+        .parameter_edits
+        .get_mut("iterations")
+        .expect("Alignment has an iteration limit")
+        .replace_text("21");
+    // Reopening it from the palette keeps the settings being edited, and shows them.
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx));
+    runtime.state.ui.inspector_open = false;
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:align".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.parameter_edits["iterations"].text, "21");
+    assert!(runtime.state.ui.inspector_open);
+
+    // The simulation shortcut keeps a simulation draft too.
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:simulate".into()), tx);
+    });
+    runtime
+        .state
+        .ui
+        .parameter_edits
+        .get_mut("size")
+        .expect("Simulation has a size")
+        .replace_text("37");
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx));
+    runtime.update(|state, tx| state.dispatch(UiAction::RunCommand("simulate".into()), tx));
+    assert_eq!(runtime.state.ui.operation, "simulate");
+    assert_eq!(runtime.state.ui.parameter_edits["size"].text, "37");
+}
+
+#[test]
+fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
+    use crate::ui::model::Activity;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("project");
+    let open = |create: bool| {
+        let mut state = AppState::init();
+        state.open_project(&path, create).unwrap();
+        state
+    };
+    // Queues a job, opens Activity for it, then ends the job with `status`.
+    let run = |state: &mut AppState, status: JobStatus, close_early: bool| {
+        let job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+        let id = job.id.clone();
+        state.project.as_mut().unwrap().document.jobs.push(job);
+        state.open_activity(vec![id.clone()]);
+        state.refresh_model();
+        assert!(
+            state.ui.activity.is_open(),
+            "Activity stays open while its job is queued"
+        );
+        if close_early {
+            state.ui.activity = Activity::Closed;
+        }
+        let job = state
+            .project
+            .as_mut()
+            .unwrap()
+            .document
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == id)
+            .unwrap();
+        job.status = status;
+        if status == JobStatus::Failed {
+            job.error = Some("Reconstruction ran out of GPU memory.".into());
+        }
+        state.refresh_model();
+        id
+    };
+    // Renders `state` and checks the failed job is listed with its error.
+    let shows_failure = |state: AppState, failed: &str| {
+        let mut runtime = rune::Runtime::new(
+            state,
+            crate::ui::view,
+            (1440., 900.),
+            rune::Env::new(false, 1.),
+        );
+        runtime.frame(0.);
+        runtime.frame(1. / 60.);
+        let elements = runtime.elements();
+        elements
+            .iter()
+            .any(|element| element.key.as_deref() == Some(&format!("job-{failed}")))
+            && elements.iter().any(|element| {
+                element.text.as_deref() == Some("Reconstruction ran out of GPU memory.")
+            })
+    };
+
+    let mut state = open(true);
+    run(&mut state, JobStatus::Completed, false);
+    assert!(!state.ui.activity.is_open(), "closes once its job succeeds");
+    let failed = run(&mut state, JobStatus::Failed, false);
+    assert!(state.ui.activity.is_open(), "a failure keeps Activity open");
+    assert!(shows_failure(state, &failed));
+
+    // Activity the user opened is theirs: success never closes it, a failure is listed.
+    let mut state = open(false);
+    state.ui.activity = Activity::Open {
+        jobs: Vec::new(),
+        closes_itself: false,
+    };
+    run(&mut state, JobStatus::Completed, false);
+    assert!(
+        state.ui.activity.is_open(),
+        "the user's Activity stays open"
+    );
+    let failed = run(&mut state, JobStatus::Failed, false);
+    assert!(shows_failure(state, &failed));
+
+    // A job already running when the user opens Activity stays listed when it fails,
+    // even when the failure arrives before Activity refreshes.
+    let mut state = open(false);
+    let mut job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+    job.status = JobStatus::Running;
+    let running = job.id.clone();
+    state.project.as_mut().unwrap().document.jobs.push(job);
+    state.refresh_model();
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.frame(0.);
+    runtime.frame(1. / 60.);
+    let button = runtime
+        .elements()
+        .into_iter()
+        .find(|element| element.key.as_deref() == Some("toggle-jobs"))
+        .expect("Activity button");
+    let (x, y) = (
+        button.rect[0] + button.rect[2] / 2.,
+        button.rect[1] + button.rect[3] / 2.,
+    );
+    runtime.pointer_move(x, y);
+    runtime.pointer_down(x, y);
+    runtime.pointer_up(x, y);
+    runtime.frame(1. / 60.);
+    assert!(runtime.state.ui.activity.is_open());
+    runtime.update(|state, _| {
+        let job = state
+            .project
+            .as_mut()
+            .unwrap()
+            .document
+            .jobs
+            .last_mut()
+            .unwrap();
+        job.status = JobStatus::Failed;
+        job.error = Some("Reconstruction ran out of GPU memory.".into());
+        state.refresh_model();
+    });
+    assert!(shows_failure(runtime.state, &running));
+
+    // Closing Activity early leaves it closed when the job later fails.
+    let mut state = open(false);
+    run(&mut state, JobStatus::Failed, true);
+    assert!(
+        !state.ui.activity.is_open(),
+        "stays closed after the user closed it"
+    );
+}
+
+#[test]
+fn activity_lists_every_failure_it_opened_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("project"), true)
+        .unwrap();
+    let mut ids = Vec::new();
+    for n in 0..6 {
+        let mut job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+        job.status = JobStatus::Failed;
+        job.error = Some(format!("Failure {n}"));
+        ids.push(job.id.clone());
+        state.project.as_mut().unwrap().document.jobs.push(job);
+    }
+    state.open_activity(ids);
+    state.refresh_model();
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.frame(0.);
+    runtime.frame(1. / 60.);
+    let elements = runtime.elements();
+    for n in 0..6 {
+        let error = format!("Failure {n}");
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some(error.as_str())),
+            "{error} is listed"
+        );
+    }
+}
+
+#[test]
+fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
+    let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
+    let _ = std::fs::remove_dir_all(&folder);
+    let mut state = AppState::init();
+    // A scan passed at launch waits for the user's own project.
+    let scratch = tempfile::tempdir().unwrap();
+    let scan = scratch.path().join("scan.nxs");
+    std::fs::write(&scan, b"").unwrap();
+    state.startup_input = Some(scan.clone());
+    state.open_demo_project().unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(folder.join("Demo project")).unwrap()
+    );
+    assert!(state.project.as_ref().unwrap().document.assets.is_empty());
+    assert_eq!(state.startup_input.as_ref(), Some(&scan));
+    state.open_demo_project().unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(folder.join("Demo project 2")).unwrap()
+    );
+    state
+        .open_project(&scratch.path().join("mine"), true)
+        .unwrap();
+    assert!(state.startup_input.is_none());
+    assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 1);
+    drop(state);
+    std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
+    use super::viewing::window_text;
+    assert_eq!(window_text(-0.020069934, 0.9726638), ["-0.0201", "0.9727"]);
+    // Four decimals would read 1 and 1: an empty window the fields could not apply.
+    assert_eq!(window_text(1.0, 1.00002), ["1", "1.00002"]);
+    assert_eq!(window_text(2e-5, 9e-5), ["2.000e-5", "9.000e-5"]);
+}
+
+#[test]
+fn applying_the_window_the_fields_show_keeps_it_exact() {
+    let exact = [-0.020069934_f32, 0.9726638];
+    let mut state = AppState::init();
+    state.applied_window = Some(exact);
+    state.prefill_window();
+    assert_eq!(state.ui.display.window_low.text, "-0.0201");
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
+    assert_eq!(runtime.state.applied_window, Some(exact));
+    // An edited field applies what was typed.
+    runtime.state.ui.display.window_high.replace_text("0.5");
+    runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
+    assert_eq!(runtime.state.applied_window, Some([-0.020069934, 0.5]));
+
+    // Editing one limit keeps the other exact: 1.000051 reads as 1.0001, but an upper
+    // limit of 1.00008 still lies above it.
+    let mut state = AppState::init();
+    state.applied_window = Some([1.000051, 1.5]);
+    state.prefill_window();
+    assert_eq!(state.ui.display.window_low.text, "1.0001");
+    state.ui.display.window_high.replace_text("1.00008");
+    state.prefill_window(); // a viewer refresh while the edit is pending
+    assert_eq!(state.ui.display.window_high.text, "1.00008");
+    assert_eq!(state.valid_window(), Ok(Some([1.000051, 1.00008])));
+
+    // Reopening the project restores the pending edit with the exact untouched limit.
+    let saved = state.capture_workspace();
+    let mut reopened = AppState::init();
+    reopened.applied_window = Some([1.000051, 1.5]);
+    reopened.restore_workspace(&saved);
+    assert_eq!(reopened.ui.display.window_high.text, "1.00008");
+    assert_eq!(reopened.valid_window(), Ok(Some([1.000051, 1.00008])));
+}
+
+#[test]
+fn a_new_project_lives_in_the_folder_the_save_dialog_names() {
+    let directory = tempfile::tempdir().unwrap();
+    // A folder named like the manifest is still the new project's own folder.
+    let named = directory.path().join(project::MANIFEST);
+    let mut state = AppState::init();
+    state.open_project(&named, true).unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(&named).unwrap()
+    );
+    assert!(named.join(project::MANIFEST).is_file());
+    assert!(
+        !directory.path().join(".tomojax.lock").exists(),
+        "the parent is untouched"
+    );
+
+    drop(state);
+    // It reopens as itself, and so does its manifest file.
+    for path in [named.clone(), named.join(project::MANIFEST)] {
+        let mut state = AppState::init();
+        state.open_project(&path, false).unwrap();
+        assert_eq!(
+            state.project.as_ref().unwrap().root,
+            std::fs::canonicalize(&named).unwrap(),
+            "{}",
+            path.display()
+        );
     }
 }

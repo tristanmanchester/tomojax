@@ -33,7 +33,7 @@ A full-size synchrotron scan easily hits this limit (Diamond I13 159815 is 73 GB
 
 Set `stream = true` or `false` in the method's configuration (`--config` TOML or Python `*Config`) to override automatic streaming. Streaming requires the standard batched operators (canonical detector grid; linear/cubic Joseph rather than exact ray integration).
 
-Implementation details to keep in mind when sizing large runs:
+What the large-volume paths hold in memory:
 
 - **Streamed CGLS** solves the equivalent normal equations and periodically recomputes the exact gradient to prevent drift. Host-slab CGLS keeps four host volumes (iterate, normal residual, search direction, normal image) and requires the full projection stack on the GPU for parallel/laminography; cone-beam slab sweeps stream the projections through a detector-row ring instead.
 - **Host-slab FISTA-TV** solves the same global objective and finite-iteration TV proximal as resident FISTA-TV (not independent slices), keeping three host volumes (iterate, extrapolate, gradient). Its exact TV halo adds `tv_prox_iterations` planes per side on the GPU, so very high `tv_prox_iterations` can still exhaust VRAM. Huber-TV, support masks, and multi-GPU FISTA-TV require a device-resident volume.

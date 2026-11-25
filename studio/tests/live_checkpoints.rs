@@ -142,7 +142,13 @@ impl Client {
                                 request,
                                 *task,
                                 *time,
-                                telemetry.task(request, *task).map(|task| task.done),
+                                telemetry.task(request, *task).map(|task| {
+                                    tomojax_studio::live::CheckpointPosition {
+                                        done: task.done,
+                                        total: task.total,
+                                        unit: task.unit.clone(),
+                                    }
+                                }),
                                 arrays.clone(),
                             );
                         }
@@ -259,7 +265,7 @@ impl Client {
         }
         let info = &self.live.frame().unwrap().info;
         std::fs::write(directory.join("checkpoint.json"),serde_json::to_vec_pretty(&json!({
-            "operation":operation,"request":request,"job":"job","task":info.task,"time":info.time,"step":info.step,
+            "operation":operation,"request":request,"job":"job","task":info.task,"time":info.time,"step":info.position.as_ref().map(|p| p.done),
             "arrays":arrays,"telemetry":self.progress[request],"recorded":true,
             "snapshot_note":"Recorded checkpoint from the real TomoJAX worker regression; local array references are copied for replay."
         })).unwrap()).unwrap();

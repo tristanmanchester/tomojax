@@ -70,3 +70,20 @@ error = np.linalg.norm(tj.reconstruct(scan).volume - phantom) / np.linalg.norm(p
 Volumes use `(z, y, x)` order and projections use `(view, v, u)`. All voxel and detector spacings must share one physical length unit; projections integrate attenuation over that unit.
 
 For independent benchmarks against analytic references and real scans, see [measurements](measurements.md). For the watch movement figures in the README, see [examples](../examples/README.md).
+
+To simulate motion for an alignment exercise, pass `translation_sigma=0.5`
+(`--translation-sigma 0.5` in the CLI). This is the standard deviation of
+independent Gaussian object shifts along each detector axis, in the same
+length unit as voxel spacing. For the CLI, one unit is one voxel pitch.
+The projections include the shifts and the scan geometry remains nominal.
+
+```python
+sim = tj.simulate("shepp", size=32, translation_sigma=0.5)
+aligned = tj.align(sim.scan)
+reference = sim.scan.with_poses(sim.true_poses)
+expected = tj.project(reference.geometry, sim.phantom)
+```
+
+`sim.true_poses` uses the same column order and units as `Scan.poses`.
+It is `None` when motion is disabled. Save with `tj.save("moving.nxs", sim)`
+and reload the phantom and true poses with `tj.load_simulation("moving.nxs")`.

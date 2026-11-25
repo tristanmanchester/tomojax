@@ -169,7 +169,19 @@ def _write_geometry_section(
     geom = ensure_group(entry, "geometry", "NXcollection")
     write_string_attr(geom, "type", geometry_type_norm)
     if meta.geometry_meta:
-        geom.attrs["geometry_meta_json"] = json.dumps(meta.geometry_meta)
+        metadata = dict(meta.geometry_meta)
+        info = metadata.get("simulation_info")
+        simulation = info.get("simulation") if isinstance(info, dict) else None
+        if isinstance(info, dict) and isinstance(simulation, dict) and "true_poses" in simulation:
+            poses = np.asarray(simulation["true_poses"], dtype=np.float32)
+            geom.create_dataset("simulation_true_poses", data=poses)
+            metadata["simulation_info"] = {
+                **info,
+                "simulation": {
+                    key: value for key, value in simulation.items() if key != "true_poses"
+                },
+            }
+        geom.attrs["geometry_meta_json"] = json.dumps(metadata)
 
 
 def _write_detector_section(

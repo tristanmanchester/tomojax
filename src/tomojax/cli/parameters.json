@@ -763,7 +763,7 @@
             }
           ],
           "items": false,
-          "description": "Distortion centre ``(column, row)`` in zero-based frame pixels.",
+          "description": "Distortion centre (column, row) in zero-based frame pixels.",
           "x-unit": "pixel"
         },
         "coefficients": {
@@ -771,7 +771,7 @@
           "items": {
             "type": "number"
           },
-          "description": "Backward radial-polynomial coefficients ``(c0, c1, ...)`` in frame-pixel coordinates; ``(1.0,)`` is the identity."
+          "description": "Backward radial-polynomial coefficients (c0, c1, ...) in frame-pixel coordinates; (1.0,) is the identity."
         }
       },
       "required": [
@@ -1693,7 +1693,7 @@
             }
           ],
           "default": null,
-          "description": "Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no lower bound."
+          "description": "Lower voxel-value bound (set 0.0 for nonnegativity), or None for no lower bound."
         },
         "upper_bound": {
           "anyOf": [
@@ -1886,7 +1886,7 @@
             }
           ],
           "default": null,
-          "description": "Lower voxel-value bound (set ``0.0`` for nonnegativity), or None for no lower bound."
+          "description": "Lower voxel-value bound (set 0.0 for nonnegativity), or None for no lower bound."
         },
         "support": {
           "anyOf": [
@@ -1943,7 +1943,7 @@
     },
     "SIRTConfig": {
       "title": "SIRTConfig",
-      "description": "SIRT, or OS-SART with ``subsets > 1`` (one view per subset is SART).",
+      "description": "SIRT, or OS-SART with subsets > 1 (one view per subset is SART).",
       "type": "object",
       "properties": {
         "type": {
@@ -2052,7 +2052,7 @@
     },
     "MLEMConfig": {
       "title": "MLEMConfig",
-      "description": "Reconstruct nonnegative linear Poisson measurements, ``y ~ Poisson(A x)``.",
+      "description": "Reconstruct nonnegative linear Poisson measurements, y ~ Poisson(A x).",
       "type": "object",
       "properties": {
         "type": {
@@ -2291,7 +2291,7 @@
     },
     "AlignConfig": {
       "title": "AlignConfig",
-      "description": "The settings of :func:`tomojax.align`.",
+      "description": "The settings of tomojax.align.",
       "type": "object",
       "properties": {
         "type": {
@@ -2330,7 +2330,7 @@
             2,
             1
           ],
-          "description": "Each level's binning of the working detector, coarsest first, ending at 1. Default is ``(2, 1)``; ``(1,)`` fits at the working resolution alone."
+          "description": "Each level's binning of the working detector, coarsest first, ending at 1. Default is (2, 1); (1,) fits at the working resolution alone."
         },
         "image_iterations": {
           "type": "integer",
@@ -2352,7 +2352,7 @@
         "min_iterations": {
           "type": "integer",
           "default": 4,
-          "description": "The fewest iterations before ``tolerance`` may stop a level. Default is 4."
+          "description": "The fewest iterations before tolerance may stop a level. Default is 4."
         },
         "resolution": {
           "type": "integer",
@@ -2398,13 +2398,13 @@
         "slip_scale": {
           "type": "number",
           "default": 0.02,
-          "description": "Under ``motion=\"smooth\"``, the view-to-view step, in native pixels, at which the pull towards the neighbours is strongest; larger steps are followed as slips, and the rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.",
+          "description": "Under motion=\"smooth\", the view-to-view step, in native pixels, at which the pull towards the neighbours is strongest; larger steps are followed as slips, and the rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.",
           "x-unit": "native_pixel"
         },
         "knot_spacing": {
           "type": "integer",
           "default": 10,
-          "description": "Under ``motion=\"smooth\"``, views between the drift's spline knots. Default is 10.",
+          "description": "Under motion=\"smooth\", views between the drift's spline knots. Default is 10.",
           "x-unit": "view"
         },
         "rotation_sigma": {
@@ -2607,7 +2607,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -2876,7 +2876,7 @@
             }
           ],
           "default": null,
-          "description": "Method-specific settings, as for ``reconstruct``."
+          "description": "Method-specific settings, as for reconstruct."
         },
         "corrections": {
           "type": "array",
@@ -3001,7 +3001,7 @@
             }
           ],
           "default": null,
-          "description": "Parameters to fit. None fits the method's own: ``\"translations\"`` for \"joint\" and ``\"center\"`` for \"opposite-views\".",
+          "description": "Parameters to fit. None fits the method's own: \"translations\" for \"joint\" and \"center\" for \"opposite-views\".",
           "x-choices": [
             "center",
             "tilt",
@@ -3044,7 +3044,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to fit on, in place of ``grid``, as for :func:`reconstruct`.",
+          "description": "The part of the scan's grid to fit on, in place of grid, as for reconstruct.",
           "x-choices": [
             "auto",
             "bbox",
@@ -3088,7 +3088,8 @@
           "x-choices": [
             "independent",
             "smooth"
-          ]
+          ],
+          "x-default": "independent"
         },
         "iterations": {
           "anyOf": [
@@ -3100,7 +3101,8 @@
             }
           ],
           "default": null,
-          "description": "Gauss-Newton iterations at the working resolution. Default is 8."
+          "description": "Gauss-Newton iterations at the working resolution. Default is 8.",
+          "x-default": 8
         },
         "image_iterations": {
           "anyOf": [
@@ -3112,7 +3114,8 @@
             }
           ],
           "default": null,
-          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16."
+          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16.",
+          "x-default": 16
         },
         "tolerance": {
           "anyOf": [
@@ -3125,7 +3128,8 @@
           ],
           "default": null,
           "description": "A level stops when two successive pose proposals move the views by less than this, in working pixels; 0 runs every level to its iterations. Default is 0.01.",
-          "x-unit": "working_pixel"
+          "x-unit": "working_pixel",
+          "x-default": 0.01
         },
         "interpolation": {
           "anyOf": [
@@ -3144,7 +3148,8 @@
           "x-choices": [
             "linear",
             "cubic"
-          ]
+          ],
+          "x-default": null
         },
         "resolution": {
           "anyOf": [
@@ -3157,7 +3162,8 @@
           ],
           "default": null,
           "description": "The working detector's longest side, in pixels. Default is 320.",
-          "x-unit": "working_pixel"
+          "x-unit": "working_pixel",
+          "x-default": 320
         },
         "config": {
           "anyOf": [
@@ -3169,7 +3175,7 @@
             }
           ],
           "default": null,
-          "description": "Every setting of the joint fit (imported from :mod:`tomojax.alignment`); None uses the defaults."
+          "description": "Every setting of the joint fit (imported from tomojax.alignment); None uses the defaults."
         }
       },
       "required": [
@@ -3227,7 +3233,7 @@
         "size": {
           "type": "integer",
           "default": 64,
-          "description": "Volume edge in voxels, and the detector size, unless ``grid`` or ``detector`` say otherwise. Default is 64.",
+          "description": "Volume edge in voxels, and the detector size, unless grid or detector say otherwise. Default is 64.",
           "x-unit": "voxel"
         },
         "n_views": {
@@ -3315,6 +3321,12 @@
           "description": "Poisson noise, drawing counts of the value times this (higher is quieter); 0 adds none. Default is 0.0.",
           "x-unit": "counts_per_line_integral"
         },
+        "translation_sigma": {
+          "type": "number",
+          "default": 0.0,
+          "description": "Standard deviation of Gaussian object shifts along each detector axis, drawn independently for each view. Uses the same length unit as voxel spacing. Zero adds no motion. The scan geometry stays nominal; sim.true_poses gives the shifts that produced the projections.",
+          "x-unit": "geometry_length"
+        },
         "artefacts": {
           "anyOf": [
             {
@@ -3325,7 +3337,7 @@
             }
           ],
           "default": null,
-          "description": "Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise) from :class:`tomojax.datasets.SimulationArtefacts`."
+          "description": "Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise) from tomojax.datasets.SimulationArtefacts."
         },
         "grid": {
           "anyOf": [
@@ -3337,7 +3349,7 @@
             }
           ],
           "default": null,
-          "description": "The volume's grid, including any ``vol_origin`` or ``vol_center``."
+          "description": "The volume's grid, including any vol_origin or vol_center."
         },
         "detector": {
           "anyOf": [
@@ -3349,12 +3361,12 @@
             }
           ],
           "default": null,
-          "description": "The detector, including any ``center`` offset."
+          "description": "The detector, including any center offset."
         },
         "seed": {
           "type": "integer",
           "default": 0,
-          "description": "Random seed for the phantom and noise. Default is 0."
+          "description": "Random seed for the phantom, motion and noise. Default is 0."
         }
       },
       "required": [
@@ -3372,6 +3384,7 @@
           "source_to_axis": "source_to_axis",
           "source_to_detector": "source_to_detector",
           "poisson_scale": "poisson_scale",
+          "translation_sigma": "translation_sigma",
           "artefacts": "artefacts",
           "grid": "grid",
           "detector": "detector",
@@ -3528,7 +3541,7 @@
             0.0,
             0.0
           ],
-          "description": "Detector-centre ``(u, v)`` offset in physical units; defaults to zero.",
+          "description": "Detector-centre (u, v) offset in physical units; defaults to zero.",
           "x-unit": "geometry_length"
         }
       },
@@ -3802,7 +3815,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for TIFF slices, or a ``.raw`` file."
+          "description": "Directory for TIFF slices, or a .raw file."
         },
         "force": {
           "type": "boolean",
@@ -3814,7 +3827,7 @@
             "uint16"
           ],
           "default": "float32",
-          "description": "Sample type; ``uint16`` maps ``range`` to 0..65535. Default is float32.",
+          "description": "Sample type; uint16 maps range to 0..65535. Default is float32.",
           "x-choices": [
             "float32",
             "uint16"
@@ -3841,7 +3854,7 @@
             }
           ],
           "default": null,
-          "description": "The values ``uint16`` maps to 0 and 65535 (finite, ``low < high``); None takes the 0.1 and 99.9 percentiles of up to 16 slices. Only valid with ``dtype=\"uint16\"``."
+          "description": "The values uint16 maps to 0 and 65535 (finite, low < high); None takes the 0.1 and 99.9 percentiles of up to 16 slices. Only valid with dtype=\"uint16\"."
         },
         "prefix": {
           "type": "string",
@@ -4279,7 +4292,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -4532,7 +4545,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of ``grid``: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -5049,7 +5062,7 @@
             }
           ],
           "default": null,
-          "description": "The detector's pixel size (u, v) in the geometry's length unit, when the file records none or another; the shape comes from the frames and the centre from the file or the middle. Not with ``detector`` or ``geometry``.",
+          "description": "The detector's pixel size (u, v) in the geometry's length unit, when the file records none or another; the shape comes from the frames and the centre from the file or the middle. Not with detector or geometry.",
           "x-unit": "geometry_length"
         },
         "grid": {

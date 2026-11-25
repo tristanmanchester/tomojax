@@ -114,7 +114,7 @@ pub struct UiState {
     pub preview_span: TextEdit,
     pub tree_open: bool,
     pub inspector_open: bool,
-    pub jobs_open: bool,
+    pub activity: Activity,
     pub palette_open: bool,
     pub shortcuts_open: bool,
     pub advanced_open: bool,
@@ -145,6 +145,9 @@ pub struct UiState {
     pub parameter_toggles: BTreeMap<String, bool>,
     pub corrections: super::corrections::CorrectionEditor,
     pub operation: String,
+    /// The operation each processing workspace last showed, restored on return.
+    pub prepare_operation: String,
+    pub reconstruct_operation: String,
     pub operation_menu: bool,
     pub choice_menu: Option<String>,
     pub export_format: String,
@@ -164,7 +167,7 @@ impl Default for UiState {
             preview_span: TextEdit::new("8"),
             tree_open: true,
             inspector_open: true,
-            jobs_open: false,
+            activity: Activity::Closed,
             palette_open: false,
             shortcuts_open: false,
             advanced_open: false,
@@ -190,6 +193,8 @@ impl Default for UiState {
             parameter_toggles: BTreeMap::new(),
             corrections: super::corrections::CorrectionEditor::default(),
             operation: "reconstruct".into(),
+            prepare_operation: String::new(),
+            reconstruct_operation: String::new(),
             operation_menu: false,
             choice_menu: None,
             export_format: "nxs".into(),
@@ -288,11 +293,10 @@ impl UiModel {
     /// written for volumes only, and an array-only result exports as NPY.
     pub fn export_format<'a>(&self, chosen: &'a str) -> &'a str {
         match self.active().map(|asset| asset.export) {
-            Some(Export::Volume) | None if chosen != "array" => chosen,
-            Some(Export::Volume) | None => "nxs",
-            Some(Export::Dataset) => "nxs",
+            Some(Export::Volume) if chosen != "array" => chosen,
+            Some(Export::Volume | Export::Dataset) => "nxs",
             Some(Export::Array) => "array",
-            Some(Export::Unavailable) => "",
+            Some(Export::Unavailable) | None => "",
         }
     }
     pub fn tiff_export(&self) -> bool {
@@ -494,6 +498,10 @@ pub struct ParameterView {
     pub choices: Vec<Choice>,
     /// Shown in an empty field: what the worker uses when the field is left blank.
     pub placeholder: String,
+    /// The configuration value a blank field takes, when the schema states it (`x-default`;
+    /// null when the configuration's own default is None).
+    /// The form's own `config` overrides it; see [`crate::forms::default_label`].
+    pub inherited: Option<serde_json::Value>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ParameterKind {
@@ -510,6 +518,32 @@ pub struct Choice {
     pub value: String,
     pub label: String,
 }
+/// The Activity popover over the jobs panel.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Activity {
+    #[default]
+    Closed,
+    Open {
+        /// Jobs it has shown or opened for. A failed one stays listed with its error until
+        /// Activity closes.
+        jobs: Vec<String>,
+        /// Opened for queued work rather than by the user, so it closes once that work
+        /// succeeds.
+        closes_itself: bool,
+    },
+}
+
+impl Activity {
+    pub fn is_open(&self) -> bool {
+        matches!(self, Self::Open { .. })
+    }
+
+    /// Whether open Activity has shown, or opened for, the job `id`.
+    pub fn tracks(&self, id: &str) -> bool {
+        matches!(self, Self::Open { jobs, .. } if jobs.iter().any(|job| job == id))
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CommandView {
     pub id: String,
@@ -531,6 +565,7 @@ pub struct ShortcutView {
 pub enum UiAction {
     NewProject,
     OpenProject,
+    OpenDemo,
     OpenRecent(String),
     ImportFiles,
     ImportFolder,

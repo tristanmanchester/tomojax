@@ -41,6 +41,32 @@ class Simulation(NamedTuple):
     scan: Scan
     phantom: np.ndarray
 
+    def __repr__(self) -> str:
+        return f"Simulation(scan={self.scan!r}, phantom_shape={self.phantom.shape})"
+
+    @property
+    def true_poses(self) -> np.ndarray | None:
+        """The ground-truth pose table in :attr:`tomojax.Scan.poses` order and units.
+
+        The six columns are alpha, beta, phi (degrees), then x, z, y
+        (geometry length units). Only x and z, the horizontal and vertical
+        detector-frame shifts, are populated. Apply the table with
+        ``sim.scan.with_poses(sim.true_poses)`` for reprojection.
+
+        Returns
+        -------
+        numpy.ndarray or None
+            A ``(views, 6)`` table, or None when no motion was simulated.
+        """
+        from tomojax._scan import simulated_poses
+
+        if (rows := simulated_poses(self.scan.source)) is None:
+            return None
+        poses = np.asarray(rows, dtype=np.float64)
+        if poses.shape != (len(self.scan.angles), 6) or not np.isfinite(poses).all():
+            raise ValueError("Simulation pose truth must contain six finite values per view")
+        return poses
+
 
 def default_detector(
     grid: Grid,
@@ -80,6 +106,7 @@ def build_sim_config(
     source_to_axis: float | None = None,
     source_to_detector: float | None = None,
     poisson_scale: float = 0.0,
+    translation_sigma: float = 0.0,
     artefacts: datasets.SimulationArtefacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
@@ -143,6 +170,7 @@ def build_sim_config(
         phantom=phantom,
         seed=seed,
         artefacts=resolved_artefacts,
+        translation_sigma=translation_sigma,
     )
     if phantom_settings:
         cfg = replace(cfg, **cast("dict[str, Any]", dict(phantom_settings)))
@@ -200,6 +228,7 @@ def simulate(
     source_to_axis: Annotated[float | None, "geometry_length"] = None,
     source_to_detector: Annotated[float | None, "geometry_length"] = None,
     poisson_scale: Annotated[float, "counts_per_line_integral"] = 0.0,
+    translation_sigma: Annotated[float, "geometry_length"] = 0.0,
     artefacts: datasets.SimulationArtefacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
@@ -236,6 +265,11 @@ def simulate(
     poisson_scale : float, optional
         Poisson noise, drawing counts of the value times this (higher is quieter);
         0 adds none. Default is 0.0.
+    translation_sigma : float, optional
+        Standard deviation of Gaussian object shifts along each detector axis, drawn
+        independently for each view. Uses the same length unit as voxel spacing.
+        Zero adds no motion. The scan geometry stays nominal; ``sim.true_poses``
+        gives the shifts that produced the projections.
     artefacts : SimulationArtefacts or None, optional
         Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise)
         from :class:`tomojax.datasets.SimulationArtefacts`.
@@ -244,13 +278,14 @@ def simulate(
     detector : Detector or None, optional
         The detector, including any ``center`` offset.
     seed : int, optional
-        Random seed for the phantom and noise. Default is 0.
+        Random seed for the phantom, motion and noise. Default is 0.
 
     Returns
     -------
     Simulation
         Named tuple ``(scan, phantom)`` holding the simulated :class:`Scan` and
-        the ground-truth phantom ``(nz, ny, nx)`` on ``scan.grid``.
+        the ground-truth phantom ``(nz, ny, nx)`` on ``scan.grid``. The
+        ``true_poses`` attribute gives the simulated per-view motion.
 
     Raises
     ------
@@ -275,6 +310,7 @@ def simulate(
         source_to_axis=source_to_axis,
         source_to_detector=source_to_detector,
         poisson_scale=poisson_scale,
+        translation_sigma=translation_sigma,
         artefacts=artefacts,
         grid=grid,
         detector=detector,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -167,6 +168,8 @@ def test_workflow_simulate_preserves_placement_unpacks_and_saves_directly(tmp_pa
     scan, phantom = sim
 
     assert isinstance(sim, tj.Simulation)
+    assert sim.true_poses is None
+    assert "phantom_shape=(4, 5, 6)" in repr(sim) and "array(" not in repr(sim)
     assert scan is sim.scan and phantom is sim.phantom
     assert scan.geometry.grid == shifted_grid
     assert scan.geometry.detector == offset_detector
@@ -237,3 +240,61 @@ def test_simulated_data_on_a_gpu_agree_with_float32_on_the_cpu(
     subprocess.run([sys.executable, "-c", code, str(reference)], check=True, env=env)
     cpu = np.load(reference)
     assert np.linalg.norm(gpu - cpu) / np.linalg.norm(cpu) < 1e-6
+
+
+@pytest.mark.parametrize(
+    ("geometry", "suffix"), [("parallel", ".nxs"), ("cone", ".npz"), ("lamino", ".nxs")]
+)
+def test_true_poses_reproduce_the_simulated_projections(tmp_path, geometry, suffix):
+    import tomojax as tj
+
+    sim = tj.simulate(
+        "sphere",
+        geometry=geometry,
+        grid=tj.Grid(8, 9, 10, 0.5, 0.6, 0.7),
+        n_views=12,
+        translation_sigma=0.5,
+        seed=21,
+    )
+    path = tmp_path / f"moving{suffix}"
+    tj.save(path, sim)
+    loaded = tj.load_simulation(path)
+    assert loaded.scan.poses is None and sim.scan.poses is None
+    poses = loaded.true_poses
+    assert poses is not None and poses.shape == (12, 6)
+    np.testing.assert_array_equal(poses, sim.true_poses)
+    np.testing.assert_array_equal(poses[:, [0, 1, 2, 5]], 0)
+    assert (np.std(poses[:, 3:5], axis=0) > 0.1).all()
+
+    nominal = tj.project(loaded.scan.geometry, loaded.phantom)
+    assert np.linalg.norm(nominal - loaded.scan.projections) > 0.5
+    expected = tj.project(loaded.scan.with_poses(poses).geometry, loaded.phantom)
+    np.testing.assert_allclose(loaded.scan.projections, expected, rtol=1e-5, atol=1e-5)
+
+
+def test_selected_views_keep_their_own_true_poses(tmp_path):
+    import tomojax as tj
+
+    sim = tj.simulate("sphere", size=8, n_views=20, translation_sigma=0.5, seed=4)
+    # Rejecting view 4 then keeping four of the rest leaves the original views 1, 9, 13, 18.
+    projections = np.array(sim.scan.projections)
+    projections[4] = np.nan
+    rejected = replace(sim.scan, projections=projections).corrected(tj.corrections.RejectViews())
+    assert rejected.projections.shape[0] == 19
+    kept = [1, 9, 13, 18]
+    selected = tj.Simulation(rejected.selected([1, 8, 12, 17]), sim.phantom)
+    path = tmp_path / "selected.nxs"
+    tj.save(path, selected)
+    loaded = tj.load_simulation(path)
+    assert sim.true_poses is not None
+    np.testing.assert_allclose(loaded.true_poses, sim.true_poses[kept], atol=1e-6)
+    expected = tj.project(loaded.scan.with_poses(loaded.true_poses).geometry, loaded.phantom)
+    np.testing.assert_allclose(loaded.scan.projections, expected, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.parametrize("sigma", [-1, float("nan"), float("inf")])
+def test_simulate_rejects_invalid_translation_sigma(sigma):
+    import tomojax as tj
+
+    with pytest.raises(ValueError, match="translation_sigma must be finite and non-negative"):
+        tj.simulate(translation_sigma=sigma)

@@ -6,6 +6,7 @@ from dataclasses import MISSING, fields
 import inspect
 import json
 from pathlib import Path
+import re
 from types import NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -174,13 +175,7 @@ def description() -> dict[str, Any]:
     definitions["Save"]["properties"]["path"]["description"] = (
         "Output dataset path. Set force to replace existing files."
     )
-    # The everyday alignment controls replace fields on this same configuration.
-    align = definitions["Align"]["properties"]
-    for name, field in definitions["AlignConfig"]["properties"].items():
-        if name in align and name != "type":
-            for key in ("description", "x-unit", "x-choices"):
-                if key in field:
-                    align[name][key] = field[key]
+    inherit_align_config(definitions)
     for target, source in (
         (op.Slice, op.Reconstruct),
         (op.CentreSweep, op.Reconstruct),
@@ -193,16 +188,38 @@ def description() -> dict[str, Any]:
     return schema
 
 
+def inherit_align_config(definitions: dict[str, Any]) -> None:
+    """Describe the everyday alignment controls from the configuration fields they replace."""
+    align = definitions["Align"]["properties"]
+    for name, field in definitions["AlignConfig"]["properties"].items():
+        if name in align and name != "type":
+            for key in ("description", "x-unit", "x-choices"):
+                if key in field:
+                    align[name][key] = field[key]
+            # A null setting takes the configuration's value, so a form can show it and
+            # follow a `config` that changes it. Null marks a configuration default of None.
+            if align[name].get("default") is None and "default" in field:
+                align[name]["x-default"] = field["default"]
+
+
 def describe_models(definitions: dict[str, Any]) -> None:
     """Describe the fields from their numerical constructor and unit metadata."""
     for cls in option_types():
         document = definitions[cls.__name__]
-        document["description"] = " ".join(NumpyDocString(inspect.getdoc(cls))["Summary"])
+        document["description"] = plain_text(
+            " ".join(NumpyDocString(inspect.getdoc(cls))["Summary"])
+        )
         metadata = {f.name: f.metadata for f in fields(cls) if f.init}
         for name, field in parameters(cls).items():
             document["properties"][name].update(field)
             if "unit" in metadata[name]:
                 document["properties"][name]["x-unit"] = metadata[name]["unit"]
+
+
+def plain_text(text: str) -> str:
+    """Remove inline reStructuredText markup from form help."""
+    text = re.sub(r":[\w:-]+:`(?:([^<`]+?)\s*<[^>`]+>|~?([^`]+))`", r"\1\2", text)
+    return text.replace("``", "")
 
 
 def parameters(owner: Callable[..., Any]) -> dict[str, dict[str, Any]]:
@@ -220,7 +237,7 @@ def parameters(owner: Callable[..., Any]) -> dict[str, dict[str, Any]]:
         if name in ("self", "cls"):
             continue
         annotation = hints[name]
-        field: dict[str, Any] = {"description": help_text[name]}
+        field: dict[str, Any] = {"description": plain_text(help_text[name])}
         if get_origin(annotation) is Annotated:
             annotation, unit = get_args(annotation)
             field["x-unit"] = unit

@@ -136,6 +136,23 @@ impl Preferences {
         .unwrap_or_else(std::env::temp_dir);
         base.join("tomojax").join("studio.json")
     }
+    /// Where Studio keeps projects it creates itself, such as demo projects.
+    pub fn data_dir() -> PathBuf {
+        if cfg!(test) {
+            return std::env::temp_dir()
+                .join(format!("tomojax-studio-test-{}", std::process::id()));
+        }
+        let base = if cfg!(target_os = "windows") {
+            std::env::var_os("APPDATA").map(PathBuf::from)
+        } else if cfg!(target_os = "macos") {
+            std::env::var_os("HOME").map(|p| PathBuf::from(p).join("Library/Application Support"))
+        } else {
+            std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
+        };
+        base.unwrap_or_else(std::env::temp_dir).join("tomojax")
+    }
     pub fn load() -> Result<Self, String> {
         let path = Self::path();
         if !path.exists() {

@@ -40,9 +40,10 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 .child(number(
                     frame
                         .info
-                        .step
-                        .map(|step| format!("step {step}"))
-                        .unwrap_or_else(|| format!("task {}", frame.info.task)),
+                        .position
+                        .as_ref()
+                        .map(crate::live::CheckpointPosition::label)
+                        .unwrap_or_default(),
                     11.,
                     muted(),
                 )),
@@ -151,8 +152,8 @@ pub fn live(state: &AppState, compact: bool) -> El {
                         .grow(1.)
                         .min_w(0.)
                         .child(strong(&column.name, 11., forest()).truncate())
-                        .child(label(&column.unit, 11., muted()).truncate())
-                        .help(format!("{} · {}", column.name, column.unit)),
+                        .child(label(unit_name(&column.unit), 11., muted()).truncate())
+                        .help(format!("{} · {}", column.name, unit_name(&column.unit))),
                 );
             }
             let poses_panel = col()
@@ -205,10 +206,9 @@ pub fn live(state: &AppState, compact: bool) -> El {
                                                     .items_center()
                                                     .child(
                                                         number(
-                                                            format!(
-                                                                "{:.3}",
+                                                            compact_number(
                                                                 poses.axes[0]
-                                                                    .coordinate(index as f64)
+                                                                    .coordinate(index as f64),
                                                             ),
                                                             11.,
                                                             muted(),
@@ -243,7 +243,8 @@ pub fn live(state: &AppState, compact: bool) -> El {
                 label(
                     format!(
                         "View coordinates: {} · {}",
-                        poses.axes[0].frame, poses.axes[0].unit
+                        poses.axes[0].frame,
+                        unit_name(&poses.axes[0].unit)
                     ),
                     11.,
                     muted(),

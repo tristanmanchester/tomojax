@@ -59,9 +59,11 @@ impl AppState {
     fn action(&mut self, action: UiAction, tx: &mut Tx) -> Result<(), String> {
         match action {
             UiAction::NewProject => {
-                tx.open_folder(
+                // A save dialog names a folder that does not exist yet; the project creates it.
+                tx.save_file(
                     FileDialogOptions {
-                        title: "Choose a directory for the new project".into(),
+                        title: "Create a project".into(),
+                        file_name: Some("TomoJAX project".into()),
                         ..Default::default()
                     },
                     |s: &mut AppState, result, tx| match result {
@@ -97,6 +99,10 @@ impl AppState {
                 );
             }
             UiAction::OpenRecent(path) => self.open_project(Path::new(&path), false)?,
+            UiAction::OpenDemo => {
+                self.open_demo_project()?;
+                self.demo = super::Demo::Simulate;
+            }
             UiAction::ImportFiles => {
                 if self.project.is_none() {
                     return Err("Create or open a project before importing scans".into());
@@ -262,12 +268,9 @@ impl AppState {
                 self.ui.display.window_low.replace_text("");
                 self.ui.display.window_high.replace_text("");
                 self.applied_window = None;
-                self.window_prefill = Some([String::new(), String::new()]);
+                self.window_prefill = Default::default();
             }
-            UiAction::Simulate => {
-                self.ui.workspace = Workspace::Prepare;
-                self.set_operation("simulate", None);
-            }
+            UiAction::Simulate => self.open_operation("simulate"),
             UiAction::SetOperation(operation) => self.set_operation(&operation, None),
             UiAction::QueueOperation(operation) => self.queue_operation(&operation)?,
             UiAction::RefreshPreview => {
@@ -436,20 +439,24 @@ impl AppState {
                 }
             }
             UiAction::ApplyWindow => {
+                let fields = [
+                    self.ui.display.window_low.text.clone(),
+                    self.ui.display.window_high.text.clone(),
+                ];
                 let window = self.valid_window()?;
                 self.remember_view();
                 self.applied_window = window;
-                self.window_prefill = Some([
-                    self.ui.display.window_low.text.clone(),
-                    self.ui.display.window_high.text.clone(),
-                ]);
+                self.window_prefill = [0, 1].map(|i| viewing::Prefilled {
+                    text: fields[i].clone(),
+                    exact: window.map(|limits| limits[i]),
+                });
             }
             UiAction::AutoWindow => {
                 self.remember_view();
                 self.applied_window = None;
                 self.ui.display.window_low.replace_text("");
                 self.ui.display.window_high.replace_text("");
-                self.window_prefill = Some([String::new(), String::new()]);
+                self.window_prefill = Default::default();
                 self.prefill_window();
             }
             UiAction::SetColormap(map) => {
@@ -609,7 +616,20 @@ impl AppState {
         Ok(())
     }
 
+    /// Show `operation`'s form in its workspace, keeping the draft when it is already open.
+    fn open_operation(&mut self, operation: &str) {
+        self.set_workspace(Workspace::for_operation(operation));
+        self.ui.inspector_open = true;
+        if self.ui.operation != operation {
+            self.set_operation(operation, None);
+        }
+    }
+
     fn run_command(&mut self, id: &str, tx: &mut Tx) -> Result<(), String> {
+        if let Some(operation) = id.strip_prefix("operation:") {
+            self.open_operation(operation);
+            return Ok(());
+        }
         let action = match id {
             "new" => UiAction::NewProject,
             "open" => UiAction::OpenProject,
@@ -767,9 +787,10 @@ impl AppState {
         job.name = format!("Export {format}");
         job.destination = Some(path);
         if let Some(project) = &mut self.project {
+            let id = job.id.clone();
             project.document.jobs.push(job);
             self.mark_dirty();
-            self.ui.jobs_open = true;
+            self.open_activity(vec![id]);
             self.refresh_model();
         }
     }

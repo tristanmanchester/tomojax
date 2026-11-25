@@ -181,6 +181,7 @@ class Simulate(Record, tag="simulate"):
     source_to_axis: float | None = None
     source_to_detector: float | None = None
     poisson_scale: float = 0.0
+    translation_sigma: float = 0.0
     artefacts: w.SimulationArtefacts | None = None
     grid: w.Grid | None = None
     detector: w.Detector | None = None
