@@ -12,7 +12,7 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 .venv/bin/tomojax --help
 ```
 
-With standard `venv` and `pip`, run `python -m venv .venv` followed by `.venv/bin/python -m pip install "tomojax[cpu]"`. While `1.0.0` is in release candidate (`1.0.0rc4`, which adds `tomojax mcp`, `tomojax-studio`, and the updated CLI), pass `--prerelease=allow` to `uv pip install` (or `--pre` to `pip`).
+With standard `venv` and `pip`, run `python -m venv .venv` followed by `.venv/bin/python -m pip install "tomojax[cpu]"`. While `1.0.0` is in release candidate (`1.0.0rc5`, which adds `tomojax mcp`, `tomojax-studio`, and the updated CLI), pass `--prerelease=allow` to `uv pip install` (or `--pre` to `pip`).
 
 ## Use CUDA 12
 
@@ -54,7 +54,7 @@ Then install the built wheel from `dist/` into a fresh environment outside the c
 mkdir /tmp/tomojax-user
 cd /tmp/tomojax-user
 uv venv --python 3.12
-uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax-1.0.0rc4-py3-none-any.whl[cpu]"
+uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax-1.0.0rc5-py3-none-any.whl[cpu]"
 .venv/bin/tomojax --help
 ```
 
