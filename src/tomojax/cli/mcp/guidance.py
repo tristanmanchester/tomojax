@@ -27,6 +27,7 @@ TOPICS = (
     *PYTHON_TOPICS,
     "pointing-and-features",
     "tuning-without-truth",
+    "thin-shell",
     "large-scans",
     "reporting-bugs",
 )

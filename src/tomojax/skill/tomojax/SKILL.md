@@ -52,14 +52,19 @@ Simulated data has ground truth; real scans do not. Do not propose optimising ag
 
 ## Agree a feature by pointing at it
 
-When the user names a structure ("the bright thin shell", "that crack"), do not describe it back in words. Mark it on a slice and ask:
+When the user names a structure ("the bright thin shell", "that crack"), do not describe it back in words. Measure, then mark, then ask:
 
-1. `view` the slice with `marks`, positions in array indices of the source: `{"type": "point", "at": [z, y, x], "label": "shell?"}`. Index ticks along the edges help you aim.
-2. Check the result's `marks` entry: whether each mark was drawn, its pixel in the image and the value under it. Fix your aim before showing the user.
-3. Show the image and ask whether that is the feature. Mark alternatives in different colours if unsure.
-4. Once confirmed, make it a feature handle with the `feature` tool and outline it with `view` and `features` on any volume on the same grid.
+1. **Measure.** Find the structure in the data before you point at it. Take a `view` with `mode="profile"` along a line ROI across it (for example `roi=[[64, 65], [64, 65], [0, 128]]` for a row of a volume), or read several rows and columns in one `python` call, and locate the values that match the description. For a thin target, zoom in with an `roi` around it.
+2. **Mark.** `view` the slice with `marks`. Point at a pixel of the image you are looking at, `{"type": "point", "at": {"pixel": [x, y], "image": "render-…"}, "label": "shell?"}`, or give array indices from your measurement, `"at": [z, y, x]`.
+3. **Check.** Each mark's report gives the value under it, its `percentile` in the plane and its place between the display limits (`display`). If the value contradicts the description, for example a "bright" structure under a mark at the 3rd percentile, you missed: re-measure and re-mark. Never ask the user to confirm a mark whose value contradicts what they described.
+4. **Ask.** Show the image and ask whether that is the feature. Mark alternatives in different colours if unsure.
+5. Once confirmed, make it a feature handle with the `feature` tool and outline it with `view` and `features`, on any volume on the same grid and side by side across candidates (`source` as a list).
 
-[references/pointing-and-features.md](references/pointing-and-features.md) has the mark types and feature recipes.
+[references/pointing-and-features.md](references/pointing-and-features.md) has the mark types and feature recipes, and [references/thin-shell.md](references/thin-shell.md) works through a thin bright shell from measurement to scores.
+
+## Stay within the task
+
+Work with the data, handles and files the task names, and the outputs you create. Do not read other agents' threads, sessions or working files, or files outside the task, to find hints or answers.
 
 ## Report a TomoJAX bug
 
@@ -75,6 +80,7 @@ If TomoJAX raises an internal error, gives a result that is clearly wrong, or do
 | [check-a-reconstruction.md](references/check-a-reconstruction.md) | Judging a volume or comparing settings |
 | [pointing-and-features.md](references/pointing-and-features.md) | Showing the user a location, or turning it into a region |
 | [tuning-without-truth.md](references/tuning-without-truth.md) | Choosing reconstruction settings on a real scan |
+| [thin-shell.md](references/thin-shell.md) | Segmenting or scoring a thin structure that touches two materials |
 | [python.md](references/python.md) | Writing code for the `python` tool, custom solvers or analysis |
 | [solvers.md](references/solvers.md), [geometry.md](references/geometry.md), [calibration.md](references/calibration.md) | Direct solver calls, custom geometry, acquisition metadata |
 | [large-scans.md](references/large-scans.md) | The scan or volume is larger than GPU or host memory, or there are several GPUs |

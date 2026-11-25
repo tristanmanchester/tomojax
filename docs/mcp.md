@@ -137,7 +137,7 @@ Use it for compound work and for anything the typed tools do not cover: a sweep 
 
 ## Guides and prompts
 
-The server publishes the Agent Skill's references as resources, and its workflow guides also as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry`, `calibration`, `pointing-and-features`, `tuning-without-truth`, `large-scans` and `reporting-bugs`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
+The server publishes the Agent Skill's references as resources, and its workflow guides also as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry`, `calibration`, `pointing-and-features`, `tuning-without-truth`, `thin-shell`, `large-scans` and `reporting-bugs`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
 
 ## Transport and session lifetime
 

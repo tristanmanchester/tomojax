@@ -34,6 +34,23 @@ rows
 
 Each row has the candidate's handle, so `view` can show it with `features=[feature_id]`. Every candidate stays in memory until closed: once you have chosen, close the others with `control` and `action="close"`, which matters for large volumes.
 
+## Check against held-out projections
+
+`evaluate` reconstructs each candidate without every fifth view (by default) and scores how well it predicts the views it did not see. Give the scan and the candidates, each tagged with its operation:
+
+```json
+{
+  "source": "@scan-1a2b3c4d",
+  "candidates": [
+    {"type": "reconstruct", "method": "fista", "tv_weight": 1e-5, "nonnegative": true},
+    {"type": "reconstruct", "method": "fista", "nonnegative": true},
+    {"type": "reconstruct", "method": "fbp"}
+  ]
+}
+```
+
+Each entry of the result's `scores` repeats its `candidate` and gives `relative_l2`, the held-out error relative to the measured projections: lower is better. Compare candidates only within one call, which uses one split for all of them. Describe `evaluate` for the split options.
+
 ## Read the scores
 
 | Score | Meaning | Better |

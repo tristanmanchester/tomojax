@@ -84,3 +84,37 @@ while True:
         c.task("cancel", task["taskId"])
         assert c.terminal(task["taskId"])["status"] == "cancelled"
         assert python(c, "1 + 1")["value"] == 2  # the worker is free again
+
+
+SHELL = TUNING.with_name("thin-shell.md")
+
+
+def test_the_thin_shell_example_segments_and_scores_the_shell(tmp_path):
+    with connection(tmp_path) as c:
+        sim = c.call("simulate", size=128, n_views=180, poisson_scale=5000)["structuredContent"]
+        recon = c.call("reconstruct", source=sim["members"]["scan"])["structuredContent"]["handle"]
+        # Measure first: the shell is the peak of a profile along the middle row.
+        row = c.call("view", source=recon, mode="profile", roi=[[64, 65], [64, 65], [0, 128]])
+        values = row["structuredContent"]["profile"]
+        x = max(range(64), key=lambda i: values[i])
+        setup = (
+            f"recon_id = {recon!r}\nshell_at = (64, 64, {x})\n"
+            "core_at = (64, 64, 40)\nair_at = (64, 64, 4)\n"
+        )
+        text = SHELL.read_text()
+        made = python(c, setup + example(text, "2. Segment by threshold, and check it is stable"))
+        found = made["value"]
+        assert min(found["stability"]) > 0.9 and found["shell"] > found["core"]
+        truth = python(
+            c,
+            f"""phantom = np.asarray(handles[{sim["handle"]!r}].phantom)
+true = np.isclose(phantom, phantom[64, 64, {x}]) & (phantom > phantom[64, 64, 40])
+mask = handles[shell_id].mask
+float(2 * (mask & true).sum() / (mask.sum() + true.sum()))""",
+        )["value"]
+        assert truth > 0.8  # Dice against the phantom's shell
+        scored = python(c, example(text, "3. Score the shell against each side"))["value"]
+        core, air = scored["against_core"], scored["against_air"]
+        assert (
+            core["contrast_to_noise"] > 1 and air["contrast_to_noise"] > core["contrast_to_noise"]
+        )
