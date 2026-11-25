@@ -302,3 +302,4 @@ def test_automatic_reconstruction_counts_opposite_views_as_one_direction(posed):
     actual = tj.reconstruct(scan)
     assert actual.method == "fbp"
     assert actual.info["automatic"]["status"] == "limited"
+    assert any("measure 12 directions" in r for r in actual.info["automatic"]["reasons"])

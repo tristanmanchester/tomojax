@@ -226,8 +226,9 @@ def _coverage_advice(scan: Scan) -> str | None:
         )
     if len(angles) < 16:
         return (
-            "Fewer than 16 views: expect streaks. method='fista' with nonnegative=True "
-            "reduces them through nonnegativity and regularization."
+            f"The views measure {len(angles)} directions, fewer than 16: expect streaks. "
+            "method='fista' with nonnegative=True reduces them through nonnegativity and "
+            "regularization."
         )
     return None
 
