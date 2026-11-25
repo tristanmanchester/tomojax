@@ -22,9 +22,9 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
 
 ## Checks
 
-`just ci` is the CPU gate (about 5 minutes); `just test-cuda` runs everything on
-a CUDA GPU (about 22 minutes), including the slow alignment fits the CPU gate
-leaves to it. A change is ready when the tests it touches
+`just ci` is the CPU gate (about 4 minutes); `just test-cuda` runs everything on
+a CUDA GPU (about 8 minutes on an 8 GB card), including the slow alignment fits
+the CPU gate leaves to it. A change is ready when the tests it touches
 pass, on the GPU if it touches GPU code. The maintainer runs `just ci` and the
 full GPU suite when merging into main, so a ready commit on a branch is the
 whole hand-off.

@@ -6,6 +6,10 @@ benchmark_scripts := "bench"
 # (tests/conftest.py) and handed one test at a time, the slow ones first.
 parallel := "-n " + `echo $(( ($(nproc) + 1) / 2 ))` + " --maxschedchunk 1"
 
+# GPU tests run on one worker per 1.3 GB of the first GPU's memory: a worker's CUDA
+# context takes 0.3 GB and its JAX pool is capped at its share of the rest (tests/conftest.py).
+gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk 'NR == 1 { print int($1 / 1300) }'` + " --maxschedchunk 1"
+
 setup:
     uv sync --locked --extra cpu --dev
 
@@ -61,10 +65,13 @@ accelerator-smoke-cuda:
     TOMOJAX_REQUIRE_CUDA=1 uv run --no-sync python tools/smoke_accelerator.py
 
 # Every test with the GPU visible: unmarked tests take the CUDA paths too, which
-# CI's CPU runner and `-m gpu` alone never exercise.
+# CI's CPU runner and `-m gpu` alone never exercise. The workers of the second stage
+# share the GPU. About one run in three, XLA then fails to create a cuFFT plan in one
+# worker and that worker's CUDA context is lost, failing every later test in it, so
+# the tests that failed are run again in one process.
 test-cuda: accelerator-smoke-cuda
     uv run --no-sync pytest -q -m fresh_gpu
-    uv run --no-sync pytest -q -m "not fresh_gpu"
+    uv run --no-sync pytest -q -m "not fresh_gpu" {{gpu_parallel}} || uv run --no-sync pytest -q -m "not fresh_gpu" --last-failed --last-failed-no-failures none
 
 benchmark-smoke:
     JAX_PLATFORMS=cpu uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1

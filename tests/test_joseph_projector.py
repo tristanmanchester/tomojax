@@ -216,9 +216,12 @@ def test_plane_operators_match_independent_physical_ray_matrix(
             from tomojax.core.joseph_cuda import JosephCUDA
 
             plan = JosephCUDA(poses, grid, detector, views_per_batch=4)
-            np.testing.assert_allclose(plan.forward(cp.asarray(volume)).get(), projected, atol=2e-6)
+            # DLPack waits for JAX to finish the array; cp.asarray would read it early.
             np.testing.assert_allclose(
-                plan.adjoint(cp.asarray(images)).get(), backprojected, rtol=2e-5, atol=2e-6
+                plan.forward(cp.from_dlpack(volume)).get(), projected, atol=2e-6
+            )
+            np.testing.assert_allclose(
+                plan.adjoint(cp.from_dlpack(images)).get(), backprojected, rtol=2e-5, atol=2e-6
             )
 
 

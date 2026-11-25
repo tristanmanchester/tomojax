@@ -26,7 +26,8 @@ def test_packet_paths_partition_pixels_and_match_individual_views(views, suffix,
     if rolled:
         horizontal, vertical = frames[:, 1, :].copy(), frames[:, 2, :].copy()
         frames[1::2, 1, :], frames[1::2, 2, :] = vertical[1::2], -horizontal[1::2]
-    coeff = cp.asarray(
+    # DLPack waits for JAX to finish the coefficients; cp.asarray would read them early.
+    coeff = cp.from_dlpack(
         cone.frame_coefficients(stack_view_poses(geometry, views), frames, grid, detector)
     )
     volume = cp.asarray(
@@ -92,7 +93,7 @@ def test_box_forward_covers_detectors_beyond_the_cuda_grid_y_limit():
     detector = tj.Detector(4100, 2100, 0.01, 0.01)
     geometry = tj.ConeGeometry(grid, detector, [30.0], tj.ConeBeam(50.0, 75.0))
     frames = cone.cone_model(geometry).frames(1)
-    coeff = cp.asarray(
+    coeff = cp.from_dlpack(
         cone.frame_coefficients(stack_view_poses(geometry, 1), frames, grid, detector)
     )
     boxes = cp.full((1, detector.nv, detector.nu), cp.nan, cp.float32)
