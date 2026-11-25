@@ -66,9 +66,9 @@ accelerator-smoke-cuda:
 
 # Every test with the GPU visible: unmarked tests take the CUDA paths too, which
 # CI's CPU runner and `-m gpu` alone never exercise. The workers of the second stage
-# share the GPU. About one run in three, XLA then fails to create a cuFFT plan in one
-# worker and that worker's CUDA context is lost, failing every later test in it, so
-# the tests that failed are run again in one process.
+# share the GPU. In one of the first three such runs XLA failed to create a cuFFT plan
+# in one worker, which lost that worker's CUDA context and failed every later test in
+# it, so the tests that fail are run again in one process.
 test-cuda: accelerator-smoke-cuda
     uv run --no-sync pytest -q -m fresh_gpu
     uv run --no-sync pytest -q -m "not fresh_gpu" {{gpu_parallel}} || uv run --no-sync pytest -q -m "not fresh_gpu" --last-failed --last-failed-no-failures none
