@@ -441,6 +441,7 @@ class Python(Record, tag="python"):
 
     code: str = ""
     reset: bool = False
+    traceback: bool = False
     aliases: dict[str, Member | Npy] = msgspec.field(default_factory=dict)
 
 

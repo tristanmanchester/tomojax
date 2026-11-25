@@ -81,15 +81,23 @@ class Open(Record):
 
 
 class Python(Record):
-    """Run Python in the worker for custom geometry, analysis or solvers.
+    """Run Python in the worker, next to the loaded data: the path for compound work.
 
-    Read objects from handles, publish snapshots with register and display images with show.
-    Variables persist between calls. Handles last until close, worker restart or server exit.
+    Use it for sweeps, loops, custom measures, geometry or solvers over live handles,
+    instead of many typed calls. In scope: tj, np, handles (ID to object; a feature's
+    .mask), register(obj or array) -> ID, register_feature(mask, like=ID or object,
+    name=...) -> ID, view(source, mode=, axis=, index=, roi=, stride=, other=, marks=,
+    features=, ticks=) with the view tool's arguments, and show(plane, marks=). The last
+    expression is the result; arrays over 16 values come back summarised, so register
+    big ones. Errors give the exception and your lines; set traceback for the full
+    trace. Variables persist between calls; reset or a worker restart clears them and
+    restart also drops handles. Long runs are cancellable at TomoJAX's checkpoints.
     See tomojax://guide/python.
     """
 
     code: str = ""
     reset: bool = False
+    traceback: bool = False
 
 
 class Describe(Record):
@@ -605,6 +613,7 @@ class Tools:
             "type": "python",
             "code": args.code,
             "reset": args.reset,
+            "traceback": args.traceback,
             "aliases": aliases,
         }
 
@@ -686,7 +695,7 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
         "cancelled": "Resubmit when ready.",
         "superseded": "Use the newer job.",
-        "input": "Read the traceback, correct the Python code and retry."
+        "input": "Read the error, correct the Python code and retry."
         if name == "python"
         else "Inspect the input path and metadata.",
         "internal": "Check status for worker and device information.",

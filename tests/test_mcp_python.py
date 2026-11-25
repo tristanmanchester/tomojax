@@ -17,7 +17,7 @@ pytestmark = pytest.mark.surface
 
 def python(c, code="", **kwargs):
     reply = c.call("python", code=code, **kwargs)
-    assert not reply["isError"], reply
+    assert not reply["isError"], reply["content"][0]["text"]
     return full_result(c, reply)["structuredContent"]
 
 
@@ -63,13 +63,18 @@ print('X' * 12000 + 'Y' * 18000, end='', file=sys.stderr)
 x.size""",
         )
         assert out["value"] == 83 and out["stdout"] == "python\n"
-        assert out["stderr"] == "X" * 10000 + "\n[10000 characters omitted]\n" + "Y" * 10000
+        assert (
+            out["stderr"]
+            == "X" * 10000
+            + "\n[10000 characters omitted; write long output to a file and read it in parts]\n"
+            + "Y" * 10000
+        )
         assert python(c, "print('next')")["stdout"] == "next\n"
         for error in ("SystemExit", "KeyboardInterrupt"):
             reply = c.call("python", code=f"survived=42\nregister(x)\nraise {error}('example')")
             assert reply["isError"]
             assert error in reply["content"][0]["text"]
-            assert "traceback" in reply["structuredContent"]["next"]
+            assert "error" in reply["structuredContent"]["next"]
         state = c.call("status")["structuredContent"]
         assert not state["handles"] and state["python_namespace_bytes"] >= 83 * 8
         assert python(c, "survived")["value"] == 42

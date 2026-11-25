@@ -45,6 +45,7 @@ _KINDS = {
     tj.Alignment: "align",
 }
 _SHOWN = 10000  # characters kept from each end of a captured stream
+_LISTED = 16  # arrays up to this size are returned as lists
 
 
 def array_bytes(value: object, seen: set[int]) -> int:
@@ -100,6 +101,8 @@ class Registrations:
 
     def registered(self, item: object) -> tuple[Any, Array]:
         """An object's primary array and its registration: axes, coordinates and unit."""
+        if isinstance(item, str) and "." in item:
+            item = self.inputs[item]
         if isinstance(item, str):
             ref = self.inputs.reference(item)
             if isinstance(ref, Npy):
@@ -248,11 +251,20 @@ class HandleInputs(Mapping):
             raise KeyError(f"{name} is not a live handle; status lists them")
         return self._aliases[name]
 
-    def __getitem__(self, name: str) -> ex.HandleValue | Npy | np.ndarray:
-        ref = self.reference(name)
-        if isinstance(ref, Member):
-            return self._leases[ref].value
-        return np.load(ref.path, mmap_mode="r", allow_pickle=False)
+    def __getitem__(self, name: str) -> Any:
+        """The object or array behind an ID, or one of its members with ``ID.member``."""
+        base, _, member = name.partition(".")
+        ref = self.reference(base)
+        value = (
+            self._leases[ref].value
+            if isinstance(ref, Member)
+            else np.load(ref.path, mmap_mode="r", allow_pickle=False)
+        )
+        if not member:
+            return value
+        if not hasattr(value, member):
+            raise KeyError(f"{base} has no member {member}")
+        return getattr(value, member)
 
     def __iter__(self) -> Iterator[str]:
         return iter(self._aliases)
@@ -291,8 +303,7 @@ def execute_in_namespace(
             value = eval(compile(expression, "<python>", "eval"), namespace)
         if isinstance(value, np.ndarray | jax.Array):
             value = registrations.register(value)
-        value = msgspec.to_builtins(value.item() if isinstance(value, np.generic) else value)
-        return registrations, value
+        return registrations, msgspec.to_builtins(value, enc_hook=summarise)
     finally:
         for key in ("handles", "register", "register_feature", "show", "view"):
             namespace.pop(key, None)
@@ -300,11 +311,50 @@ def execute_in_namespace(
         context.measure(array_bytes(kept, set()))
 
 
+def summarise(value: object) -> object:
+    """Keep returned values small: short arrays as lists, longer ones as a summary."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray | jax.Array):
+        a = np.asarray(value)
+        if a.size <= _LISTED:
+            return a.tolist()
+        finite = a[np.isfinite(a)] if a.dtype.kind in "fc" else a.ravel()
+        moments = (
+            {"min": finite.min().item(), "max": finite.max().item(), "mean": finite.mean().item()}
+            if finite.size and a.dtype.kind in "biuf"
+            else {}
+        )
+        return {"shape": list(a.shape), "dtype": str(a.dtype), **moments}
+    text = repr(value)
+    return text if len(text) <= 200 else text[:200] + "..."
+
+
 def _clip(text: str) -> str:
     missing = len(text) - 2 * _SHOWN
     if missing <= 0:
         return text
-    return f"{text[:_SHOWN]}\n[{missing} characters omitted]\n{text[-_SHOWN:]}"
+    note = f"[{missing} characters omitted; write long output to a file and read it in parts]"
+    return f"{text[:_SHOWN]}\n{note}\n{text[-_SHOWN:]}"
+
+
+def error_report(error: BaseException, code: str, *, full: bool) -> str:
+    """The exception with the lines of the submitted code it passed through.
+
+    ``full`` gives the traceback from the first submitted line down into the library.
+    """
+    frames = traceback.extract_tb(error.__traceback__)
+    start = next((i for i, f in enumerate(frames) if f.filename == "<python>"), len(frames))
+    if full:
+        trail = traceback.format_list(frames[start:])
+    else:
+        lines = code.splitlines()
+        trail = [
+            f"line {f.lineno}: {lines[f.lineno - 1].strip()}\n"
+            for f in frames[start:]
+            if f.filename == "<python>" and f.lineno and f.lineno <= len(lines)
+        ]
+    return "".join(trail + traceback.format_exception_only(error))
 
 
 def run_python(cmd: op.Python, context: ex.ExecutionContext) -> ex.Success:
@@ -313,11 +363,7 @@ def run_python(cmd: op.Python, context: ex.ExecutionContext) -> ex.Success:
         with redirect_stdout(out), redirect_stderr(err):
             registrations, value = execute_in_namespace(cmd, context)
     except BaseException as error:
-        frames = traceback.extract_tb(error.__traceback__)
-        start = next((i for i, f in enumerate(frames) if f.filename == "<python>"), len(frames))
-        message = "".join(
-            traceback.format_list(frames[start:]) + traceback.format_exception_only(error)
-        )
+        message = error_report(error, cmd.code, full=cmd.traceback)
         detail = _clip(out.getvalue()) + _clip(err.getvalue()) + message
         if len(msgspec.json.encode(detail)) > INLINE_LIMIT:
             raise ValueError("Python exception too large for the worker pipe") from error

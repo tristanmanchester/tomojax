@@ -92,6 +92,10 @@
           "type": "boolean",
           "default": false
         },
+        "traceback": {
+          "type": "boolean",
+          "default": false
+        },
         "aliases": {
           "type": "object",
           "additionalProperties": {

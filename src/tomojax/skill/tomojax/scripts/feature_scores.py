@@ -2,8 +2,8 @@
 
 Every score compares a volume with itself inside a feature mask and a surrounding
 mask, both boolean arrays of the volume's shape (for example the .mask of TomoJAX
-feature handles made with the seeded and band recipes). Higher contrast-to-noise and
-a narrower edge are better; compare candidates on the same masks.
+feature handles made with the seeded and band recipes). Higher contrast-to-noise,
+lower noise and a narrower edge are better; compare candidates on the same masks.
 
 Run it on saved arrays::
 
@@ -67,13 +67,23 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
     return abs(crossing(0.1) - crossing(0.9))
 
 
-def scores(volume: np.ndarray, feature: np.ndarray, surround: np.ndarray) -> dict[str, float]:
-    """All three scores for one candidate."""
+def scores(
+    volume: np.ndarray, feature: np.ndarray, surround: np.ndarray, margin: int = 2
+) -> dict[str, float]:
+    """All three scores for one candidate.
+
+    Contrast and noise use the feature's interior, ``margin`` voxels in from its
+    boundary, so blurred edges do not count as noise. Use ``margin=0`` for a feature
+    too thin to have an interior.
+    """
     volume = np.asarray(volume, dtype=np.float64)
     feature, surround = np.asarray(feature, dtype=bool), np.asarray(surround, dtype=bool)
+    interior = ndimage.binary_erosion(feature, iterations=margin) if margin else feature
+    if not interior.any():
+        raise ValueError(f"the feature has no voxels {margin} in from its edge; lower margin")
     return {
-        "contrast_to_noise": contrast_to_noise(volume, feature, surround),
-        "noise": noise(volume, feature),
+        "contrast_to_noise": contrast_to_noise(volume, interior, surround),
+        "noise": noise(volume, interior),
         "edge_width": edge_width(volume, feature),
     }
 
