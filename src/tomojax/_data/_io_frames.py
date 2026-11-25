@@ -173,7 +173,7 @@ def _gda_metadata(
             acquisition.update(angle_units_recorded=units, angle_units="degree")
             logging.getLogger(__name__).warning(
                 "%s:%s: GDA angular command is labelled mm; interpreting it as degrees",
-                cast(Any, file).filename,
+                file.filename,
                 angles_at,
             )
         # Older GDA exports (DIAD) write the paired rotation command with no unit
@@ -302,12 +302,11 @@ def locate_frames(
             raise KeyError(f"{path} has no dataset {data_path!r}")
         if where is None or stack is None:
             missing: list[str] = []
-            root: Any = file
-            for name in root:
-                link = root.get(name, getlink=True)
-                if isinstance(link, cast(Any, h5py).ExternalLink):
+            for name in file:
+                link = file.get(name, getlink=True)
+                if isinstance(link, h5py.ExternalLink):
                     try:
-                        root[name]
+                        file[name]
                     except (KeyError, OSError):
                         missing.append(f"/{name} -> {link.filename}:{link.path}")
             if missing:
@@ -379,16 +378,18 @@ def locate_frames(
 
 
 def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
-    handle = cast(Any, file)  # h5py stubs omit link lookup and file names.
-    found = handle.get(where)
+    found = file.get(where)
     if found is None:
-        link = handle.get(where, getlink=True)
-        if isinstance(link, cast(Any, h5py).ExternalLink):
-            target = cast(Any, link)
+        # get() reads a dangling link as absence: missing frame labels would make
+        # every flat and dark a sample view.
+        link = file.get(where, getlink=True)
+        if isinstance(link, h5py.ExternalLink):
             raise ValueError(
-                f"{where}: external data unavailable; supply {target.filename!r} "
-                f"beside {handle.filename!r}, containing dataset {target.path!r}"
+                f"{where}: external data unavailable; supply {link.filename!r} "
+                f"beside {file.filename!r}, containing dataset {link.path!r}"
             )
+        if isinstance(link, h5py.SoftLink):
+            raise ValueError(f"{where}: links to {link.path!r}, which {file.filename!r} lacks")
     return found if isinstance(found, h5py.Dataset) else None
 
 

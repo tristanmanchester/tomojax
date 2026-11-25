@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, MutableMapping
 from pathlib import Path
-from typing import Any, Protocol, overload
+from typing import Any, Literal, Protocol, overload
 
 import numpy as np
 from numpy.typing import DTypeLike
@@ -51,6 +51,17 @@ class Dataset:
     def __len__(self) -> int: ...
     def astype(self, dtype: DTypeLike) -> Dataset: ...
 
+class HardLink: ...
+
+class SoftLink:
+    path: str
+    def __init__(self, path: str) -> None: ...
+
+class ExternalLink:
+    filename: str
+    path: str
+    def __init__(self, filename: str | Path, path: str) -> None: ...
+
 class Group:
     file: File
     name: str | None
@@ -58,6 +69,10 @@ class Group:
     attrs: AttributeManager
     @overload
     def get(self, name: str, default: None = None) -> Dataset | Group | None: ...
+    @overload
+    def get(
+        self, name: str, default: None = None, *, getlink: Literal[True]
+    ) -> HardLink | SoftLink | ExternalLink | None: ...
     @overload
     def get(self, name: str, default: object) -> Dataset | Group | object: ...
     def require_group(self, name: str) -> Group: ...
@@ -73,6 +88,7 @@ class Group:
 
 class File(Group):
     mode: str
+    filename: str
     def __init__(self, name: str | Path, mode: str = "r", **kwargs: object) -> None: ...
     def __enter__(self) -> File: ...
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None: ...

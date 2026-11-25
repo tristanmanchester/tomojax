@@ -90,11 +90,16 @@ def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...
         object.__setattr__(obj, name, pitch)
 
 
-def _restore(obj: Grid | Detector, state: dict[str, object]) -> None:
-    """Unpickle or copy through the constructor's checks, keeping the class and its fields."""
+type _State = dict[str, object] | tuple[dict[str, object] | None, dict[str, object] | None]
+
+
+def _restore(obj: object, state: _State) -> None:
+    """Set unpickled or copied fields as stored, keeping the class and its own fields."""
+    if isinstance(state, tuple):  # a subclass with __slots__: (instance dict, slot values)
+        fields, slots = state
+        state = {**(fields or {}), **(slots or {})}
     for name, value in state.items():
         object.__setattr__(obj, name, value)
-    obj.__post_init__()
 
 
 @dataclass(frozen=True)
@@ -156,8 +161,11 @@ class Grid:
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
 
-    def __setstate__(self, state: dict[str, object]) -> None:
+    def __setstate__(self, state: _State) -> None:
+        # Run this class's checks, not a subclass's __post_init__: its fields are
+        # already initialised, and a subclass's own initialisation need not repeat.
         _restore(self, state)
+        Grid.__post_init__(self)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -335,8 +343,10 @@ class Detector:
         _plain_numbers(self, ("nu", "nv"), ("du", "dv"))
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
-    def __setstate__(self, state: dict[str, object]) -> None:
+    def __setstate__(self, state: _State) -> None:
+        # As Grid: this class's checks only, on fields that are already initialised.
         _restore(self, state)
+        Detector.__post_init__(self)
 
     def to_dict(self) -> DetectorDict:
         """Return JSON-compatible detector metadata.

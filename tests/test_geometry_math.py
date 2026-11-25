@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import pickle
 
 import jax
@@ -197,17 +198,43 @@ def test_grid_rejects_nonfinite_placement(field) -> None:
         Grid(4, 4, 4, 1, 1, 1, **{field: (0.0, np.inf, 0.0)})
 
 
+@dataclass(frozen=True)
+class ShiftedDetector(Detector):
+    shift: float = 0.0
+
+
+@dataclass(frozen=True)
+class CalibratedDetector(Detector):
+    offset: tuple[float, float] = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        u, v = self.center
+        object.__setattr__(self, "center", (u + self.offset[0], v + self.offset[1]))
+
+
+class SlottedGrid(Grid):
+    __slots__ = ("label",)
+
+
 def test_copies_keep_grid_and_detector_subclasses_and_their_fields() -> None:
     import copy
-    from dataclasses import dataclass
-
-    @dataclass(frozen=True)
-    class ShiftedDetector(Detector):
-        shift: float = 0.0
 
     detector = ShiftedDetector(4, 3, 1.0, 1.0, shift=2.5)
     copied = copy.deepcopy(detector)
     assert type(copied) is ShiftedDetector and copied.shift == 2.5
+    # A subclass's own initialisation runs once, at construction, not again on a copy.
+    calibrated = CalibratedDetector(4, 3, 1.0, 1.0, (1.0, 2.0), offset=(1.5, 1.5))
+    assert pickle.loads(pickle.dumps(calibrated)).center == calibrated.center == (2.5, 3.5)
+    assert copy.copy(calibrated).center == (2.5, 3.5)
+    slotted = SlottedGrid(4, 4, 4, 1, 1, 1)
+    object.__setattr__(slotted, "label", "slab")
+    for restored in (
+        copy.copy(slotted),
+        copy.deepcopy(slotted),
+        pickle.loads(pickle.dumps(slotted)),
+    ):
+        assert restored == slotted and restored.label == "slab"
 
 
 def test_a_saved_tilt_may_be_a_numeric_string() -> None:

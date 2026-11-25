@@ -32,6 +32,7 @@ from tomojax._typed_arrays import (
     true_count,
     unique_int_count_map,
 )
+from tomojax.geometry import Grid
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
@@ -459,10 +460,12 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
         else None
     )
     if grid is not None:
-        try:  # read the counts as Grid.from_dict does when the file is loaded
-            return [int(grid["nx"]), int(grid["ny"]), int(grid["nz"])]
+        try:  # the grid that loading this file would build
+            saved = Grid.from_dict(grid)
         except (KeyError, TypeError, ValueError):
             pass
+        else:
+            return [saved.nx, saved.ny, saved.nz]
 
     det_shape = projection.get("detector_shape")
     if isinstance(det_shape, dict):
