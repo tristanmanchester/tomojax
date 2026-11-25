@@ -190,8 +190,11 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        # Parallel rays, as declared or with per-view poses.
-        angles = np.unique(np.mod(scan.angles, 180.0))
+        # Parallel rays, as declared or with per-view poses: each view's angle about the
+        # axis comes from its full pose, so saved rotation corrections count.
+        poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
+        turned = np.degrees(np.arctan2(poses[:, 1, 0], poses[:, 0, 0]))
+        angles = np.unique(np.mod(turned, 180.0))
         gaps = np.diff(np.r_[angles, angles[0] + 180])
         recommendation = None
         if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):

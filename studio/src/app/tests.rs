@@ -1707,6 +1707,43 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
 }
 
 #[test]
+fn activity_lists_every_failure_it_opened_for() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("project"), true)
+        .unwrap();
+    let mut ids = Vec::new();
+    for n in 0..6 {
+        let mut job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+        job.status = JobStatus::Failed;
+        job.error = Some(format!("Failure {n}"));
+        ids.push(job.id.clone());
+        state.project.as_mut().unwrap().document.jobs.push(job);
+    }
+    state.open_activity(ids);
+    state.refresh_model();
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.frame(0.);
+    runtime.frame(1. / 60.);
+    let elements = runtime.elements();
+    for n in 0..6 {
+        let error = format!("Failure {n}");
+        assert!(
+            elements
+                .iter()
+                .any(|e| e.text.as_deref() == Some(error.as_str())),
+            "{error} is listed"
+        );
+    }
+}
+
+#[test]
 fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
     let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
     let _ = std::fs::remove_dir_all(&folder);

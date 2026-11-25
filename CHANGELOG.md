@@ -4,7 +4,9 @@
 
 Synthetic scans support random per-view translations with saved ground-truth poses.
 The alignment CLI reports fitted correction sizes and stopping reasons. Automatic
-reconstruction uses FBP for posed parallel scans without a warning.
+reconstruction no longer warns about a posed parallel scan for its poses alone;
+it warns when the views, rotation corrections included, leave gaps in the half turn
+or number fewer than 16.
 
 ## 1.0.0rc4 (2026-11-25)
 

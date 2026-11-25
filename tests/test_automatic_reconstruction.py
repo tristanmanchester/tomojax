@@ -265,3 +265,15 @@ def test_automatic_reconstruction_flags_incomplete_or_sparse_views(posed, n_view
         "method='fista' with nonnegative=True" in reason
         for reason in actual.info["automatic"]["reasons"]
     )
+
+
+def test_automatic_reconstruction_counts_saved_rotation_corrections_in_coverage():
+    # 33 views 5 degrees apart leave a 20 degree gap; phi corrections from +4 to -4
+    # degrees widen it to 28, past the 22.5 degree limit.
+    sim = tj.simulate("sphere", size=8, n_views=33, rotation=165.0)
+    nominal = tj.reconstruct(sim.scan)
+    assert nominal.info["automatic"]["status"] == "ok"
+    poses = np.zeros((33, 6))
+    poses[:, 2] = np.linspace(4.0, -4.0, 33)
+    posed = tj.reconstruct(sim.scan.with_poses(poses))
+    assert posed.info["automatic"]["status"] == "limited"

@@ -366,7 +366,6 @@ pub fn jobs_drawer(state: &AppState) -> El {
                 JobStatus::Running | JobStatus::Paused | JobStatus::Queued
             ) || (j.status == JobStatus::Failed && state.ui.activity_for.contains(&j.id))
         })
-        .take(5)
         .collect();
     let mut rows = col().gap(8.);
     if state.live.frame().is_some() || state.live.loading() {
