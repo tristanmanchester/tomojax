@@ -97,6 +97,7 @@ def test_independent_integrator_uses_zyx_field_and_xyz_rays(benchmark, axis):
     np.testing.assert_allclose(actual, expected, atol=1e-12)
 
 
+@pytest.mark.slow
 def test_command_line_runs_one_cell_with_its_motion_bounds(benchmark, monkeypatch, tmp_path):
     output = tmp_path / "run"
     monkeypatch.setenv("JAX_PLATFORMS", "cpu")

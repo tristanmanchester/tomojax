@@ -117,6 +117,7 @@ def predictions(monkeypatch):
     return records
 
 
+@pytest.mark.slow
 def test_fits_ignore_every_excluded_observation(tmp_path, monkeypatch, predictions):
     scan = tj.simulate("shepp", size=12, n_views=60, rotation=360).scan
     ids = np.arange(len(scan.angles))

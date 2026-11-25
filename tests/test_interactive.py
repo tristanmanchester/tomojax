@@ -247,7 +247,10 @@ def test_sweep_keeps_input_cylinder_support():
     result = centre_sweep(scan, "z", 1, [0, 3], method="fbp", region="cyl")
     shifted = replace(scan, geometry=replace(geom, detector=replace(det, center=(3, 0))))
     full = tj.reconstruct(shifted, "fbp", grid=cyl.grid)
-    np.testing.assert_array_equal(result[1], np.where(support, full.volume[1], 0))
+    # One plane and the whole volume are compiled apart, and round apart on some CPUs.
+    np.testing.assert_allclose(
+        result[1], np.where(support, full.volume[1], 0), rtol=2e-5, atol=1e-6
+    )
 
 
 def test_plane_does_not_retain_the_full_mapped_reconstruction(monkeypatch, tmp_path):

@@ -165,6 +165,7 @@ def test_running_out_of_device_memory_inside_a_level_names_the_placement(monkeyp
         _aligned(("translations",), COLD)
 
 
+@pytest.mark.slow
 def test_released_storage_leaves_nothing_of_the_level_on_the_device():
     # The stacks and every volume but the result (handed to the caller first) are released.
     projections, nominal, grid, detector = _scan()
@@ -182,6 +183,7 @@ def test_released_storage_leaves_nothing_of_the_level_on_the_device():
     assert held and all(array.is_deleted() for level in held for array in level)
 
 
+@pytest.mark.slow
 def test_align_reports_each_levels_placement_and_time():
     projections, _, grid, detector = _scan()
     geometry = tj.LaminographyGeometry(

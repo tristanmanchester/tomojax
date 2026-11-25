@@ -248,7 +248,7 @@ markers = [
     "gpu: requires GPU",
     "fresh_gpu: needs a GPU no other process holds; run in its own pytest process",
     "cuda: requires Cuda-capable backend",
-    "slow: takes over about 20 s on a CPU; starts first, and the CPU gate leaves it to the GPU suite",
+    "slow: takes over about 10 s on a CPU; starts first, and the CPU gate leaves it to the GPU suite",
 ]
 
 [tool.coverage.run]

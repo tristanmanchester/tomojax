@@ -96,6 +96,7 @@ class _Recorded(np.ndarray):
         return super().__getitem__(key)
 
 
+@pytest.mark.slow
 def test_the_fit_reads_the_frames_front_to_back_once():
     # A memory map read at random stops reading ahead, and a sweep after that reads a page per
     # fault: every level's observations, the scale and the noise come from one sweep.

@@ -1,12 +1,15 @@
 name: CI
 
-# `just ci` and `just test-cuda` run locally before each push. Here the CPU gate
-# (product-spine) runs on demand (`gh workflow run CI`) and, with the quick surface tests
-# in place of the numerical suite, on pull requests to main; the release workflow calls
-# this one first, so a release runs the whole CPU gate and the installed-package matrix
-# before anything is published.
+# `just ci` and `just test-cuda` run locally before each push. Here the CPU gate runs on
+# pull requests to main and on demand (`gh workflow run CI`): the static checks and smoke
+# workflows in product-spine, and the CPU tests of `just ci` split among eight jobs. The
+# release workflow calls this one first, with the installed-package matrix, before
+# anything is published. The alignment fits marked `slow` run only in `just test-cuda`.
 on:
   pull_request:
+    branches: [main]
+  # A push to main also saves the compilation cache that pull requests start from.
+  push:
     branches: [main]
   workflow_dispatch:
   workflow_call:
@@ -24,7 +27,7 @@ env:
 jobs:
   product-spine:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -80,16 +83,6 @@ jobs:
       - name: Accelerator smoke workflow
         run: uv run --no-sync python tools/smoke_accelerator.py
 
-      # A pull request gets the quick public-surface tests; the numerical suite runs on
-      # demand and before a release.
-      - name: Surface tests
-        if: github.event_name == 'pull_request'
-        run: uv run --no-sync pytest -q tests -m "surface and not numerical and not gpu" -n auto --maxschedchunk 1
-
-      - name: Tests
-        if: github.event_name != 'pull_request'
-        run: uv run --no-sync pytest -q tests -m "not gpu" --cov -n auto --maxschedchunk 1
-
       - name: Analytic accuracy benchmarks
         env:
           JAX_PLATFORMS: cpu
@@ -97,6 +90,50 @@ jobs:
           uv run --no-sync python bench/compare_projectors.py --libraries tomojax --sizes 32 --views 30 --repeats 1
           uv run --no-sync python bench/reconstruction_benchmark.py --sizes 32 --views 60 --repeats 1
           uv run --no-sync python bench/workflow_benchmark.py --sizes 16 --geometries parallel --methods fista spdhg --repeats 1
+
+  # A hosted runner has four slow cores, so the CPU tests are split among eight of them.
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --locked --extra cpu --dev
+
+      # Compiling every program from nothing takes three times as long as the tests do
+      # with JAX's persistent cache. Each run saves the cache it ends with. An entry is
+      # reused only on the CPU model that compiled it, which the log names.
+      - name: JAX compilation cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/tomojax/jax_cache
+          key: jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
+          restore-keys: |
+            jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-
+
+      - name: Tests
+        env:
+          TOMOJAX_TEST_SHARD: ${{ matrix.shard }}/8
+        run: |
+          lscpu | grep "Model name"
+          uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1 --durations=15
 
   installed-package:
     if: github.event_name != 'pull_request'

@@ -95,6 +95,7 @@ def test_a_view_next_to_a_break_is_not_judged_against_another_acquisition():
     assert isolated_views(values, ViewOrder(20, restart)) == [6]
 
 
+@pytest.mark.slow
 def test_a_regular_selection_aligns_exactly_as_consecutive_views():
     from bench.fit_alignment import make_case
 

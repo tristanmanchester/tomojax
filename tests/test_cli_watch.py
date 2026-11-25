@@ -89,6 +89,7 @@ def test_the_watched_volume_is_bit_identical(tmp_path, scan):
     np.testing.assert_array_equal(volumes[0], volumes[1])
 
 
+@pytest.mark.slow
 def test_an_alignment_writes_its_working_image_and_poses(tmp_path, scan):
     watch = tmp_path / "watch"
     argv = ["align", str(scan), "-o", str(tmp_path / "a.nxs"), "--watch-dir", str(watch)]

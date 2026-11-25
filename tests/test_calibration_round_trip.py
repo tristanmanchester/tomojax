@@ -32,6 +32,7 @@ def _same_projections(a, b):
 
 
 @pytest.mark.parametrize("geometry", ["parallel", "lamino", "cone"])
+@pytest.mark.slow
 def test_a_reported_center_rebuilds_the_fitted_geometry(geometry):
     scan, fitted, center = _fitted("center", geometry, "center")
     center = tuple(center) if geometry == "cone" else (center, scan.detector.center[1])
@@ -47,6 +48,7 @@ def test_a_reported_center_rebuilds_the_fitted_geometry(geometry):
 
 
 @pytest.mark.parametrize("geometry", ["parallel", "lamino", "cone"])
+@pytest.mark.slow
 def test_a_reported_roll_rebuilds_the_fitted_geometry(geometry):
     scan, fitted, roll = _fitted("roll", geometry, "roll")
     if geometry == "cone":
@@ -62,6 +64,7 @@ def test_a_reported_roll_rebuilds_the_fitted_geometry(geometry):
 
 
 @pytest.mark.parametrize("geometry", ["parallel", "lamino", "cone"])
+@pytest.mark.slow
 def test_a_reported_tilt_rebuilds_the_fitted_geometry(geometry):
     scan, fitted, tilt = _fitted("tilt", geometry, "tilt")
     # The reported tilt is the axis's signed inclination atan2(axis_y, axis_z).

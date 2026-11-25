@@ -226,6 +226,7 @@ def test_the_exact_tiers_objective_has_its_minimum_at_the_gauge_free_truth(label
 
 
 @pytest.mark.numerical
+@pytest.mark.slow
 def test_the_default_call_on_exact_data_ends_within_the_stop_rules_tolerance():
     # The stop rule ends a level once two successive pose proposals are under its tolerance;
     # on exact data the default call's remaining error must be under that same tolerance.
