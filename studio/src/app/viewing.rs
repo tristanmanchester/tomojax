@@ -1156,6 +1156,21 @@ impl AppState {
             .collect();
     }
 
+    /// Open Activity as the user's choice, over the jobs it shows now.
+    pub(crate) fn show_activity(&mut self) {
+        let jobs = self
+            .project
+            .iter()
+            .flat_map(|project| &project.document.jobs)
+            .filter(|job| job.status.active())
+            .map(|job| job.id.clone())
+            .collect();
+        self.ui.activity = Activity::Open {
+            jobs,
+            closes_itself: false,
+        };
+    }
+
     /// Show Activity for newly queued jobs; when it opens for them, it closes once they
     /// succeed.
     pub(super) fn open_activity(&mut self, queued: Vec<String>) {

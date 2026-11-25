@@ -191,14 +191,11 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                     &title,
                     state.ui.activity.is_open(),
                     |s, _| {
-                        s.ui.activity = if s.ui.activity.is_open() {
-                            Activity::Closed
+                        if s.ui.activity.is_open() {
+                            s.ui.activity = Activity::Closed;
                         } else {
-                            Activity::Open {
-                                jobs: Vec::new(),
-                                closes_itself: false,
-                            }
-                        };
+                            s.show_activity();
+                        }
                     },
                 )
                 .label("Activity"),

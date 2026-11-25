@@ -380,6 +380,16 @@ pub fn method_setting(ui: &UiState, name: &str) -> bool {
     )
 }
 
+/// Alignment by opposite views fits the centre alone, from paired views: it takes no fit
+/// choice, no image and no joint options.
+fn opposite_views(ui: &UiState) -> bool {
+    ui.operation == "align"
+        && ui
+            .parameter_choices
+            .get("method")
+            .is_some_and(|method| method == "opposite-views")
+}
+
 pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
     if ui.operation == "simulate" {
         let geometry = ui
@@ -393,9 +403,7 @@ pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
         };
     }
     if ui.operation == "align" {
-        // Opposite views fit the centre from paired views alone: no image, no joint options.
-        let method = ui.parameter_choices.get("method").map(String::as_str);
-        return method != Some("opposite-views") || matches!(name, "fit" | "method");
+        return !opposite_views(ui) || name == "method";
     }
     if !method_setting(ui, name) {
         return true;
@@ -521,6 +529,9 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
         }
         result.insert(p.name, value);
     }
+    if opposite_views(ui) {
+        result.insert("fit".into(), "center".into());
+    }
     Ok(Value::Object(result))
 }
 
@@ -620,10 +631,14 @@ mod tests {
         for name in ["iterations", "motion", "config", "grid", "region"] {
             assert!(!applies(&ui, &catalog, name), "{name} is a joint option");
         }
-        assert!(applies(&ui, &catalog, "fit"));
+        assert!(!applies(&ui, &catalog, "fit"), "it fits the centre alone");
         let sent = parameters(&ui, &catalog).unwrap();
         assert!(sent.get("iterations").is_none(), "{sent}");
         assert_eq!(sent["method"], "opposite-views");
+        assert_eq!(sent["fit"], "center");
+        // Joint alignment gets its own fit choice back.
+        ui.parameter_choices.insert("method".into(), "joint".into());
+        assert_ne!(parameters(&ui, &catalog).unwrap()["fit"], "center");
     }
 
     #[test]
