@@ -50,7 +50,7 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
         }
         if state.ui.jobs_open {
             state.ui.jobs_open = false;
-            state.ui.jobs_auto_open = false;
+            state.ui.activity_for.clear();
             return true;
         }
         return false;

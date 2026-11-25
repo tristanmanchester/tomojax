@@ -91,6 +91,7 @@ impl AppState {
                 "Raw frames can't be saved after cropping or selecting views. Run Corrections first, then crop or select views of the corrected scan.".into(),
             );
         }
+        let first = project.document.jobs.len();
         if operation == "simulate" {
             project
                 .document
@@ -109,8 +110,12 @@ impl AppState {
                     .push(Job::new(operation, parameters.clone(), vec![input]));
             }
         }
+        let queued = project.document.jobs[first..]
+            .iter()
+            .map(|job| job.id.clone())
+            .collect();
         self.mark_dirty();
-        self.open_activity();
+        self.open_activity(queued);
         self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())

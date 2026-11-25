@@ -187,7 +187,12 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         gaps = np.diff(np.r_[angles, angles[0] + 180])
         if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
             return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
-        reason = "FBP supports sparse or incomplete half-turn coverage."
+        return (
+            "fbp",
+            "FBP, because the views leave gaps in the half turn that Fourier inversion needs.",
+            "Expect streaks along the unmeasured directions; method='fista' fills them from "
+            "nonnegativity and regularization.",
+        )
     elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
         return (
             "fbp",

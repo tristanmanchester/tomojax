@@ -20,13 +20,18 @@ def build_parser() -> argparse.ArgumentParser:
     _ = parser.add_argument(
         "--build", action="store_true", help="Build the native application first"
     )
-    _ = parser.add_argument("--demo", action="store_true", help="Start a sample project workflow")
+    _ = parser.add_argument(
+        "--demo", action="store_true", help="Create a demo project and simulate a scan in it"
+    )
     return parser
 
 
 def main() -> int:
     """Launch Studio and return zero on a clean native exit."""
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.demo and args.input is not None:
+        parser.error("--demo creates its own project; omit PROJECT_OR_INPUT")
     source = None if args.input is None else Path(args.input).expanduser().resolve(strict=True)
     native = Path(__file__).resolve().parents[3] / "studio"
     manifest = native / "Cargo.toml"

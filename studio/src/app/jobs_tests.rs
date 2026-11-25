@@ -60,7 +60,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     let path = directory.path().join("preview.npy");
     let mut writer = npyz::WriteOptions::new()
@@ -241,7 +241,7 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     // The input stays selected, as it is when the job is submitted.
     state.model.active_asset = Some(input.asset.clone());
@@ -323,7 +323,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.project.as_mut().unwrap().document.name = "Alignment checkpoint verification".into();
     state.started = true;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());

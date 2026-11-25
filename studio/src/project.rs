@@ -513,7 +513,8 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 impl Project {
     pub fn open(path: &Path, create: bool) -> Result<Self, String> {
-        let path = if path.file_name().is_some_and(|name| name == MANIFEST) {
+        // Opening accepts the manifest itself; a new project's path is always its folder.
+        let path = if !create && path.file_name().is_some_and(|name| name == MANIFEST) {
             path.parent().unwrap_or(path)
         } else {
             path

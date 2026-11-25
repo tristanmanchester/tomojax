@@ -929,7 +929,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     let mut state = AppState::init();
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.startup_input = None;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |s| s.model.backend.ready);
@@ -1179,7 +1179,7 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.project.as_mut().unwrap().document.name = "Interactive preview verification".into();
     state.startup_input = None;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |state| state.model.backend.ready);
@@ -1625,22 +1625,52 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
 }
 
 #[test]
-fn activity_closes_once_the_work_it_opened_for_ends_but_not_when_the_user_opened_it() {
+fn activity_closes_after_the_work_it_opened_for_succeeds_and_stays_on_a_failure() {
+    let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
-    state.ui.jobs_open = false;
-    state.open_activity();
-    assert!(state.ui.jobs_open && state.ui.jobs_auto_open);
-    state.refresh_model();
+    state
+        .open_project(&directory.path().join("project"), true)
+        .unwrap();
+    let finish = |state: &mut AppState, status: JobStatus| {
+        let job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+        let id = job.id.clone();
+        state.project.as_mut().unwrap().document.jobs.push(job);
+        state.ui.jobs_open = false;
+        state.open_activity(vec![id.clone()]);
+        state.refresh_model();
+        assert!(
+            state.ui.jobs_open,
+            "Activity stays open while its job is queued"
+        );
+        let project = state.project.as_mut().unwrap();
+        project
+            .document
+            .jobs
+            .iter_mut()
+            .find(|job| job.id == id)
+            .unwrap()
+            .status = status;
+        state.refresh_model();
+        state.ui.jobs_open
+    };
     assert!(
-        !state.ui.jobs_open,
-        "no active jobs: Activity closes itself"
+        !finish(&mut state, JobStatus::Completed),
+        "closes once its job succeeds"
+    );
+    assert!(
+        finish(&mut state, JobStatus::Failed),
+        "a failure stays visible"
+    );
+    assert!(
+        state.ui.activity_for.is_empty(),
+        "the user now controls Activity"
     );
 
+    // Activity the user opened is theirs: new work never closes it.
     state.ui.jobs_open = true;
-    state.ui.jobs_auto_open = false;
-    state.open_activity();
+    state.open_activity(vec!["later".into()]);
     state.refresh_model();
-    assert!(state.ui.jobs_open, "Activity the user opened stays open");
+    assert!(state.ui.jobs_open && state.ui.activity_for.is_empty());
 }
 
 #[test]
@@ -1660,4 +1690,13 @@ fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
     );
     drop(state);
     std::fs::remove_dir_all(&folder).unwrap();
+}
+
+#[test]
+fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
+    use super::viewing::window_text;
+    assert_eq!(window_text(-0.020069934, 0.9726638), ["-0.0201", "0.9727"]);
+    // Four decimals would read 1 and 1: an empty window the fields could not apply.
+    assert_eq!(window_text(1.0, 1.00002), ["1", "1.00002"]);
+    assert_eq!(window_text(2e-5, 9e-5), ["2.000e-5", "9.000e-5"]);
 }

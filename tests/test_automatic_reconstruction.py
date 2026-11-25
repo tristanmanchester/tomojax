@@ -35,7 +35,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     actual = tj.reconstruct(scan)
     np.testing.assert_array_equal(actual.volume, expected.volume)
     assert actual.scan is scan and actual.method == expected.method
-    limited = bool(raw)
+    limited = bool(raw) or not complete
     assert actual.info["automatic"]["status"] == ("limited" if limited else "ok")
     assert bool(actual.info["automatic"]["reasons"]) == limited
     if raw:
@@ -250,3 +250,12 @@ def test_automatic_reconstruction_of_a_posed_parallel_scan_is_ordinary(tmp_path,
     actual = tj.load_reconstruction(out)
     assert actual.info["automatic"]["status"] == "ok"
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-6, atol=1e-6)
+
+
+def test_automatic_reconstruction_flags_views_that_leave_the_half_turn_incomplete():
+    # A third of a half turn is missing: FBP is chosen and the scan is reported as limited.
+    sim = tj.simulate("sphere", size=8, n_views=16, rotation=120.0)
+    actual = tj.reconstruct(sim.scan)
+    assert actual.method == "fbp"
+    assert actual.info["automatic"]["status"] == "limited"
+    assert any("method='fista'" in reason for reason in actual.info["automatic"]["reasons"])

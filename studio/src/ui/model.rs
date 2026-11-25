@@ -115,8 +115,9 @@ pub struct UiState {
     pub tree_open: bool,
     pub inspector_open: bool,
     pub jobs_open: bool,
-    /// Activity opened itself for new work, so it closes once that work is done.
-    pub jobs_auto_open: bool,
+    /// The jobs Activity opened itself for: it closes when they end unless one failed.
+    /// Empty while the user controls Activity.
+    pub activity_for: Vec<String>,
     pub palette_open: bool,
     pub shortcuts_open: bool,
     pub advanced_open: bool,
@@ -170,7 +171,7 @@ impl Default for UiState {
             tree_open: true,
             inspector_open: true,
             jobs_open: false,
-            jobs_auto_open: false,
+            activity_for: Vec::new(),
             palette_open: false,
             shortcuts_open: false,
             advanced_open: false,
@@ -501,6 +502,9 @@ pub struct ParameterView {
     pub choices: Vec<Choice>,
     /// Shown in an empty field: what the worker uses when the field is left blank.
     pub placeholder: String,
+    /// The configuration value a blank field takes, when the schema states it (`x-default`).
+    /// The form's own `config` overrides it; see [`crate::forms::default_label`].
+    pub inherited: Option<serde_json::Value>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ParameterKind {

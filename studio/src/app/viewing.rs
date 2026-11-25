@@ -627,7 +627,7 @@ impl AppState {
             return;
         }
         if let Some([low, high]) = self.current_window() {
-            let values = [low, high].map(|v| crate::ui::compact_number(f64::from(v)));
+            let values = window_text(low, high);
             self.ui.display.window_low.replace_text(values[0].clone());
             self.ui.display.window_high.replace_text(values[1].clone());
             self.window_prefill = Some(values);
@@ -1155,11 +1155,11 @@ impl AppState {
             .collect();
     }
 
-    /// Show Activity for newly queued work unless the user already has it open.
-    pub(super) fn open_activity(&mut self) {
-        if !self.ui.jobs_open {
+    /// Show Activity for newly queued jobs unless the user already has it open.
+    pub(super) fn open_activity(&mut self, jobs: Vec<String>) {
+        if !self.ui.jobs_open || !self.ui.activity_for.is_empty() {
             self.ui.jobs_open = true;
-            self.ui.jobs_auto_open = true;
+            self.ui.activity_for.extend(jobs);
         }
     }
 
@@ -1394,9 +1394,22 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        if self.ui.jobs_auto_open && self.model.active_jobs() == 0 {
-            self.ui.jobs_open = false;
-            self.ui.jobs_auto_open = false;
+        if !self.ui.activity_for.is_empty()
+            && let Some(project) = &self.project
+        {
+            let opened_for = || {
+                project
+                    .document
+                    .jobs
+                    .iter()
+                    .filter(|job| self.ui.activity_for.contains(&job.id))
+            };
+            if opened_for().all(|job| !job.status.active()) {
+                // A failure stays on screen until the user has read it and closes Activity.
+                let failed = opened_for().any(|job| job.status == project::JobStatus::Failed);
+                self.ui.activity_for.clear();
+                self.ui.jobs_open = failed;
+            }
         }
         self.model.commands = crate::preferences::COMMANDS
             .iter()
@@ -1517,5 +1530,17 @@ fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
             std: statistics.std,
             sampled_pixels: statistics.finite_count,
         }),
+    }
+}
+
+/// A display window as field text: rounded for reading while the rounded bounds stay in
+/// order, else the shortest text that reads back as each exact bound.
+pub(crate) fn window_text(low: f32, high: f32) -> [String; 2] {
+    let rounded = [low, high].map(|v| crate::ui::compact_number(f64::from(v)));
+    let read = |text: &str| text.parse::<f32>().unwrap_or(f32::NAN);
+    if low >= high || read(&rounded[0]) < read(&rounded[1]) {
+        rounded
+    } else {
+        [low.to_string(), high.to_string()]
     }
 }

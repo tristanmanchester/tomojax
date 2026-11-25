@@ -101,7 +101,7 @@ impl AppState {
             UiAction::OpenRecent(path) => self.open_project(Path::new(&path), false)?,
             UiAction::OpenDemo => {
                 self.open_demo_project()?;
-                self.auto_demo = true;
+                self.demo = super::Demo::Simulate;
             }
             UiAction::ImportFiles => {
                 if self.project.is_none() {
@@ -778,9 +778,10 @@ impl AppState {
         job.name = format!("Export {format}");
         job.destination = Some(path);
         if let Some(project) = &mut self.project {
+            let id = job.id.clone();
             project.document.jobs.push(job);
             self.mark_dirty();
-            self.open_activity();
+            self.open_activity(vec![id]);
             self.refresh_model();
         }
     }

@@ -251,7 +251,7 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
     state.project.as_mut().unwrap().document.name = "Cone geometry validation".into();
     state.ui.workspace = Workspace::Explore;
     state.startup_input = None;
-    state.auto_demo = false;
+    state.demo = crate::app::Demo::Off;
     state.started = true;
     state.engine = Some(Engine::spawn(python, Arc::new(|| {})).unwrap());
     drive(&mut state, |state| {

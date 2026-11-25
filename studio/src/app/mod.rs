@@ -92,6 +92,17 @@ enum LocalEvent {
 /// Plane ids of the two compared images, the split fraction and both windows, as bits.
 type SplitKey = ([u64; 2], u32, Vec<u32>);
 
+/// The demo's progress: a demo project is created, then a scan simulated in it, never in
+/// a project the user opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Demo {
+    Off,
+    /// `tomojax studio --demo`: create a demo project once the worker is ready.
+    Create,
+    /// A demo project was just created; queue its simulation.
+    Simulate,
+}
+
 pub struct AppState {
     pub ui: UiState,
     pub model: UiModel,
@@ -116,7 +127,7 @@ pub struct AppState {
     pub(crate) copying: usize,
     metadata_pending: usize,
     started: bool,
-    auto_demo: bool,
+    demo: Demo,
     startup_input: Option<PathBuf>,
     last_context: Value,
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
@@ -171,7 +182,11 @@ impl AppState {
             copying: 0,
             metadata_pending: 0,
             started: false,
-            auto_demo: std::env::var_os("TOMOJAX_STUDIO_DEMO").is_some(),
+            demo: if std::env::var_os("TOMOJAX_STUDIO_DEMO").is_some() {
+                Demo::Create
+            } else {
+                Demo::Off
+            },
             startup_input: std::env::var_os("TOMOJAX_STUDIO_INPUT").map(PathBuf::from),
             last_context: Value::Null,
             difference: None,
@@ -352,15 +367,18 @@ impl AppState {
                     self.startup_input = Some(path);
                 }
             }
-            if self.auto_demo && self.project.is_none() && self.startup_input.is_none() {
-                if let Err(error) = self.open_demo_project() {
-                    self.auto_demo = false;
-                    self.model.error = Some(error);
-                }
+            if self.demo == Demo::Create {
+                self.demo = match self.open_demo_project() {
+                    Ok(()) => Demo::Simulate,
+                    Err(error) => {
+                        self.model.error = Some(error);
+                        Demo::Off
+                    }
+                };
                 self.refresh_model();
             }
-            if self.auto_demo && self.project.is_some() {
-                self.auto_demo = false;
+            if self.demo == Demo::Simulate && self.project.is_some() {
+                self.demo = Demo::Off;
                 self.set_operation("simulate", None);
                 let _ = self
                     .queue_operation("simulate")
@@ -622,7 +640,7 @@ impl AppState {
             return Err("Finish or cancel active work before switching projects".into());
         }
         if let Some(current) = &self.project {
-            let candidate = if path.file_name().is_some_and(|n| n == project::MANIFEST) {
+            let candidate = if !create && path.file_name().is_some_and(|n| n == project::MANIFEST) {
                 path.parent().unwrap_or(path)
             } else {
                 path

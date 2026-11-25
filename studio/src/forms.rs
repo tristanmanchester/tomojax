@@ -243,8 +243,8 @@ pub fn initialise(
         );
         let structured =
             !matches!(data_type, "integer" | "number" | "string" | "boolean") && choices.is_empty();
-        // The value TomoJAX uses when a null setting is left blank, when the schema states it.
-        let effective_default = p.schema.get("x-default").cloned();
+        // The configuration value a null setting takes, when the schema states it.
+        let effective_default = p.schema.get("x-default").filter(|v| !v.is_null()).cloned();
         views.push(ParameterView {
             name: p.name.clone(),
             label: label(&p.name),
@@ -263,12 +263,9 @@ pub fn initialise(
             placeholder: if p.required || !matches!(p.default, None | Some(Value::Null)) {
                 String::new()
             } else {
-                match &effective_default {
-                    Some(Value::String(s)) => s.clone(),
-                    Some(value @ (Value::Number(_) | Value::Bool(_))) => value.to_string(),
-                    _ => "Default".into(),
-                }
+                "Default".into()
             },
+            inherited: effective_default,
             choices: choices
                 .iter()
                 .map(|v| Choice {
@@ -288,12 +285,7 @@ pub fn initialise(
                         }
                         .into(),
                         Value::String(s) => sentence(&s.replace('_', " ")),
-                        Value::Null => match &effective_default {
-                            Some(Value::String(s)) => {
-                                format!("Default ({})", sentence(&s.replace('_', " ")))
-                            }
-                            _ => "Default".into(),
-                        },
+                        Value::Null => "Default".into(),
                         Value::Bool(true) => "Enabled".into(),
                         Value::Bool(false) => "Disabled".into(),
                         v => v.to_string(),
@@ -527,6 +519,35 @@ pub fn parameters_detailed(ui: &UiState, catalog: &SchemaCatalog) -> Result<Valu
     Ok(Value::Object(result))
 }
 
+/// What a blank field shows: the value TomoJAX will use. A field that takes its value from
+/// the configuration shows the form's own `config` entry when it sets one, else the schema's
+/// stated default; an unreadable `config` leaves it unknown ("Default").
+pub fn default_label(ui: &UiState, view: &ParameterView) -> String {
+    let Some(inherited) = &view.inherited else {
+        return view.placeholder.clone();
+    };
+    let config = ui
+        .parameter_edits
+        .get("config")
+        .map_or("", |edit| edit.text.trim());
+    let value = if config.is_empty() {
+        inherited.clone()
+    } else {
+        match serde_json::from_str::<Value>(config) {
+            Ok(Value::Object(fields)) => fields.get(&view.name).unwrap_or(inherited).clone(),
+            _ => return "Default".into(),
+        }
+    };
+    match value {
+        Value::String(text) if view.kind == ParameterKind::Choice => {
+            format!("Default ({})", sentence(&text.replace('_', " ")))
+        }
+        Value::String(text) => text,
+        Value::Null => "Default".into(),
+        other => other.to_string(),
+    }
+}
+
 /// "reconstruction" → "Reconstruction": schema values shown as labels.
 fn sentence(text: &str) -> String {
     let mut chars = text.chars();
@@ -576,27 +597,28 @@ mod tests {
     }
 
     #[test]
-    fn a_blank_setting_shows_the_value_tomojax_will_use_when_the_schema_states_it() {
+    fn a_blank_setting_shows_the_value_tomojax_will_use() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(
-                // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
-            )
-            .unwrap(),
+            // The description the worker sends: the wire schema with help, units and defaults.
+            serde_json::from_str(include_str!("../../src/tomojax/cli/parameters.json")).unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
         let views = initialise(&mut ui, &catalog, "align", None);
         let view = |name: &str| views.iter().find(|view| view.name == name).unwrap();
-        assert_eq!(view("iterations").placeholder, "8");
-        assert_eq!(view("interpolation").placeholder, "Default");
-        let motion = view("motion");
-        assert!(
-            motion
-                .choices
-                .iter()
-                .any(|c| c.label == "Default (Independent)")
+        let shown = |ui: &UiState| {
+            ["iterations", "motion", "interpolation"].map(|name| default_label(ui, view(name)))
+        };
+        assert_eq!(shown(&ui), ["8", "Default (Independent)", "Default"]);
+        // The form's own configuration wins over the schema's stated default.
+        ui.parameter_edits.insert(
+            "config".into(),
+            TextEdit::new(r#"{"iterations": 21, "motion": "smooth"}"#),
         );
+        assert_eq!(shown(&ui), ["21", "Default (Smooth)", "Default"]);
+        ui.parameter_edits
+            .insert("config".into(), TextEdit::new(r#"{"iterations":"#));
+        assert_eq!(shown(&ui), ["Default", "Default", "Default"]);
     }
 
     #[test]
