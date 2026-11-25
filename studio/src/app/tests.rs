@@ -1885,6 +1885,14 @@ fn applying_the_window_the_fields_show_keeps_it_exact() {
     state.prefill_window(); // a viewer refresh while the edit is pending
     assert_eq!(state.ui.display.window_high.text, "1.00008");
     assert_eq!(state.valid_window(), Ok(Some([1.000051, 1.00008])));
+
+    // Reopening the project restores the pending edit with the exact untouched limit.
+    let saved = state.capture_workspace();
+    let mut reopened = AppState::init();
+    reopened.applied_window = Some([1.000051, 1.5]);
+    reopened.restore_workspace(&saved);
+    assert_eq!(reopened.ui.display.window_high.text, "1.00008");
+    assert_eq!(reopened.valid_window(), Ok(Some([1.000051, 1.00008])));
 }
 
 #[test]

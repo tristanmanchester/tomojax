@@ -926,7 +926,13 @@ impl AppState {
 
     pub(super) fn capture_workspace(&self) -> project::Workspace {
         let mut draft_choices = self.ui.parameter_choices.clone();
-        draft_choices.insert("studio:prefill".into(), self.window_untouched().to_string());
+        // Each window field's prefill, so an untouched field keeps its exact limit on reopening.
+        for (side, prefill) in ["low", "high"].into_iter().zip(&self.window_prefill) {
+            draft_choices.insert(format!("studio:prefill_{side}"), prefill.text.clone());
+            if let Some(exact) = prefill.exact {
+                draft_choices.insert(format!("studio:exact_{side}"), exact.to_string());
+            }
+        }
         draft_choices.insert("studio:preview_array".into(), self.ui.preview_array.clone());
         draft_choices.insert(
             "studio:compare_linked".into(),
@@ -1119,18 +1125,16 @@ impl AppState {
         if let Some(value) = context.draft_edits.get("studio:window_high") {
             self.ui.display.window_high.replace_text(value.clone());
         }
-        if context
-            .draft_choices
-            .get("studio:prefill")
-            .map_or_else(|| self.valid_window().is_ok(), |v| v == "true")
-        {
-            self.window_prefill =
-                [&self.ui.display.window_low, &self.ui.display.window_high].map(|field| {
-                    Prefilled {
-                        text: field.text.clone(),
-                        exact: field.text.trim().parse().ok(),
-                    }
-                });
+        for (i, side) in ["low", "high"].into_iter().enumerate() {
+            if let Some(text) = context.draft_choices.get(&format!("studio:prefill_{side}")) {
+                self.window_prefill[i] = Prefilled {
+                    text: text.clone(),
+                    exact: context
+                        .draft_choices
+                        .get(&format!("studio:exact_{side}"))
+                        .and_then(|value| value.parse().ok()),
+                };
+            }
         }
         if let Some(value) = context.draft_choices.get("studio:preview_array")
             && matches!(value.as_str(), "before" | "after")
