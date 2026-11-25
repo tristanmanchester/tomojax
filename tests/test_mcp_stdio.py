@@ -412,6 +412,7 @@ def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
 
 
 @pytest.mark.parametrize("size", [32, pytest.param(128, marks=pytest.mark.gpu)])
+@pytest.mark.slow
 def test_reconstruction_chain_matches_direct_api(tmp_path, size):
     import numpy as np
 

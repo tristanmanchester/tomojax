@@ -88,6 +88,7 @@ def test_missing_axis_is_not_silently_inferred():
             operation(scan)
 
 
+@pytest.mark.slow
 def test_saved_alignment_reuse(tmp_path):
     # Align, save, load, and reconstruct the loaded scan through the real automatic route
     # (FBP): its saved poses are used, and on data that never moved the image is the one the

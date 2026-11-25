@@ -130,6 +130,7 @@ def _tree(events):
     return rows
 
 
+@pytest.mark.slow
 def test_the_cli_alignment_has_the_task_tree_of_tj_align(tmp_path, scan_path, capsys):
     events = []
     with progress.watch(events.append):

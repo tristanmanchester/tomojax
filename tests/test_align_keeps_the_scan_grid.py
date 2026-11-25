@@ -35,6 +35,7 @@ def _shape(grid: tj.Grid) -> tuple[int, int, int]:
 
 
 @pytest.mark.parametrize("kind", GEOMETRIES)
+@pytest.mark.slow
 def test_reconstructing_an_aligned_scan_keeps_the_scan_grid(kind):
     scan = _scan(kind)
     result = tj.align(scan)
@@ -52,6 +53,7 @@ def test_the_align_docstring_example_reconstructs_at_the_scan_grid():
     assert np.shape(recon.volume) == _shape(scan.grid)
 
 
+@pytest.mark.slow
 def test_a_saved_alignment_reloads_on_the_scan_grid(tmp_path: Path):
     scan = _scan("parallel")
     result = tj.align(scan)

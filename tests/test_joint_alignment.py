@@ -37,6 +37,7 @@ def _laminography(*, nx=5, ny=4, nz=3, nu=7, nv=6, views=4, tilt=-30.0):
 @pytest.mark.parametrize("backend", ["jax", pytest.param("cuda", marks=pytest.mark.gpu)])
 @pytest.mark.parametrize("interpolation", ["linear", "cubic"])
 @pytest.mark.parametrize("tilt", [-30.0, 0.0])
+@pytest.mark.slow
 def test_weighted_diagonal_is_the_explicit_matrix_diagonal(backend, interpolation, tilt):
     # Axial parallel beam (tilt 0) has whole planes the cubic footprint reaches and a
     # linear one does not; a linear diagonal for cubic rays is zero there.

@@ -33,7 +33,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 
-`just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 20 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
+`just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 10 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
 
 `tools/smoke_installed_wheel.py` creates a disposable environment outside the repository, installs the built wheel without a package cache (requiring a real GPU under `--extra cuda12`), and runs simulation, automatic reconstruction, and slice export.
 

@@ -626,6 +626,7 @@ def test_align_json_distinguishes_usage_and_io_errors(tmp_path, capsys):
         ),
     ],
 )
+@pytest.mark.slow
 def test_alignment_keeps_image_poses_and_stops(alignment_scan, tolerance, counts, stops):
     """These budgets and stops repeated on archived main, including eight GPU runs."""
     from tomojax.alignment import AlignConfig

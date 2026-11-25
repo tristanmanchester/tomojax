@@ -14,6 +14,7 @@ from . import _joint_stacks as js
 
 
 @pytest.mark.parametrize("cone", [False, True])
+@pytest.mark.slow
 def test_implicit_precision_matches_explicit_ones_in_joint_and_edge_objectives(cone):
     grid = Grid(5, 4, 3, 0.7, 0.9, 1.1)
     detector = Detector(7, 6, 0.8, 0.9, center=(0.12, -0.17))
