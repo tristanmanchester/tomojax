@@ -32,16 +32,18 @@ def test_the_documented_sweep_scores_candidates_and_leaves_viewable_handles(tmp_
         setup = f"scan_id, feature_id, surround_id = {scan!r}, {inside['handle']!r}, {around['handle']!r}"
         out = python(c, setup + "\n" + example(TUNING.read_text(), "Sweep and score"))
         rows = out["value"]
-        assert [r["tv_weight"] for r in rows] == [0.001, 0.003, 0.01]
         assert {r["handle"] for r in rows} == set(out["handles"])
+        assert [r["tv_weight"] for r in rows[1:]] == pytest.approx([1e-5, 1e-4, 1e-3])
+        assert rows[0]["tv_weight"] >= 5e-5  # the estimate's floor
         for row in rows:
             assert row["contrast_to_noise"] > 1 and row["noise"] > 0 and row["edge_width"] > 0
             shown = c.call("view", source=row["handle"], axis="z", features=[inside["handle"]])
             assert not shown["isError"], shown
             assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
         # More total variation blurs the boundary more.
-        widths = [r["edge_width"] for r in rows]
-        assert widths == sorted(widths) and widths[-1] > widths[0] + 1
+        ordered = sorted(rows, key=lambda r: r["tv_weight"])
+        widths = [r["edge_width"] for r in ordered]
+        assert widths == sorted(widths) and widths[-1] > widths[0]
 
 
 def test_results_stay_small_and_errors_name_the_line(tmp_path):

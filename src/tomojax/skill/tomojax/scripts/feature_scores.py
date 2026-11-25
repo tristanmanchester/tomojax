@@ -41,6 +41,8 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
     of signed distance (negative inside), giving the edge profile. A step edge
     measures under one voxel and an edge blurred by a Gaussian of sigma about 2.4
     sigma (the ideal 10-90% rise is 2.56 sigma; binning a curved boundary reads low).
+    The feature must be thicker than the blur: across a thin shell both of its edges
+    fall within ``reach`` and the width measures the shell's own profile.
     """
     inside = np.asarray(ndimage.distance_transform_edt(feature))
     outside = np.asarray(ndimage.distance_transform_edt(~feature))

@@ -246,11 +246,11 @@ def outline(mask: np.ndarray) -> np.ndarray:
     return mask & ~interior
 
 
-def nice_step(span: float, count: int = 6) -> float:
-    """A 1, 2 or 5 times power-of-ten step giving about ``count`` ticks over ``span``."""
+def nice_step(span: float, count: int = 8) -> float:
+    """The 1, 2 or 5 times power-of-ten step closest to ``count`` ticks over ``span``."""
     raw = max(span, 1.0) / count
     base = 10 ** floor(log10(raw))
-    return next(m * base for m in (1, 2, 5, 10) if m * base >= raw)
+    return min((m * base for m in (1, 2, 5, 10)), key=lambda step: abs(step - raw))
 
 
 def ticks(start: int, step: int, n: int) -> list[tuple[float, int]]:
@@ -357,7 +357,11 @@ def draw(
         scaled = Image.fromarray(np.uint8(mask) * 255).resize(
             (max(width, 1), max(height, 1)), Image.Resampling.NEAREST
         )
-        edge = Image.fromarray(np.uint8(outline(np.asarray(scaled) > 0)) * 255)
+        edge = outline(np.asarray(scaled) > 0)
+        # Two pixels wide, so the line survives a client scaling the image down.
+        edge[1:] |= edge[:-1]
+        edge[:, 1:] |= edge[:, :-1].copy()
+        edge = Image.fromarray(np.uint8(edge) * 255)
         x, y = round(cell.x), round(cell.y)
         image.paste(PALETTE[colour], (x, y, x + edge.width, y + edge.height), mask=edge)
     if overlay.ticks:

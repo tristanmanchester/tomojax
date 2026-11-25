@@ -108,6 +108,8 @@ def test_python_round_trip_and_grid_checks(session):
 again = register_feature(mask, like={other!r}, name="copy")
 report = view({volume!r}, axis="y", index=14, features=[{box["handle"]!r}],
               marks=[{{"type": "point", "at": [10, 14, 16]}}])
+# A feature registered in this call can be shown before the call publishes it.
+same_call = view({other!r}, axis="y", index=14, features=[again])
 [again, report]""",
     )
     again, report = out["value"]

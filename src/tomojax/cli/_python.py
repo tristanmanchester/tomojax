@@ -85,22 +85,28 @@ class Registrations:
         self.roots = []
         self.products = {}
         self.images = []
+        # What this call registered, usable by name before the call publishes it.
+        self.made: dict[str, object] = {}
 
     def register(self, item: Root | jax.Array | np.ndarray) -> str:
         if isinstance(item, np.ndarray | jax.Array):
             name = new_reference("array")
             a = np.asarray(item)
             self.products[name] = p.ArrayResult(indexed(stage_array(self.context, a), a))
+            self.made[name] = a
             return name
         kind = next((kind for cls, kind in _KINDS.items() if isinstance(item, cls)), None)
         if not kind:
             raise ValueError("register expects a TomoJAX object or array")
         name = new_reference(kind)
         self.roots.append((name, handle(item)))
+        self.made[name] = item
         return name
 
     def registered(self, item: object) -> tuple[Any, Array]:
         """An object's primary array and its registration: axes, coordinates and unit."""
+        if isinstance(item, str) and item in self.made:
+            item = self.made[item]
         if isinstance(item, str) and "." in item:
             item = self.inputs[item]
         if isinstance(item, str):
@@ -129,6 +135,7 @@ class Registrations:
         feature = ex.Feature(name, np.asarray(mask, dtype=bool), registration, {"type": "python"})
         named = new_reference("feature")
         self.roots.append((named, feature_handle(feature, values)))
+        self.made[named] = feature
         return named
 
     def show(
@@ -169,7 +176,9 @@ class Registrations:
         second = self.registered(other)[0] if other is not None else None
         masks = []
         for f in features:
-            feature = self.inputs[f] if isinstance(f, str) else f
+            feature = f
+            if isinstance(f, str):
+                feature = self.made[f] if f in self.made else self.inputs[f]
             if not isinstance(feature, ex.Feature) or feature.mask.shape != shape:
                 raise ValueError(f"{f!r} is not a feature on a {shape} grid")
             masks.append(feature.mask)
