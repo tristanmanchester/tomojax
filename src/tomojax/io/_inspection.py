@@ -454,9 +454,10 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
         else None
     )
     if grid is not None:
-        nx, ny, nz = (grid.get(key) for key in ("nx", "ny", "nz"))
-        if isinstance(nx, int) and isinstance(ny, int) and isinstance(nz, int):
-            return [nx, ny, nz]
+        try:  # read the counts as Grid.from_dict does when the file is loaded
+            return [int(grid["nx"]), int(grid["ny"]), int(grid["nz"])]
+        except (KeyError, TypeError, ValueError):
+            pass
 
     det_shape = projection.get("detector_shape")
     if isinstance(det_shape, dict):

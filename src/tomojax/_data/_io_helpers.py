@@ -65,16 +65,20 @@ def attr_to_str(v: object, default: str | None = None) -> str | None:
 
 def child_group(parent: h5py.Group, name: str) -> h5py.Group | None:
     """The group at ``name`` under ``parent``, or None when nothing is there."""
-    child = parent.get(name)
-    if child is None or isinstance(child, h5py.Group):
+    if name not in parent:
+        return None
+    child = parent[name]  # unlike get(), indexing a broken link raises
+    if isinstance(child, h5py.Group):
         return child
     raise ValueError(f"{parent.name}/{name} is a dataset where NXtomo expects a group")
 
 
 def child_dataset(parent: h5py.Group, name: str) -> h5py.Dataset | None:
     """The dataset at ``name`` under ``parent``, or None when nothing is there."""
-    child = parent.get(name)
-    if child is None or isinstance(child, h5py.Dataset):
+    if name not in parent:
+        return None
+    child = parent[name]  # unlike get(), indexing a broken link raises
+    if isinstance(child, h5py.Dataset):
         return child
     raise ValueError(f"{parent.name}/{name} is a group where NXtomo expects a dataset")
 

@@ -1094,6 +1094,22 @@ def test_device_allocation_failures_reported_as_internal_are_out_of_memory(messa
     assert classify(error).kind == classify(wrapped).kind == "out_of_memory"
 
 
+def test_recognising_a_cupy_allocation_failure_does_not_import_jax():
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys\n"
+        "from tomojax.errors import device_out_of_memory\n"
+        "assert not device_out_of_memory(MemoryError('host'))\n"
+        "print('jax' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"
+
+
 def test_logger_notes_between_and_inside_operations(caplog):
     import logging
 

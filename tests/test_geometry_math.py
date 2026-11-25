@@ -183,7 +183,8 @@ def test_grid_and_detector_round_trip_through_pickle() -> None:
 )
 def test_unpickling_rebuilds_through_the_constructor(kind, field, value, message) -> None:
     item = Grid(4, 4, 4, 1, 1, 1) if kind == "grid" else Detector(4, 4, 1, 1)
-    # Simulate a stored object written before the constructor checked this field.
+    # A stored object written before the constructor checked this field: its pickle
+    # holds the same field state that a plain dataclass pickle always held.
     object.__setattr__(item, field, value)
     with pytest.raises(InvalidParameter, match=message) as error:
         pickle.loads(pickle.dumps(item))
@@ -194,3 +195,24 @@ def test_unpickling_rebuilds_through_the_constructor(kind, field, value, message
 def test_grid_rejects_nonfinite_placement(field) -> None:
     with pytest.raises(InvalidParameter, match=f"{field} must be finite"):
         Grid(4, 4, 4, 1, 1, 1, **{field: (0.0, np.inf, 0.0)})
+
+
+def test_copies_keep_grid_and_detector_subclasses_and_their_fields() -> None:
+    import copy
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class ShiftedDetector(Detector):
+        shift: float = 0.0
+
+    detector = ShiftedDetector(4, 3, 1.0, 1.0, shift=2.5)
+    copied = copy.deepcopy(detector)
+    assert type(copied) is ShiftedDetector and copied.shift == 2.5
+
+
+def test_a_saved_tilt_may_be_a_numeric_string() -> None:
+    from tomojax.geometry.api import nominal_axis_unit_from_inputs
+
+    as_text = nominal_axis_unit_from_inputs({"geometry_type": "lamino", "tilt": "30.0"})
+    as_number = nominal_axis_unit_from_inputs({"geometry_type": "lamino", "tilt": 30.0})
+    np.testing.assert_array_equal(as_text, as_number)

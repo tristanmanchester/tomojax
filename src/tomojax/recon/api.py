@@ -461,7 +461,7 @@ def _parallel(geometry: Geometry) -> ParallelGeometry:
 
 
 def _coupled_detector_volume[T](
-    geometry: Geometry,
+    geometry: ParallelGeometry,
     grid: Grid,
     detector: Detector,
     read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
@@ -485,7 +485,7 @@ def _coupled_detector_volume[T](
 
 def reconstruct_arrays(
     method: str,
-    geometry: Geometry,
+    geometry: ScanGeometry,
     grid: Grid,
     detector: Detector,
     projections: jnp.ndarray | np.ndarray,
@@ -515,7 +515,7 @@ def reconstruct_arrays(
     ----------
     method : str
         Reconstruction method accepted by method_config.
-    geometry : Geometry
+    geometry : ScanGeometry
         Scan geometry, including angles and per-view poses.
     grid : Grid
         Reconstruction grid, with physical spacing in ``(x, y, z)`` order.
@@ -554,7 +554,7 @@ def reconstruct_arrays(
 
         backend = resolve_fourier_backend(cfg.backend)
         volume = recon.fourier(
-            _parallel(geometry),
+            geometry,
             grid,
             detector,
             np.asarray(projections),

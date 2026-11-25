@@ -90,6 +90,13 @@ def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...
         object.__setattr__(obj, name, pitch)
 
 
+def _restore(obj: Grid | Detector, state: dict[str, object]) -> None:
+    """Unpickle or copy through the constructor's checks, keeping the class and its fields."""
+    for name, value in state.items():
+        object.__setattr__(obj, name, value)
+    obj.__post_init__()
+
+
 @dataclass(frozen=True)
 class Grid:
     """Regular voxel grid metadata.
@@ -149,10 +156,8 @@ class Grid:
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
 
-    def __reduce__(self) -> tuple[Callable[..., Grid], tuple[int, int, int, float, float, float]]:
-        # Unpickling rebuilds through the constructor, so a stored grid is checked too.
-        placed = functools.partial(Grid, vol_origin=self.vol_origin, vol_center=self.vol_center)
-        return placed, (self.nx, self.ny, self.nz, self.vx, self.vy, self.vz)
+    def __setstate__(self, state: dict[str, object]) -> None:
+        _restore(self, state)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -330,9 +335,8 @@ class Detector:
         _plain_numbers(self, ("nu", "nv"), ("du", "dv"))
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
-    def __reduce__(self) -> tuple[type[Detector], tuple[object, ...]]:
-        # Unpickling rebuilds through the constructor, so a stored detector is checked too.
-        return Detector, (self.nu, self.nv, self.du, self.dv, self.center)
+    def __setstate__(self, state: dict[str, object]) -> None:
+        _restore(self, state)
 
     def to_dict(self) -> DetectorDict:
         """Return JSON-compatible detector metadata.

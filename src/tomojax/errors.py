@@ -51,14 +51,13 @@ def _causes(exc: BaseException) -> Iterator[BaseException]:
 
 
 def _device_allocation_failed(error: BaseException) -> bool:
-    import jax
-
-    # A CuPy exception implies its defining module is already loaded. Checking an
-    # unrelated exception must not initialise CUDA or require optional CuPy.
+    # An exception implies its defining module is already loaded. Checking one
+    # must not import JAX or CuPy, nor initialise CUDA.
     cupy_oom = getattr(sys.modules.get("cupy.cuda.memory"), "OutOfMemoryError", None)
     if cupy_oom is not None and isinstance(error, cupy_oom):
         return True
-    if not isinstance(error, jax.errors.JaxRuntimeError):
+    jax_errors = sys.modules.get("jax.errors")
+    if jax_errors is None or not isinstance(error, jax_errors.JaxRuntimeError):
         return False
     if getattr(error, "error_code", None) == 8:  # absl::RESOURCE_EXHAUSTED
         return True

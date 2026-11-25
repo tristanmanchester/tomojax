@@ -196,11 +196,10 @@ def _grid_from_meta(
             vz=float(detector.dv) * scale,
         )
 
-    grid = Grid.from_dict(grid_d)
     if grid_override is None:
-        return grid
+        return Grid.from_dict(grid_d)
     nx, ny, nz = map(int, grid_override)
-    return replace(grid, nx=nx, ny=ny, nz=nz)
+    return Grid.from_dict({**grid_d, "nx": nx, "ny": ny, "nz": nz})
 
 
 def _resolve_angles(
