@@ -1832,16 +1832,28 @@ fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
     let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
     let _ = std::fs::remove_dir_all(&folder);
     let mut state = AppState::init();
+    // A scan passed at launch waits for the user's own project.
+    let scratch = tempfile::tempdir().unwrap();
+    let scan = scratch.path().join("scan.nxs");
+    std::fs::write(&scan, b"").unwrap();
+    state.startup_input = Some(scan.clone());
     state.open_demo_project().unwrap();
     assert_eq!(
         state.project.as_ref().unwrap().root,
         std::fs::canonicalize(folder.join("Demo project")).unwrap()
     );
+    assert!(state.project.as_ref().unwrap().document.assets.is_empty());
+    assert_eq!(state.startup_input.as_ref(), Some(&scan));
     state.open_demo_project().unwrap();
     assert_eq!(
         state.project.as_ref().unwrap().root,
         std::fs::canonicalize(folder.join("Demo project 2")).unwrap()
     );
+    state
+        .open_project(&scratch.path().join("mine"), true)
+        .unwrap();
+    assert!(state.startup_input.is_none());
+    assert_eq!(state.project.as_ref().unwrap().document.assets.len(), 1);
     drop(state);
     std::fs::remove_dir_all(&folder).unwrap();
 }

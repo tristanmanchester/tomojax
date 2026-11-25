@@ -618,7 +618,11 @@ impl AppState {
             })
             .find(|path| !path.exists())
             .expect("an unused demo project name");
-        self.open_project(&path, true)
+        // A scan passed at launch belongs in the user's own project, not the demo.
+        let pending = self.startup_input.take();
+        let opened = self.open_project(&path, true);
+        self.startup_input = pending;
+        opened
     }
 
     fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {
