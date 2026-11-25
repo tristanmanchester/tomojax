@@ -2,6 +2,7 @@ from collections.abc import Iterator
 import os
 from pathlib import Path
 import sys
+import zlib
 
 import pytest
 
@@ -30,7 +31,15 @@ if str(SRC) not in sys.path:
 
 def pytest_collection_modifyitems(config: object, items: list[object]) -> None:
     """Start the slow tests first, and skip ``gpu``-marked tests without a CUDA device."""
-    del config
+    if shard := os.environ.get("TOMOJAX_TEST_SHARD"):
+        # "2/4": hosted CI splits the suite among jobs, each taking the tests whose name
+        # hashes to its number.
+        index, count = (int(part) for part in shard.split("/"))
+        mine = [zlib.crc32(item.nodeid.encode()) % count == index - 1 for item in items]  # pyright: ignore[reportAttributeAccessIssue]
+        config.hook.pytest_deselected(  # pyright: ignore[reportAttributeAccessIssue]
+            items=[item for item, keep in zip(items, mine, strict=True) if not keep]
+        )
+        items[:] = [item for item, keep in zip(items, mine, strict=True) if keep]
     # A parallel run ends when its last test does: the long ones must not start last.
     items.sort(key=lambda item: item.get_closest_marker("slow") is None)  # pyright: ignore[reportAttributeAccessIssue]
     import jax
