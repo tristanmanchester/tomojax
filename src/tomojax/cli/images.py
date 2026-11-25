@@ -33,7 +33,8 @@ def label_number(value: float) -> str:
 
 def limits(panels: list[Panel]) -> tuple[float, float]:
     """Choose shared intensity limits from the finite pixels of all panels."""
-    finite = np.concatenate([p.pixels[np.isfinite(p.pixels)] for p in panels])
+    finite = np.concatenate([np.asarray(p.pixels, float).ravel() for p in panels])
+    finite = finite[np.isfinite(finite)]
     if not finite.size:
         return 0, 1
     lo, hi = np.percentile(finite, (1, 99))

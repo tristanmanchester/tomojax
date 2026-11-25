@@ -1,5 +1,6 @@
 """Feature handles: masks made from shapes, seeds and bands, outlined and reused."""
 
+import numpy as np
 import pytest
 
 from tests.test_mcp_marks import images
@@ -135,3 +136,72 @@ same_call = view({other!r}, axis="y", index=14, features=[again])
         },
     )["result"]
     assert wrong["isError"] and "3 array indices (z, y, x)" in wrong["content"][0]["text"]
+
+
+def test_features_on_saved_volumes_member_ids_and_scans(session, tmp_path):
+    c, (volume, _, _) = session
+    saved = tmp_path / "saved.nxs"
+    assert not c.call("save", source=volume, path=str(saved))["isError"]
+    # A saved volume is read through its slicing interface.
+    box = feature(
+        c, source=str(saved), recipe={"type": "box", "corners": [[8, 10, 12], [13, 17, 21]]}
+    )
+    assert box["voxels"] == 480 and abs(box["mean"] - 1) < 0.02
+    seeded = feature(c, source=str(saved), recipe={"type": "seeded", "seeds": [[10, 14, 16]]})
+    assert seeded["bounds"] == [[8, 14], [10, 18], [12, 22]]
+    out = python(
+        c,
+        f"""made = register_feature(handles[{box["handle"]!r}].mask, like={volume + ".volume"!r})
+report = view({volume + ".volume"!r}, axis="z", index=10, features=[made])
+sim = tj.simulate(size=12, n_views=8).scan
+scan = register(sim)
+on_scan = register_feature(np.ones(sim.projections.shape, bool), like=sim)
+[made, on_scan, scan]""",
+    )
+    made, on_scan, scan = out["value"]
+    # The member ID keeps the volume's own axes, not axis0..axis2.
+    axes = python(c, f"[a.name for a in handles[{made!r}].registration.axes]")["value"]
+    assert axes == ["z", "y", "x"]
+    # A feature made from an object of this call owns its view coordinates.
+    c.call("control", action="close", target=scan)
+    shown = c.call("view", source=on_scan, mode="projection", index=3)
+    assert not shown["isError"], shown["content"][0]["text"]
+    assert any("view[3]" in label for label in shown["structuredContent"]["panels"][0]["labels"])
+
+
+def test_features_on_a_diamond_size_volume_touch_only_their_windows(tmp_path):
+    from numpy.lib.format import open_memmap
+
+    path = tmp_path / "large.npy"
+    shape = (2160, 2560, 2560)  # 56.6 GB of float32, stored sparsely
+    large = open_memmap(path, mode="w+", dtype=np.float32, shape=shape)
+    large[1000:1040, 1200:1260, 1300:1380] = 1
+    large.flush()
+    del large
+    with connection(tmp_path) as c:
+        recipe = {"type": "seeded", "seeds": [[1020, 1230, 1340]]}
+        block = feature(
+            c, source=str(path), recipe=recipe | {"tolerance_unit": "value"} | {"tolerance": 0.5}
+        )
+        assert block["voxels"] == 40 * 60 * 80 and block["mean"] == 1
+        assert block["bounds"] == [[1000, 1040], [1200, 1260], [1300, 1380]]
+        shell = feature(
+            c, source=str(path), recipe={"type": "band", "feature": block["handle"], "outer": 1}
+        )
+        assert shell["voxels"] == 2 * (60 * 80 + 40 * 80 + 40 * 60) and shell["mean"] == 0
+        ball = feature(
+            c, source=str(path), recipe={"type": "sphere", "at": [1020, 1230, 1340], "radius": 2}
+        )
+        assert ball["voxels"] == 33
+        shown = c.call(
+            "view",
+            source=str(path),
+            axis="axis0",
+            index=1020,
+            roi=[[0, 2160], [1150, 1310], [1250, 1430]],
+            features=[block["handle"], shell["handle"]],
+        )
+        assert not shown["isError"], shown["content"][0]["text"]
+        assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
+        peak = python(c, "import resource\nresource.getrusage(resource.RUSAGE_SELF).ru_maxrss")
+        assert peak["value"] < 4 << 20  # kB: the worker never held more than 4 GB

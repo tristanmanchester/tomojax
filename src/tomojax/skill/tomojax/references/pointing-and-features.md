@@ -54,5 +54,6 @@ Name features after what they are (`name="shell"`). The result gives the voxel c
 ## Use a feature
 
 - `view` with `features=["@feature-…"]` outlines up to five features, in cyan, magenta, green, orange and red, on any source with the same grid: the volume it was made on, another reconstruction of the same scan, or a difference.
-- In `python`, `handles["@feature-…"].mask` is the boolean mask, and `register_feature(mask, like="@recon-…", name="…")` registers a mask you computed yourself on that volume's grid.
+- In `python`, `handles["@feature-…"].mask` is the whole boolean mask. A feature stores only its bounding box: `.box` (a slice per axis) and `.inside` (the mask over that box). On a large volume use those, for example `volume[f.box][f.inside]`, instead of building `.mask`, which takes one byte per voxel of the grid. `register_feature(mask, like="@recon-…", name="…")` registers a mask you computed yourself on that object's grid; `like` also takes a member such as `"@recon-….volume"`.
+- Features work at any volume size: each recipe works on the feature's own box plus its band or growth margin and reads the source in windows.
 - Show the user what you will optimise for before you optimise it: one `view` with the feature outlined.

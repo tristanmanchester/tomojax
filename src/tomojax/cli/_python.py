@@ -9,7 +9,7 @@ from dataclasses import fields, is_dataclass
 from io import BytesIO, StringIO
 import traceback
 from types import FunctionType, ModuleType
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import jax
 import msgspec
@@ -19,7 +19,7 @@ from PIL import Image
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
 from tomojax.cli._browse import indexed, pixels as pixels_of
-from tomojax.cli._features import feature_handle
+from tomojax.cli._features import feature_handle, owned, tight
 from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._marks import Overlay, annotate, check, frame_of, parse
 from tomojax.cli._planes import plane_windows
@@ -30,12 +30,14 @@ from tomojax.wire.arrays import Member, Npy
 from tomojax.wire.progress import Info
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from numpy.typing import ArrayLike
 
     from tomojax.cli import operations as op
     from tomojax.cli._handles import Root
     from tomojax.cli._marks import Colour, Frame
-    from tomojax.wire.arrays import Array
+    from tomojax.wire.arrays import Array, Storage
 
 _KINDS = {
     tj.Scan: "scan",
@@ -103,36 +105,61 @@ class Registrations:
         self.made[name] = item
         return name
 
-    def registered(self, item: object) -> tuple[Any, Array]:
-        """An object's primary array and its registration: axes, coordinates and unit."""
+    def registered(self, item: object) -> tuple[Any, Array, Callable[[Storage], np.ndarray]]:
+        """An object's primary array or named member, its registration and coordinate reader.
+
+        ``item`` is an ID (``ID.member`` selects a member), an object or an array. The
+        reader returns the values of a coordinate vector the registration refers to.
+        """
+        member = ""
+        identifier = "python"  # objects made in this call are bound under this name
         if isinstance(item, str) and item in self.made:
             item = self.made[item]
-        if isinstance(item, str) and "." in item:
-            item = self.inputs[item]
         if isinstance(item, str):
-            ref = self.inputs.reference(item)
+            base, _, member = item.partition(".")
+            ref = self.inputs.reference(base)
             if isinstance(ref, Npy):
+                if member:
+                    raise KeyError(f"{base} is an array and has no member {member}")
                 data = np.load(ref.path, mmap_mode="r", allow_pickle=False)
-                return data, self.context.leases[ref].metadata or indexed(ref, data)
-            item = self.context.leases[ref].value
+                return data, self.context.leases[ref].metadata or indexed(ref, data), _load
+            identifier, item = ref.handle, self.context.leases[ref].value
         if isinstance(item, ex.Feature):
-            return item.mask, item.registration
+            return item, item.registration, _load
         if isinstance(item, ex.RegisteredArray):
-            return item.data, item.metadata
+            return item.data, item.metadata, _load
         if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Reconstruction | tj.Alignment):
-            key = next(key for cls, key in _PRIMARY.items() if isinstance(item, cls))
-            member = handle(item).bind("python").members.get(key)
-            if not isinstance(member, ex.RegisteredArray):
-                raise ValueError(f"this {type(item).__name__} has no {key}")
-            return member.data, member.metadata
+            key = member or next(key for cls, key in _PRIMARY.items() if isinstance(item, cls))
+            bound = handle(item).bind(identifier)
+            value = bound.members.get(key)
+            if isinstance(value, ex.RegisteredArray):
+
+                def coordinate(ref: Storage) -> np.ndarray:
+                    if isinstance(ref, Member):
+                        return np.asarray(
+                            cast("ex.RegisteredArray", bound.members[ref.member]).data
+                        )
+                    return _load(ref)
+
+                return value.data, value.metadata, coordinate
+            if value is None or value is item:
+                raise KeyError(f"this {type(item).__name__} has no array {key}")
+            return self.registered(value)
+        if member:
+            raise KeyError(f"{type(item).__name__} has no member {member}")
         data = np.asarray(item)
-        return data, indexed(Member("python", "array"), data)
+        return data, indexed(Member("python", "array"), data), _load
 
     def register_feature(
         self, mask: ArrayLike | jax.Array, *, like: object, name: str = "python"
     ) -> str:
-        values, registration = self.registered(like)
-        feature = ex.Feature(name, np.asarray(mask, dtype=bool), registration, {"type": "python"})
+        values, registration, coordinate = self.registered(like)
+        whole = np.asarray(mask, dtype=bool)
+        if whole.shape != tuple(registration.shape):
+            raise ValueError(f"mask shape {whole.shape} differs from the grid {registration.shape}")
+        inside, box = tight(whole, tuple(slice(0, n) for n in whole.shape))
+        grid = owned(registration, coordinate, self.context)
+        feature = ex.Feature(name, inside, box, grid, {"type": "python"})
         named = new_reference("feature")
         self.roots.append((named, feature_handle(feature, values)))
         self.made[named] = feature
@@ -170,7 +197,7 @@ class Registrations:
         ticks: bool | None = None,
     ) -> list[dict[str, object]]:
         """Render planes like the view tool; with ``other``, the difference from it."""
-        data, meta = self.registered(source)
+        data, meta, _ = self.registered(source)
         names = [a.name for a in meta.axes]
         shape = tuple(meta.shape)
         second = self.registered(other)[0] if other is not None else None
@@ -179,9 +206,9 @@ class Registrations:
             feature = f
             if isinstance(f, str):
                 feature = self.made[f] if f in self.made else self.inputs[f]
-            if not isinstance(feature, ex.Feature) or feature.mask.shape != shape:
+            if not isinstance(feature, ex.Feature) or feature.shape != shape:
                 raise ValueError(f"{f!r} is not a feature on a {shape} grid")
-            masks.append(feature.mask)
+            masks.append(feature)
         panels, frames, outlines = [], [], []
         for d, at, selected, step, sampling in plane_windows(
             names,
@@ -318,6 +345,13 @@ def execute_in_namespace(
             namespace.pop(key, None)
         kept = {k: v for k, v in namespace.items() if k != "__builtins__"}
         context.measure(array_bytes(kept, set()))
+
+
+def _load(ref: Storage) -> np.ndarray:
+    """A coordinate vector stored in a NumPy file."""
+    if not isinstance(ref, Npy):
+        raise ValueError(f"coordinate vector {ref} is not a published array")
+    return np.load(ref.path, mmap_mode="r", allow_pickle=False)
 
 
 def summarise(value: object) -> object:
