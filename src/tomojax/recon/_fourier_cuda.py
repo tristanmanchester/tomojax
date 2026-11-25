@@ -6,7 +6,7 @@ import functools
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
 
 _SOURCE = r"""
 __device__ float radial_weight(float distance, const float* table) {

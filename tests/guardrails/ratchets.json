@@ -26,7 +26,7 @@
     "tomojax.alignment": 1,
     "tomojax.datasets": 14,
     "tomojax.geometry.api": 12,
-    "tomojax.corrections.api": 7,
+    "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
     "tomojax.io.api": 29,
     "tomojax.alignment.api": 4
@@ -43,33 +43,37 @@
     "studio": 3
   },
   "long_files": {
+    "src/tomojax/_loading.py": 821,
+    "src/tomojax/alignment/_joint/_solver.py": 962,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 174,
+    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 104,
     "src/tomojax/corrections/_engine.py::correct_frames": 129,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
     "src/tomojax/recon/_cgls_jax.py::cgls": 101,
+    "src/tomojax/recon/_projection.py::subset_operators": 118,
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 6227,
-    "_data": 2208,
-    "alignment": 4670,
+    "(modules)": 6520,
+    "_data": 2213,
+    "alignment": 5435,
     "backends": 269,
-    "cli": 11058,
-    "core": 9971,
-    "corrections": 3204,
+    "cli": 11185,
+    "core": 10115,
+    "corrections": 3228,
     "datasets": 1069,
-    "forward": 399,
+    "forward": 403,
     "geometry": 916,
-    "io": 4050,
+    "io": 4069,
     "motion": 153,
     "nuisance": 232,
-    "recon": 15002,
+    "recon": 15535,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -81,6 +85,8 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
+    "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
+    "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
@@ -93,12 +99,14 @@
     "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
+    "src/tomojax/recon/_projection.py::C901::select",
+    "src/tomojax/recon/_projection.py::C901::subset_operators",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 63,
-    "forwarders": 5,
+    "tiny": 65,
+    "forwarders": 3,
     "chained": 4
   },
   "positional_options": [],

@@ -31,7 +31,7 @@ from .cgls import CGLSConfig, resident_bytes
 if TYPE_CHECKING:
     import jax
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
     from tomojax.geometry import Detector, Geometry, Grid
 
     from .types import DataTerm

@@ -21,7 +21,7 @@ from tomojax.core.cone import xla_stream
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext, CuPyValue
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext, CuPyValue
 
     from ._cone_slabs import HostVolume
 

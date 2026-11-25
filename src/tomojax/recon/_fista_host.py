@@ -22,7 +22,7 @@ from ._tv_ops import gradient_norm_squared
 if TYPE_CHECKING:
     import jax
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
     from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
 
     from ._cone_slabs import Batch, ConeProblem, HostVolume

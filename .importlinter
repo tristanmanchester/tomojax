@@ -12,6 +12,7 @@ layers =
     tomojax._workflow
     tomojax._resources
     tomojax._smooth_alignment
+    tomojax._calibration
     tomojax._planning
     tomojax._field_of_view
     tomojax._region

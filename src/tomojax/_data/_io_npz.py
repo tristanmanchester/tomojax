@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
 import numpy as np
@@ -62,10 +61,9 @@ def npz_layout(
     """The archive's record and its saved arrays, read whole."""
     with ZipFile(path) as archive:
         payload = LoadedNXTomo.from_dataset(_load_npz_dataset(archive, volume_only=volume_only))
-    if TYPE_CHECKING:
-        # NPZ members are read whole, so there is no lazy HDF5 projection stack.
-        assert payload.projections is None or isinstance(payload.projections, np.ndarray)
-    arrays = {"projections": payload.projections, "volume": payload.metadata.volume}
+    # NPZ members are read whole: the projections are already an array.
+    projections = None if payload.projections is None else np.asarray(payload.projections)
+    arrays = {"projections": projections, "volume": payload.metadata.volume}
     return payload, {key: value for key, value in arrays.items() if value is not None}
 
 

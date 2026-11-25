@@ -13,7 +13,7 @@ from ._fourier_grid import check_samples, gather_per_view_rows, sample_projectio
 if TYPE_CHECKING:
     import jax
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
 
 
 @dataclass

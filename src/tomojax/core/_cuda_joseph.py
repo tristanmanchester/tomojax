@@ -30,8 +30,8 @@ from tomojax.core._joseph_cuda_kernels import RUN, THREADS, forward_kernel, gath
 from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
-    from tomojax.core._cuda_types import CallbackBuffer
     from tomojax.core.cuda import Offset
+    from tomojax.core.cuda_types import CallbackBuffer
     from tomojax.core.geometry.base import Detector, Grid
 
 # Keep tiny grids on the allocator-free path. Kernel loading and callback setup

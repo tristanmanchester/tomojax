@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from tomojax import _region, corrections
     from tomojax._planning import ResolvedReconstruction
     from tomojax._smooth_alignment import CentreSelection, JointSelection
-    from tomojax.corrections._rows import CorrectedRows
+    from tomojax.corrections.api import CorrectedRows
     from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
     from tomojax.recon.types import ReconstructionSlab

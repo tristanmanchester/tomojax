@@ -22,7 +22,7 @@ from ._pinned import PinnedPool
 if TYPE_CHECKING:
     import jax
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
 
 
 def _cupy_device() -> int:

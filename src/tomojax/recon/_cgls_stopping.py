@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from jax import Array
     import numpy as np
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
 
     from .types import DataTerm
 

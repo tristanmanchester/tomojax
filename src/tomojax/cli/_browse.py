@@ -29,7 +29,7 @@ from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage,
 if TYPE_CHECKING:
     import jax
 
-    from tomojax._data import FrameStack
+    from tomojax.cli._frame_reads import WindowedFrames
 
 READ_BYTES = 16 << 20
 
@@ -197,7 +197,7 @@ def browse(
 
 def read_window(
     context: ex.ExecutionContext,
-    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | FrameStack,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
     meta: Array,
     ranges: tuple[range, ...],
 ) -> Array:
@@ -288,7 +288,7 @@ def exact_percentiles(
 def statistics(
     request: op.Statistics,
     context: ex.ExecutionContext,
-    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | FrameStack,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
     meta: Array,
     ranges: tuple[range, ...],
 ) -> p.StatisticsResult:

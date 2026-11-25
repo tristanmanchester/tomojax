@@ -15,7 +15,7 @@ from ._cuda_joseph import xla_stream
 from ._plane_interpolation import validate_interpolation
 
 if TYPE_CHECKING:
-    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext, CuPyValue
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext, CuPyValue
 
     from .geometry.base import Detector, Grid
 

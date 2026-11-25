@@ -14,7 +14,7 @@ from tomojax.core.cuda import launch_kernel
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 
 if TYPE_CHECKING:
-    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext
 
 _SOURCE = r"""
 __device__ __forceinline__ float sample(

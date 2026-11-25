@@ -11,7 +11,7 @@ from . import _cone_slabs
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.core.cuda_types import CuPyValue
 
     from ._cone_slabs import Batch
 

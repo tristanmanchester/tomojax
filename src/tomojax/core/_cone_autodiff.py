@@ -17,7 +17,7 @@ from tomojax.core.projector_autodiff import FirstOrderProjector
 from tomojax.core.volume_layout import swap_private_axes
 
 if TYPE_CHECKING:
-    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext
 
     from .geometry.base import Detector, Grid
 

@@ -8,12 +8,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import h5py
 import numpy as np
 
-from tomojax._data import Hdf5Frames
-
 if TYPE_CHECKING:
     from collections.abc import Iterator
-
-    from tomojax._data import FrameStack
 
 
 class _FrameWindow(Protocol):
@@ -29,8 +25,19 @@ class WindowedFrames(Protocol):
 
 
 @runtime_checkable
+class _Hdf5Frames(WindowedFrames, Protocol):
+    """A lazy HDF5 stack: read straight from its dataset at the logical selection."""
+
+    path: str
+    dataset: str
+    frames: np.ndarray
+    first_row: int
+    first_col: int
+
+
+@runtime_checkable
 class _BlockFrames(WindowedFrames, Protocol):
-    blocks: tuple[FrameStack, ...]
+    blocks: tuple[WindowedFrames, ...]
     indices: np.ndarray
     frames: np.ndarray
     first_row: int
@@ -51,7 +58,7 @@ def frame_pixels(
         return out
     if rows.step == cols.step == 1:
         return data.window(slice(rows.start, rows.stop), slice(cols.start, cols.stop))[selected]
-    if isinstance(data, Hdf5Frames):
+    if isinstance(data, _Hdf5Frames):
         return hdf5_pixels(data, ranges)
 
     # Other frame stacks expose contiguous detector windows. Account for all
@@ -75,7 +82,7 @@ def frame_pixels(
 
 def block_windows(
     stack: _BlockFrames, ranges: tuple[range, ...]
-) -> Iterator[tuple[np.ndarray, FrameStack, tuple[range, ...]]]:
+) -> Iterator[tuple[np.ndarray, WindowedFrames, tuple[range, ...]]]:
     """Map a logical window of a multi-file acquisition into its contributing blocks."""
     views, rows, cols = ranges
     indices = stack.indices[stack.frames[views.start : views.stop : views.step]]
@@ -89,7 +96,7 @@ def block_windows(
         yield mask, block, (range(len(block)), *detector)
 
 
-def hdf5_pixels(data: Hdf5Frames, ranges: tuple[range, ...]) -> np.ndarray:
+def hdf5_pixels(data: _Hdf5Frames, ranges: tuple[range, ...]) -> np.ndarray:
     views, rows, cols = ranges
     selected = slice(views.start, views.stop, views.step)
     # Map the logical view indices and cropped detector origin back to disk.
