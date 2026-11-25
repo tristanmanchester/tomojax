@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 import jax
 from jax.core import Tracer
@@ -11,6 +11,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.robust import MAD_TO_SD
+
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
 
 
 class _SampledStack(Protocol):
@@ -23,23 +26,24 @@ class _SampledStack(Protocol):
     def __getitem__(self, indices: tuple[np.ndarray, ...], /) -> np.ndarray: ...
 
 
+def _sampled(value: object) -> TypeGuard[_SampledStack]:
+    # hasattr, unlike a runtime Protocol check, sees attributes a proxy delegates.
+    return hasattr(value, "shape")
+
+
 def _gather_samples(
-    array: _SampledStack | jax.Array | np.ndarray | np.generic | float,
-    coordinates: tuple[np.ndarray, np.ndarray, np.ndarray],
-) -> jax.Array | np.ndarray | np.generic:
+    array: _SampledStack | ArrayLike, coordinates: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> _SampledStack | np.ndarray:
     """Gather only requested pixels, including broadcast observation weights."""
-    if isinstance(array, np.generic):
-        return array
-    if isinstance(array, int | float):
-        return np.asarray(array)
-    shape = array.shape
+    stack = array if _sampled(array) else np.asarray(array)
+    shape = stack.shape
     if not shape:
-        return array[()]
+        return stack
     indices = tuple(
         np.zeros_like(index) if extent == 1 else index
         for index, extent in zip(coordinates[-len(shape) :], shape, strict=True)
     )
-    return array[indices]
+    return stack[indices]
 
 
 def _require_samples(present: jax.Array | bool | np.bool_) -> None:

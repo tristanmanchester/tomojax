@@ -16,6 +16,8 @@ from ._validation import positive_finite
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    import jax
+
     from tomojax._data import FrameStack
 
 LOG = logging.getLogger(__name__)
@@ -146,8 +148,8 @@ def _moments(
 
 
 def batch_fields(
-    fields: Fields, resident: np.ndarray | None, lo: np.ndarray, hi: np.ndarray
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    fields: Fields, resident: np.ndarray | jax.Array | None, lo: np.ndarray, hi: np.ndarray
+) -> tuple[np.ndarray | jax.Array, np.ndarray, np.ndarray]:
     """Only the bracketing calibrations for the views about to be corrected."""
     if resident is not None:
         return resident, lo, hi

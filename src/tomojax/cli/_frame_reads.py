@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, TypeGuard
 
 import h5py
 import numpy as np
@@ -16,7 +16,6 @@ class _FrameWindow(Protocol):
     def __getitem__(self, key: slice, /) -> np.ndarray: ...
 
 
-@runtime_checkable
 class WindowedFrames(Protocol):
     @property
     def dtype(self) -> np.dtype: ...
@@ -24,7 +23,12 @@ class WindowedFrames(Protocol):
     def window(self, rows: slice, cols: slice) -> _FrameWindow: ...
 
 
-@runtime_checkable
+class _FrameBlock(WindowedFrames, Protocol):
+    def __len__(self) -> int: ...
+
+    def frames_at(self, which: np.ndarray | slice) -> Self: ...
+
+
 class _Hdf5Frames(WindowedFrames, Protocol):
     """A lazy HDF5 stack: read straight from its dataset at the logical selection."""
 
@@ -35,13 +39,27 @@ class _Hdf5Frames(WindowedFrames, Protocol):
     first_col: int
 
 
-@runtime_checkable
 class _BlockFrames(WindowedFrames, Protocol):
-    blocks: tuple[WindowedFrames, ...]
+    blocks: tuple[_FrameBlock, ...]
     indices: np.ndarray
     frames: np.ndarray
     first_row: int
     first_col: int
+
+
+# Dispatch by attribute with hasattr, which, unlike a runtime Protocol check, sees
+# attributes a proxy stack delegates through __getattr__.
+def windowed(data: object) -> TypeGuard[WindowedFrames]:
+    """Whether ``data`` reads detector windows lazily rather than by indexing."""
+    return hasattr(data, "window")
+
+
+def _in_blocks(data: WindowedFrames) -> TypeGuard[_BlockFrames]:
+    return hasattr(data, "blocks")
+
+
+def _in_hdf5(data: WindowedFrames) -> TypeGuard[_Hdf5Frames]:
+    return hasattr(data, "dataset")
 
 
 def frame_pixels(
@@ -51,14 +69,14 @@ def frame_pixels(
     selected = slice(views.start, views.stop, views.step)
     if isinstance(data, np.ndarray):
         return np.asarray(data[tuple(slice(r.start, r.stop, r.step) for r in ranges)])
-    if isinstance(data, _BlockFrames):
+    if _in_blocks(data):
         out = np.empty(tuple(map(len, ranges)), data.dtype)
         for mask, block, tile in block_windows(data, ranges):
             out[mask] = frame_pixels(block, tile, budget)
         return out
     if rows.step == cols.step == 1:
         return data.window(slice(rows.start, rows.stop), slice(cols.start, cols.stop))[selected]
-    if isinstance(data, _Hdf5Frames):
+    if _in_hdf5(data):
         return hdf5_pixels(data, ranges)
 
     # Other frame stacks expose contiguous detector windows. Account for all
@@ -82,7 +100,7 @@ def frame_pixels(
 
 def block_windows(
     stack: _BlockFrames, ranges: tuple[range, ...]
-) -> Iterator[tuple[np.ndarray, WindowedFrames, tuple[range, ...]]]:
+) -> Iterator[tuple[np.ndarray, _FrameBlock, tuple[range, ...]]]:
     """Map a logical window of a multi-file acquisition into its contributing blocks."""
     views, rows, cols = ranges
     indices = stack.indices[stack.frames[views.start : views.stop : views.step]]

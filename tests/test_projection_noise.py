@@ -34,6 +34,8 @@ def test_noise_masks_whole_cells_and_broadcast_weights():
     values[:, :8] = np.nan
     expected = estimate_projection_noise(values[:, 8:])
     assert estimate_projection_noise(values, weights=weights) == pytest.approx(expected)
+    # Weights may be any array-like, as the solvers that take them document.
+    assert estimate_projection_noise(values, weights=weights.tolist()) == pytest.approx(expected)
     actual = estimate_projection_noise(jnp.asarray(values), weights=jnp.asarray(weights))
     assert float(actual) == pytest.approx(expected, rel=2e-6)
     compiled = jax.jit(lambda w: estimate_projection_noise(values, weights=w))
