@@ -443,14 +443,7 @@ impl AppState {
                     self.ui.display.window_low.text.clone(),
                     self.ui.display.window_high.text.clone(),
                 ];
-                // Untouched fields show the current window rounded; apply it exactly.
-                let window = if self.window_prefill.as_ref() == Some(&fields)
-                    && fields.iter().all(|text| !text.is_empty())
-                {
-                    self.current_window()
-                } else {
-                    self.valid_window()?
-                };
+                let window = self.valid_window()?;
                 self.remember_view();
                 self.applied_window = window;
                 self.window_prefill = Some(fields);

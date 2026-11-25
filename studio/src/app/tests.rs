@@ -1873,7 +1873,16 @@ fn applying_the_window_the_fields_show_keeps_it_exact() {
     // An edited field applies what was typed.
     runtime.state.ui.display.window_high.replace_text("0.5");
     runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
-    assert_eq!(runtime.state.applied_window, Some([-0.0201, 0.5]));
+    assert_eq!(runtime.state.applied_window, Some([-0.020069934, 0.5]));
+
+    // Editing one limit keeps the other exact: 1.000051 reads as 1.0001, but an upper
+    // limit of 1.00008 still lies above it.
+    let mut state = AppState::init();
+    state.applied_window = Some([1.000051, 1.5]);
+    state.prefill_window();
+    assert_eq!(state.ui.display.window_low.text, "1.0001");
+    state.ui.display.window_high.replace_text("1.00008");
+    assert_eq!(state.valid_window(), Ok(Some([1.000051, 1.00008])));
 }
 
 #[test]

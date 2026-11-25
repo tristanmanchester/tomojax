@@ -201,7 +201,7 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
         reason = (
             "FBP, because automatic selection takes Fourier inversion only for 16 or more "
-            "directions spread over the half turn; method='fourier' still accepts this scan."
+            "directions spread over the half turn."
         )
         return "fbp", reason, recommendation
     return "fbp", reason, None

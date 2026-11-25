@@ -636,17 +636,26 @@ impl AppState {
     }
 
     pub(super) fn valid_window(&self) -> Result<Option<[f32; 2]>, String> {
-        let low = self.ui.display.window_low.text.trim();
-        let high = self.ui.display.window_high.text.trim();
-        if low.is_empty() && high.is_empty() {
+        let fields = [
+            &self.ui.display.window_low.text,
+            &self.ui.display.window_high.text,
+        ];
+        if fields.iter().all(|text| text.trim().is_empty()) {
             return Ok(None);
         }
-        let low = low
-            .parse::<f32>()
-            .map_err(|_| "Enter a finite lower window limit")?;
-        let high = high
-            .parse::<f32>()
-            .map_err(|_| "Enter a finite upper window limit")?;
+        // A field still showing the prefilled window, rounded for reading, stands for the
+        // exact limit; only the fields the user edited are read as typed.
+        let exact = self.current_window();
+        let limit = |i: usize, name: &str| match (&self.window_prefill, exact) {
+            (Some(prefill), Some(exact)) if !fields[i].is_empty() && *fields[i] == prefill[i] => {
+                Ok(exact[i])
+            }
+            _ => fields[i]
+                .trim()
+                .parse::<f32>()
+                .map_err(|_| format!("Enter a finite {name} window limit")),
+        };
+        let (low, high) = (limit(0, "lower")?, limit(1, "upper")?);
         if !low.is_finite() || !high.is_finite() || low >= high {
             return Err("Display window limits must be finite, with minimum below maximum".into());
         }
