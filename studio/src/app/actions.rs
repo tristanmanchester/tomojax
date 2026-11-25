@@ -270,10 +270,7 @@ impl AppState {
                 self.applied_window = None;
                 self.window_prefill = Some([String::new(), String::new()]);
             }
-            UiAction::Simulate => {
-                self.ui.workspace = Workspace::Prepare;
-                self.set_operation("simulate", None);
-            }
+            UiAction::Simulate => self.open_operation("simulate"),
             UiAction::SetOperation(operation) => self.set_operation(&operation, None),
             UiAction::QueueOperation(operation) => self.queue_operation(&operation)?,
             UiAction::RefreshPreview => {
@@ -623,14 +620,18 @@ impl AppState {
         Ok(())
     }
 
+    /// Show `operation`'s form in its workspace, keeping the draft when it is already open.
+    fn open_operation(&mut self, operation: &str) {
+        self.set_workspace(Workspace::for_operation(operation));
+        self.ui.inspector_open = true;
+        if self.ui.operation != operation {
+            self.set_operation(operation, None);
+        }
+    }
+
     fn run_command(&mut self, id: &str, tx: &mut Tx) -> Result<(), String> {
         if let Some(operation) = id.strip_prefix("operation:") {
-            self.set_workspace(Workspace::for_operation(operation));
-            self.ui.inspector_open = true;
-            // The workspace may already show it; resetting the form would lose its draft.
-            if self.ui.operation != operation {
-                self.set_operation(operation, None);
-            }
+            self.open_operation(operation);
             return Ok(());
         }
         let action = match id {

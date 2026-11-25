@@ -1638,6 +1638,22 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
     });
     assert_eq!(runtime.state.ui.parameter_edits["iterations"].text, "21");
     assert!(runtime.state.ui.inspector_open);
+
+    // The simulation shortcut keeps a simulation draft too.
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:simulate".into()), tx);
+    });
+    runtime
+        .state
+        .ui
+        .parameter_edits
+        .get_mut("size")
+        .expect("Simulation has a size")
+        .replace_text("37");
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx));
+    runtime.update(|state, tx| state.dispatch(UiAction::RunCommand("simulate".into()), tx));
+    assert_eq!(runtime.state.ui.operation, "simulate");
+    assert_eq!(runtime.state.ui.parameter_edits["size"].text, "37");
 }
 
 #[test]

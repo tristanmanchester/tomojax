@@ -199,11 +199,11 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             return "fbp", "FBP uses the scan's per-view geometry.", recommendation
         if recommendation is None:
             return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
-        return (
-            "fbp",
-            "FBP, because Fourier inversion needs at least 16 views spread over the half turn.",
-            recommendation,
+        reason = (
+            "FBP, because automatic selection takes Fourier inversion only for 16 or more "
+            "directions spread over the half turn; method='fourier' still accepts this scan."
         )
+        return "fbp", reason, recommendation
     return "fbp", reason, None
 
 
@@ -227,8 +227,7 @@ def _coverage_advice(scan: Scan) -> str | None:
     if len(angles) < 16:
         return (
             f"The views measure {len(angles)} directions, fewer than 16: expect streaks. "
-            "method='fista' with nonnegative=True reduces them through nonnegativity and "
-            "regularization."
+            "method='fista' with nonnegative=True reduces them through regularization."
         )
     return None
 
