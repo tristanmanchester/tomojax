@@ -127,9 +127,14 @@ jobs:
           name: dist-studio
           path: dist-studio/
 
+      - name: Stage Studio wheel for TestPyPI
+        run: |
+          mkdir -p dist-studio-wheel
+          mv dist-studio/*.whl dist-studio-wheel/
+
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: dist-studio/
+          packages-dir: dist-studio-wheel/
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
 
@@ -165,9 +170,14 @@ jobs:
           name: dist-studio
           path: dist-studio/
 
+      - name: Stage Studio wheel for PyPI
+        run: |
+          mkdir -p dist-studio-wheel
+          mv dist-studio/*.whl dist-studio-wheel/
+
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
-          packages-dir: dist-studio/
+          packages-dir: dist-studio-wheel/
 
   github-release:
     if: github.event_name == 'push'
