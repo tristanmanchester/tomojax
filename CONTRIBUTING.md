@@ -29,7 +29,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just examples` | Run the public projection and reconstruction example |
 | `just package` | Build sdist and wheel, run `twine check --strict`, and smoke-test the installed wheel |
 | `just ci` | CPU gate: static checks, package build and smoke test, example, the CPU tests except those marked `slow`, and small analytic benchmarks |
-| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included |
+| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 
 `just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 20 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.

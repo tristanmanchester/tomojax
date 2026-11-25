@@ -16,6 +16,11 @@ if worker := os.environ.get("PYTEST_XDIST_WORKER"):
     cores = sorted(os.sched_getaffinity(0))
     index, count = int(worker.removeprefix("gw")), int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
     os.sched_setaffinity(0, cores[index % len(cores) :: count] or cores)
+    if os.environ.get("JAX_PLATFORMS") != "cpu":
+        # Workers share the GPU, and a JAX pool only grows: uncapped, the pools fill the
+        # device until XLA cannot create a cuFFT plan, which leaves that worker's CUDA
+        # context unusable. Each pool gets its share of 70%; contexts and CuPy use the rest.
+        os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", f"{0.7 / count:.3f}")
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
