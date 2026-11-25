@@ -13,6 +13,7 @@ from functools import cache, partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.cone import (
@@ -211,20 +212,14 @@ def _project(
     detector: Detector,
     backend: str,
 ) -> jax.Array:
-    if TYPE_CHECKING:
-        # JIT converts NumPy inputs before tracing the projector.
-        assert isinstance(volume, jax.Array)
-        assert isinstance(coeff, jax.Array)
-    return cone_project(volume, coeff, grid, detector, backend=backend)
+    return cone_project(jnp.asarray(volume), jnp.asarray(coeff), grid, detector, backend=backend)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
 def _project_ones(
     coeff: jax.Array | np.ndarray, *, grid: Grid, detector: Detector, backend: str
 ) -> jax.Array:
-    if TYPE_CHECKING:
-        assert isinstance(coeff, jax.Array)
-    return cone_project_ones(coeff, grid, detector, backend=backend)
+    return cone_project_ones(jnp.asarray(coeff), grid, detector, backend=backend)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
@@ -237,34 +232,33 @@ def _transpose(
     detector: Detector,
     backend: str,
 ) -> jax.Array:
-    if TYPE_CHECKING:
-        assert isinstance(images, jax.Array)
-        assert isinstance(coeff, jax.Array)
-        assert accumulate is None or isinstance(accumulate, jax.Array)
-    return cone_backproject(images, coeff, grid, detector, backend=backend, accumulate=accumulate)
+    return cone_backproject(
+        jnp.asarray(images),
+        jnp.asarray(coeff),
+        grid,
+        detector,
+        backend=backend,
+        accumulate=None if accumulate is None else jnp.asarray(accumulate),
+    )
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
 def _transpose_pair(
-    images: tuple[jax.Array, jax.Array] | tuple[np.ndarray, ...],
+    images: tuple[jax.Array | np.ndarray, jax.Array | np.ndarray],
     coeff: jax.Array | np.ndarray,
-    accumulate: tuple[jax.Array, jax.Array] | tuple[np.ndarray, ...],
+    accumulate: tuple[jax.Array | np.ndarray, jax.Array | np.ndarray],
     *,
     grid: Grid,
     detector: Detector,
     backend: str,
 ) -> tuple[jax.Array, jax.Array]:
-    if TYPE_CHECKING:
-        assert isinstance(coeff, jax.Array)
-        # Both channels have been traced as JAX arrays.
-        assert isinstance(images[0], jax.Array)
-        assert isinstance(images[1], jax.Array)
-        assert isinstance(accumulate[0], jax.Array)
-        assert isinstance(accumulate[1], jax.Array)
-        images = (images[0], images[1])
-        accumulate = (accumulate[0], accumulate[1])
     return cone_backproject_pair(
-        images, coeff, grid, detector, backend=backend, accumulate=accumulate
+        (jnp.asarray(images[0]), jnp.asarray(images[1])),
+        jnp.asarray(coeff),
+        grid,
+        detector,
+        backend=backend,
+        accumulate=(jnp.asarray(accumulate[0]), jnp.asarray(accumulate[1])),
     )
 
 
@@ -311,7 +305,9 @@ class JaxEngine:
         if len(images) == 1:
             results = (_transpose(images[0], coeff, accumulate[0], **shapes),)
         else:
-            results = _transpose_pair(tuple(images), coeff, tuple(accumulate), **shapes)
+            first, second = images
+            first_out, second_out = accumulate
+            results = _transpose_pair((first, second), coeff, (first_out, second_out), **shapes)
         for target, value in zip(accumulate, results, strict=True):
             target[...] = np.asarray(value)
         return accumulate

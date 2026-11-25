@@ -183,8 +183,8 @@ class HostFista:
         """The unchanged backprojected-data power start, then the feasible initial iterate."""
         xp = self.xp
         if self.noise_scale is not None:
-            if TYPE_CHECKING:
-                assert self.metric is not None  # Auto TV resolves the metric first.
+            if self.metric is None:
+                raise ValueError("automatic host FISTA TV requires a resolved TV metric")
             self.metric = raise_tv_weight(self.metric, self.noise_scale * self.noise_gradient_rms())
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz

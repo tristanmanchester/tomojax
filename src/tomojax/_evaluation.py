@@ -32,12 +32,14 @@ if TYPE_CHECKING:
     from tomojax.recon.api import MethodConfig
 
     class _AngularSplit(TypedDict):
+        type: Literal["angular"]
         start: float
         width: float
         guard: float
         period: float
 
     class _InterleavedSplit(TypedDict):
+        type: Literal["interleaved"]
         stride: int
         offset: int
         guard: int
@@ -58,37 +60,35 @@ class Partition:
 
 def native_split(
     data: tj.Scan | tj.Frames,
-    kind: Literal["angular", "interleaved"],
     settings: SplitSettings,
 ) -> tuple[Split, np.ndarray]:
-    shape = (data.counts if isinstance(data, tj.Frames) else data.projections).shape
-    if TYPE_CHECKING:
-        assert len(shape) == 3  # Scan and Frames store (view, v, u) stacks.
-    n = shape[0]
+    n, rows, cols = (data.counts if isinstance(data, tj.Frames) else data.projections).shape
+    shape = (n, rows, cols)
     positions = np.arange(n) if data.view_positions is None else np.asarray(data.view_positions)
     starts = np.r_[True, np.diff(positions) <= 0]
     if parts := segments_of(data.geometry):
         starts[np.cumsum(parts.trajectory_lengths)[:-1]] = True
     segments = np.cumsum(starts)
-    guard = settings["guard"]
-    if kind == "angular":
-        if TYPE_CHECKING:
-            assert "start" in settings
-        split = Split.angular(shape, np.asarray(data.geometry.angles), **settings)
+    interleaved_guard = None
+    if settings["type"] == "angular":
+        split = Split.angular(
+            shape,
+            np.asarray(data.geometry.angles),
+            start=settings["start"],
+            width=settings["width"],
+            guard=settings["guard"],
+            period=settings["period"],
+        )
     else:
-        if TYPE_CHECKING:
-            assert "stride" in settings
-        if not 0 <= guard < settings["stride"] / 2:
+        interleaved_guard = settings["guard"]
+        if not 0 <= interleaved_guard < settings["stride"] / 2:
             raise InvalidParameter("split.guard", "guards must leave training views")
         split = Split.interleaved(shape, stride=settings["stride"], offset=settings["offset"])
     train, test = split.train.ravel().copy(), split.test.ravel().copy()
     for group in np.unique(segments):
         ids = np.flatnonzero(segments == group)
-        if kind == "interleaved":
-            if TYPE_CHECKING:
-                assert "stride" in settings
-                guard = settings["guard"]
-            for k in range(1, guard + 1):
+        if interleaved_guard is not None:
+            for k in range(1, interleaved_guard + 1):
                 train[ids[k:]] &= ~test[ids[:-k]]
                 train[ids[:-k]] &= ~test[ids[k:]]
             support = ids[train[ids]]
@@ -154,7 +154,6 @@ def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> t
 
 def partition_layout(
     data: tj.Scan | tj.Frames,
-    kind: Literal["angular", "interleaved"],
     settings: SplitSettings,
     steps: Sequence[Step],
     *,
@@ -168,7 +167,7 @@ def partition_layout(
         check_calibration_layout(data)
     else:
         check_scan_steps(steps)
-    split, segments = native_split(data, kind, settings)
+    split, segments = native_split(data, settings)
     positions = (
         np.arange(len(segments)) + 0.5 if data.view_positions is None else data.view_positions
     )
@@ -196,13 +195,12 @@ def partition_layout(
 
 def partitions(
     data: tj.Scan | tj.Frames,
-    kind: Literal["angular", "interleaved"],
     settings: SplitSettings,
     steps: Sequence[Step],
     *,
     raw: bool,
 ) -> tuple[Split, Partition, Partition]:
-    split, segments = native_split(data, kind, settings)
+    split, segments = native_split(data, settings)
 
     def partition(mask: np.ndarray) -> Partition:
         ids = np.flatnonzero(mask)
@@ -268,8 +266,10 @@ def fit_candidate(
     scan = train.scan
     if kind == "align":
         local = local_motion(settings)
-        if TYPE_CHECKING:
-            assert scan.view_positions is not None  # partitions retain acquisition positions.
+        if scan.view_positions is None:
+            raise ValueError(
+                "alignment evaluation requires acquisition positions in the training partition"
+            )
         positions = scan.view_positions.copy()
         for group in np.unique(train.segments):
             members = train.segments == group
@@ -313,9 +313,7 @@ def prediction_score(
     split: Split, test: Partition, held: tj.Scan, recon: tj.Reconstruction, config: MethodConfig
 ) -> Score:
     """Project one bounded batch at a time, summing views in acquisition order."""
-    if TYPE_CHECKING:
-        # _select_views stages both partitions in host storage.
-        assert isinstance(test.scan.projections, np.ndarray)
+    measured = test.scan.projections
     detector = held.detector
     batch = max(1, _PREDICTION_BYTES // (detector.nv * detector.nu * np.dtype(np.float32).itemsize))
     views = len(test.indices)
@@ -337,10 +335,11 @@ def prediction_score(
             k = int(test.indices[i])
             score += split.score(
                 predicted[row : row + 1],
-                test.scan.projections[i : i + 1],
+                np.asarray(measured[i : i + 1]),
                 views=slice(k, k + 1),
             )
-        release_planes(test.scan.projections, first, stop)
+        if isinstance(measured, np.ndarray):
+            release_planes(measured, first, stop)
         del predicted
     return score
 

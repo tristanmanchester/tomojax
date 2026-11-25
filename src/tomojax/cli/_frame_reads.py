@@ -3,41 +3,55 @@
 from __future__ import annotations
 
 from itertools import product
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import h5py
 import numpy as np
 
+from tomojax._data import Hdf5Frames
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from tomojax._data import FrameStack, Hdf5Frames
-    from tomojax.io._frame_blocks import FrameBlocks
+    from tomojax._data import FrameStack
+
+
+class _FrameWindow(Protocol):
+    def __getitem__(self, key: slice, /) -> np.ndarray: ...
+
+
+@runtime_checkable
+class WindowedFrames(Protocol):
+    @property
+    def dtype(self) -> np.dtype: ...
+
+    def window(self, rows: slice, cols: slice) -> _FrameWindow: ...
+
+
+@runtime_checkable
+class _BlockFrames(WindowedFrames, Protocol):
+    blocks: tuple[FrameStack, ...]
+    indices: np.ndarray
+    frames: np.ndarray
+    first_row: int
+    first_col: int
 
 
 def frame_pixels(
-    data: np.ndarray | FrameStack, ranges: tuple[range, ...], budget: int
+    data: np.ndarray | WindowedFrames, ranges: tuple[range, ...], budget: int
 ) -> np.ndarray:
     views, rows, cols = ranges
     selected = slice(views.start, views.stop, views.step)
-    if not hasattr(data, "window"):
-        if TYPE_CHECKING:
-            assert isinstance(data, np.ndarray)
+    if isinstance(data, np.ndarray):
         return np.asarray(data[tuple(slice(r.start, r.stop, r.step) for r in ranges)])
-    if TYPE_CHECKING:
-        assert isinstance(data, FrameStack)
-    if hasattr(data, "blocks"):
-        if TYPE_CHECKING:
-            assert isinstance(data, FrameBlocks)
+    if isinstance(data, _BlockFrames):
         out = np.empty(tuple(map(len, ranges)), data.dtype)
         for mask, block, tile in block_windows(data, ranges):
             out[mask] = frame_pixels(block, tile, budget)
         return out
     if rows.step == cols.step == 1:
         return data.window(slice(rows.start, rows.stop), slice(cols.start, cols.stop))[selected]
-    if hasattr(data, "dataset"):
-        if TYPE_CHECKING:
-            assert isinstance(data, Hdf5Frames)
+    if isinstance(data, Hdf5Frames):
         return hdf5_pixels(data, ranges)
 
     # Other frame stacks expose contiguous detector windows. Account for all
@@ -60,7 +74,7 @@ def frame_pixels(
 
 
 def block_windows(
-    stack: FrameBlocks, ranges: tuple[range, ...]
+    stack: _BlockFrames, ranges: tuple[range, ...]
 ) -> Iterator[tuple[np.ndarray, FrameStack, tuple[range, ...]]]:
     """Map a logical window of a multi-file acquisition into its contributing blocks."""
     views, rows, cols = ranges
@@ -85,7 +99,9 @@ def hdf5_pixels(data: Hdf5Frames, ranges: tuple[range, ...]) -> np.ndarray:
         for r, offset in ((rows, data.first_row), (cols, data.first_col))
     )
     with h5py.File(data.path, "r", rdcc_nbytes=0) as file:
-        dataset = cast("h5py.Dataset", file[data.dataset])
+        dataset = file[data.dataset]
+        if not isinstance(dataset, h5py.Dataset):
+            raise TypeError(f"{data.path}:{data.dataset} must be an HDF5 dataset")
         if dataset.ndim == 2:
             detector = detector[1:]
         shape = tuple(map(len, ranges))

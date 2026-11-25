@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 import jax
 from jax.core import Tracer
@@ -13,19 +13,31 @@ import numpy as np
 from tomojax.core.robust import MAD_TO_SD
 
 
+class _SampledStack(Protocol):
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def dtype(self) -> np.dtype: ...
+
+    def __getitem__(self, indices: tuple[np.ndarray, ...], /) -> np.ndarray: ...
+
+
 def _gather_samples(
-    array: jax.Array | np.ndarray | float, coordinates: tuple[np.ndarray, np.ndarray, np.ndarray]
-) -> jax.Array | np.ndarray:
+    array: _SampledStack | jax.Array | np.ndarray | np.generic | float,
+    coordinates: tuple[np.ndarray, np.ndarray, np.ndarray],
+) -> jax.Array | np.ndarray | np.generic:
     """Gather only requested pixels, including broadcast observation weights."""
-    if not hasattr(array, "shape"):
-        array = np.asarray(array)
-    if TYPE_CHECKING:
-        assert isinstance(array, jax.Array | np.ndarray)
-    if not array.shape:
+    if isinstance(array, np.generic):
         return array
+    if isinstance(array, int | float):
+        return np.asarray(array)
+    shape = array.shape
+    if not shape:
+        return array[()]
     indices = tuple(
         np.zeros_like(index) if extent == 1 else index
-        for index, extent in zip(coordinates[-len(array.shape) :], array.shape, strict=True)
+        for index, extent in zip(coordinates[-len(shape) :], shape, strict=True)
     )
     return array[indices]
 
@@ -36,7 +48,9 @@ def _require_samples(present: jax.Array | bool | np.bool_) -> None:
 
 
 def estimate_projection_noise(
-    projections: jax.Array | np.ndarray, *, weights: jax.Array | np.ndarray | float | None = None
+    projections: _SampledStack | jax.Array | np.ndarray,
+    *,
+    weights: jax.Array | np.ndarray | np.generic | float | None = None,
 ) -> jax.Array | np.float64:
     """Estimate one measurement SD from at most 65536 sampled Haar cells.
 

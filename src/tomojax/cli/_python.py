@@ -125,13 +125,15 @@ def execute_in_namespace(
     )
     try:
         tree = ast.parse(cmd.code, filename="<python>")
-        expr = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
+        last = tree.body[-1] if tree.body else None
+        expression = None
+        if isinstance(last, ast.Expr):
+            tree.body.pop()
+            expression = ast.Expression(last.value)
         exec(compile(tree, "<python>", "exec"), namespace)
         value = None
-        if expr is not None:
-            if TYPE_CHECKING:
-                assert isinstance(expr, ast.Expr)
-            value = eval(compile(ast.Expression(expr.value), "<python>", "eval"), namespace)
+        if expression is not None:
+            value = eval(compile(expression, "<python>", "eval"), namespace)
         if isinstance(value, np.ndarray | jax.Array):
             value = registrations.register(value)
         value = msgspec.to_builtins(value.item() if isinstance(value, np.generic) else value)

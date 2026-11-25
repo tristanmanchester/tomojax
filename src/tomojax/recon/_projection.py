@@ -53,7 +53,7 @@ if TYPE_CHECKING:
             *,
             row_support: jax.Array | None = None,
             return_column: Literal[True],
-        ) -> tuple[jax.Array, ...]: ...
+        ) -> tuple[jax.Array, jax.Array]: ...
 
 
 type SubsetOperators = tuple[
@@ -307,7 +307,7 @@ def subset_operators(
                 *,
                 row_support: jax.Array | None = None,
                 return_column: Literal[True],
-            ) -> tuple[jax.Array, ...]: ...
+            ) -> tuple[jax.Array, jax.Array]: ...
 
         def residual_adjoint(
             volume: jax.Array,
@@ -316,12 +316,12 @@ def subset_operators(
             *,
             row_support: jax.Array | None = None,
             return_column: bool = False,
-        ) -> jax.Array | tuple[jax.Array, ...]:
+        ) -> jax.Array | tuple[jax.Array, jax.Array]:
             project = selected.projector(volume)
 
-            def body(
-                chunk: jax.Array, output: jax.Array | tuple[jax.Array, jax.Array] | None
-            ) -> jax.Array | tuple[jax.Array, ...]:
+            def batch_residual(
+                chunk: jax.Array,
+            ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
                 measured = (
@@ -344,24 +344,30 @@ def subset_operators(
                         weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
                     )
                 residual = jnp.where(counts[:, None, None], residual, 0.0)
-                if return_column:
-                    if TYPE_CHECKING:
-                        assert isinstance(output, tuple)  # The loop starts with two volumes.
+                return residual, start, batch, counts
+
+            if return_column:
+
+                def pair_body(
+                    chunk: jax.Array, output: tuple[jax.Array, jax.Array]
+                ) -> tuple[jax.Array, jax.Array]:
+                    residual, start, batch, counts = batch_residual(chunk)
                     ones = jnp.broadcast_to(
                         counts[:, None, None].astype(jnp.float32), residual.shape
                     )
                     return selected.backproject_pair((residual, ones), start, batch, output)
-                if TYPE_CHECKING:
-                    assert not isinstance(output, tuple)
+
+                initial = selected.zeros_volume()
+                return jax.lax.fori_loop(0, selected.count, pair_body, (initial, initial))
+
+            def body(chunk: jax.Array, output: jax.Array | None) -> jax.Array:
+                residual, start, batch, _ = batch_residual(chunk)
                 return selected.backproject(residual, start, batch, output)
 
             # A single transpose has no previous batch to accumulate.
-            if selected.count == 1 and not return_column:
+            if selected.count == 1:
                 return body(jnp.int32(0), None)
-            initial = selected.zeros_volume()
-            return jax.lax.fori_loop(
-                0, selected.count, body, (initial, initial) if return_column else initial
-            )
+            return jax.lax.fori_loop(0, selected.count, body, selected.zeros_volume())
 
         return forward, adjoint, residual_adjoint
 

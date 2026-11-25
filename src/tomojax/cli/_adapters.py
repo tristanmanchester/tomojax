@@ -48,6 +48,8 @@ from tomojax.wire.progress import Event, Preview
 if TYPE_CHECKING:
     from os import PathLike
 
+    from tomojax._evaluation import SplitSettings
+
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
 EXECUTABLE = (
@@ -305,7 +307,12 @@ class Admission:
 
     @prepare.register
     def evaluate(self, operation: op.Evaluate) -> Work:
-        from tomojax._evaluation import local_motion, partition_layout, partitions, score_candidate
+        from tomojax._evaluation import (
+            local_motion,
+            partition_layout,
+            partitions,
+            score_candidate,
+        )
 
         if isinstance(operation.source, op.PathInput):
             data, raw = projection_frames(Path(operation.source.path))
@@ -315,17 +322,32 @@ class Admission:
         steps = arguments(
             operation, self.context, omit=("source", "split", "reference", "candidates")
         )["corrections"]
-        spec = msgspec.to_builtins(operation.split)
-        kind = spec.pop("type")
+        split = operation.split
+        spec: SplitSettings
+        if isinstance(split, op.Angular):
+            spec = {
+                "type": "angular",
+                "start": split.start,
+                "width": split.width,
+                "guard": split.guard,
+                "period": split.period,
+            }
+        else:
+            spec = {
+                "type": "interleaved",
+                "stride": split.stride,
+                "offset": split.offset,
+                "guard": split.guard,
+            }
         if not operation.candidates:
             raise InvalidParameter("candidates", "supply at least one setting")
         if operation.reference.grid is not None or operation.reference.region is not None:
             raise InvalidParameter("reference", "alignment reference uses the scan's default grid")
         try:
             domain = (
-                partition_layout(data, kind, spec, steps, raw=raw)
+                partition_layout(data, spec, steps, raw=raw)
                 if self.validating
-                else partitions(data, kind, spec, steps, raw=raw)
+                else partitions(data, spec, steps, raw=raw)
             )
         except InvalidParameter:
             raise

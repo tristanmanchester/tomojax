@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -23,6 +23,12 @@ if TYPE_CHECKING:
     from tomojax._data import FrameStack
 
     from ._steps import Step
+
+
+@runtime_checkable
+class _Shaped(Protocol):
+    @property
+    def shape(self) -> tuple[int, ...]: ...
 
 
 class HostCopies(AbstractContextManager["HostCopies"]):
@@ -88,12 +94,10 @@ def copy_projections(
     """Own the line-integral input before applying corrections in place."""
     from tomojax.core.host_volume import fill, host_array
 
-    if not hasattr(projections, "shape") or any(
+    if not isinstance(projections, _Shaped) or any(
         step.whole_rows or step.selects_views for step in steps
     ):
         return np.array(projections, np.float32, copy=True)
-    if TYPE_CHECKING:
-        assert isinstance(projections, np.ndarray | jax.Array | FrameStack)
     out = host_array(projections.shape)
     depth = max(1, (32 << 20) // (4 * out.shape[1] * out.shape[2]))
     return fill(out, projections, depth=depth)

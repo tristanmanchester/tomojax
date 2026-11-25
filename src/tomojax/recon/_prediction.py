@@ -37,8 +37,7 @@ def add_slab(
     interpolation: str,
     cone: bool,
 ) -> jax.Array:
-    if TYPE_CHECKING:
-        assert isinstance(coefficients, jax.Array)  # JIT converts the host input.
+    coefficients = jnp.asarray(coefficients)
     if cone:
         return total + cone_project(slab, coefficients, grid, detector, backend=backend)
     return total + forward_project_planes(

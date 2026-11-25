@@ -17,7 +17,7 @@ import numpy as np
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
-from tomojax.cli._frame_reads import frame_pixels
+from tomojax.cli._frame_reads import WindowedFrames, frame_pixels
 from tomojax.cli._handles import stage_array
 from tomojax.cli._planes import plane_windows
 from tomojax.cli._results import disk_volume, stored_grid
@@ -146,7 +146,7 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
-    if hasattr(data, "window"):
+    if isinstance(data, WindowedFrames):
         return frame_pixels(data, ranges, READ_BYTES)
     keys = tuple(slice(r.start, r[-1] + 1, r.step) for r in ranges)
     return np.asarray(data[keys])
