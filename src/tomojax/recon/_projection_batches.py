@@ -171,7 +171,13 @@ class ViewBatches:
             z_fast=self.z_fast,
         )
 
-    def backproject_pair(self, images, start, batch, outputs):
+    def backproject_pair(
+        self,
+        images: tuple[jax.Array, jax.Array],
+        start: jax.Array,
+        batch: jax.Array,
+        outputs: tuple[jax.Array, jax.Array],
+    ) -> tuple[jax.Array, jax.Array]:
         """Two exact transposes with common batch geometry and separate accumulators."""
         if isinstance(self.model, ConeModel):
             return self.model.backproject_pair(
@@ -182,9 +188,9 @@ class ViewBatches:
                 backend=self.cone_backend,
                 accumulate=outputs,
             )
-        return tuple(
-            self.backproject(image, start, batch, out)
-            for image, out in zip(images, outputs, strict=True)
+        return (
+            self.backproject(images[0], start, batch, outputs[0]),
+            self.backproject(images[1], start, batch, outputs[1]),
         )
 
     def zeros_volume(self) -> jax.Array:

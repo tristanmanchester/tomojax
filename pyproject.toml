@@ -189,8 +189,6 @@ ban-relative-imports = "parents"
 "{tools,bench}/**" = ["T20"]
 "src/tomojax/cli/**" = ["T20"]
 "src/tomojax/**/_*.py" = [
-    "ANN001",
-    "ANN202",
     "D100",
     "D101",
     "D102",
@@ -204,19 +202,7 @@ ban-relative-imports = "parents"
 
 [tool.basedpyright]
 include = [
-    "src/tomojax/_region.py",
-    "src/tomojax/evaluation.py",
-    "src/tomojax/alignment/api.py",
-    "src/tomojax/alignment/__init__.py",
-    "src/tomojax/backends/api.py",
-    "src/tomojax/cli",
-    "src/tomojax/core/api.py",
-    "src/tomojax/forward/api.py",
-    "src/tomojax/geometry/api.py",
-    "src/tomojax/io",
-    "src/tomojax/motion/api.py",
-    "src/tomojax/nuisance/api.py",
-    "src/tomojax/recon/api.py",
+    "src/tomojax",
     "tools",
 ]
 exclude = [
@@ -228,6 +214,8 @@ exclude = [
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = "warning"
+# Optional packages (PyTorch, xraylib, CuPy...) are absent from some environments.
+reportMissingImports = "warning"
 reportUnknownMemberType = "warning"
 reportUnknownArgumentType = "warning"
 reportUnknownVariableType = "warning"

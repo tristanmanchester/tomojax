@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -12,6 +12,13 @@ from tomojax.core.host_volume import host_array, release_planes
 
 from ._records import Correction, Json
 from ._validation import positive_finite
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+    import jax
+
+    from tomojax._data import FrameStack
 
 LOG = logging.getLogger(__name__)
 
@@ -140,7 +147,9 @@ def _moments(
     return mean, np.maximum(0.0, squares - total * mean) / (count * (count - 1))
 
 
-def batch_fields(fields, resident, lo, hi):
+def batch_fields(
+    fields: Fields, resident: np.ndarray | jax.Array | None, lo: np.ndarray, hi: np.ndarray
+) -> tuple[np.ndarray | jax.Array, np.ndarray, np.ndarray]:
     """Only the bracketing calibrations for the views about to be corrected."""
     if resident is not None:
         return resident, lo, hi
@@ -149,7 +158,14 @@ def batch_fields(fields, resident, lo, hi):
     return fields.flats[selected], a, b
 
 
-def set_moments(flats, shape, where, sets, flat_scales, dark):
+def set_moments(
+    flats: np.ndarray | FrameStack,
+    shape: tuple[int, int],
+    where: np.ndarray,
+    sets: np.ndarray,
+    flat_scales: np.ndarray | None,
+    dark: np.ndarray,
+) -> Iterator[tuple[np.ndarray, np.ndarray, float | np.floating]]:
     for position in sets:
         selected = None if len(sets) == 1 else np.flatnonzero(where == position)
         light, variance = _moments(

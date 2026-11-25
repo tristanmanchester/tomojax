@@ -385,13 +385,11 @@ def test_fbp_interpolation_preserves_physical_fractions_under_zero_padding(
     np.testing.assert_array_equal(padded, original)
 
 
-@pytest.mark.parametrize("bad", ["angle", "origin", "detector"])
 @pytest.mark.parametrize("host", [False, True])
-def test_fbp_rejects_nonfinite_geometry_before_any_work(bad, host) -> None:
-    nan = float("nan")
-    grid = Grid(3, 2, 1, 1, 1, 1, vol_origin=(nan, 0, 0) if bad == "origin" else None)
-    detector = Detector(5, 1, 1, 1, (nan, 0) if bad == "detector" else (0, 0))
-    geometry = ParallelGeometry(grid, detector, [0, nan if bad == "angle" else 60, 120])
+def test_fbp_rejects_nonfinite_angles_before_any_work(host) -> None:
+    grid = Grid(3, 2, 1, 1, 1, 1)
+    detector = Detector(5, 1, 1, 1)
+    geometry = ParallelGeometry(grid, detector, [0, float("nan"), 120])
     run = fbp_host if host else fbp
     projections = np.ones((3, 1, 5), np.float32) if host else jnp.ones((3, 1, 5))
     with pytest.raises(ValueError, match="must be finite"):

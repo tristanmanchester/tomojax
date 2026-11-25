@@ -5,7 +5,7 @@ import contextlib
 from dataclasses import dataclass, field, fields, replace
 import functools
 import math
-from typing import NamedTuple
+from typing import ClassVar, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -26,7 +26,6 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
-    validate_grid,
     validate_optional_broadcastable_shape,
     validate_optional_same_shape,
     validate_pose_stack,
@@ -140,6 +139,8 @@ class SPDHGConfig:
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     """
+
+    method: ClassVar[Literal["spdhg"]] = "spdhg"
 
     iterations: int = 600
     tv_weight: float | None = None
@@ -442,7 +443,6 @@ def _prepare_spdhg_runtime(
     regularizer = validate_regularizer(cfg.regularizer, cfg.huber_delta, context="spdhg_tv config")
     huber_delta = float(cfg.huber_delta)
 
-    validate_grid(grid, "spdhg_tv grid")
     n_views, nv, nu = validate_projection_stack(
         projections,
         detector,

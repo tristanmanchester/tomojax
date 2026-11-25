@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,6 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_projection_stack,
     validate_volume,
 )
@@ -94,6 +93,8 @@ class SIRTConfig:
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["sirt"]] = "sirt"
 
     iterations: int = 50
     subsets: int = 1
@@ -520,7 +521,6 @@ class SIRTCall:
         """Solve this invocation, retaining normalizers across its axial slabs."""
         announce(array=projections)
         cfg = SIRTConfig() if config is None else config
-        validate_grid(grid, "sirt grid")
         n, _, _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="sirt"
         )

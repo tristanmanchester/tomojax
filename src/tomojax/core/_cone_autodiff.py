@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
+from typing import TYPE_CHECKING, Literal
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -15,8 +16,23 @@ from tomojax.core.cone import adjoint_cuda, forward_cuda, pose_columns_cuda
 from tomojax.core.projector_autodiff import FirstOrderProjector
 from tomojax.core.volume_layout import swap_private_axes
 
+if TYPE_CHECKING:
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext
 
-def _launch_vjp(context, out, coeff, volume, cotangent, *, grid, detector, z_fast):
+    from .geometry.base import Detector, Grid
+
+
+def _launch_vjp(
+    context: CallbackContext,
+    out: CallbackBuffer,
+    coeff: CallbackBuffer,
+    volume: CallbackBuffer,
+    cotangent: CallbackBuffer,
+    *,
+    grid: Grid,
+    detector: Detector,
+    z_fast: bool,
+) -> None:
     import cupy as cp
 
     with cone.xla_stream(context, out):
@@ -35,7 +51,14 @@ def _launch_vjp(context, out, coeff, volume, cotangent, *, grid, detector, z_fas
         )  # fmt: skip
 
 
-def _coefficient_vjp(coeff, volume, cotangent, grid, detector, z_fast):
+def _coefficient_vjp(
+    coeff: jax.Array,
+    volume: jax.Array,
+    cotangent: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    z_fast: Literal[True, False],
+) -> jax.Array:
     call = buffer_callback(
         partial(_launch_vjp, grid=grid, detector=detector, z_fast=z_fast),
         jax.ShapeDtypeStruct(coeff.shape, jnp.float32),
@@ -47,10 +70,12 @@ def _coefficient_vjp(coeff, volume, cotangent, grid, detector, z_fast):
 class _ConeProjector(FirstOrderProjector):
     z_fast: bool
 
-    def expand(self, coeff, volume):
+    def expand(self, coeff: jax.Array, volume: jax.Array) -> jax.Array:
         return forward_cuda(volume, coeff, self.grid, self.detector, z_fast=self.z_fast)
 
-    def coefficient_jvp(self, coeff, volume, dcoeff, dvolume):
+    def coefficient_jvp(
+        self, coeff: jax.Array, volume: jax.Array, dcoeff: jax.Array, dvolume: jax.Array | None
+    ) -> jax.Array:
         result = pose_columns_cuda(
             volume,
             coeff,
@@ -65,25 +90,29 @@ class _ConeProjector(FirstOrderProjector):
             )
         return result
 
-    def coefficient_vjp(self, coeff, volume, cotangent):
+    def coefficient_vjp(
+        self, coeff: jax.Array, volume: jax.Array, cotangent: jax.Array
+    ) -> jax.Array:
         return _coefficient_vjp(coeff, volume, cotangent, self.grid, self.detector, self.z_fast)
 
-    def adjoint(self, coeff, cotangent):
+    def adjoint(self, coeff: jax.Array, cotangent: jax.Array) -> jax.Array:
         shape = (self.grid.nx, self.grid.ny, self.grid.nz)
         initial = jnp.zeros(shape if self.z_fast else shape[::-1], jnp.float32)
         return adjoint_cuda(cotangent, coeff, self.grid, self.detector, initial, z_fast=self.z_fast)
 
 
-def differentiable_forward(coeff, volume, grid, detector, *, z_fast=False):
+def differentiable_forward(
+    coeff: jax.Array, volume: jax.Array, grid: Grid, detector: Detector, *, z_fast: bool = False
+) -> jax.Array:
     """CUDA projection with first-order pose/volume derivatives."""
 
-    def on_cuda(c, v):
+    def on_cuda(c: jax.Array, v: jax.Array) -> jax.Array:
         args = (c, v)
         return _ConeProjector(
             tuple(jax.typeof(arg) for arg in args), grid=grid, detector=detector, z_fast=z_fast
         )(*args)
 
-    def on_jax(c, v):
+    def on_jax(c: jax.Array, v: jax.Array) -> jax.Array:
         v = swap_private_axes(v, z_fast=z_fast)
         return cone.cone_project(v, c, grid, detector, backend="jax")
 

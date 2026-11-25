@@ -17,7 +17,7 @@ import numbers
 import os
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict, Unpack, cast
 
 import numpy as np
 
@@ -51,12 +51,29 @@ from tomojax.io.projection_layout import saved_projection_layout
 
 if TYPE_CHECKING:
     from tomojax import corrections
+    from tomojax._data import FrameStack
     from tomojax._loading_geometry import DeclaredGeometry
     from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames
 else:
     corrections = AnnotationModule("tomojax.corrections")
+
+if TYPE_CHECKING:
+
+    class _FrameOverrides(TypedDict, total=False):
+        detector: Detector | None
+        pixel_size: float | tuple[float, float] | None
+        grid: Grid | None
+        geometry: ScanGeometry | None
+        declared: DeclaredGeometry | None
+
+    class _StoredOverrides(_FrameOverrides):
+        angles: Sequence[float] | np.ndarray | None
+
+    class _StoredFrameSettings(_StoredOverrides):
+        apply_poses: bool
+
 
 LOG = logging.getLogger(__name__)
 
@@ -240,23 +257,26 @@ def discover_frames(
 def projection_frames(
     file: Path,
     *,
-    require_raw=False,
-    apply_poses=True,
-    flats=None,
-    darks=None,
-    exposure_times=None,
-    flat_exposure_times=None,
-    data_path=None,
-    image_key_path=None,
-    angles_path=None,
-    angles=None,
-    **overrides: Any,
+    require_raw: bool = False,
+    apply_poses: bool = True,
+    flats: np.ndarray | float | str | PathLike[str] | None = None,
+    darks: np.ndarray | float | str | PathLike[str] | None = None,
+    exposure_times: np.ndarray | float | None = None,
+    flat_exposure_times: np.ndarray | float | None = None,
+    data_path: str | None = None,
+    image_key_path: str | None = None,
+    angles_path: str | None = None,
+    angles: Sequence[float] | np.ndarray | None = None,
+    **overrides: Unpack[_FrameOverrides],
 ) -> tuple[Frames, bool]:
     """Resolve geometry and calibration for a scan without reading its detector pixels."""
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
     centre, overrides["declared"] = centre_of(overrides.get("declared"))
-    settings = dict(apply_poses=apply_poses, angles=angles, **overrides)
+    if TYPE_CHECKING:
+        settings = _StoredFrameSettings(apply_poses=apply_poses, angles=angles, **overrides)
+    else:
+        settings = dict(apply_poses=apply_poses, angles=angles, **overrides)
     frames, located = discover_frames(
         file,
         layout_only=True,
@@ -283,8 +303,18 @@ def projection_frames(
     return centred(fields, centre), True
 
 
-def stored_frames(file, located, *, require_raw, apply_poses, **overrides: Any):
-    settings = dict(apply_poses=apply_poses, **overrides)
+def stored_frames(
+    file: Path,
+    located: LocatedFrames | None,
+    *,
+    require_raw: bool,
+    apply_poses: bool,
+    **overrides: Unpack[_StoredOverrides],
+) -> tuple[Frames, bool]:
+    if TYPE_CHECKING:
+        settings = _StoredFrameSettings(apply_poses=apply_poses, **overrides)
+    else:
+        settings = dict(apply_poses=apply_poses, **overrides)
     if located is not None and require_raw:
         return _hdf5_frames(file, located, layout_only=True, **settings), True
     try:
@@ -1074,7 +1104,7 @@ def _record_frames(
         declared=declared,
     )
 
-    def labelled(label):
+    def labelled(label: int) -> np.ndarray | FrameStack | None:
         mask = key == label
         if not mask.any():
             return None

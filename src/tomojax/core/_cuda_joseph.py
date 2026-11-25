@@ -30,6 +30,8 @@ from tomojax.core._joseph_cuda_kernels import RUN, THREADS, forward_kernel, gath
 from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
+    from tomojax.core.cuda import Offset
+    from tomojax.core.cuda_types import CallbackBuffer
     from tomojax.core.geometry.base import Detector, Grid
 
 # Keep tiny grids on the allocator-free path. Kernel loading and callback setup
@@ -90,7 +92,18 @@ def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
             yield stream
 
 
-def _launch_gather(kernel, stream, coeff, images, out, listed, shape, detector, views, z0):
+def _launch_gather(
+    kernel: str,
+    stream: int,
+    coeff: CallbackBuffer | Offset,
+    images: CallbackBuffer,
+    out: CallbackBuffer,
+    listed: tuple[CallbackBuffer, ...],
+    shape: tuple[int, int, int],
+    detector: tuple[int, int],
+    views: int,
+    z0: int,
+) -> None:
     """Accumulate into a run list or a whole band using the same Joseph weights."""
     from tomojax.core.cuda import launch_kernel
 
@@ -250,7 +263,7 @@ def project_ones_cuda(coeff: jax.Array, grid: Grid, detector: Detector) -> jax.A
         vmap_method="sequential",
     )
 
-    def on_jax(c):
+    def on_jax(c: jax.Array) -> jax.Array:
         from .joseph import forward_jax
 
         ones = jnp.ones((grid.nz, grid.ny, grid.nx), jnp.float32)

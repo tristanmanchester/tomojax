@@ -443,8 +443,8 @@ def random_cubes_spheres(
             cy = float(rng.uniform(margin, ny - margin))
             cz = float(rng.uniform(margin, nz - margin))
         val = float(rng.uniform(min_value, max_value))
-        ang = np.deg2rad(rng.uniform(-max_rotation, max_rotation, size=3))
-        _add_rotated_cube_soft(vol, (cx, cy, cz), size, val, ang)
+        ax, ay, az = (float(a) for a in np.deg2rad(rng.uniform(-max_rotation, max_rotation, 3)))
+        _add_rotated_cube_soft(vol, (cx, cy, cz), size, val, (ax, ay, az))
 
     params = _sample_random_sphere_params(
         nx,

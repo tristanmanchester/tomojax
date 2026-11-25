@@ -30,7 +30,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._typed_arrays import device_id
-from tomojax.errors import InvalidParameter
+from tomojax.errors import InvalidParameter, device_out_of_memory
 
 if TYPE_CHECKING:
     from jax.typing import ArrayLike
@@ -130,9 +130,11 @@ def sum_batches(
     If a share retries with smaller batches, it replays to the current view
     boundary before it can yield another partial volume.
     """
-    shares = [(None, range(views))] if split is None else split.shares()
+    shares: list[tuple[Device | None, range]] = [(None, range(views))]
     if split is not None:
-        announce(tuple(device for device, _ in shares))
+        placed = split.shares()
+        announce(tuple(device for device, _ in placed))
+        shares = list(placed)
     counts = [math.ceil(len(share) / batch_size) for _, share in shares]
     task = progress.for_unit("batches")
     end = max(counts)
@@ -322,7 +324,7 @@ def block_available(size: int) -> bool:
         block = jnp.zeros((-(-size // 4),), jnp.float32)
         block.block_until_ready()
     except Exception as exc:
-        if "resource_exhausted" in str(exc).lower():
+        if device_out_of_memory(exc):
             return False
         raise
     block.delete()

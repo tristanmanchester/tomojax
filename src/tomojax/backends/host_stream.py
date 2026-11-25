@@ -127,7 +127,7 @@ def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.in
 
 
 def read_block(
-    key: jax.Array, start: jax.Array, shape: tuple[int, ...], dtype: DTypeLike = jnp.float32
+    key: jax.Array, start: int | jax.Array, shape: tuple[int, ...], dtype: DTypeLike = jnp.float32
 ) -> jax.Array:
     """Read rows of a registered buffer, ordered after earlier writes.
 

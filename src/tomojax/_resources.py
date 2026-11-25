@@ -123,7 +123,6 @@ def estimate(
     from tomojax.recon.planning import inversion_storage
 
     return inversion_storage(
-        plan.method,
         plan.config,
         plan.scan.geometry,
         scan.projections,

@@ -15,11 +15,13 @@ from ._cuda_joseph import xla_stream
 from ._plane_interpolation import validate_interpolation
 
 if TYPE_CHECKING:
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext, CuPyValue
+
     from .geometry.base import Detector, Grid
 
 
 @cache
-def _kernel(directions: int, interpolation: str, *, z_fast: bool):
+def _kernel(directions: int, interpolation: str, *, z_fast: bool) -> CuPyValue:
     import cupy as cp
 
     root = Path(__file__).parent
@@ -34,7 +36,18 @@ def _kernel(directions: int, interpolation: str, *, z_fast: bool):
     return cp.RawModule(code=source, options=("--fmad=false",)).get_function("pose_columns")
 
 
-def _launch(context, out, coeff, tangent, volume, *, grid, detector, interpolation, z_fast):
+def _launch(
+    context: CallbackContext,
+    out: CallbackBuffer,
+    coeff: CallbackBuffer,
+    tangent: CallbackBuffer,
+    volume: CallbackBuffer,
+    *,
+    grid: Grid,
+    detector: Detector,
+    interpolation: str,
+    z_fast: bool,
+) -> None:
     import cupy as cp
 
     views, directions = tangent.shape[:2]
@@ -82,7 +95,7 @@ def pose_columns_cuda(
         vmap_method="sequential",
     )
 
-    def on_jax(c, t, v):
+    def on_jax(c: jax.Array, t: jax.Array, v: jax.Array) -> jax.Array:
         from .joseph import plane_pose_columns
 
         return plane_pose_columns(

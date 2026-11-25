@@ -1,5 +1,7 @@
 """Execute a trusted Python call against the session's handles."""
 
+from __future__ import annotations
+
 import ast
 from collections.abc import Iterator, Mapping
 from contextlib import redirect_stderr, redirect_stdout
@@ -7,7 +9,7 @@ from dataclasses import fields, is_dataclass
 from io import StringIO
 import traceback
 from types import FunctionType, ModuleType
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 import msgspec
@@ -23,6 +25,13 @@ from tomojax.cli.mcp.ledger import new_reference
 from tomojax.wire.arrays import Member
 from tomojax.wire.progress import Info
 
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
+
+    from tomojax.cli import operations as op
+    from tomojax.cli._handles import Root
+    from tomojax.wire.arrays import Npy
+
 _KINDS = {
     tj.Scan: "scan",
     tj.Frames: "frames",
@@ -33,7 +42,7 @@ _KINDS = {
 _SHOWN = 10000  # characters kept from each end of a captured stream
 
 
-def array_bytes(value, seen) -> int:
+def array_bytes(value: object, seen: set[int]) -> int:
     """Bytes of the arrays reachable from ``value`` through containers and dataclasses."""
     if id(value) in seen or isinstance(value, type | ModuleType | FunctionType):
         return 0
@@ -54,13 +63,13 @@ def array_bytes(value, seen) -> int:
 class Registrations:
     """The handles, arrays and images one Python call publishes when it succeeds."""
 
-    def __init__(self, context) -> None:
+    def __init__(self, context: ex.ExecutionContext) -> None:
         self.context = context
         self.roots = []
         self.products = {}
         self.images = []
 
-    def register(self, item):
+    def register(self, item: Root | jax.Array | np.ndarray) -> str:
         if isinstance(item, np.ndarray | jax.Array):
             name = new_reference("array")
             a = np.asarray(item)
@@ -73,7 +82,7 @@ class Registrations:
         self.roots.append((name, handle(item)))
         return name
 
-    def show(self, array):
+    def show(self, array: ArrayLike | jax.Array) -> None:
         panel = Panel("Python", np.asarray(array), (), "unspecified")
         self.images.append(stage_array(self.context, raster(panel, *limits([panel]))))
 
@@ -81,11 +90,13 @@ class Registrations:
 class HandleInputs(Mapping):
     """The session's handles and arrays by reference, read when indexed."""
 
-    def __init__(self, aliases, leases) -> None:
+    def __init__(
+        self, aliases: Mapping[str, Member | Npy], leases: Mapping[Member | Npy, ex.Lease]
+    ) -> None:
         self._aliases = aliases
         self._leases = leases
 
-    def __getitem__(self, name) -> Any:
+    def __getitem__(self, name: str) -> ex.HandleValue | Npy | np.ndarray:
         ref = self._aliases[name]
         if isinstance(ref, Member):
             return self._leases[ref].value
@@ -98,7 +109,9 @@ class HandleInputs(Mapping):
         return len(self._aliases)
 
 
-def execute_in_namespace(cmd, context):
+def execute_in_namespace(
+    cmd: op.Python, context: ex.ExecutionContext
+) -> tuple[Registrations, object]:
     namespace = context.namespace
     if cmd.reset:
         namespace.clear()
@@ -112,11 +125,15 @@ def execute_in_namespace(cmd, context):
     )
     try:
         tree = ast.parse(cmd.code, filename="<python>")
-        expr = tree.body.pop() if tree.body and isinstance(tree.body[-1], ast.Expr) else None
+        last = tree.body[-1] if tree.body else None
+        expression = None
+        if isinstance(last, ast.Expr):
+            tree.body.pop()
+            expression = ast.Expression(last.value)
         exec(compile(tree, "<python>", "exec"), namespace)
         value = None
-        if expr is not None:
-            value = eval(compile(ast.Expression(expr.value), "<python>", "eval"), namespace)
+        if expression is not None:
+            value = eval(compile(expression, "<python>", "eval"), namespace)
         if isinstance(value, np.ndarray | jax.Array):
             value = registrations.register(value)
         value = msgspec.to_builtins(value.item() if isinstance(value, np.generic) else value)
@@ -135,7 +152,7 @@ def _clip(text: str) -> str:
     return f"{text[:_SHOWN]}\n[{missing} characters omitted]\n{text[-_SHOWN:]}"
 
 
-def run_python(cmd, context):
+def run_python(cmd: op.Python, context: ex.ExecutionContext) -> ex.Success:
     out, err = StringIO(), StringIO()
     try:
         with redirect_stdout(out), redirect_stderr(err):

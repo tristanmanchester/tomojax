@@ -26,8 +26,8 @@
     "tomojax.alignment": 1,
     "tomojax.datasets": 14,
     "tomojax.geometry.api": 12,
-    "tomojax.corrections.api": 7,
-    "tomojax.recon.api": 13,
+    "tomojax.corrections.api": 8,
+    "tomojax.recon.api": 14,
     "tomojax.io.api": 29,
     "tomojax.alignment.api": 4
   },
@@ -43,34 +43,37 @@
     "studio": 3
   },
   "long_files": {
+    "src/tomojax/_loading.py": 821,
+    "src/tomojax/alignment/_joint/_solver.py": 962,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 171,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 174,
+    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 104,
     "src/tomojax/corrections/_engine.py::correct_frames": 129,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
-    "src/tomojax/recon/_cgls_jax.py::cgls": 102,
-    "src/tomojax/recon/sirt.py::SIRTCall.solve": 101,
-    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 116
+    "src/tomojax/recon/_cgls_jax.py::cgls": 101,
+    "src/tomojax/recon/_projection.py::subset_operators": 118,
+    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "code_lines": {
-    "(modules)": 6216,
-    "_data": 2189,
-    "alignment": 4670,
-    "backends": 273,
-    "cli": 11062,
-    "core": 10053,
-    "corrections": 3204,
+    "(modules)": 6520,
+    "_data": 2213,
+    "alignment": 5435,
+    "backends": 269,
+    "cli": 11202,
+    "core": 10115,
+    "corrections": 3232,
     "datasets": 1069,
-    "forward": 404,
-    "geometry": 913,
-    "io": 4057,
+    "forward": 403,
+    "geometry": 916,
+    "io": 4069,
     "motion": 153,
     "nuisance": 232,
-    "recon": 15037,
+    "recon": 15539,
     "wire": 266
   },
   "cuda_kernels": 47,
@@ -78,10 +81,12 @@
   "environment_reads": 22,
   "suppressions": {
     "noqa": 5,
-    "type: ignore": 11,
+    "type: ignore": 8,
     "pyright: ignore": 12
   },
   "complex_functions": [
+    "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
+    "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
@@ -94,27 +99,20 @@
     "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
+    "src/tomojax/recon/_projection.py::C901::select",
+    "src/tomojax/recon/_projection.py::C901::subset_operators",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 64,
-    "forwarders": 5,
+    "tiny": 69,
+    "forwarders": 7,
     "chained": 4
-  },
-  "type_errors": {
-    "reportArgumentType": 42,
-    "reportAttributeAccessIssue": 18,
-    "reportCallIssue": 2,
-    "reportIndexIssue": 5,
-    "reportPrivateUsage": 15,
-    "reportReturnType": 5,
-    "reportTypedDictNotRequiredAccess": 3
   },
   "positional_options": [],
   "params5_mentions": 0,
   "string_normalisers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 135
+  "test_private_imports": 138
 }

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from tomojax._field_of_view import Cylinder
     from tomojax._parameters import RegionName
     from tomojax._region import RegionEstimate
-    from tomojax._scan import Scan
+    from tomojax._scan import Alignment, Scan
     from tomojax.alignment import AlignConfig
     from tomojax.alignment._integration import FitSchedule
     from tomojax.geometry import Grid
@@ -32,7 +32,7 @@ def align_poses(
     plan: JointSelection,
 ) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
-    from tomojax.alignment._calibration import publish_calibration
+    from tomojax._calibration import publish_calibration
 
     grid = plan.grid
     if grid is not None:
@@ -168,24 +168,34 @@ def resolve_alignment(
             "axis; pass geometry=... to tomojax.load"
         )
     frames = cone_frames(scan.geometry)
-    declared = (
-        np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
-        if frames is not None
-        else None
-    )
+    cone = None
+    if frames is not None:
+        declared = np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
+        cone = (declared, frames)
     schedule = fit_schedule(
-        scan.grid, scan.detector, declared, frames, keep_grid=grid is not None, config=config
+        scan.grid, scan.detector, cone, keep_grid=grid is not None, config=config
     )
     return JointSelection(grid, config, cylinder, info, schedule, frames)
 
 
-def transfer_alignment(train, test, alignment, *, training_segments, held_segments, local):
+def transfer_alignment(
+    train: Scan,
+    test: Scan,
+    alignment: Alignment,
+    *,
+    training_segments: np.ndarray,
+    held_segments: np.ndarray,
+    local: bool,
+) -> Scan:
     """Apply fitted globals and segment-interpolated local updates to unseen views."""
     from scipy.spatial.transform import Rotation
 
-    from tomojax.alignment._calibration import publish_calibration
+    from tomojax._calibration import publish_calibration
 
-    corrections = {key: entry["change"] for key, entry in alignment.info["calibration"].items()}
+    calibration = alignment.info["calibration"]
+    if not isinstance(calibration, dict):
+        raise TypeError("the alignment records no calibration changes to transfer")
+    corrections = {key: entry["change"] for key, entry in calibration.items()}
     fitted = None
     if local:
         # publish_calibration composes old * delta and adds lab translations.
@@ -199,12 +209,13 @@ def transfer_alignment(train, test, alignment, *, training_segments, held_segmen
             delta[:, 3:] -= previous[:, 3:]
         delta[:, :3] = rotations.as_euler("YXZ")[:, [1, 0, 2]]
         fitted = np.empty((len(held_segments), 6))
+        train_at, test_at = train.view_positions, test.view_positions
+        if train_at is None or test_at is None:
+            raise ValueError("transferring local motion needs each view's acquisition position")
         for group in np.unique(held_segments):
             a, b = training_segments == group, held_segments == group
             for col in range(6):
-                fitted[b, col] = np.interp(
-                    test.view_positions[b], train.view_positions[a], delta[a, col]
-                )
+                fitted[b, col] = np.interp(test_at[b], train_at[a], delta[a, col])
     detector = test.detector
     return publish_calibration(
         test, fitted, corrections, native_pixel_size=(detector.du, detector.dv)

@@ -5,17 +5,18 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 import operator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
 from tomojax import progress
+from tomojax.backends.api import is_oom_error
 from tomojax.core.geometry.cone import require_parallel_beam
-from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
-from ._fourier_backend import FourierPlan, fourier_slab_depth, is_cuda_oom, resolve_fourier_backend
+from ._fourier_backend import FourierPlan, fourier_slab_depth, resolve_fourier_backend
 from ._fourier_grid import (
     check_samples,
     sample_projection_rows,
@@ -69,6 +70,8 @@ class FourierConfig:
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["fourier"]] = "fourier"
 
     slices_per_batch: int | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"
@@ -165,8 +168,7 @@ def fourier(
     """
     cfg = FourierConfig() if config is None else config
     backend = resolve_fourier_backend(cfg.backend)
-    nx, ny, nz = validate_grid(grid, "fourier_reconstruct grid")
-    shape = (nz, ny, nx)
+    shape = grid.shape
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
@@ -215,7 +217,7 @@ def fourier(
                     progress.step("slabs")
             return output
         except Exception as error:
-            if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+            if backend != "cupy" or depth == 1 or not is_oom_error(error):
                 raise
             # The pipeline has drained its transfer events. Drop this attempt's
             # buffers and the exception traceback before allocating a smaller
@@ -284,8 +286,6 @@ def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector
     translations = detector_translations(geometry, len(order))
     plan_detector, shifts, vertical = detector, None, None
     origin = grid_volume_origin(grid)
-    if not np.isfinite([*origin, *detector.center]).all():
-        raise ValueError("fourier_reconstruct: grid and detector placement must be finite")
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
     ) / 2

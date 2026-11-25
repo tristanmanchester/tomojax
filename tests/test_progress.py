@@ -72,7 +72,7 @@ def scan():
 @pytest.mark.parametrize("kind", [progress.Started, progress.Advanced, progress.Finished])
 def test_handler_exception_is_the_last_delivery(kind):
     events = []
-    failure = RuntimeError("out of memory")
+    failure = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def handler(event):
         events.append(event)
@@ -393,7 +393,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
 
     before = mapped_files()
     workers = set(threading.enumerate())
-    failure_object = RuntimeError("out of memory")
+    failure_object = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
     token = progress.Control()
     events = []
 
@@ -529,7 +529,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
 
     events = []
     token = progress.Control()
-    problem = RuntimeError("out of memory")
+    problem = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def observe(event):
         json.dumps(progress.to_json(event), allow_nan=False)
@@ -898,7 +898,7 @@ def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
     detector = tj.Detector(7, 11, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, np.arange(7))
     events, reads = [], []
-    error = RuntimeError("out of memory")
+    error = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def read(first, stop):
         reads.append((first, stop))
@@ -910,7 +910,7 @@ def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
         if isinstance(event, progress.Advanced):
             raise error
 
-    slabs = api.reconstruct_slabs("sirt", geometry, grid, detector, read, config=SIRTConfig())
+    slabs = api.reconstruct_slabs(geometry, grid, detector, read, config=SIRTConfig())
     with progress.watch(observe), closing(slabs), pytest.raises(RuntimeError) as failure:
         next(slabs)
     validate_tree(events, interrupted=True)
@@ -1064,9 +1064,8 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
             return 8
 
     assert classify(Exhausted("no message")).kind == "out_of_memory"
-    assert (
-        classify(jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")).kind == "internal"
-    )
+    assert classify(jax.errors.JaxRuntimeError("INTERNAL: an unrelated failure")).kind == "internal"
+    assert classify(RuntimeError("RESOURCE_EXHAUSTED: from user code")).kind == "internal"
     wrapper = ValueError("solve could not allocate")
     wrapper.__cause__ = MemoryError()
     assert classify(wrapper).kind == "out_of_memory"
@@ -1074,6 +1073,41 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
         raise tj.InvalidParameter("filter", "unknown")
     assert classify(failure.value).path == "config.filter"
     assert classify(failure.value).kind == "invalid_parameter"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "INTERNAL: fft_plan != nullptr: Failed to create cuFFT batched plan with scratch allocator",
+        "INTERNAL: Failed to load in-memory CUBIN: CUDA_ERROR_OUT_OF_MEMORY: out of memory",
+    ],
+)
+def test_device_allocation_failures_reported_as_internal_are_out_of_memory(message):
+    # The retry paths and the error a client sees must agree on what ran out of memory.
+    from tomojax.backends.api import is_oom_error
+    from tomojax.errors import classify
+
+    error = jax.errors.JaxRuntimeError(message)
+    wrapped = ValueError("reconstruction failed")
+    wrapped.__cause__ = error
+    assert is_oom_error(error) and is_oom_error(wrapped)
+    assert classify(error).kind == classify(wrapped).kind == "out_of_memory"
+
+
+def test_recognising_a_cupy_allocation_failure_does_not_import_jax():
+    import subprocess
+    import sys
+
+    probe = (
+        "import sys\n"
+        "from tomojax.errors import device_out_of_memory\n"
+        "assert not device_out_of_memory(MemoryError('host'))\n"
+        "print('jax' in sys.modules)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "False"
 
 
 def test_logger_notes_between_and_inside_operations(caplog):

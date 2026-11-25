@@ -1,12 +1,30 @@
 """Preconditioned CG with explicit convergence verification for the image Schur solve."""
 
-from typing import NamedTuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def _dot(a, b):
+type _Iteration = tuple[
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+]
+type _State[Work] = tuple[*_Iteration, Work]
+
+
+def _dot(a: jax.Array, b: jax.Array) -> jax.Array:
     return jnp.sum(a.astype(jnp.float64) * b.astype(jnp.float64), dtype=jnp.float64)
 
 
@@ -20,7 +38,16 @@ class KrylovResult(NamedTuple):
     matvecs: jax.Array
 
 
-def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
+def solve[Work](
+    matvec: Callable[[jax.Array, Work], tuple[jax.Array, Work]],
+    rhs: jax.Array,
+    invdiag: jax.Array,
+    maxiter: int,
+    *,
+    rtol: float,
+    work: Work,
+    precondition: Callable[[jax.Array], jax.Array] | None = None,
+) -> tuple[KrylovResult, Work]:
     """Solve K x = rhs from zero with verified tolerance convergence.
 
     The caller supplies the same symmetric positive operator for every use.
@@ -38,7 +65,7 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
     A non-positive operator or preconditioner reports an infinite residual.
     """
 
-    def apply_inverse(residual):
+    def apply_inverse(residual: jax.Array) -> jax.Array:
         return residual * invdiag if precondition is None else precondition(residual)
 
     squared = _dot(rhs, rhs)
@@ -59,13 +86,13 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
     )
     threshold = rtol**2 * squared
 
-    def condition(state):
+    def condition(state: _State[Work]) -> jax.Array:
         k, _, _, _, _, ok, residual_squared, explicit, _, _ = state
         advance = (k < maxiter) & (residual_squared > threshold)
         verify = (residual_squared <= threshold) & ~explicit
         return ok & (advance | verify)
 
-    def advance(state, ap):
+    def advance(state: _Iteration, ap: jax.Array) -> _Iteration:
         k, x, r, p, rz, ok, _, _, products = state
         denominator = _dot(p, ap)
         safe = jnp.isfinite(denominator) & (denominator > 0)
@@ -87,7 +114,7 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
             products + 1,
         )
 
-    def verify(state, ax):
+    def verify(state: _Iteration, ax: jax.Array) -> _Iteration:
         k, x, _, _, _, ok, _, _, products = state
         r = rhs - ax
         z = apply_inverse(r)
@@ -96,14 +123,14 @@ def solve(matvec, rhs, invdiag, maxiter, *, rtol, work, precondition=None):
         ok = ok & ((gamma > 0) | (residual_squared == 0))
         return k, x, r, z, gamma, ok, residual_squared, jnp.asarray(True), products + 1
 
-    def step(state):
+    def step(state: _State[Work]) -> _State[Work]:
         # Verifying or advancing, each makes one product: x's or p's. It is made here, outside
         # the conditional, so the work buffer passes straight through the loop. Returned from a
         # conditional, it was copied every iteration (a whole stack of temporaries on the GPU).
-        *state, work = state
-        verifying = state[6] <= threshold
-        product, work = matvec(jnp.where(verifying, state[1], state[3]), work)
-        return (*jax.lax.cond(verifying, verify, advance, tuple(state), product), work)
+        *iteration, work = state
+        verifying = iteration[6] <= threshold
+        product, work = matvec(jnp.where(verifying, iteration[1], iteration[3]), work)
+        return (*jax.lax.cond(verifying, verify, advance, tuple(iteration), product), work)
 
     k, x, _, _, _, valid, residual_squared, explicit, products, work = jax.lax.while_loop(
         condition, step, initial

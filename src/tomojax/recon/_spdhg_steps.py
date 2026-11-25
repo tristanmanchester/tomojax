@@ -83,7 +83,7 @@ def _block_row_column_bounds(
     shape = volume_shape(projector[0], grid)
     zero, one = jnp.zeros(shape, jnp.float32), jnp.ones(shape, jnp.float32)
 
-    def bound(block, maxima):
+    def bound(block: jax.Array, maxima: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
         start = block * batch
         valid = jnp.minimum(batch, n - start)
         shifted = jnp.minimum(start, n - batch)

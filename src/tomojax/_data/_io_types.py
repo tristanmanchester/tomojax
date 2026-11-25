@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 
@@ -31,6 +31,35 @@ type DatasetValue = np.ndarray | Hdf5Frames | JsonValue | GridDict | DetectorDic
 
 
 type LoadedDataset = dict[str, DatasetValue]
+
+
+def _json_object(data: Mapping[str, DatasetValue], key: str) -> JsonObject | None:
+    """A saved JSON-object field, checked as it leaves the generic loaded mapping."""
+    value = data.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(f"saved {key} must be a JSON object, not {type(value).__name__}")
+    return cast("JsonObject", value)
+
+
+def _source_record(value: DatasetValue | None) -> SourceInfo | None:
+    if not isinstance(value, dict):
+        return None
+    fields = cast("dict[str, object]", value)
+
+    def text(key: str) -> str | None:
+        item = fields.get(key)
+        return None if item is None else str(item)
+
+    info = SourceInfo()
+    if "name" in fields:
+        info["name"] = text("name")
+    if "type" in fields:
+        info["type"] = text("type")
+    if "probe" in fields:
+        info["probe"] = text("probe")
+    return info
 
 
 def _copy_array_metadata(value: object) -> np.ndarray | None:
@@ -128,11 +157,11 @@ class NXTomoMetadata:
         NXTomoMetadata
             Typed dataset metadata or payload with copied array metadata.
         """
-        source_info = data.get("source")
+        source_info = _source_record(data.get("source"))
         source_name = data.get("source_name")
         source_type = data.get("source_type")
         source_probe = data.get("source_probe")
-        if isinstance(source_info, dict):
+        if source_info is not None:
             if source_name is None:
                 source_name = source_info.get("name")
             if source_type is None:
@@ -144,17 +173,18 @@ class NXTomoMetadata:
         return cls(
             angles=_copy_array_metadata(data.get("angles")),
             image_key=_copy_array_metadata(data.get("image_key")),
-            grid=data.get("grid"),
-            detector=data.get("detector"),
+            grid=cast("GridDict | None", _json_object(data, "grid")),
+            # An incomplete saved detector stays a mapping: load_frames may complete it.
+            detector=cast("DetectorDict | None", _json_object(data, "detector")),
             geometry_type="parallel" if geometry_type is None else str(geometry_type),
-            geometry_meta=data.get("geometry_meta"),
+            geometry_meta=_json_object(data, "geometry_meta"),
             volume=_copy_array_metadata(data.get("volume")),
             align_params=_copy_array_metadata(data.get("align_params")),
-            align_gauge=data.get("align_gauge"),
-            geometry_calibration=data.get("geometry_calibration"),
+            align_gauge=_json_object(data, "align_gauge"),
+            geometry_calibration=_json_object(data, "geometry_calibration"),
             angle_offset=_copy_array_metadata(data.get("angle_offset")),
-            misalign_spec=data.get("misalign_spec"),
-            simulation_artefacts=data.get("simulation_artefacts"),
+            misalign_spec=_json_object(data, "misalign_spec"),
+            simulation_artefacts=_json_object(data, "simulation_artefacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
             sample_name=(None if data.get("sample_name") is None else str(data.get("sample_name"))),
             source_name=None if source_name is None else str(source_name),
@@ -206,13 +236,12 @@ class LoadedNXTomo:
         KeyError
             If projections are absent.
         """
-        source_info = data.get("source")
         return cls(
             projections=None
             if data.get("projections") is None
             else _frames_or_array(data["projections"]),
             metadata=NXTomoMetadata.from_dataset(data),
-            source=source_info if isinstance(source_info, dict) else None,
+            source=_source_record(data.get("source")),
             disk_volume_axes_order=(
                 None
                 if data.get("disk_volume_axes_order") is None
@@ -289,7 +318,7 @@ class LoadedNXTomo:
             else:
                 data[field_name] = value
         if self.source is not None:
-            data["source"] = dict(self.source)
+            data["source"] = self.source.copy()
         if self.disk_volume_axes_order is not None:
             data["disk_volume_axes_order"] = self.disk_volume_axes_order
         return data

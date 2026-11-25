@@ -2,10 +2,43 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, overload
+
 from .types import DataTerm
 
+if TYPE_CHECKING:
+    from types import ModuleType
 
-def project_residual(residual, data_term: DataTerm, *, weights=None, xp=None):
+    import jax
+
+    from tomojax.core.cuda_types import CuPyValue
+
+    @overload
+    def project_residual(
+        residual: jax.Array,
+        data_term: DataTerm,
+        *,
+        weights: jax.Array | None = None,
+        xp: None = None,
+    ) -> jax.Array: ...
+
+    @overload
+    def project_residual(
+        residual: CuPyValue,
+        data_term: DataTerm,
+        *,
+        weights: CuPyValue | None = None,
+        xp: ModuleType,
+    ) -> CuPyValue: ...
+
+
+def project_residual(
+    residual: jax.Array | CuPyValue,
+    data_term: DataTerm,
+    *,
+    weights: jax.Array | CuPyValue | None = None,
+    xp: ModuleType | None = None,
+) -> jax.Array | CuPyValue:
     """Profile one constant per complete detector view, never per detector tile.
 
     Weights specify the least-squares metric. The result is unweighted; a

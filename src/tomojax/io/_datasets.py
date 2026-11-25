@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field, replace
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
 
@@ -57,7 +58,7 @@ if TYPE_CHECKING:
 
     from tomojax._json import JsonValue
 
-type PathLike = str | Path
+type PathLike = str | os.PathLike[str]
 
 _HDF5_SUFFIXES = {".nx", ".nxs", ".h5", ".hdf", ".hdf5"}
 _TIFF_SUFFIXES = TIFF_SUFFIXES

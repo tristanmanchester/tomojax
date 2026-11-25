@@ -6,11 +6,29 @@ removes cubic trends while retaining unit variance for independent unit noise.
 The estimate is frozen before fitting and never uses a reconstruction or poses.
 """
 
+from __future__ import annotations
+
 import math
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from tomojax.core.robust import MAD_TO_SD
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from typing import Protocol
+
+    from numpy.typing import DTypeLike
+
+    class ProjectionSource(Protocol):
+        @property
+        def shape(self) -> tuple[int, ...]: ...
+
+        def __getitem__(
+            self, key: slice | tuple[np.ndarray, np.ndarray, np.ndarray], /
+        ) -> np.ndarray: ...
+
 
 # Most residuals any robust statistic here samples.
 MAX_SAMPLES = 65_536
@@ -19,7 +37,12 @@ LOSS_WIDTH_SIGMAS = 2.5
 _NO_CONTRAST = "noise calibration needs an observed detector contrast"
 
 
-def estimate_noise(projections, *, precision=None, dtype=None):
+def estimate_noise(
+    projections: ProjectionSource,
+    *,
+    precision: np.ndarray | None = None,
+    dtype: DTypeLike | None = None,
+) -> float:
     """Estimate a measurement SD from bounded fourth-difference contrasts.
 
     ``projections`` is a host (view, v, u) array; ``precision`` may broadcast
@@ -52,7 +75,7 @@ class Windows:
     pixels' offsets, v major, and ``values`` each tap's gathered values in FP64.
     """
 
-    def __init__(self, shape, orders=None) -> None:
+    def __init__(self, shape: tuple[int, ...], orders: tuple[int, int] | None = None) -> None:
         """``orders`` None takes the first orders ``estimate_noise`` tries."""
         n, nv, nu = shape
         orders = orders or next(_orders(shape), None)
@@ -71,7 +94,9 @@ class Windows:
         self.taps = [(v, u) for v in range(vorder + 1) for u in range(uorder + 1)]
         self.values = [np.empty(len(selected)) for _ in self.taps]
 
-    def gather(self, projections, dtype=None, start=0):
+    def gather(
+        self, projections: ProjectionSource, dtype: DTypeLike | None = None, start: int = 0
+    ) -> None:
         """Keep the pixels of the windows in ``projections``, views ``start`` onward.
 
         A stack read front to back in slabs passes each slab in turn, so nothing reads it at
@@ -82,7 +107,7 @@ class Windows:
         for (v, u), values in zip(self.taps, self.values, strict=True):
             values[inside] = np.asarray(projections[views, rows + v, columns + u], dtype)
 
-    def sd(self, mask=None):
+    def sd(self, mask: np.ndarray | None = None) -> float | None:
         """The robust SD of the normalized contrasts, None when no window is wholly observed.
 
         A pixel is observed where it is finite and ``mask``, if given, is positive.
@@ -105,7 +130,7 @@ class Windows:
         return float(np.median(np.abs(centered)) * MAD_TO_SD)
 
 
-def _orders(shape):
+def _orders(shape: tuple[int, ...]) -> Iterator[tuple[int, int]]:
     """The (v, u) contrast orders to try, highest first; a short axis lowers its order."""
     _, nv, nu = shape
     tried = set()

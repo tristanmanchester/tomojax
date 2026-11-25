@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import ExitStack
 import math
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal, TypedDict, overload
 
 import jax
 import jax.numpy as jnp
@@ -48,11 +48,39 @@ from tomojax import progress
 from tomojax.backends.host_stream import host_source, read_block, write_block
 from tomojax.core.devices import block_fits, pool_stats
 from tomojax.core.host_volume import close_work_file, host_array
+from tomojax.errors import device_out_of_memory
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+    from jax.stages import Wrapped
+    from numpy.typing import DTypeLike
+
+    from ._operators import Operators
+    from ._pose import FactorShape, PoseFactor
+
 Place = Literal["device", "host"]
+type StackSpec = tuple[tuple[int, ...], DTypeLike]
+type VolumeName = Literal["x", "other", "gx0", "dd", "invdiag", "step", "gx", "d", "images", "free"]
+type _StackName = Literal["sw", "r", "j", "y", "precision", "residual"]
+
+
+class _StorageRecord(TypedDict):
+    placement: dict[str, Place]
+    raised: list[str]
+    stack_bytes: dict[str, int]
+    room_bytes: int | None
+    reserve_bytes: int
+    reserve_parts: dict[str, int]
+    volume_bytes: dict[str, int]
+    setup_waste_bytes: int
+    in_use_bytes: int | None
+    free_bytes: int
+
+
+class StorageRecord(_StorageRecord, total=False):
+    transients: dict[str, int]
+
 
 # Who most deserves the device: read in every matvec (sw, r, j), then the data
 # (each linearisation and line-search trial), then the residual (the trials at
@@ -61,35 +89,47 @@ ORDER = ("sw", "r", "j", "y", "precision", "residual")
 
 
 @jax.tree_util.register_pytree_node_class
-class Stack:
+class Stack[Data: jax.Array | jax.ShapeDtypeStruct]:
     """One stack-sized array, views first: a device array, or the key of a registered host buffer.
 
     The placement, shape, dtype and batch size are static.
     """
 
     def __init__(
-        self, data: Any, *, host: bool, shape: tuple[int, ...], dtype: Any, batch: int
+        self,
+        data: Data,
+        *,
+        host: bool,
+        shape: tuple[int, ...],
+        dtype: DTypeLike,
+        batch: int,
     ) -> None:
         self.data, self.host, self.shape, self.batch = data, host, tuple(shape), int(batch)
         self.dtype = np.dtype(dtype)
 
-    def tree_flatten(self):
+    def tree_flatten(
+        self,
+    ) -> tuple[tuple[Data], tuple[bool, tuple[int, ...], np.dtype, int]]:
         return (self.data,), (self.host, self.shape, self.dtype, self.batch)
 
     @classmethod
-    def tree_unflatten(cls, aux: tuple, children: tuple) -> Stack:
+    def tree_unflatten(
+        cls,
+        aux: tuple[bool, tuple[int, ...], np.dtype, int],
+        children: tuple[Data],
+    ) -> Stack[Data]:
         host, shape, dtype, batch = aux
         return cls(children[0], host=host, shape=shape, dtype=dtype, batch=batch)
 
-    @classmethod
-    def shaped(cls, spec: tuple[tuple[int, ...], Any], batch: int) -> Stack:
+    @staticmethod
+    def shaped(spec: StackSpec, batch: int) -> Stack[jax.ShapeDtypeStruct]:
         """A resident stack as a shape, for a compile before the stack exists."""
         shape, dtype = spec
-        return cls(
+        return Stack(
             jax.ShapeDtypeStruct(shape, dtype), host=False, shape=shape, dtype=dtype, batch=batch
         )
 
-    def read(self, i: jax.Array) -> jax.Array:
+    def read(self: Stack[jax.Array], i: int | jax.Array) -> jax.Array:
         """Batch ``i`` (``batch`` views) on the device.
 
         Behind an optimization barrier whatever the placement: a slice of a device
@@ -104,7 +144,7 @@ class Stack:
             block = jax.lax.dynamic_slice_in_dim(self.data, start, self.batch, 0)
         return jax.lax.optimization_barrier(block)
 
-    def write(self, i: jax.Array, value: jax.Array) -> Stack:
+    def write(self: Stack[jax.Array], i: jax.Array, value: jax.Array) -> Stack[jax.Array]:
         """The stack with batch ``i`` replaced by ``value``."""
         value = value.astype(self.dtype)
         if self.host:
@@ -114,8 +154,12 @@ class Stack:
         return Stack(data, host=False, shape=self.shape, dtype=self.dtype, batch=self.batch)
 
 
-def _exhausted(err: Exception) -> bool:
-    return "RESOURCE_EXHAUSTED" in str(err)
+type ArrayStack = Stack[jax.Array]
+type _Replacement = (
+    tuple[_StackName, ArrayStack]
+    | tuple[VolumeName, jax.Array]
+    | tuple[Literal["factor"], PoseFactor]
+)
 
 
 def _device_stats() -> dict[str, int] | None:
@@ -152,13 +196,13 @@ class LevelStacks:
 
     def __init__(
         self,
-        specs: Mapping[str, tuple[tuple[int, ...], Any]],
+        specs: Mapping[str, StackSpec],
         batch: int,
         *,
         data: Mapping[str, np.ndarray],
         room: int | None,
         reserve: int | Mapping[str, int],
-        volumes: Mapping[str, Any] | None = None,
+        volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape] | None = None,
         placement: Mapping[str, Place] | None = None,
     ) -> None:
         self.names = [name for name in ORDER if name in specs]
@@ -176,9 +220,9 @@ class LevelStacks:
             raise ValueError(
                 f"placement takes {ORDER} mapped to 'device' or 'host', not {placement}"
             )
-        self.volumes: dict[str, Any] = {}
+        self.volumes: dict[str, jax.Array | PoseFactor] = {}
         self.volume_bytes: dict[str, int] = {}
-        self.stacks: dict[str, Stack] = {}
+        self.stacks: dict[str, ArrayStack] = {}
         self.placed: dict[str, Place] = {}
         self.raised: list[str] = []
         self._keys = ExitStack()
@@ -193,7 +237,7 @@ class LevelStacks:
             self.close()
             raise
 
-    def _own(self, volumes: Mapping[str, Any]) -> None:
+    def _own(self, volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape]) -> None:
         """Allocate the volumes, and count them with what the device holds above them."""
         before = _in_use()
         for name, spec in volumes.items():
@@ -232,7 +276,9 @@ class LevelStacks:
             self.stacks[name] = Stack(key, host=True, shape=shape, dtype=dtype, batch=self.batch)
             self.placed[name] = "host"
 
-    def _fitting(self, name, shape, dtype, value) -> jax.Array | None:
+    def _fitting(
+        self, name: str, shape: tuple[int, ...], dtype: np.dtype, value: np.ndarray | None
+    ) -> jax.Array | None:
         """The stack on the device, or None if no block fits it, it raised, or it took the last.
 
         The last block is the one the level's largest transient needs. A forced stack is
@@ -244,7 +290,7 @@ class LevelStacks:
         try:
             array = self._device(shape, dtype, value)
         except jax.errors.JaxRuntimeError as err:
-            if not _exhausted(err):
+            if not device_out_of_memory(err):
                 raise
             progress.retried("host stack")
             self.raised.append(name)
@@ -255,27 +301,42 @@ class LevelStacks:
         return None
 
     @staticmethod
-    def _device(shape: tuple[int, ...], dtype: Any, value: np.ndarray | None) -> jax.Array:
+    def _device(shape: tuple[int, ...], dtype: np.dtype, value: np.ndarray | None) -> jax.Array:
         """Allocate one stack on the device and wait for it: the allocator is the judge."""
         array = jnp.zeros(shape, dtype) if value is None else jax.device_put(value)
         return array.block_until_ready()
 
-    def __getitem__(self, name: str) -> Any:
+    @overload
+    def __getitem__(self, name: _StackName) -> ArrayStack: ...
+    @overload
+    def __getitem__(self, name: VolumeName) -> jax.Array: ...
+    @overload
+    def __getitem__(self, name: Literal["factor"]) -> PoseFactor: ...
+    @overload
+    def __getitem__(self, name: str) -> ArrayStack | jax.Array | PoseFactor: ...
+    def __getitem__(self, name: str) -> ArrayStack | jax.Array | PoseFactor:
         return self.stacks[name] if name in self.stacks else self.volumes[name]
 
-    def get(self, name: str) -> Stack | None:
+    def get(self, name: str) -> ArrayStack | None:
         return self.stacks.get(name)
 
-    def update(self, arrays: Iterable[tuple[str, Any]]) -> None:
+    def update(self, arrays: Iterable[_Replacement]) -> None:
         """Hold the stacks or volumes a donating call returned in place of the ones it consumed."""
         for name, array in arrays:
-            (self.volumes if name in self.volumes else self.stacks)[name] = array
+            if isinstance(array, Stack):
+                self.stacks[name] = array
+            else:
+                self.volumes[name] = array
 
-    def take(self, name: str) -> Any:
+    @overload
+    def take(self, name: VolumeName) -> jax.Array: ...
+    @overload
+    def take(self, name: Literal["factor"]) -> PoseFactor: ...
+    def take(self, name: str) -> jax.Array | PoseFactor:
         """Hand a volume to the caller: it is no longer the level's, and outlives it."""
         return self.volumes.pop(name)
 
-    def record(self) -> dict[str, Any]:
+    def record(self) -> _StorageRecord:
         """What ``info`` reports: each stack's placement and size, and the plan it came from."""
         return {
             "placement": dict(self.placed),
@@ -312,7 +373,7 @@ def transient_reserve(transients: Mapping[str, int]) -> dict[str, int]:
     return {"transient": transient, "chunk": min(transient, CHUNK)}
 
 
-def temporaries(compiled: Any, *args: Any) -> int:
+def temporaries(compiled: Wrapped, *args: object) -> int:
     """The temporary bytes of ``compiled`` (a jitted function) at ``args``, from its compile.
 
     The compile is the one its calls with arguments of the same shapes then reuse.
@@ -332,12 +393,12 @@ def device_room() -> int | None:
 
 
 def level_stacks(
-    ops: Any,
-    y: np.ndarray,
-    precision: np.ndarray | None,
+    ops: Operators,
+    y: np.ndarray | jax.Array,
+    precision: np.ndarray | jax.Array | None,
     *,
     reserve: Mapping[str, int],
-    volumes: Mapping[str, Any] | None = None,
+    volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape] | None = None,
     names: Iterable[str] | None = None,
     placement: Mapping[str, Place] | None = None,
 ) -> LevelStacks:
@@ -364,7 +425,7 @@ def level_stacks(
 
 def unplaced(err: Exception, stacks: LevelStacks) -> Exception:
     """A plain error for a level that ran out of device memory after its stacks were placed."""
-    if not _exhausted(err):
+    if not device_out_of_memory(err):
         return err
     gib = 2**30
     held = ", ".join(f"{n} on the {p}" for n, p in stacks.placed.items())

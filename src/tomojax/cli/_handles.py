@@ -12,7 +12,7 @@ import tomojax as tj
 from tomojax.cli import execution as ex, products as p
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.core.registration import pose_columns
-from tomojax.geometry.api import is_cone_beam
+from tomojax.recon.api import solver_name
 from tomojax.wire.arrays import (
     Array,
     Axis,
@@ -71,9 +71,7 @@ def handle(item: Root, *, volume_storage: Storage | None = None) -> ex.NewHandle
         math.prod(v.shape) * np.dtype(v.dtype).itemsize
         for v in {id(v): v for v in logical}.values()
     )
-    method = item.method if isinstance(item, tj.Reconstruction) else ""
-    if isinstance(item, tj.Reconstruction) and method == "fbp" and is_cone_beam(item.geometry):
-        method = "fdk"
+    method = solver_name(item.method, item.geometry) if isinstance(item, tj.Reconstruction) else ""
 
     bind = partial(
         bind_result,

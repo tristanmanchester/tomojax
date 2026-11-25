@@ -28,12 +28,11 @@ from tomojax._typed_arrays import (
     numpy_float64_array,
     object_list,
     object_mapping,
-    scalar_float,
-    scalar_int,
     sum_float64,
     true_count,
     unique_int_count_map,
 )
+from tomojax.geometry import Grid
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
@@ -203,10 +202,8 @@ def projection_stats(dataset: _ProjectionStack) -> tuple[ProjectionStatsReport, 
             p50 = None
             p99 = None
         else:
-            percentiles = numpy_float64_array(np.percentile(sample_finite, [1.0, 50.0, 99.0]))
-            p01 = scalar_float(cast("object", percentiles[0]))
-            p50 = scalar_float(cast("object", percentiles[1]))
-            p99 = scalar_float(cast("object", percentiles[2]))
+            percentiles = np.percentile(sample_finite, [1.0, 50.0, 99.0]).tolist()
+            p01, p50, p99 = (float(value) for value in percentiles)
         stats = {
             "min": float(finite_min),
             "p01": p01,
@@ -434,7 +431,12 @@ def _alignment_report(file: h5py.File | None) -> AlignmentReport:
     )
 
 
-def alignment_fields(params, angle_offset, misalign_spec, gauge_fix) -> AlignmentReport:
+def alignment_fields(
+    params: h5py.Dataset | h5py.Group | np.ndarray | None,
+    angle_offset: h5py.Dataset | h5py.Group | np.ndarray | None,
+    misalign_spec: object,
+    gauge_fix: object,
+) -> AlignmentReport:
     params_found = isinstance(params, h5py.Dataset | np.ndarray)
     angle_offset_found = isinstance(angle_offset, h5py.Dataset | np.ndarray)
     return {
@@ -458,14 +460,12 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
         else None
     )
     if grid is not None:
-        try:
-            return [
-                scalar_int(cast("object", grid["nx"])),
-                scalar_int(cast("object", grid["ny"])),
-                scalar_int(cast("object", grid["nz"])),
-            ]
+        try:  # the grid that loading this file would build
+            saved = Grid.from_dict(grid)
         except (KeyError, TypeError, ValueError):
             pass
+        else:
+            return [saved.nx, saved.ny, saved.nz]
 
     det_shape = projection.get("detector_shape")
     if isinstance(det_shape, dict):

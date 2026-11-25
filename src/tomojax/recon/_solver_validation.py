@@ -130,7 +130,7 @@ def _valid_device_weights(weights: jax.Array) -> jax.Array:
     return jnp.all(jnp.isfinite(weights) & nonnegative & (weights <= np.finfo(np.float32).max))
 
 
-def _supported_weight_dtype(dtype) -> bool:
+def _supported_weight_dtype(dtype: np.dtype) -> bool:
     # Extended FP4/FP6/FP8 formats have nonstandard signs/promotion and varying
     # backend conversion support. Do not silently accept them as NumPy floats.
     return (

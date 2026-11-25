@@ -8,7 +8,7 @@ from itertools import product
 import math
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import msgspec
@@ -17,7 +17,7 @@ import numpy as np
 from tomojax._files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
-from tomojax.cli._frame_reads import frame_pixels
+from tomojax.cli._frame_reads import frame_pixels, windowed
 from tomojax.cli._handles import stage_array
 from tomojax.cli._planes import plane_windows
 from tomojax.cli._results import disk_volume, stored_grid
@@ -25,6 +25,11 @@ from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
 from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
+
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax.cli._frame_reads import WindowedFrames
 
 READ_BYTES = 16 << 20
 
@@ -141,7 +146,7 @@ def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:
-    if hasattr(data, "window"):
+    if windowed(data):
         return frame_pixels(data, ranges, READ_BYTES)
     keys = tuple(slice(r.start, r[-1] + 1, r.step) for r in ranges)
     return np.asarray(data[keys])
@@ -190,7 +195,12 @@ def browse(
         return p.DisplayPlanes(tuple(planes))
 
 
-def read_window(context, data, meta, ranges):
+def read_window(
+    context: ex.ExecutionContext,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
+    meta: Array,
+    ranges: tuple[range, ...],
+) -> Array:
     shape = tuple(map(len, ranges))
     if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
         raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
@@ -220,7 +230,7 @@ def read_window(context, data, meta, ranges):
     )
 
 
-def ordered_tiles(ranges, capacity):
+def ordered_tiles(ranges: tuple[range, ...], capacity: int) -> Iterator[tuple[range, ...]]:
     """Partition a window into C-order spans of at most capacity elements."""
     block = [1] * len(ranges)
     for i in reversed(range(len(ranges))):
@@ -231,7 +241,13 @@ def ordered_tiles(ranges, capacity):
         yield tuple(r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True))
 
 
-def exact_percentiles(samples, percentiles, low, high, control):
+def exact_percentiles(
+    samples: np.ndarray,
+    percentiles: tuple[float, ...],
+    low: float,
+    high: float,
+    control: ex.Control,
+) -> np.ndarray:
     """Find bracketing order statistics by counting in independently sorted runs."""
     step = READ_BYTES // samples.itemsize
     if samples.size <= step:
@@ -269,7 +285,13 @@ def exact_percentiles(samples, percentiles, low, high, control):
     return np.interp(positions, ranks, lower)
 
 
-def statistics(request, context, data, meta, ranges):
+def statistics(
+    request: op.Statistics,
+    context: ex.ExecutionContext,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
+    meta: Array,
+    ranges: tuple[range, ...],
+) -> p.StatisticsResult:
     """Spool finite samples for exact quantiles while bounding source reads and resident buffers."""
     if not 1 <= request.bins <= 4096:
         raise InvalidParameter("bins", "choose 1 to 4096 histogram bins")

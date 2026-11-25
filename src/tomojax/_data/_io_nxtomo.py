@@ -18,19 +18,19 @@ from tomojax.geometry.api import nominal_axis_unit_from_inputs
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
 from ._io_helpers import (
-    _attr_to_str,
-    _detector_group,
-    _ensure_group,
-    _load_detector_metadata,
-    _load_geometry_metadata,
-    _load_grid_metadata,
-    _load_image_key,
-    _load_processing_metadata,
-    _load_rotation_angles,
-    _load_sample_metadata,
-    _load_source_metadata,
-    _write_string_attr,
+    attr_to_str,
+    detector_group,
+    ensure_group,
+    load_detector_metadata,
+    load_geometry_metadata,
+    load_grid_metadata,
+    load_image_key,
+    load_processing_metadata,
+    load_rotation_angles,
+    load_sample_metadata,
+    load_source_metadata,
     sizes_of,
+    write_string_attr,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport
 from .geometry_meta import normalize_geometry_type
@@ -138,22 +138,22 @@ def _write_entry(
 ) -> h5py.Group:
     n_views = len(meta.angles if meta.angles is not None else ()) if proj is None else proj.shape[0]
     geometry_type_norm = normalize_geometry_type(meta.geometry_type)
-    entry = _ensure_group(f, "entry", "NXentry")
+    entry = ensure_group(f, "entry", "NXentry")
     # NXtomo names its application definition in a field; the attribute
     # remains for readers of earlier TomoJAX files.
     entry.create_dataset("definition", data=np.bytes_(b"NXtomo"))
-    _write_string_attr(entry, "definition", "NXtomo")
-    inst = _ensure_group(entry, "instrument", "NXinstrument")
+    write_string_attr(entry, "definition", "NXtomo")
+    inst = ensure_group(entry, "instrument", "NXinstrument")
 
     _write_geometry_section(entry, meta, geometry_type_norm)
     det = _write_detector_section(inst, meta, proj, n_views=n_views, compression=compression)
     _write_sample_section(entry, meta, n_views=n_views)
 
     if proj is not None:  # NXdata linking for the default plot
-        data_grp = _ensure_group(entry, "data", "NXdata")
+        data_grp = ensure_group(entry, "data", "NXdata")
         # store projections also under /entry/data/projections for convenience
         data_grp["projections"] = det["data"]
-        _write_string_attr(data_grp, "signal", "projections")
+        write_string_attr(data_grp, "signal", "projections")
 
     _write_source_section(inst, meta)
     _write_grid_metadata(entry, meta)
@@ -166,8 +166,8 @@ def _write_geometry_section(
     meta: NXTomoMetadata,
     geometry_type_norm: str,
 ) -> None:
-    geom = _ensure_group(entry, "geometry", "NXcollection")
-    _write_string_attr(geom, "type", geometry_type_norm)
+    geom = ensure_group(entry, "geometry", "NXcollection")
+    write_string_attr(geom, "type", geometry_type_norm)
     if meta.geometry_meta:
         geom.attrs["geometry_meta_json"] = json.dumps(meta.geometry_meta)
 
@@ -180,7 +180,7 @@ def _write_detector_section(
     n_views: int,
     compression: str,
 ) -> h5py.Group:
-    det = _ensure_group(inst, "detector", "NXdetector")
+    det = ensure_group(inst, "detector", "NXdetector")
     if proj is not None:  # a reconstruction saved without its scan has only the geometry
         _, nv, nu = proj.shape
         det.create_dataset(
@@ -210,7 +210,7 @@ def _write_detector_section(
 
 
 def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: int) -> None:
-    sample = _ensure_group(entry, "sample", "NXsample")
+    sample = ensure_group(entry, "sample", "NXsample")
     sample_name_str = "sample" if meta.sample_name is None else str(meta.sample_name)
     sample.create_dataset(
         "name",
@@ -221,10 +221,10 @@ def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: i
     angles = np.asarray(meta.angles, dtype=np.float32)
     if angles.shape != (n_views,):
         raise ValueError("angles must be (n_views,)")
-    trans = _ensure_group(sample, "transformations", "NXtransformations")
+    trans = ensure_group(sample, "transformations", "NXtransformations")
     d_angle = trans.create_dataset("rotation_angle", data=angles)
     d_angle.attrs["units"] = "degree"
-    _write_string_attr(d_angle, "transformation_type", "rotation")
+    write_string_attr(d_angle, "transformation_type", "rotation")
     # The public NX fields must agree with the saved tilted/arbitrary-axis model.
     # If that model is incomplete, do not manufacture an axial direction.
     inputs = dict(meta.geometry_meta or {})
@@ -233,11 +233,11 @@ def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: i
     if gtype == "parallel" or "tilt" in inputs or "axis_unit_lab" in inputs:
         axis = nominal_axis_unit_from_inputs(inputs)
         trans.create_dataset("rotation_axis", data=np.asarray(axis, dtype=np.float32))
-    _write_string_attr(trans, "depends_on", "rotation_angle")
+    write_string_attr(trans, "depends_on", "rotation_angle")
 
 
 def _write_source_section(inst: h5py.Group, meta: NXTomoMetadata) -> None:
-    src_grp = _ensure_group(inst, "SOURCE", "NXsource")
+    src_grp = ensure_group(inst, "SOURCE", "NXsource")
     if meta.source_name is not None:
         src_grp.create_dataset(
             "name",
@@ -285,11 +285,11 @@ def _write_volume_section(
 
 
 def _volume_group(entry: h5py.Group, meta: NXTomoMetadata) -> h5py.Group:
-    processing = _ensure_group(entry, "processing", "NXprocess")
-    tj = _ensure_group(processing, "tomojax", "NXcollection")
-    _write_string_attr(tj, "volume_axes_order", "zyx")
+    processing = ensure_group(entry, "processing", "NXprocess")
+    tj = ensure_group(processing, "tomojax", "NXcollection")
+    write_string_attr(tj, "volume_axes_order", "zyx")
     if meta.frame is not None:
-        _write_string_attr(tj, "frame", str(meta.frame))
+        write_string_attr(tj, "frame", str(meta.frame))
 
     return tj
 
@@ -338,20 +338,20 @@ def _write_tomojax_metadata_sections(
         or meta.misalign_spec is not None
     )
     if has_alignment_metadata or meta.geometry_calibration is not None:
-        processing = _ensure_group(entry, "processing", "NXprocess")
-        tj = _ensure_group(processing, "tomojax", "NXcollection")
+        processing = ensure_group(entry, "processing", "NXprocess")
+        tj = ensure_group(processing, "tomojax", "NXcollection")
         if has_alignment_metadata:
             _write_alignment_metadata_section(tj, meta, compression=compression)
         if meta.geometry_calibration is not None:
-            calibration_grp = _ensure_group(tj, "calibration", "NXcollection")
+            calibration_grp = ensure_group(tj, "calibration", "NXcollection")
             calibration_grp.attrs["geometry_calibration_json"] = json.dumps(
                 meta.geometry_calibration
             )
 
     if meta.simulation_artefacts is not None:
-        processing = _ensure_group(entry, "processing", "NXprocess")
-        tj = _ensure_group(processing, "tomojax", "NXcollection")
-        simulation_grp = _ensure_group(tj, "simulation", "NXcollection")
+        processing = ensure_group(entry, "processing", "NXprocess")
+        tj = ensure_group(processing, "tomojax", "NXcollection")
+        simulation_grp = ensure_group(tj, "simulation", "NXcollection")
         simulation_grp.attrs["artefacts_json"] = json.dumps(meta.simulation_artefacts)
 
 
@@ -361,7 +361,7 @@ def _write_alignment_metadata_section(
     *,
     compression: str,
 ) -> None:
-    align_grp = _ensure_group(tj, "align", "NXcollection")
+    align_grp = ensure_group(tj, "align", "NXcollection")
     if meta.align_params is not None:
         dset = align_grp.create_dataset(
             "thetas",
@@ -444,7 +444,7 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
 
     with h5py.File(path, "r") as f:
         entry = cast("h5py.Group", f["/entry"])
-        det_grp = _detector_group(entry)
+        det_grp = detector_group(entry)
         if det_grp is not None and "data" in det_grp:
             where = "/entry/instrument/detector/data"
         elif "data" in entry and "projections" in entry["data"]:
@@ -465,17 +465,15 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
             proj = stack if lazy else _read_projections(stack)
             out["projections"] = proj
             n_views = proj.shape[0]
-            image_key = _load_image_key(entry, n_views=n_views, path=path)
+            image_key = load_image_key(entry, n_views=n_views, path=path)
             out["image_key"] = image_key
-        out["angles"] = _load_rotation_angles(
-            entry, n_views=n_views, path=path, image_key=image_key
-        )
-        _load_geometry_metadata(out, entry, path=path)
-        _load_grid_metadata(out, entry, path=path)
-        _load_detector_metadata(out, entry, path=path)
-        _load_source_metadata(out, entry)
-        volume, volume_axes_attr = _load_processing_metadata(out, entry, path=path)
-        _load_sample_metadata(out, entry)
+        out["angles"] = load_rotation_angles(entry, n_views=n_views, path=path, image_key=image_key)
+        load_geometry_metadata(out, entry, path=path)
+        load_grid_metadata(out, entry, path=path)
+        load_detector_metadata(out, entry, path=path)
+        load_source_metadata(out, entry)
+        volume, volume_axes_attr = load_processing_metadata(out, entry, path=path)
+        load_sample_metadata(out, entry)
 
         if volume is not None:
             volume_np, disk_order = _volume_in_internal_axes(
@@ -611,9 +609,10 @@ def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str 
     field = e.get("definition")
     stored = np.asarray(field).tolist() if isinstance(field, h5py.Dataset) else None
     stored = stored.decode() if isinstance(stored, bytes) else stored
-    if "NXtomo" not in (stored, _attr_to_str(e.attrs.get("definition"))):
+    if "NXtomo" not in (stored, attr_to_str(e.attrs.get("definition"))):
         issues.append("entry/definition must be 'NXtomo'")
-    if "instrument/detector/data" not in e:
+    data = e.get("instrument/detector/data")
+    if data is None:
         issues.append("Missing instrument/detector/data")
     angle_path = next((p for p in ROTATION_ANGLE_PATHS if p in f), None)
     if angle_path is None:
@@ -623,12 +622,11 @@ def _required_entry_issues(f: h5py.File, e: h5py.Group) -> tuple[list[str], str 
     if "sample" not in e or "name" not in e["sample"]:
         issues.append("Missing sample/name")
     n_views = None
-    if "instrument/detector/data" in e:
-        d = e["instrument/detector/data"]
-        if d.ndim not in (2, 3):
+    if data is not None:
+        if not isinstance(data, h5py.Dataset) or data.ndim not in (2, 3):
             issues.append("instrument/detector/data must be (n_views, nu) or (n_views, nv, nu)")
         else:
-            n_views = d.shape[0]
+            n_views = data.shape[0]
     return issues, angle_path, n_views
 
 
@@ -642,9 +640,10 @@ def _image_key_issues(image_key: h5py.Dataset, *, frames: int | None) -> list[st
     if image_key.dtype.kind not in {"i", "u"}:
         issues.append("image_key must use integer dtype")
     elif image_key.ndim == 1:
-        allowed = np.asarray([0, 1, 2, 3], dtype=image_key.dtype)
+        values = np.asarray(image_key[...])
+        allowed = np.asarray([0, 1, 2, 3], dtype=values.dtype)
         invalid_values, invalid_counts = np.unique(
-            image_key[~np.isin(image_key, allowed)], return_counts=True
+            values[~np.isin(values, allowed)], return_counts=True
         )
         if invalid_values.size > 0:
             formatted = ", ".join(
@@ -662,7 +661,7 @@ def _rotation_angle_issues(angles: h5py.Dataset, *, frames: int | None, path: st
         issues.append("rotation_angle must be 1D (n_views,)")
     elif frames is not None and angles.shape[0] != frames:
         issues.append("rotation_angle length must match #views in detector/data")
-    units = _attr_to_str(angles.attrs.get("units"))
+    units = attr_to_str(angles.attrs.get("units"))
     try:
         angle_scale_degrees(units or "", path=path)
     except ValueError as exc:

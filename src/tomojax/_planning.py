@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, get_args
 
 import numpy as np
 
-from tomojax._parameters import Method
+from tomojax._parameters import Method, ReconMethod
 from tomojax._scan import Scan, with_grid
 from tomojax.errors import InvalidParameter
 from tomojax.recon.api import MethodConfig, method_config, validate_reconstruction
@@ -24,12 +24,16 @@ class ResolvedReconstruction:
     """Acquisition, support and numerical configuration consumed by the solver."""
 
     scan: Scan
-    method: Method
     config: MethodConfig
     cylinder: Cylinder | None
     reasons: tuple[str, ...]
     info: dict[str, Any]
     warm_start: bool
+
+    @property
+    def method(self) -> ReconMethod:
+        """Reconstruction method, named by the configuration's class."""
+        return self.config.method
 
 
 def plane_dimension(grid: Grid, axis: str, index: int) -> int:
@@ -127,7 +131,6 @@ def resolve_reconstruction(
         plane[1] if plane is not None and plane_dimension(scan.grid, *plane) == 0 else None
     )
     validate_reconstruction(
-        method,
         scan.geometry,
         scan.grid,
         cfg,
@@ -136,15 +139,13 @@ def resolve_reconstruction(
         check_samples=not metadata_only,
         axial_index=axial_index,
     )
-    return ResolvedReconstruction(
-        scan, method, cfg, cylinder, tuple(reasons), info, bool(warm_start)
-    )
+    return ResolvedReconstruction(scan, cfg, cylinder, tuple(reasons), info, bool(warm_start))
 
 
 def _methods_taking(options: dict[str, Any]) -> list[str]:
     """The explicit methods whose settings take every one of ``options``."""
     taking = []
-    for name in get_args(Method.__value__)[1:]:  # all but "auto"
+    for name in get_args(ReconMethod.__value__):
         try:
             _ = method_config(name, **options)
         except ValueError:

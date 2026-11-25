@@ -37,7 +37,7 @@ from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
-from tomojax.core.validation import validate_grid, validate_projection_stack
+from tomojax.core.validation import validate_projection_stack
 from tomojax.recon._backend import reconstruction_backend
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
@@ -570,7 +570,6 @@ def fdk(
     parts = cone_parts(geometry, detector)
     if parts is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
-    validate_grid(grid, "fdk grid")
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
@@ -762,7 +761,6 @@ def fdk_slabs[T](
     from tomojax.backends import device_free_memory_bytes
     from tomojax.recon.types import ReconstructionSlab
 
-    validate_grid(grid, "FDK slab grid")
     n_views = len(getattr(geometry, "angles", ()))
     check_angular_coverage(geometry, detector, n_views)
     devices = as_devices(config.devices)
@@ -869,7 +867,7 @@ def fdk_host(
             ) from error
         if depth < 1:
             raise ValueError("fdk_host: slices_per_batch must be a positive integer or None")
-    nx, ny, nz = validate_grid(grid, "fdk_host grid")
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk_host projections"
     )

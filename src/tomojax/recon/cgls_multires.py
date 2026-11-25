@@ -19,7 +19,6 @@ from tomojax.core.multires import (
 )
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_projection_stack,
     validate_volume,
 )
@@ -139,7 +138,6 @@ def cgls_multires(
     if any(it < 1 for it in budgets):
         raise ValueError("cgls_multires: every level requires a positive iteration budget")
     cfg = CGLSConfig() if config is None else config
-    validate_grid(grid, "cgls_multires grid")
     validate_projection_stack(projections, detector, geometry=geometry, context="cgls_multires")
     validate_detector_grid(det_grid, detector, context="cgls_multires")
     if init_x is not None:

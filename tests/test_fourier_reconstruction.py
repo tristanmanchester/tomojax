@@ -246,7 +246,7 @@ def test_cuda_allocation_exhaustion_retries_smaller_slabs_and_rewrites_output(mo
             destroyed.append(self.depth)
 
     monkeypatch.setattr(implementation, "FourierPlan", Plan)
-    monkeypatch.setattr(implementation, "is_cuda_oom", lambda error: isinstance(error, Exhausted))
+    monkeypatch.setattr(implementation, "is_oom_error", lambda error: isinstance(error, Exhausted))
     monkeypatch.setattr(implementation, "_HOST_PIPELINE_MIN_BYTES", 10**12)
     # The NumPy stand-in plan takes host-sampled rows, not CUDA-staged ones.
     monkeypatch.setattr(
@@ -720,11 +720,12 @@ def test_invalid_inputs_rejected_before_output_written(invalid):
 def test_missing_cupy_does_not_mask_original_memory_or_import_errors(monkeypatch):
     import sys
 
-    implementation = importlib.import_module("tomojax.recon.fourier")
+    from tomojax.backends.api import is_oom_error
 
     monkeypatch.setitem(sys.modules, "cupy", None)
-    assert not implementation.is_cuda_oom(MemoryError("host allocation"))
-    assert not implementation.is_cuda_oom(ImportError("optional backend"))
+    monkeypatch.setitem(sys.modules, "cupy.cuda.memory", None)
+    assert not is_oom_error(MemoryError("host allocation"))
+    assert not is_oom_error(ImportError("optional backend"))
 
 
 @pytest.mark.parametrize("nz", [1, 6, 7])

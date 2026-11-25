@@ -25,6 +25,8 @@ Vec3 = tuple[float, float, float]
 PoseMatrix = tuple[tuple[float, ...], ...]
 RayFunction = Callable[[int, int], Vec3]
 RayPair = tuple[RayFunction, RayFunction]
+# View angles in degrees, as the caller gave them: a sequence or a NumPy array.
+type Angles = Sequence[float] | np.ndarray
 
 
 class GridDictRequired(TypedDict):
@@ -66,9 +68,12 @@ def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) ->
     if len(items) != expected_len:
         raise ValueError(f"{name} must have length {expected_len}, got {len(items)}")
     try:
-        return tuple(float(v) for v in items)
+        values = tuple(float(v) for v in items)
     except (TypeError, ValueError) as e:
         raise TypeError(f"{name} elements must be real numbers") from e
+    if not all(math.isfinite(v) for v in values):
+        raise InvalidParameter(name, f"{name} must be finite")
+    return values
 
 
 def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...]) -> None:
@@ -83,6 +88,18 @@ def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...
         if not math.isfinite(pitch) or pitch <= 0:
             raise InvalidParameter(name, f"{name} must be finite and positive")
         object.__setattr__(obj, name, pitch)
+
+
+type _State = dict[str, object] | tuple[dict[str, object] | None, dict[str, object] | None]
+
+
+def _restore(obj: object, state: _State) -> None:
+    """Set unpickled or copied fields as stored, keeping the class and its own fields."""
+    if isinstance(state, tuple):  # a subclass with __slots__: (instance dict, slot values)
+        fields, slots = state
+        state = {**(fields or {}), **(slots or {})}
+    for name, value in state.items():
+        object.__setattr__(obj, name, value)
 
 
 @dataclass(frozen=True)
@@ -112,7 +129,8 @@ class Grid:
     TypeError
         If counts are not integers or placement coordinates are not real numbers.
     ValueError
-        If a placement vector does not have three components.
+        If a count or pitch is not positive, or a placement vector is not three
+        finite numbers.
     """
 
     nx: int = field(metadata={"unit": "voxel"})
@@ -142,6 +160,12 @@ class Grid:
                 "vol_center",
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
+
+    def __setstate__(self, state: _State) -> None:
+        # Run this class's checks, not a subclass's __post_init__: its fields are
+        # already initialised, and a subclass's own initialisation need not repeat.
+        _restore(self, state)
+        Grid.__post_init__(self)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -306,7 +330,7 @@ class Detector:
     TypeError
         If counts are not integers or centre coordinates are not real numbers.
     ValueError
-        If center does not have two components.
+        If a count or pitch is not positive, or center is not two finite numbers.
     """
 
     nu: int = field(metadata={"unit": "pixel"})
@@ -318,6 +342,11 @@ class Detector:
     def __post_init__(self) -> None:
         _plain_numbers(self, ("nu", "nv"), ("du", "dv"))
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
+
+    def __setstate__(self, state: _State) -> None:
+        # As Grid: this class's checks only, on fields that are already initialised.
+        _restore(self, state)
+        Detector.__post_init__(self)
 
     def to_dict(self) -> DetectorDict:
         """Return JSON-compatible detector metadata.
@@ -394,7 +423,7 @@ def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     return jnp.asarray(u, dtype=jnp.float32), jnp.asarray(v, dtype=jnp.float32)
 
 
-def _parallel_detector_rays(
+def parallel_detector_rays(
     grid: Grid,
     detector: Detector,
     detector_roll: float = 0.0,
@@ -449,6 +478,7 @@ class Geometry(Protocol):
         tuple of tuple of float
             Row-major 4 x 4 homogeneous world-from-object transform.
         """
+        ...
 
 
 class ScanGeometry(Geometry, Protocol):
@@ -481,12 +511,12 @@ class ScanGeometry(Geometry, Protocol):
         ...
 
     @property
-    def angles(self) -> Sequence[float]:
+    def angles(self) -> Angles:
         """Each view's rotation angle, in degrees.
 
         Returns
         -------
-        sequence of float
+        sequence of float or numpy.ndarray
             One rotation angle per view, in degrees.
         """
         ...

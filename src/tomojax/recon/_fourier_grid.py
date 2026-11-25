@@ -221,7 +221,9 @@ def sample_rolled_rows(
     return result
 
 
-def gather_per_view_rows(projections, order, positions):
+def gather_per_view_rows(
+    projections: np.ndarray | jax.Array, order: np.ndarray, positions: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
     """Copy at most two contributing rows per slice/view, with zero extension."""
     nv = projections.shape[1]
     positions = np.clip(positions, -1, nv)
@@ -339,7 +341,15 @@ def _interpolate_inside(
     return result
 
 
-def _radial_values(spectrum, source, radial, ri, table, nfft, period_phase):
+def _radial_values(
+    spectrum: np.ndarray,
+    source: np.ndarray,
+    radial: np.ndarray,
+    ri: np.ndarray,
+    table: np.ndarray,
+    nfft: int,
+    period_phase: complex,
+) -> np.ndarray:
     """Interpolate before physical phase/orientation and redundant-view averaging."""
     row = np.zeros((spectrum.shape[0], *radial.shape), dtype=np.complex128)
     for dr in range(-2, 4):

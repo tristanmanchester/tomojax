@@ -143,7 +143,15 @@ def export(
     )
 
 
-def export_volume(path, reconstruction, *, dtype, value_range, prefix, source):
+def export_volume(
+    path: str | PathLike[str],
+    reconstruction: Reconstruction | Alignment | Simulation,
+    *,
+    dtype: Literal["float32", "uint16"],
+    value_range: tuple[float, float] | None,
+    prefix: str,
+    source: str | dict[str, object] | None,
+) -> None:
     """Export registered pixels with the durable source known to the caller."""
     from tomojax._scan import Alignment
     from tomojax._simulate import Simulation

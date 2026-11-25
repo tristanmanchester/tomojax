@@ -21,8 +21,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import (
-    validate_acquisition,
-    validate_detector,
+    validate_angles,
     validate_projection_stack,
 )
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
@@ -283,7 +282,8 @@ def fbp_host(
         raise ValueError("fbp_host: slices_per_batch and views_per_batch must be positive")
     if fbp_cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
-    shape = validate_acquisition(geometry, grid, detector, "fbp_host")
+    validate_angles(geometry, "fbp_host")
+    shape = grid.shape
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
@@ -467,8 +467,7 @@ def fbp_slabs[T](
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
-    _ = validate_acquisition(geometry, grid, detector, "reconstruct_slabs")
-    _ = validate_detector(detector, "reconstruct_slabs detector")
+    validate_angles(geometry, "reconstruct_slabs")
     if config.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("FBP backend must be 'auto', 'jax' or 'cuda'")
     batches = (grid.nz + 7) // 8

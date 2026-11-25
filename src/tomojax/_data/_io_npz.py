@@ -49,15 +49,21 @@ def save_npz(
         payload[_AXES_KEY] = "zyx"
     parts = sizes_of(projections, metadata.volume)
     with replaced_when_complete(path, parts) as temporary, temporary.open("wb") as stream:
-        arrays = {k: json.dumps(v) if k in _JSON_FIELDS else v for k, v in payload.items()}
+        arrays = {
+            k: json.dumps(v) if k in _JSON_FIELDS else np.asarray(v) for k, v in payload.items()
+        }
         np.savez_compressed(stream, allow_pickle=False, **arrays)
 
 
-def npz_layout(path: Path, *, volume_only: bool = False):
+def npz_layout(
+    path: Path, *, volume_only: bool = False
+) -> tuple[LoadedNXTomo, dict[str, np.ndarray]]:
     """The archive's record and its saved arrays, read whole."""
     with ZipFile(path) as archive:
         payload = LoadedNXTomo.from_dataset(_load_npz_dataset(archive, volume_only=volume_only))
-    arrays = {"projections": payload.projections, "volume": payload.metadata.volume}
+    # NPZ members are read whole: the projections are already an array.
+    projections = None if payload.projections is None else np.asarray(payload.projections)
+    arrays = {"projections": projections, "volume": payload.metadata.volume}
     return payload, {key: value for key, value in arrays.items() if value is not None}
 
 

@@ -49,7 +49,7 @@ type Axis = Literal["z", "y", "x"]
 
 def _axial_plane(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
     """The plane on its own, where axial FBP can make it without the rest of the volume."""
-    if axis != "z" or plan.method != "fbp" or not isinstance(plan.config, FBPConfig):
+    if axis != "z" or not isinstance(plan.config, FBPConfig):
         return None
     scan = plan.scan
     value = axial_fbp_plane(

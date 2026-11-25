@@ -6,7 +6,9 @@ broadcast; scores apply the transpose of that broadcast. Held parameters do
 not have columns or entries in the linear system.
 """
 
-from typing import get_args
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, get_args
 
 import jax
 import jax.numpy as jnp
@@ -17,10 +19,15 @@ from tomojax.errors import InvalidParameter
 
 from ._projection import posed
 
-_NAMES = get_args(Fit.__value__)
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector
+
+type CalibrationCorrections = dict[str, float | tuple[float, float]]
+
+_NAMES: tuple[Fit, ...] = get_args(Fit.__value__)
 
 
-def parse_fit(fit):
+def parse_fit(fit: str | tuple[str, ...]) -> tuple[Fit, ...]:
     """Validate the public parameter selection and put it in a stable order."""
     names = (fit,) if isinstance(fit, str) else fit
     if not isinstance(names, tuple) or not names or any(not isinstance(n, str) for n in names):
@@ -44,7 +51,9 @@ class Parameters:
     ``lever`` pixels per radian, independently of the working resolution.
     """
 
-    def __init__(self, views, fit, *, cone=False, lever=1.0) -> None:
+    def __init__(
+        self, views: int, fit: str | tuple[str, ...], *, cone: bool = False, lever: float = 1.0
+    ) -> None:
         self.n, self.fit, self.cone, self.lever = views, parse_fit(fit), bool(cone), float(lever)
         self.full_dofs = 6 if cone else 5
         self.local = ((0, 1) if "rotations" in self.fit else ()) + (
@@ -59,21 +68,23 @@ class Parameters:
         self.local_size = self.n * self.nlocal
         self.size = self.local_size + self.nglobal
 
-    def expand(self, state):
+    def expand(self, state: jax.Array | np.ndarray) -> jax.Array:
         """Broadcast the shared border into ``(views, columns)`` projector rows."""
         state = jnp.asarray(state).reshape(self.size)
         local = state[: self.local_size].reshape(self.n, self.nlocal)
         shared = jnp.broadcast_to(state[self.local_size :], (self.n, self.nglobal))
         return jnp.concatenate([local, shared], axis=1)
 
-    def reduce_score(self, rows):
+    def reduce_score(self, rows: jax.Array | np.ndarray) -> jax.Array:
         """The exact transpose of :meth:`expand`, including a sum over shared columns."""
         rows = jnp.asarray(rows).reshape(self.n, self.k)
         return jnp.concatenate(
             [rows[:, : self.nlocal].reshape(-1), jnp.sum(rows[:, self.nlocal :], axis=0)]
         )
 
-    def physical(self, state, scales):
+    def physical(
+        self, state: np.ndarray, scales: np.ndarray
+    ) -> tuple[np.ndarray, CalibrationCorrections]:
         """Return local poses in radians/lengths and global pixel/degree corrections."""
         state = np.asarray(state, np.float64).reshape(self.size)
         table = np.zeros((self.n, 6), np.float64)
@@ -97,16 +108,16 @@ class Parameters:
 
     def geometry(
         self,
-        nominal,
-        rows,
-        scales,
+        nominal: jax.Array,
+        rows: jax.Array,
+        scales: jax.Array,
         *,
-        detector,
-        native,
-        frames=None,
-        detector_roll=0.0,
-        detector_pivot=None,
-    ):
+        detector: Detector,
+        native: tuple[float, float],
+        frames: jax.Array | None = None,
+        detector_roll: float = 0.0,
+        detector_pivot: tuple[float, float] | None = None,
+    ) -> tuple[jax.Array, jax.Array | None]:
         """Map parameter rows to physical poses and detector frames.
 
         Positive tilt leans the rotation axis towards the beam: a lab-frame

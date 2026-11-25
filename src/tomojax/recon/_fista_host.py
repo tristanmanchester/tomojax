@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -22,16 +22,26 @@ from ._tv_ops import gradient_norm_squared
 if TYPE_CHECKING:
     import jax
 
-    from tomojax.geometry import Grid, ScanGeometry
+    from tomojax.core.cuda_types import CuPyValue
+    from tomojax.geometry import Detector, Geometry, Grid, ScanGeometry
 
-    from .fista_tv import FISTAConfig
+    from ._cone_slabs import Batch, ConeProblem, HostVolume
+    from ._tv_metric import TVMetric
+    from .fista_tv import FISTAConfig, FistaRuntime
 
 
 class HostFista:
     """Three host volumes suffice for gradient, proximal and momentum updates."""
 
     def __init__(
-        self, problem: Any, config: Any, *, metric, noise_scale=None, initial=None, out=None
+        self,
+        problem: ConeProblem,
+        config: FISTAConfig,
+        *,
+        metric: TVMetric | None,
+        noise_scale: float | jax.Array | None = None,
+        initial: np.ndarray | None = None,
+        out: np.ndarray | None = None,
     ) -> None:
         from ._host_arrays import validate_host_arrays
 
@@ -70,11 +80,18 @@ class HostFista:
             self.initial = fill(host_volume(shape, directory), initial)
         self.shape = shape
 
-    def apply(self, source, target, *, residual=False, step=None):
+    def apply(
+        self,
+        source: HostVolume | None,
+        target: HostVolume,
+        *,
+        residual: bool = False,
+        step: float | None = None,
+    ) -> float:
         """Write a normal application or data gradient, returning the residual's energy."""
         value = self.absolute_outside if residual else 0.0
 
-        def read(k):
+        def read(k: int) -> tuple[np.ndarray | CuPyValue, ...]:
             return () if source is None else (source.get(*self.plan.planes(k)),)
 
         mean = None
@@ -86,7 +103,7 @@ class HostFista:
             if source is not None:
                 if self.plan.ring == self.plan.detector.nv:
 
-                    def prepare_rows(rows):
+                    def prepare_rows(rows: tuple[np.ndarray | CuPyValue, ...]) -> None:
                         nonlocal mean, value
                         mean = statistics.projection_mean(rows[0]) - statistics.mean
                         value = float(statistics.outside_energy(-mean))
@@ -96,7 +113,9 @@ class HostFista:
                     mean = mean + statistics.project(read)
             value = float(statistics.outside_energy(-mean))
 
-        def finish(batch, first, stop, rows):
+        def finish(
+            batch: Batch, first: int, stop: int, rows: tuple[np.ndarray | CuPyValue, ...]
+        ) -> None:
             nonlocal value
             if residual:
                 rows[0][...] -= self.problem.measured(batch, first, stop)
@@ -104,7 +123,11 @@ class HostFista:
                     rows[0][...] -= mean[batch.index, None, None]
                 value += self.problem.engine.norm2(rows[0])
 
-        def sink(k, accumulated, _sources):
+        def sink(
+            k: int,
+            accumulated: tuple[np.ndarray | CuPyValue, ...],
+            _sources: tuple[np.ndarray | CuPyValue, ...],
+        ) -> None:
             z0, z1 = self.plan.planes(k)
             value = accumulated[0]
             if step is not None:
@@ -117,7 +140,7 @@ class HostFista:
         )
         return 0.5 * value
 
-    def noise_gradient_rms(self):
+    def noise_gradient_rms(self) -> float:
         """Use the existing row-window transpose without another host volume."""
         import jax
         import jax.numpy as jnp
@@ -126,7 +149,9 @@ class HostFista:
         draw = jax.jit(gaussian_probe, static_argnames=("detector_shape",))
         energy = 0.0
 
-        def finish(batch, first, stop, rows):
+        def finish(
+            batch: Batch, first: int, stop: int, rows: tuple[np.ndarray | CuPyValue, ...]
+        ) -> None:
             # Draw and center the FULL detector before selecting a row window.
             # Each view's draw is seeded by its index, so drawing views in chunks
             # no larger than the planned row window bounds the full-view probe.
@@ -141,7 +166,11 @@ class HostFista:
                 self.xp.cuda.get_current_stream().synchronize()
                 del probe, native
 
-        def sink(_k, accumulated, _sources):
+        def sink(
+            _k: int,
+            accumulated: tuple[np.ndarray | CuPyValue, ...],
+            _sources: tuple[np.ndarray | CuPyValue, ...],
+        ) -> None:
             nonlocal energy
             energy += self.problem.engine.norm2(accumulated[0])
 
@@ -150,10 +179,12 @@ class HostFista:
         )
         return math.sqrt(energy / math.prod(self.shape))
 
-    def initialize(self):
+    def initialize(self) -> tuple[float, float]:
         """The unchanged backprojected-data power start, then the feasible initial iterate."""
         xp = self.xp
         if self.noise_scale is not None:
+            if self.metric is None:
+                raise ValueError("automatic host FISTA TV requires a resolved TV metric")
             self.metric = raise_tv_weight(self.metric, self.noise_scale * self.noise_gradient_rms())
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz
@@ -199,7 +230,7 @@ class HostFista:
             self.Z.put(z0, z1, part)
         return float(limit), value
 
-    def update(self, limit, momentum, *, gradient=False):
+    def update(self, limit: float, momentum: np.float32, *, gradient: bool = False) -> None:
         """Gradient step, global finite-step TV proximal, and the resident clipped momentum."""
         cfg, xp = self.cfg, self.xp
         metric = self.metric
@@ -211,7 +242,7 @@ class HostFista:
                 self.G.put(z0, z1, step)
             del step
 
-        def momentum_sink(z0, z1, new):
+        def momentum_sink(z0: int, z1: int, new: CuPyValue) -> None:
             old = self.X.view(z0, z1)
             self.X.put(z0, z1, new)
             self.Z.put(z0, z1, xp.clip(new + momentum * (new - old), self.lower, self.upper))
@@ -227,7 +258,7 @@ class HostFista:
             upper=self.upper,
         )
 
-    def regularizer(self):
+    def regularizer(self) -> float:
         """Isotropic TV with each slab's outgoing z edge, counted once."""
         if self.metric is None:
             return 0.0
@@ -245,7 +276,7 @@ class HostFista:
             del part, squares
         return value
 
-    def run(self) -> tuple[np.ndarray, dict[str, Any]]:
+    def run(self) -> tuple[np.ndarray, dict[str, object]]:
         """Run exactly the same stopping rule and retain the padded objective history."""
         cfg = self.cfg
         limit, at_zero = self.initialize()
@@ -390,8 +421,14 @@ def fista_host_required(
 
 
 def solve_on_host(
-    geometry, grid, detector, projections, runtime, *, out=None
-) -> tuple[np.ndarray, dict[str, Any], Any] | None:
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    runtime: FistaRuntime,
+    *,
+    out: np.ndarray | None = None,
+) -> tuple[np.ndarray, dict[str, object], TVMetric | None] | None:
     """Select host state only when requested, or when the resident state cannot fit."""
     from tomojax.backends import device_free_memory_bytes
     from tomojax.core.cone import ConeModel

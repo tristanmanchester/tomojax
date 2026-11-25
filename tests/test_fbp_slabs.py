@@ -37,7 +37,7 @@ def test_owned_fbp_slabs_keep_measured_rows_and_physical_geometry(kind, backend)
     def read(first, stop):
         return jax.device_put(data[:, first:stop].copy()), (first, stop)
 
-    with closing(reconstruct_slabs("fbp", geometry, grid, detector, read, config=cfg)) as output:
+    with closing(reconstruct_slabs(geometry, grid, detector, read, config=cfg)) as output:
         collected = list(output)
     actual = np.concatenate([item.volume for item in collected], axis=0)
     np.testing.assert_allclose(actual, expected, atol=4e-6, rtol=5e-5)
@@ -59,7 +59,7 @@ def test_owned_fbp_slabs_survive_early_context_closure(backend):
         return jax.numpy.full((4, stop - first, 17), first + 1, dtype="float32"), None
 
     with closing(
-        reconstruct_slabs("fbp", geometry, grid, detector, read, config=FBPConfig(backend=backend))
+        reconstruct_slabs(geometry, grid, detector, read, config=FBPConfig(backend=backend))
     ) as output:
         first = next(output)
         saved = first.volume.copy()
@@ -85,9 +85,7 @@ def test_fbp_rejects_nonfinite_input_even_outside_the_reconstructed_field(backen
 
     with (
         closing(
-            reconstruct_slabs(
-                "fbp", geometry, grid, detector, read, config=FBPConfig(backend=backend)
-            )
+            reconstruct_slabs(geometry, grid, detector, read, config=FBPConfig(backend=backend))
         ) as output,
         pytest.raises(ValueError, match="projections must be finite"),
     ):

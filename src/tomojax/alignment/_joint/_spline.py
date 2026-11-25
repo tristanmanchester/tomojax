@@ -6,8 +6,11 @@ number is at most four cubic splines at each cut per translation, regardless
 of the interval length.
 """
 
+from __future__ import annotations
+
 import math
-from typing import NamedTuple
+from operator import index
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -15,8 +18,13 @@ import numpy as np
 from scipy import sparse
 from scipy.interpolate import BSpline
 
+if TYPE_CHECKING:
+    from types import ModuleType
 
-def sampled(steps, spacing):
+    from numpy.typing import ArrayLike
+
+
+def sampled(steps: np.ndarray, spacing: int) -> sparse.csr_array:
     """Not-a-knot collocation, omitting knots too far from any sample to contribute."""
     end = steps[-1]
     if end == 0:
@@ -33,7 +41,7 @@ def sampled(steps, spacing):
     # spline, without allocating a sample for every missing acquisition step.
     count = math.ceil(end)
 
-    def coordinate(x):
+    def coordinate(x: ArrayLike) -> np.ndarray:
         i = np.floor(x)
         lo = -1 + i * (2 / count)
         hi = np.where(i + 1 == count, 1, -1 + (i + 1) * (2 / count))
@@ -47,14 +55,26 @@ def sampled(steps, spacing):
     return design
 
 
+def design_shape(design: sparse.csr_array | sparse.csr_matrix) -> tuple[int, int]:
+    """The views by modes shape of a SciPy sparse spline design."""
+    # SciPy sets the final shape in its sparse constructors, after base initialisation.
+    shape: object = getattr(design, "shape", None)
+    if not isinstance(shape, tuple) or len(shape) != 2:
+        raise ValueError("expected a two-dimensional sparse spline design")
+    rows, cols = shape
+    return index(rows), index(cols)
+
+
 class Modes(NamedTuple):
     drift: jax.Array | np.ndarray
     rough: jax.Array | np.ndarray
     carry: jax.Array | np.ndarray
 
 
-def _split(matrix, inside, tol):
-    def basis(a):
+def _split(
+    matrix: np.ndarray, inside: np.ndarray, tol: float | np.floating
+) -> tuple[tuple[np.ndarray, np.ndarray, np.ndarray], np.ndarray]:
+    def basis(a: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         if not a.shape[1]:
             return a, np.eye(len(a))
         u, s, _ = np.linalg.svd(a, full_matrices=True)
@@ -76,20 +96,21 @@ class Drift(NamedTuple):
     levels: tuple[Modes, ...]
 
     @classmethod
-    def build(cls, design, n, k) -> "Drift":
+    def build(cls, design: sparse.csr_array | sparse.csr_matrix, n: int, k: int) -> Drift:
         # The leaves cover contiguous, nearly equal intervals. No empty subtree.
         leaves = 1 << max(0, (math.ceil(n / 8) - 1).bit_length())
         groups = np.array_split(np.arange(n), leaves)
         width = len(groups[0])
         views = np.full((leaves, width), n, np.int32)
         design = design.tocsr()
+        shape = design_shape(design)
         coo = design.tocoo()
-        first, last = np.full(design.shape[1], n), np.full(design.shape[1], -1)
+        first, last = np.full(shape[1], n), np.full(shape[1], -1)
         np.minimum.at(first, coo.col, coo.row // k)
         np.maximum.at(last, coo.col, coo.row // k)
         tol = (
             np.finfo(float).eps
-            * max(design.shape)
+            * max(shape)
             * max(1, np.sqrt(np.asarray(design.power(2).sum(axis=0)).max(initial=0)))
         )
         # Each item carries an interval, its active knot IDs, their sampled
@@ -137,7 +158,7 @@ class Drift(NamedTuple):
                 ]
                 pending.append((left[0], right[1], ids, b[valid], np.flatnonzero(valid)))
 
-    def residual(self, x, xp=jnp):
+    def residual[ArrayT: (jax.Array, np.ndarray)](self, x: ArrayT, xp: ModuleType = jnp) -> ArrayT:
         """Apply the orthogonal complement by a pair of tree sweeps."""
         cols = x.shape[-1]
         local = xp.pad(x, ((0, 1), (0, 0), (0, 0)))[self.views].reshape(len(self.views), -1, cols)

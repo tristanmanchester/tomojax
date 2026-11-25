@@ -24,8 +24,11 @@ def regularization_normal(
 def gradient_energy(volume: jax.Array, spacing: tuple[float, float, float]) -> jax.Array:
     """Return ||D x||²; D contains adjacent differences divided by voxel spacing."""
     return sum(
-        jnp.sum((jnp.diff(volume, axis=axis) / step) ** 2)
-        for axis, step in zip((2, 1, 0), spacing, strict=True)
+        (
+            jnp.sum((jnp.diff(volume, axis=axis) / step) ** 2)
+            for axis, step in zip((2, 1, 0), spacing, strict=True)
+        ),
+        start=jnp.zeros((), volume.dtype),
     )
 
 

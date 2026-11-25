@@ -171,9 +171,7 @@ def test_low_memory_plan_and_run_agree_on_rolled_slab_eligibility(monkeypatch, m
     assert planned.placement.strategy == expected
 
 
-@pytest.mark.parametrize(
-    ("bad", "path"), [("grid", "grid"), ("angle", "source"), ("pose", "source")]
-)
+@pytest.mark.parametrize(("bad", "path"), [("angle", "source"), ("pose", "source")])
 def test_preflight_rejects_invalid_projection_geometry(bad, path):
     class ScaledPose(tj.ParallelGeometry):
         def pose_matrix(self, index):
@@ -181,7 +179,7 @@ def test_preflight_rejects_invalid_projection_geometry(bad, path):
             matrix[2, 2] = 1.05
             return matrix
 
-    grid = tj.Grid(4, 4, 2, 1, 1, 1, vol_origin=(0, np.nan if bad == "grid" else 0, 0))
+    grid = tj.Grid(4, 4, 2, 1, 1, 1)
     kind = ScaledPose if bad == "pose" else tj.ParallelGeometry
     geometry = kind(grid, tj.Detector(4, 2, 1, 1), [0, np.nan if bad == "angle" else 90])
     source = tj.Scan(np.ones((2, 2, 4), np.float32), geometry)

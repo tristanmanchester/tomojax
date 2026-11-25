@@ -24,7 +24,7 @@ class tomojax.ConeBeam(
 class tomojax.ConeGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         beam: 'ConeBeam',
         tilt: 'float' = 0.0,
         tilt_about: 'str' = 'x',
@@ -91,7 +91,7 @@ class tomojax.InvalidParameter(path: 'str', message: 'str') -> 'None'
 class tomojax.LaminographyGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         tilt: 'float' = 30.0,
         tilt_about: 'str' = 'x',
         detector_roll: 'float' = 0.0,
@@ -102,7 +102,7 @@ class tomojax.LaminographyGeometry(
 class tomojax.ParallelGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         detector_roll: 'float' = 0.0,
     ) -> None
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
@@ -306,7 +306,7 @@ class tomojax.geometry.ConeBeam(
 class tomojax.geometry.ConeGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         beam: 'ConeBeam',
         tilt: 'float' = 0.0,
         tilt_about: 'str' = 'x',
@@ -357,7 +357,7 @@ class tomojax.geometry.Grid(
 class tomojax.geometry.LaminographyGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         tilt: 'float' = 30.0,
         tilt_about: 'str' = 'x',
         detector_roll: 'float' = 0.0,
@@ -368,7 +368,7 @@ class tomojax.geometry.LaminographyGeometry(
 class tomojax.geometry.ParallelGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         detector_roll: 'float' = 0.0,
     ) -> None
     .pose_matrix(self, i: 'int') -> 'PoseMatrix'
@@ -376,7 +376,7 @@ class tomojax.geometry.ParallelGeometry(
 class tomojax.geometry.RotationAxisGeometry(
         grid: 'Grid',
         detector: 'Detector',
-        angles: 'Sequence[float]',
+        angles: 'Angles',
         axis_unit: 'Sequence[float]',
         detector_roll: 'float' = 0.0,
     ) -> None

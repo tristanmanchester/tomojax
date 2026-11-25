@@ -17,6 +17,8 @@ from tomojax.geometry import Grid, grid_volume_origin
 from tomojax.geometry.api import is_cone_beam, view_frames
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     import jax
 
     from tomojax._region import RegionEstimate
@@ -205,7 +207,9 @@ def _seen_voxels(scan: Scan) -> tuple[np.ndarray, np.ndarray, Cylinder]:
     return first, last, Cylinder(float(radius))
 
 
-def _pixel_coordinates(scan: Scan, views: np.ndarray, points: np.ndarray):
+def _pixel_coordinates(
+    scan: Scan, views: np.ndarray, points: np.ndarray
+) -> Iterator[tuple[np.ndarray, np.ndarray]]:
     """Yield each view's detector (column, row) pixel coordinates of object ``points``."""
     geometry, detector = scan.geometry, scan.detector
     if is_cone_beam(geometry):

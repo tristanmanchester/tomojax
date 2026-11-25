@@ -14,6 +14,7 @@ from tomojax.geometry import Detector, Grid
 from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.io import (
     ProjectionDataset,
+    build_geometry_from_dataset_metadata,
     load_dataset,
     load_tiff_stack,
     save_dataset,
@@ -28,7 +29,7 @@ from tomojax.io.api import (
     save_nxtomo,
 )
 
-from ._helpers import make_projection_dataset, write_projection_dataset
+from ._helpers import make_projection_dataset, write_projection_dataset, write_raw_nxtomo
 
 pytestmark = pytest.mark.surface
 
@@ -550,3 +551,44 @@ def test_npz_inspection_accepts_angles_recorded_only_for_sample_views(tmp_path):
     )
     angles = tj.inspect(path)["angles"]
     assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (4, 0, 90, 90)
+
+
+def test_a_broken_frame_label_link_is_an_error_not_missing_labels(tmp_path: Path) -> None:
+    # Reading a dangling link as absent would label every flat and dark a sample view.
+    path = tmp_path / "scan.nxs"
+    save_dataset(path, make_projection_dataset())
+    with h5py.File(path, "a") as file:
+        detector = file["/entry/instrument/detector"]
+        del detector["image_key"]
+        detector["image_key"] = h5py.ExternalLink("absent.h5", "/image_key")
+    with pytest.raises(KeyError):
+        load_dataset(path)
+
+
+def test_a_grid_override_needs_only_the_saved_pitches() -> None:
+    grid, _, _ = build_geometry_from_dataset_metadata(
+        {
+            "detector": Detector(4, 3, 1.0, 1.0).to_dict(),
+            "angles": np.arange(5, dtype=np.float32),
+            "grid": {"vx": 0.5, "vy": 0.25, "vz": 2.0},
+        },
+        grid_override=(7, 6, 5),
+    )
+    assert (grid.nx, grid.ny, grid.nz, grid.vx, grid.vy, grid.vz) == (7, 6, 5, 0.5, 0.25, 2.0)
+
+
+@pytest.mark.parametrize("link", ["soft", "external"])
+def test_raw_frames_refuse_a_dangling_frame_label_link(tmp_path: Path, link: str) -> None:
+    # Reading the dangling link as absent would make the flat and dark sample views.
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    with h5py.File(path, "a") as file:
+        detector = file["/entry/instrument/detector"]
+        del detector["image_key"]
+        detector["image_key"] = (
+            h5py.SoftLink("/entry/absent")
+            if link == "soft"
+            else h5py.ExternalLink("absent.h5", "/image_key")
+        )
+    with pytest.raises(ValueError, match="image_key"):
+        tj.load_frames(path)

@@ -2,18 +2,37 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, overload
 
 if TYPE_CHECKING:
+    import jax
     from jax import Array
+    import numpy as np
+
+    from tomojax.core.cuda_types import CuPyValue
+
+    from .types import DataTerm
+
+    @overload
+    def precision_stalled(
+        norm2: float,
+        previous_norm2: float,
+        previous_verified: bool | np.bool_,
+        bounded: Literal[True, False],
+    ) -> bool | np.bool_: ...
+
+    @overload
+    def precision_stalled(
+        norm2: Array, previous_norm2: Array, previous_verified: Array, bounded: Array
+    ) -> Array: ...
 
 
 def precision_stalled(
     norm2: float | Array,
     previous_norm2: float | Array,
-    previous_verified: bool | Array,
+    previous_verified: bool | np.bool_ | Array,
     bounded: bool | Array,
-) -> bool | Array:
+) -> bool | np.bool_ | Array:
     """A cancellation bound is not proof that a requested tolerance is unattainable.
 
     Keep improving a verified normal residual even inside its FP32 bound. Only
@@ -36,7 +55,9 @@ def termination(*, failed: bool, converged: bool, roundoff: bool) -> str:
     return "roundoff_limit" if roundoff else "iteration_limit"
 
 
-def cancellation_magnitude(data, prediction, data_term):
+def cancellation_magnitude(
+    data: jax.Array | CuPyValue, prediction: jax.Array | CuPyValue, data_term: DataTerm
+) -> jax.Array | CuPyValue:
     """Nonnegative projection envelope for the FP32 cancellation bound.
 
     Contrast uses C = I - P, with P the whole-view mean. Since |C| <= I + P,

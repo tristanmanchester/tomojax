@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from .geometry.base import Detector, Grid, grid_volume_origin
-from .validation import validate_detector, validate_grid
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -17,7 +16,7 @@ if TYPE_CHECKING:
     import jax.numpy as jnp
 
 
-def validate_scale_factor(factor: object) -> int:
+def validate_scale_factor(factor: float) -> int:
     """Return ``factor`` as an integer scale >= 1 or raise a clear ValueError."""
     try:
         value = float(factor)
@@ -37,7 +36,6 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
     lower face; keeping it unchanged would translate an explicitly placed grid.
     """
     f = validate_scale_factor(factor)
-    validate_grid(grid, "scale_grid grid")
     if f == 1:
         return grid
     shape = (grid.nx, grid.ny, grid.nz)
@@ -46,9 +44,11 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
     coarse_spacing = tuple(
         v * n / nc for v, n, nc in zip(spacing, shape, coarse_shape, strict=True)
     )
-    origin = grid_volume_origin(grid)
-    coarse_origin = tuple(
-        o + (vc - v) / 2 for o, v, vc in zip(origin, spacing, coarse_spacing, strict=True)
+    ox, oy, oz = grid_volume_origin(grid)
+    coarse_origin = (
+        ox + (coarse_spacing[0] - spacing[0]) / 2,
+        oy + (coarse_spacing[1] - spacing[1]) / 2,
+        oz + (coarse_spacing[2] - spacing[2]) / 2,
     )
     return Grid(
         nx=coarse_shape[0],
@@ -77,7 +77,6 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     samples are duplicated or assigned fictitious uniformly spaced coordinates.
     """
     f = validate_scale_factor(factor)
-    validate_detector(det, "scale_detector detector")
     if f == 1:
         return det
     nu, offset_u = _decimated_axis(det.nu, f)

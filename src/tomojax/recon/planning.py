@@ -36,7 +36,6 @@ def prediction_block_views(geometry: ScanGeometry, config: MethodConfig) -> int 
 
 
 def inversion_storage(
-    method: str,
     cfg: MethodConfig,
     geometry: ScanGeometry,
     data: Any,
@@ -54,8 +53,8 @@ def inversion_storage(
     gpu = bool(devices and devices[0].startswith("gpu:"))
     pool = next((s.available for s in snapshot if s.scope == "cupy"), room)
     volume = 4 * math.prod(grid.shape)
-    resident = _recon_bytes(method, cfg, volume, projections, grid, data.shape)
-    if method == "fourier":
+    resident = _recon_bytes(cfg, volume, projections, grid, data.shape)
+    if cfg.method == "fourier":
         from ._fourier_backend import fourier_slab_depth
         from ._fourier_grid import transform_grid
 
@@ -192,19 +191,21 @@ def _cgls_slabs(
 
 
 def _recon_bytes(
-    method: str, config: Any, volume: int, projections: int, grid: Any, shape: tuple[int, ...]
+    config: MethodConfig, volume: int, projections: int, grid: Any, shape: tuple[int, ...]
 ) -> int:
     """Resident working set including the iterate, auxiliary volumes and measured views."""
-    if method == "cgls":
-        from tomojax.recon.cgls import resident_bytes
+    match config.method:
+        case "cgls":
+            from tomojax.recon.cgls import resident_bytes
 
-        return resident_bytes(grid, shape)
-    if method in {"sirt", "mlem"}:
-        from ._axial_slabs import axial_workspace
+            return resident_bytes(grid, shape)
+        case "sirt" | "mlem":
+            from ._axial_slabs import axial_workspace
 
-        return int(axial_workspace(config, volume, projections))
-    if method == "spdhg":
-        return (3 + 3 * (config.tv_weight != 0)) * volume + 2 * projections
-    if method == "fista":
-        return (4 + 4 * (config.tv_weight != 0)) * volume + 2 * projections
-    return volume + 2 * projections
+            return int(axial_workspace(config, volume, projections))
+        case "spdhg":
+            return (3 + 3 * (config.tv_weight != 0)) * volume + 2 * projections
+        case "fista":
+            return (4 + 4 * (config.tv_weight != 0)) * volume + 2 * projections
+        case "fbp" | "fourier":
+            return volume + 2 * projections

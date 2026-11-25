@@ -164,3 +164,14 @@ def test_describable_signatures_preserve_the_native_host_import_path():
         check=False,
     )
     assert probe.returncode == 0, probe.stderr
+
+
+def test_each_method_config_names_its_method():
+    from tomojax._parameters import Method, ReconMethod
+    from tomojax.recon.api import method_config
+
+    names = get_args(ReconMethod.__value__)
+    assert get_args(Method.__value__) == ("auto", *names)
+    assert sorted(kind.method for kind in get_args(MethodConfig.__value__)) == sorted(names)
+    for name in names:
+        assert method_config(name).method == name

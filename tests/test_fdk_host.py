@@ -122,15 +122,6 @@ def test_host_slabs_reject_sampled_nonfinite_fp32_values(value):
         fdk_host(geometry, grid, detector, data, config=FDKHostConfig(fdk=FDKConfig(backend="jax")))
 
 
-@pytest.mark.parametrize("invalid", ["nx", "vz"])
-def test_host_slabs_validate_grid_before_allocating_or_writing(invalid):
-    geometry, grid, detector, data = scan()
-    # A grid restored from an older pickle can bypass constructor validation.
-    object.__setattr__(grid, invalid, 0)
-    with pytest.raises(ValueError, match="fdk_host grid"):
-        fdk_host(geometry, grid, detector, data)
-
-
 @pytest.mark.parametrize("backend", ["jax", CUDA])
 @pytest.mark.parametrize("layout", ["allocated", "C", "F", "reversed"])
 def test_host_slabs_preserve_writable_output(layout, backend):

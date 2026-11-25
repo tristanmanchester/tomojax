@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from ._fourier_grid import check_samples, gather_per_view_rows, sample_projection_rows
+
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax.core.cuda_types import CuPyValue
 
 
 @dataclass
@@ -20,7 +26,9 @@ class ProjectionRows:
     fraction: np.ndarray
 
 
-def prepare_projection_rows(projections, order, positions) -> np.ndarray | ProjectionRows:
+def prepare_projection_rows(
+    projections: np.ndarray | jax.Array, order: np.ndarray, positions: np.ndarray
+) -> np.ndarray | ProjectionRows:
     """Stage at most two measured rows per requested slice, without interpolation.
 
     Only contributing neighbors are copied, even for strided/mapped input. A
@@ -53,7 +61,7 @@ def prepare_projection_rows(projections, order, positions) -> np.ndarray | Proje
 
 
 @lru_cache(maxsize=2)
-def _row_kernel(*, per_view=False):
+def _row_kernel(*, per_view: bool = False) -> CuPyValue:
     import cupy
 
     return cupy.ElementwiseKernel(
@@ -80,7 +88,9 @@ def _row_kernel(*, per_view=False):
     )
 
 
-def interpolate_projection_rows(rows: ProjectionRows, source, depth: int, xp):
+def interpolate_projection_rows(
+    rows: ProjectionRows, source: CuPyValue, depth: int, xp: CuPyValue
+) -> tuple[CuPyValue, tuple[CuPyValue, CuPyValue, CuPyValue]]:
     """An owned CUDA FFT slab, and the metadata arrays it needs until the kernel runs."""
     nviews, nu = rows.samples.shape[1:]
     output = xp.empty((depth, nviews, nu), dtype=xp.float32)

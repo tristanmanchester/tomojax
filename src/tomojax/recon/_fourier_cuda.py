@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import functools
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from tomojax.core.cuda_types import CuPyValue
 
 _SOURCE = r"""
 __device__ float radial_weight(float distance, const float* table) {
@@ -175,7 +179,9 @@ extern "C" __global__ void mass_deapod(
 
 
 @functools.lru_cache(maxsize=8)
-def interpolation_kernel(*, y_boundary=False, repeats=False, translated=False):
+def interpolation_kernel(
+    *, y_boundary: bool = False, repeats: bool = False, translated: bool = False
+) -> CuPyValue:
     import cupy
 
     options = (
@@ -188,7 +194,7 @@ def interpolation_kernel(*, y_boundary=False, repeats=False, translated=False):
 
 
 @functools.lru_cache(maxsize=1)
-def mass_deapod_kernel():
+def mass_deapod_kernel() -> CuPyValue:
     """Sum each measured profile in FP64 while deapodizing its owned FP32 copy."""
     import cupy
 
@@ -233,7 +239,7 @@ extern "C" __global__ void coordinates(
 
 
 @functools.lru_cache(maxsize=1)
-def coordinates_kernel():
+def coordinates_kernel() -> CuPyValue:
     """Build immutable physical Fourier coordinates in one FP64 device pass."""
     import cupy
 

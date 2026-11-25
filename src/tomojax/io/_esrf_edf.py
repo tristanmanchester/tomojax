@@ -75,7 +75,9 @@ def _projection_files(owner: Path, fields: dict[str, str]) -> list[Path]:
     return [frames[i] for i in indices]
 
 
-def _calibrations(owner: Path, fields: dict[str, str]):
+def _calibrations(
+    owner: Path, fields: dict[str, str]
+) -> tuple[EdfFrames | None, EdfFrames | np.ndarray | None, np.ndarray | None]:
     """Keep fractional dark means; nxtomomill's integer NX output quantizes them."""
     files = sorted(owner.parent.iterdir())
     dark_files = [f for f in files if re.fullmatch(r"darkend\d+\.edf", f.name)]

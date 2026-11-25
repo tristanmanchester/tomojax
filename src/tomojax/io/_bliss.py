@@ -185,7 +185,9 @@ def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
     return np.empty(0, np.float32)
 
 
-def _collect_steps(root: Any, steps: list[Any]):
+def _collect_steps(
+    root: Any, steps: list[Any]
+) -> tuple[dict[int, list[Hdf5Frames]], np.ndarray, np.ndarray]:
     name = _value(root, "technique/detector/name")
     if name is None:
         names = np.atleast_1d(_value(root, "technique/tomoconfig/detector", []))

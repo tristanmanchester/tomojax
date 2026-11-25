@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 import jax
 from jax.core import Tracer
@@ -11,26 +12,50 @@ import numpy as np
 
 from tomojax.core.robust import MAD_TO_SD
 
+if TYPE_CHECKING:
+    from numpy.typing import ArrayLike
 
-def _gather_samples(array, coordinates):
+
+class _SampledStack(Protocol):
+    @property
+    def shape(self) -> tuple[int, ...]: ...
+
+    @property
+    def dtype(self) -> np.dtype: ...
+
+    def __getitem__(self, indices: tuple[np.ndarray, ...], /) -> np.ndarray: ...
+
+
+def _sampled(value: object) -> TypeGuard[_SampledStack]:
+    # hasattr, unlike a runtime Protocol check, sees attributes a proxy delegates.
+    return hasattr(value, "shape")
+
+
+def _gather_samples(
+    array: _SampledStack | ArrayLike, coordinates: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> _SampledStack | np.ndarray:
     """Gather only requested pixels, including broadcast observation weights."""
-    if not hasattr(array, "shape"):
-        array = np.asarray(array)
-    if not array.shape:
-        return array
+    stack = array if _sampled(array) else np.asarray(array)
+    shape = stack.shape
+    if not shape:
+        return stack
     indices = tuple(
         np.zeros_like(index) if extent == 1 else index
-        for index, extent in zip(coordinates[-len(array.shape) :], array.shape, strict=True)
+        for index, extent in zip(coordinates[-len(shape) :], shape, strict=True)
     )
-    return array[indices]
+    return stack[indices]
 
 
-def _require_samples(present):
+def _require_samples(present: jax.Array | bool | np.bool_) -> None:
     if not bool(present):
         raise ValueError("Noise level cannot be estimated: pass tv_weight explicitly.")
 
 
-def estimate_projection_noise(projections, *, weights=None):
+def estimate_projection_noise(
+    projections: _SampledStack | jax.Array | np.ndarray,
+    *,
+    weights: jax.Array | np.ndarray | np.generic | float | None = None,
+) -> jax.Array | np.float64:
     """Estimate one measurement SD from at most 65536 sampled Haar cells.
 
     A fixed seed samples cells uniformly with replacement, independently of the

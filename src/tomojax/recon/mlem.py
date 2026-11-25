@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,6 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_projection_stack,
     validate_volume,
 )
@@ -119,6 +118,8 @@ class MLEMConfig:
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["mlem"]] = "mlem"
 
     iterations: int = 50
     subsets: int = 1
@@ -458,7 +459,6 @@ def run_mlem(
     announce(array=projections)
     cfg = config
     iterations, subsets = cfg.iterations, cfg.subsets
-    validate_grid(grid, "mlem grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
     validate_detector_grid(det_grid, detector, context="mlem")
     check_subset_count("mlem", subsets, n)

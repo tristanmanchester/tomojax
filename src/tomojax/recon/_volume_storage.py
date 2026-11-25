@@ -14,6 +14,7 @@ from tomojax.core.registration import planes
 from tomojax.core.volume_layout import transpose_volume
 
 if TYPE_CHECKING:
+    from tomojax import progress
     from tomojax.geometry import Grid
 
 
@@ -52,7 +53,7 @@ def pack_volume[T: jax.Array | None](volume: T, model: Model) -> T:
 
 def preview_planes(
     volume: jax.Array, model: Model, grid: Grid, *, observed: jax.Array | None = None
-):
+) -> dict[str, progress.Sample]:
     """Extract central planes without unpacking a private device volume."""
     return planes(volume, grid, reversed_axes=_private(model), observed=observed)
 

@@ -111,9 +111,9 @@ def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[st
 
 def method_name(work: ResolvedReconstruction) -> str:
     """The method as users name it: FDK for a cone-beam FBP."""
-    from tomojax.geometry.api import is_cone_beam
+    from tomojax.recon.api import solver_name
 
-    return "fdk" if work.method == "fbp" and is_cone_beam(work.scan.geometry) else work.method
+    return solver_name(work.method, work.scan.geometry)
 
 
 def plan_text(scan: tj.Scan, work: Work, placement: Placement) -> str:

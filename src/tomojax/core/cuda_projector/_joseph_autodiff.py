@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax
 
 from tomojax.core.projector_autodiff import FirstOrderProjector
@@ -9,12 +11,15 @@ from tomojax.core.projector_autodiff import FirstOrderProjector
 from ._joseph import adjoint_cuda, forward_cuda
 from ._joseph_derivatives import coefficient_vjp, projection_jvp
 
+if TYPE_CHECKING:
+    from tomojax.core.geometry.base import Detector, Grid
+
 
 class _PlaneProjector(FirstOrderProjector):
     interpolation: str
     z_fast: bool
 
-    def expand(self, coeff, volume):
+    def expand(self, coeff: jax.Array, volume: jax.Array) -> jax.Array:
         return forward_cuda(
             coeff,
             volume,
@@ -24,7 +29,9 @@ class _PlaneProjector(FirstOrderProjector):
             z_fast=self.z_fast,
         )
 
-    def coefficient_jvp(self, coeff, volume, dcoeff, dvolume):
+    def coefficient_jvp(
+        self, coeff: jax.Array, volume: jax.Array, dcoeff: jax.Array, dvolume: jax.Array | None
+    ) -> jax.Array:
         return projection_jvp(
             coeff,
             volume,
@@ -36,7 +43,9 @@ class _PlaneProjector(FirstOrderProjector):
             z_fast=self.z_fast,
         )
 
-    def coefficient_vjp(self, coeff, volume, cotangent):
+    def coefficient_vjp(
+        self, coeff: jax.Array, volume: jax.Array, cotangent: jax.Array
+    ) -> jax.Array:
         return coefficient_vjp(
             coeff,
             volume,
@@ -47,7 +56,7 @@ class _PlaneProjector(FirstOrderProjector):
             z_fast=self.z_fast,
         )
 
-    def adjoint(self, coeff, cotangent):
+    def adjoint(self, coeff: jax.Array, cotangent: jax.Array) -> jax.Array:
         return adjoint_cuda(
             coeff,
             cotangent,
@@ -59,7 +68,13 @@ class _PlaneProjector(FirstOrderProjector):
 
 
 def differentiable_forward(
-    coeff, volume, grid, detector, *, interpolation="linear", z_fast=False
+    coeff: jax.Array,
+    volume: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    *,
+    interpolation: str = "linear",
+    z_fast: bool = False,
 ) -> jax.Array:
     """Apply CUDA projection with explicit first-order derivatives and batching.
 

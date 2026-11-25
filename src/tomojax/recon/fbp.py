@@ -4,7 +4,7 @@ from collections.abc import Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import Literal
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -20,7 +20,7 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
-    validate_acquisition,
+    validate_angles,
     validate_detector_grid,
     validate_pose_stack,
     validate_projection_stack,
@@ -64,6 +64,8 @@ class FBPConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     """
+
+    method: ClassVar[Literal["fbp"]] = "fbp"
 
     filter: Filter = "ramp"
     scale: float | None = None
@@ -897,7 +899,7 @@ def parallel_fbp(
 ) -> jnp.ndarray:
     """Filter and backproject original view batches on the grid or one aligned axial row."""
     with progress.task("reconstruct", "fbp", None, "batches"):
-        validate_acquisition(geometry, grid, detector, "fbp")
+        validate_angles(geometry, "fbp")
         n_views, _, _ = validate_projection_stack(
             projections,
             detector,
@@ -919,7 +921,7 @@ def parallel_fbp(
             cfg.backend,
             cone=False,
             context="fbp",
-            devices=T_all.devices() if on_host else proj.devices(),
+            devices=proj.devices() if isinstance(proj, jax.Array) else T_all.devices(),
         )
         plan = _plan(
             geometry,

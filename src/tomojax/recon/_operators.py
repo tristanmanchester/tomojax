@@ -7,7 +7,7 @@ import functools
 import math
 import os
 import pickle
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import jax
 from jax.core import Tracer
@@ -32,12 +32,19 @@ from tomojax.recon._projection import projection_operators, resolve_geometry_pro
 from tomojax.recon._volume_storage import resident_model
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
     import numpy as np
 
     from tomojax._typed_arrays import Device
+    from tomojax.core.devices import ViewSplit
     from tomojax.geometry import Detector, Grid, ScanGeometry
+
+    type MatchedPair = tuple[Callable[[jax.Array], jax.Array], Callable[..., jax.Array]]
+
+    class _BandForward(Protocol):
+        def __call__(self, x: jax.Array, depth: int) -> jax.Array: ...
+
 
 PROJECTOR_BLOCK_VIEWS = 32
 _AXIAL_STACK_BYTES = 64 * 1024**2
@@ -71,7 +78,7 @@ def matched_operators(
     *,
     interpolation: str = "linear",
     backend: str = "auto",
-):
+) -> tuple[Grid, ViewSplit | None, Callable[[], MatchedPair], Callable[[], MatchedPair] | None]:
     """The grid, the split of the views among ``devices`` and builders of their operators.
 
     The last item builds the same operators on solver-private z-fast storage
@@ -172,13 +179,13 @@ class Projector:
         self._single_slice = self.grid.nz == self.geometry.detector.nv == 1
 
     @functools.cached_property
-    def _operators(self):
+    def _operators(self) -> MatchedPair:
         """The forward and transpose on public (z, y, x) volumes, built on first use."""
         with jax.ensure_compile_time_eval():  # the geometry is concrete inside any trace
             return self._build()
 
     @functools.cached_property
-    def _private_operators(self):
+    def _private_operators(self) -> MatchedPair:
         """The same pair on solver-private z-fast volumes, built on first use."""
         assert self._build_private is not None
         with jax.ensure_compile_time_eval():
@@ -255,7 +262,7 @@ class Projector:
         return volume[0] if squeezed else volume
 
     @functools.cached_property
-    def _coefficients(self):
+    def _coefficients(self) -> jax.Array:
         with jax.ensure_compile_time_eval():  # the geometry is concrete inside any trace
             poses = stack_view_poses(self.geometry, self.projection_shape[0])
             detector = self.geometry.detector
@@ -282,13 +289,13 @@ class Projector:
     # the same result bits any way, except for views whose kernels stage
     # their own z-fast bands.
     @functools.cached_property
-    def _private_forward(self):
+    def _private_forward(self) -> Callable[[jax.Array], jax.Array] | None:
         if self._bands[0] == "bands":
             return None
         return jax.jit(lambda x: self._private_operators[0](transpose_volume(x)))
 
     @functools.cached_property
-    def _band_forward(self):
+    def _band_forward(self) -> _BandForward | None:
         """The forward from z-fast bands, for when the copy does not fit; band depth is static."""
         if self._build_private is None or (kind := self._bands[0]) == "bands":
             return None
@@ -301,11 +308,11 @@ class Projector:
         )
 
     @functools.cached_property
-    def _private_adjoint(self):
+    def _private_adjoint(self) -> Callable[[jax.Array], jax.Array]:
         return jax.jit(lambda y: transpose_volume(self._private_operators[1](y)))
 
     @functools.cached_property
-    def _band_adjoint(self):
+    def _band_adjoint(self) -> Callable[[jax.Array], jax.Array] | None:
         """The transpose in z-fast bands, batch by batch as the operators add them."""
         if self._build_private is None or (kind := self._bands[1]) is None:
             return None
@@ -317,7 +324,9 @@ class Projector:
             )
         )
 
-    def _private_call(self, values: jax.Array, direction: int, elements: int):
+    def _private_call(
+        self, values: jax.Array, direction: int, elements: int
+    ) -> Callable[[jax.Array], jax.Array] | None:
         """The private-storage call for ``direction`` when ``elements`` more floats fit.
 
         A forward for which they do not takes z-fast bands as deep as fit instead.
@@ -343,7 +352,9 @@ class Projector:
         return functools.partial(self._band_forward, depth=depth)
 
     @staticmethod
-    def _validate(values, shape: tuple[int, int, int], context: str) -> None:
+    def _validate(
+        values: jax.Array | np.ndarray, shape: tuple[int, int, int], context: str
+    ) -> None:
         if tuple(values.shape) != shape:
             raise ValueError(f"{context} shape {tuple(values.shape)} does not match {shape}")
 

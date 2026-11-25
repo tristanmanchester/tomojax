@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+import pickle
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
+
+from tomojax import InvalidParameter
 
 # check-public-imports: allow-private
 from tomojax.core.geometry.transforms import align_u_to_v
@@ -158,3 +163,83 @@ def test_detector_grid_is_flattened_row_by_row_about_the_centre() -> None:
 
     np.testing.assert_allclose(u, [-2.0, 0.0, 2.0, -2.0, 0.0, 2.0])
     np.testing.assert_allclose(v, [-2.0, -2.0, -2.0, 2.0, 2.0, 2.0])
+
+
+def test_grid_and_detector_round_trip_through_pickle() -> None:
+    grid = Grid(5, 4, 3, 0.5, 0.25, 2.0, vol_origin=(1, 2, 3), vol_center=(4, 5, 6))
+    detector = Detector(7, 6, 0.5, 0.75, (0.25, -1.5))
+    assert pickle.loads(pickle.dumps(grid)) == grid
+    assert pickle.loads(pickle.dumps(detector)) == detector
+
+
+@pytest.mark.parametrize(
+    ("kind", "field", "value", "message"),
+    [
+        ("grid", "nx", 0, "nx must be a positive integer"),
+        ("grid", "vz", -1.0, "vz must be finite and positive"),
+        ("grid", "vol_origin", (np.nan, 0.0, 0.0), "vol_origin must be finite"),
+        ("detector", "du", 0.0, "du must be finite and positive"),
+        ("detector", "center", (np.inf, 0.0), "center must be finite"),
+    ],
+)
+def test_unpickling_rebuilds_through_the_constructor(kind, field, value, message) -> None:
+    item = Grid(4, 4, 4, 1, 1, 1) if kind == "grid" else Detector(4, 4, 1, 1)
+    # A stored object written before the constructor checked this field: its pickle
+    # holds the same field state that a plain dataclass pickle always held.
+    object.__setattr__(item, field, value)
+    with pytest.raises(InvalidParameter, match=message) as error:
+        pickle.loads(pickle.dumps(item))
+    assert error.value.path == field
+
+
+@pytest.mark.parametrize("field", ["vol_origin", "vol_center"])
+def test_grid_rejects_nonfinite_placement(field) -> None:
+    with pytest.raises(InvalidParameter, match=f"{field} must be finite"):
+        Grid(4, 4, 4, 1, 1, 1, **{field: (0.0, np.inf, 0.0)})
+
+
+@dataclass(frozen=True)
+class ShiftedDetector(Detector):
+    shift: float = 0.0
+
+
+@dataclass(frozen=True)
+class CalibratedDetector(Detector):
+    offset: tuple[float, float] = (0.0, 0.0)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        u, v = self.center
+        object.__setattr__(self, "center", (u + self.offset[0], v + self.offset[1]))
+
+
+class SlottedGrid(Grid):
+    __slots__ = ("label",)
+
+
+def test_copies_keep_grid_and_detector_subclasses_and_their_fields() -> None:
+    import copy
+
+    detector = ShiftedDetector(4, 3, 1.0, 1.0, shift=2.5)
+    copied = copy.deepcopy(detector)
+    assert type(copied) is ShiftedDetector and copied.shift == 2.5
+    # A subclass's own initialisation runs once, at construction, not again on a copy.
+    calibrated = CalibratedDetector(4, 3, 1.0, 1.0, (1.0, 2.0), offset=(1.5, 1.5))
+    assert pickle.loads(pickle.dumps(calibrated)).center == calibrated.center == (2.5, 3.5)
+    assert copy.copy(calibrated).center == (2.5, 3.5)
+    slotted = SlottedGrid(4, 4, 4, 1, 1, 1)
+    object.__setattr__(slotted, "label", "slab")
+    for restored in (
+        copy.copy(slotted),
+        copy.deepcopy(slotted),
+        pickle.loads(pickle.dumps(slotted)),
+    ):
+        assert restored == slotted and restored.label == "slab"
+
+
+def test_a_saved_tilt_may_be_a_numeric_string() -> None:
+    from tomojax.geometry.api import nominal_axis_unit_from_inputs
+
+    as_text = nominal_axis_unit_from_inputs({"geometry_type": "lamino", "tilt": "30.0"})
+    as_number = nominal_axis_unit_from_inputs({"geometry_type": "lamino", "tilt": 30.0})
+    np.testing.assert_array_equal(as_text, as_number)

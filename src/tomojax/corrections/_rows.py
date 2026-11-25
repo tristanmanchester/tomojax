@@ -96,7 +96,23 @@ def preview_window(
 
 @dataclass
 class CorrectedRows:
-    """Owned device projections and their records, completed only when requested."""
+    """Owned device projections and their records, completed only when requested.
+
+    Parameters
+    ----------
+    projections : jax.Array
+        Corrected line integrals of the requested rows, in (view, row, column) order.
+    flat : Correction
+        Record of the flat and dark normalisation.
+    steps : tuple of Step
+        Corrections applied after normalisation, in order.
+    epsilon : float
+        Floor applied to transmission before the logarithm.
+    counts : tuple of jax.Array
+        Device counts of nonpositive transmissions and of nonfinite results.
+    raw : numpy.ndarray
+        Raw detector counts read for these rows.
+    """
 
     projections: jax.Array
     flat: Correction
@@ -107,7 +123,18 @@ class CorrectedRows:
 
     @property
     def records(self) -> tuple[Correction, ...]:
-        """Correction records for these measured rows, including any sampling halo."""
+        """Correction records for these measured rows, including any sampling halo.
+
+        Returns
+        -------
+        tuple of Correction
+            Flat normalisation, transmission steps, logarithm and line-integral steps.
+
+        Raises
+        ------
+        ValueError
+            If any corrected value is not finite.
+        """
         reject_nonfinite(int(self.counts[1]), 0, len(self.projections))
         log = Correction(
             "log", {"epsilon": self.epsilon}, {"nonpositive_transmission": int(self.counts[0])}

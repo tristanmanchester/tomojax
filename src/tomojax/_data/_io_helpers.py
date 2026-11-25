@@ -41,7 +41,7 @@ def _axes_log_warning(message: str, *args: object) -> None:
         LOG.warning(message, *args)
 
 
-def _attr_to_str(v: object, default: str | None = None) -> str | None:
+def attr_to_str(v: object, default: str | None = None) -> str | None:
     """Robustly convert an HDF5 attribute to a Python string.
 
     Handles h5py special string dtypes, numpy scalars/arrays, bytes, and plain str.
@@ -54,23 +54,43 @@ def _attr_to_str(v: object, default: str | None = None) -> str | None:
         if isinstance(v, np.ndarray):
             if v.shape == ():
                 v = v.item()
-                return _attr_to_str(v, default)
+                return attr_to_str(v, default)
             # 1-D array of length 1 or more — take first element
             if v.size >= 1:
-                return _attr_to_str(v.flat[0], default)
+                return attr_to_str(v.flat[0], default)
         return str(v)
     except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
 
-def _ensure_group(root: h5py.Group, name: str, nx_class: str | None = None) -> h5py.Group:
+def child_group(parent: h5py.Group, name: str) -> h5py.Group | None:
+    """The group at ``name`` under ``parent``, or None when nothing is there."""
+    if name not in parent:
+        return None
+    child = parent[name]  # unlike get(), indexing a broken link raises
+    if isinstance(child, h5py.Group):
+        return child
+    raise ValueError(f"{parent.name}/{name} is a dataset where NXtomo expects a group")
+
+
+def child_dataset(parent: h5py.Group, name: str) -> h5py.Dataset | None:
+    """The dataset at ``name`` under ``parent``, or None when nothing is there."""
+    if name not in parent:
+        return None
+    child = parent[name]  # unlike get(), indexing a broken link raises
+    if isinstance(child, h5py.Dataset):
+        return child
+    raise ValueError(f"{parent.name}/{name} is a group where NXtomo expects a dataset")
+
+
+def ensure_group(root: h5py.Group, name: str, nx_class: str | None = None) -> h5py.Group:
     g = root.require_group(name)
     if nx_class:
         g.attrs["NX_class"] = nx_class
     return g
 
 
-def _write_string_attr(obj: h5py.Group | h5py.Dataset, key: str, value: str) -> None:
+def write_string_attr(obj: h5py.Group | h5py.Dataset, key: str, value: str) -> None:
     obj.attrs[key] = np.array(value, dtype=h5py.string_dtype(encoding="utf-8"))
 
 
@@ -82,7 +102,7 @@ def _load_json_mapping_attr(
 ) -> JsonObject | None:
     if raw_attr is None:
         return None
-    payload = _attr_to_str(raw_attr)
+    payload = attr_to_str(raw_attr)
     if not payload:
         return None
     try:
@@ -105,25 +125,24 @@ def _load_json_mapping_attr(
     return loaded
 
 
-def _detector_group(entry: h5py.Group) -> h5py.Group | None:
-    inst_grp = entry.get("instrument")
-    if inst_grp is None:
-        return None
-    return inst_grp.get("detector")
+def detector_group(entry: h5py.Group) -> h5py.Group | None:
+    inst_grp = child_group(entry, "instrument")
+    return None if inst_grp is None else child_group(inst_grp, "detector")
 
 
-def _load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
-    det_grp = _detector_group(entry)
-    if det_grp is None or "image_key" not in det_grp:
+def load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
+    det_grp = detector_group(entry)
+    image_key = None if det_grp is None else child_dataset(det_grp, "image_key")
+    if image_key is None:
         _axes_log_warning(
             "load_nxtomo: missing image_key for %s; defaulting to zeros",
             path,
         )
         return np.zeros((n_views,), dtype=np.int32)
-    return checked_image_key(np.asarray(det_grp["image_key"][...]), frames=n_views, path=path)
+    return checked_image_key(np.asarray(image_key[...]), frames=n_views, path=path)
 
 
-def _load_rotation_angles(
+def load_rotation_angles(
     entry: h5py.Group, *, n_views: int, path: str, image_key: np.ndarray
 ) -> np.ndarray | None:
     angles = next((entry.file[p] for p in ROTATION_ANGLE_PATHS if p in entry.file), None)
@@ -131,22 +150,22 @@ def _load_rotation_angles(
         return None
     if not isinstance(angles, h5py.Dataset):
         raise ValueError(f"{path}: rotation angles must be a dataset")
-    units = _attr_to_str(angles.attrs.get("units"), default="") or ""
+    units = attr_to_str(angles.attrs.get("units"), default="") or ""
     return angles_in_degrees(
         np.asarray(angles[...]), units, frames=n_views, path=path, image_key=image_key
     ).astype(np.float32)
 
 
-def _load_geometry_metadata(
+def load_geometry_metadata(
     out: LoadedDataset,
     entry: h5py.Group,
     *,
     path: str,
 ) -> None:
-    geom = entry.get("geometry")
+    geom = child_group(entry, "geometry")
     geom_type = "parallel"
     if geom is not None and "type" in geom.attrs:
-        raw_type = _attr_to_str(geom.attrs.get("type"), default="parallel")
+        raw_type = attr_to_str(geom.attrs.get("type"), default="parallel")
         geom_type = normalize_geometry_type(raw_type)
     out["geometry_type"] = geom_type
     if geom is None:
@@ -163,7 +182,7 @@ def _load_geometry_metadata(
         out.setdefault(key, val)
 
 
-def _load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> None:
+def load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> None:
     grid_dict = _load_json_mapping_attr(
         entry.attrs.get("grid_meta_json"),
         path=path,
@@ -173,13 +192,13 @@ def _load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> 
         out["grid"] = grid_dict
 
 
-def _load_detector_metadata(
+def load_detector_metadata(
     out: LoadedDataset,
     entry: h5py.Group,
     *,
     path: str,
 ) -> None:
-    det_grp = _detector_group(entry)
+    det_grp = detector_group(entry)
     detector_dict = None
     if det_grp is not None:
         detector_dict = _load_json_mapping_attr(
@@ -215,17 +234,17 @@ def _pixel_size(group: h5py.Group | None, name: str) -> float | None:
     return value if np.isfinite(value) and value > 0 else None
 
 
-def _load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
-    inst_grp = entry.get("instrument")
+def load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
+    inst_grp = child_group(entry, "instrument")
     if inst_grp is None:
         return
-    source_grp = inst_grp.get("SOURCE") or inst_grp.get("source")
+    source_grp = child_group(inst_grp, "SOURCE") or child_group(inst_grp, "source")
     if source_grp is None:
         return
     source_info: SourceInfo = {}
     for key in ("name", "type", "probe"):
-        if key in source_grp:
-            source_info[key] = _attr_to_str(source_grp[key][()])
+        if (value := child_dataset(source_grp, key)) is not None:
+            source_info[key] = attr_to_str(value[()])
     if not source_info:
         return
     out["source"] = source_info
@@ -245,32 +264,32 @@ _PROCESSING_JSON_SECTIONS = (
 )
 
 
-def _load_processing_metadata(
+def load_processing_metadata(
     out: LoadedDataset,
     entry: h5py.Group,
     *,
     path: str,
 ) -> tuple[h5py.Dataset | None, str | None]:
-    tomojax_grp = entry.get("processing/tomojax")
-    if not isinstance(tomojax_grp, h5py.Group):
+    tomojax_grp = child_group(entry, "processing/tomojax")
+    if tomojax_grp is None:
         return None, None
-    volume = cast("h5py.Dataset | None", tomojax_grp.get("volume"))
-    volume_axes_attr = _attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
+    volume = child_dataset(tomojax_grp, "volume")
+    volume_axes_attr = attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
 
     frame_attr = tomojax_grp.attrs.get("frame")
     if frame_attr is not None:
-        frame = _attr_to_str(frame_attr)
+        frame = attr_to_str(frame_attr)
         if frame:
             out["frame"] = frame
 
-    align_grp = tomojax_grp.get("align")
+    align_grp = child_group(tomojax_grp, "align")
     if align_grp is not None:
-        if "thetas" in align_grp:
-            out["align_params"] = align_grp["thetas"][...]
-        if "angle_offset" in align_grp:
-            out["angle_offset"] = align_grp["angle_offset"][...]
+        if (thetas := child_dataset(align_grp, "thetas")) is not None:
+            out["align_params"] = np.asarray(thetas[...])
+        if (offset := child_dataset(align_grp, "angle_offset")) is not None:
+            out["angle_offset"] = np.asarray(offset[...])
     for group, attr, key, context in _PROCESSING_JSON_SECTIONS:
-        section = tomojax_grp.get(group)
+        section = child_group(tomojax_grp, group)
         if section is None:
             continue
         mapping = _load_json_mapping_attr(section.attrs.get(attr), path=path, context=context)
@@ -280,7 +299,8 @@ def _load_processing_metadata(
     return volume, volume_axes_attr
 
 
-def _load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
-    sample_grp = entry.get("sample")
-    if sample_grp is not None and "name" in sample_grp:
-        out["sample_name"] = _attr_to_str(sample_grp["name"][()], default=None)
+def load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
+    sample_grp = child_group(entry, "sample")
+    name = None if sample_grp is None else child_dataset(sample_grp, "name")
+    if name is not None:
+        out["sample_name"] = attr_to_str(name[()], default=None)
