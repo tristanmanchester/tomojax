@@ -13,6 +13,7 @@ import tomojax as tj
 from tomojax import progress
 from tomojax._data import views_of
 from tomojax._frame_sources import selected_frames
+from tomojax._parameters import method_fit
 from tomojax._planning import resolve_reconstruction
 from tomojax._scan import bind_step_geometry, frame_output_grid, selected_scan, with_grid
 from tomojax._smooth_alignment import transfer_alignment
@@ -234,12 +235,8 @@ def partitions(
 
 def local_motion(settings: dict[str, WireValue]) -> bool:
     """Only global and smooth fits define poses for unseen views."""
-    selection = settings["fit"]
-    local = bool(
-        {"rotations", "translations"}.intersection(
-            (selection,) if isinstance(selection, str) else selection
-        )
-    )
+    fit = method_fit(settings["method"], settings["fit"])
+    local = bool({"rotations", "translations"}.intersection(fit))
     if (
         local
         and (settings["motion"] or getattr(settings["config"], "motion", "independent"))

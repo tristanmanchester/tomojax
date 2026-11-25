@@ -9,7 +9,7 @@ The script follows the quickstart on an NXtomo file of raw counts with its
 flats and darks: ``tj.load_frames``, a crop to 16 detector rows,
 ``corrected(Stripes(9), Stripes(51, varying=True))`` for the rings, then FBP.
 The rotation centre is the recorded one given by ``--center`` (in pixels),
-or without it ``tj.align(fit="center", method="opposite-views")`` finds it.
+or without it ``tj.align(method="opposite-views")`` finds it.
 The figure shows one raw frame with the cropped rows marked, the corrected
 sinogram of the middle row and its slice at the detector's resolution, with
 one enlarged region. Diamond I13 scan 159815 is 3001 views over a full turn
@@ -61,7 +61,7 @@ def main() -> None:
     raw = np.asarray(frames.selected([0]).counts, np.float32)[0]
     scan = frames.cropped(rows, slice(None)).corrected(Stripes(9), Stripes(51, varying=True))
     if args.center is None:
-        scan = tj.align(scan, fit="center", method="opposite-views").scan
+        scan = tj.align(scan, method="opposite-views").scan
     print("detector centre:", scan.detector.center)
     middle = (rows.stop - rows.start) // 2
     sinogram = np.asarray(scan.projections, np.float32)[:, middle]

@@ -147,7 +147,7 @@ def test_fits_ignore_every_excluded_observation(tmp_path, monkeypatch, predictio
         op.ReconstructSettings(
             method="cgls", config=wire_options.CGLSConfig(interpolation="cubic", iterations=2)
         ),
-        op.AlignSettings(fit="center", method="opposite-views"),
+        op.AlignSettings(method="opposite-views"),
         op.AlignSettings(fit="translations", motion="smooth", iterations=1, image_iterations=2),
     )
     args = dict(candidates=candidates, corrections=(wire_options.Stripes(width=3),))

@@ -11,7 +11,7 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 def _centered(scan):
     """The scan with its centre from near-opposite views (``tj.align``'s method)."""
-    return tj.align(scan, fit="center", method="opposite-views").scan
+    return tj.align(scan, method="opposite-views").scan
 
 
 def _scan(*, pitch=0.8, views=180, span=180):

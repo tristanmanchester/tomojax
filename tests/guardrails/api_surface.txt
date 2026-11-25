@@ -165,7 +165,7 @@ tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
         *,
-        fit: 'Fit | tuple[Fit, ...]' = 'translations',
+        fit: 'Fit | tuple[Fit, ...] | None' = None,
         grid: 'Grid | None' = None,
         region: 'Region | None' = None,
         method: 'AlignMethod | None' = None,

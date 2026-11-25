@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
+  `tomojax align --method opposite-views` and the worker's `align` operation fit the centre
+  without `fit="center"`; joint alignment still defaults to `"translations"`.
+
 ## 1.0.0rc4 (2026-11-25)
 
 Fixes the PEP 639 `License-File` metadata path in the `tomojax-studio` wheel

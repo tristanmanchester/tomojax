@@ -39,7 +39,7 @@ def main() -> None:
     args = parser.parse_args()
 
     frames = tj.load_frames(args.raw)
-    plain = tj.align(frames.corrected(), fit="center", method="opposite-views").scan
+    plain = tj.align(frames.corrected(), method="opposite-views").scan
     steps = (Stripes(), Stripes(51, varying=True))
     cleaned = replace(frames.corrected(*steps), geometry=plain.geometry)
     reference = tifffile.imread(args.reference).astype(np.float32)

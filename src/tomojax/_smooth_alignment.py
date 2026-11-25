@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from tomojax._parameters import method_fit
 from tomojax._planning import resolve_grid
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
 from tomojax.alignment._integration import CentreSelection, fit_poses
@@ -17,7 +18,7 @@ from tomojax.progress import warn
 
 if TYPE_CHECKING:
     from tomojax._field_of_view import Cylinder
-    from tomojax._parameters import RegionName
+    from tomojax._parameters import Fit, RegionName
     from tomojax._region import RegionEstimate
     from tomojax._scan import Alignment, Scan
     from tomojax.alignment import AlignConfig
@@ -25,12 +26,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Grid
 
 
-def align_poses(
-    scan: Scan,
-    *,
-    fit: str | tuple[str, ...] = "translations",
-    plan: JointSelection,
-) -> Reconstruction:
+def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
     from tomojax._calibration import publish_calibration
 
@@ -46,7 +42,7 @@ def align_poses(
             np.asarray(stack_view_poses(scan.geometry, views), np.float64),
             scan.grid,
             scan.detector,
-            fit=fit,
+            fit=plan.fit,
             keep_grid=grid is not None,
             frames=plan.frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
@@ -98,8 +94,9 @@ def _first(views: list[int], count: int = 5) -> str:
 
 @dataclass(frozen=True)
 class JointSelection:
-    """Working support, calibrated ray frames and the fit's execution schedule."""
+    """The parameters to fit, working support, calibrated ray frames and execution schedule."""
 
+    fit: tuple[Fit, ...]
     grid: Grid | None
     config: AlignConfig
     cylinder: Cylinder | None
@@ -111,7 +108,7 @@ class JointSelection:
 def resolve_alignment(
     scan: Scan,
     *,
-    fit: str | tuple[str, ...] = "translations",
+    fit: str | tuple[str, ...] | None = None,
     method: str | None = None,
     grid: Grid | None = None,
     region: RegionName | RegionEstimate | None = None,
@@ -119,7 +116,11 @@ def resolve_alignment(
     shape: tuple[int, int, int] | None = None,
     **settings: Any,
 ) -> JointSelection | CentreSelection:
-    """Resolve the method-specific work without sampling projections."""
+    """Resolve the method-specific work without sampling projections.
+
+    A ``fit`` of None selects the method's own fit; an explicit fit the method
+    cannot use is rejected.
+    """
     from tomojax.alignment import AlignConfig
     from tomojax.alignment._integration import (
         cone_frames,
@@ -147,14 +148,14 @@ def resolve_alignment(
                 'method="opposite-views" fits no image and takes no joint options '
                 f"({', '.join(extras)})",
             )
-        if fit not in ("center", ("center",)):
+        if method_fit(method, fit) != ("center",):
             raise InvalidParameter(
                 "fit", f'method="opposite-views" fits fit="center" alone, not {fit!r}'
             )
         return opposite_samples(scan.geometry)
     if method not in (None, "joint"):
         raise InvalidParameter("method", f"method is 'joint' or 'opposite-views', not {method!r}")
-    _ = parse_fit(fit)
+    names = parse_fit(method_fit(method, fit))
     config = replace(AlignConfig() if config is None else config, **supplied)
     grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if grid is not None:
@@ -175,7 +176,7 @@ def resolve_alignment(
     schedule = fit_schedule(
         scan.grid, scan.detector, cone, keep_grid=grid is not None, config=config
     )
-    return JointSelection(grid, config, cylinder, info, schedule, frames)
+    return JointSelection(names, grid, config, cylinder, info, schedule, frames)
 
 
 def transfer_alignment(

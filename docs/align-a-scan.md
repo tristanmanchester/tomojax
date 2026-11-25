@@ -53,7 +53,7 @@ A wrong rotation centre turns every small bright feature into a ring of the same
 
 For cone data, `"center"` also fits detector-v, though the data constrain it weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically.
 
-For a quick axial parallel estimate without reconstructing a volume, run `tj.align(scan, fit="center", method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
+For a quick axial parallel estimate without reconstructing a volume, run `tj.align(scan, method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
 
 ### Check the centre by eye
 

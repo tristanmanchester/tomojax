@@ -75,7 +75,7 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
   `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`
   are `tj.align`'s keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
-  `--method opposite-views` estimates `--fit center` from near-opposite views without an image.
+  `--method opposite-views` estimates the centre from near-opposite views without an image.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
   `--dry-run` prints the plan: each level's grid and budget, and the estimated memory.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when

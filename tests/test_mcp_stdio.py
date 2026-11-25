@@ -365,7 +365,7 @@ def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
         assert task["resultType"] == "task" and task["ttlMs"] == 86_400_000
         assert task["pollIntervalMs"] == 2_000
         simulation = c.terminal(task["taskId"])["result"]["structuredContent"]
-        args = dict(source=simulation["members"]["scan"], method="opposite-views", fit="center")
+        args = dict(source=simulation["members"]["scan"], method="opposite-views")
         assert c.call("align", tasks=True, dry_run=True, **args)["resultType"] == "complete"
         aligned = c.terminal(c.call("align", tasks=True, **args)["taskId"])
         assert not aligned["result"]["isError"], aligned["result"]["content"][0]

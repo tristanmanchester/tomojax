@@ -2145,9 +2145,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "translations"
+          "default": null
         },
         "grid": {
           "anyOf": [
@@ -2992,10 +2995,13 @@
               "items": {
                 "type": "string"
               }
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "translations",
-          "description": "Parameters to fit. Defaults to ``\"translations\"``.",
+          "default": null,
+          "description": "Parameters to fit. None fits the method's own: ``\"translations\"`` for \"joint\" and ``\"center\"`` for \"opposite-views\".",
           "x-choices": [
             "center",
             "tilt",
