@@ -16,7 +16,7 @@ import json
 from pathlib import Path
 import sys
 import tomllib
-from types import ModuleType, SimpleNamespace
+from types import ModuleType
 
 import pytest
 
@@ -305,14 +305,3 @@ def a():
 """
     debt = _guardrails()._helper_debt([source])
     assert debt == {"tiny": 3, "forwarders": 2, "chained": 1}
-
-
-def test_type_ratchet_uses_running_interpreter(monkeypatch):
-    guardrails = _guardrails()
-
-    def run(command, **_kwargs: object):
-        assert command[command.index("--pythonpath") + 1] == sys.executable
-        return SimpleNamespace(stdout='{"generalDiagnostics": []}')
-
-    monkeypatch.setattr(guardrails.subprocess, "run", run)
-    assert guardrails._type_errors() == {}

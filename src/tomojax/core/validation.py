@@ -56,14 +56,8 @@ def _shape_of(value: Any) -> tuple[int, ...]:
     return tuple(int(s) for s in shape)
 
 
-def _shape_text(shape: Iterable[object]) -> str:
-    items: list[object] = []
-    for s in shape:
-        try:
-            items.append(int(s))
-        except Exception:
-            items.append(s)
-    return str(tuple(items))
+def _shape_text(shape: Iterable[int]) -> str:
+    return str(tuple(int(s) for s in shape))
 
 
 def _raise_shape_error(

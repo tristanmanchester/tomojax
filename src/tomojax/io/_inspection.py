@@ -28,8 +28,6 @@ from tomojax._typed_arrays import (
     numpy_float64_array,
     object_list,
     object_mapping,
-    scalar_float,
-    scalar_int,
     sum_float64,
     true_count,
     unique_int_count_map,
@@ -203,10 +201,8 @@ def projection_stats(dataset: _ProjectionStack) -> tuple[ProjectionStatsReport, 
             p50 = None
             p99 = None
         else:
-            percentiles = numpy_float64_array(np.percentile(sample_finite, [1.0, 50.0, 99.0]))
-            p01 = scalar_float(cast("object", percentiles[0]))
-            p50 = scalar_float(cast("object", percentiles[1]))
-            p99 = scalar_float(cast("object", percentiles[2]))
+            percentiles = np.percentile(sample_finite, [1.0, 50.0, 99.0]).tolist()
+            p01, p50, p99 = (float(value) for value in percentiles)
         stats = {
             "min": float(finite_min),
             "p01": p01,
@@ -458,14 +454,9 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
         else None
     )
     if grid is not None:
-        try:
-            return [
-                scalar_int(cast("object", grid["nx"])),
-                scalar_int(cast("object", grid["ny"])),
-                scalar_int(cast("object", grid["nz"])),
-            ]
-        except (KeyError, TypeError, ValueError):
-            pass
+        nx, ny, nz = (grid.get(key) for key in ("nx", "ny", "nz"))
+        if isinstance(nx, int) and isinstance(ny, int) and isinstance(nz, int):
+            return [nx, ny, nz]
 
     det_shape = projection.get("detector_shape")
     if isinstance(det_shape, dict):

@@ -13,12 +13,12 @@ from .lamino import laminography_tilt_matrix
 from .transforms import align_u_to_v
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
 
     import jax
     import jax.numpy as jnp
 
-    from .base import Detector, Grid, PoseMatrix, RayPair, ScanGeometry
+    from .base import Angles, Detector, Grid, PoseMatrix, RayPair, ScanGeometry
 
 
 # Marks saved cone beams whose positive roll turns detector u towards v.
@@ -226,7 +226,7 @@ class ConeGeometry:
 
     grid: Grid
     detector: Detector
-    angles: Sequence[float]
+    angles: Angles
     beam: ConeBeam
     tilt: float = 0.0
     tilt_about: str = "x"

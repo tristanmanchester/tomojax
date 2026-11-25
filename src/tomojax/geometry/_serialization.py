@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, SupportsFloat
 
 import numpy as np
 
@@ -39,8 +39,11 @@ def nominal_axis_unit_from_inputs(geometry_inputs: Mapping[str, object]) -> np.n
     }:
         if "tilt" not in geometry_inputs:
             raise ValueError("Missing laminography tilt or axis_unit_lab")
+        tilt = geometry_inputs["tilt"]
+        if not isinstance(tilt, SupportsFloat):
+            raise TypeError(f"laminography tilt must be a number, not {type(tilt).__name__}")
         axis = laminography_axis_unit(
-            float(geometry_inputs["tilt"]),
+            float(tilt),
             str(geometry_inputs.get("tilt_about", "x")),
         )
     else:

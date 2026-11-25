@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomojax.core.geometry.base import (
+        Angles,
         DetectorDict,
         GridDict,
         PoseMatrix,
@@ -101,7 +102,7 @@ class _WrappedGeometry:
         return self.base.detector
 
     @property
-    def angles(self) -> Sequence[float]:
+    def angles(self) -> Angles:
         """The base geometry's view angles."""
         return self.base.angles
 
@@ -195,40 +196,11 @@ def _grid_from_meta(
             vz=float(detector.dv) * scale,
         )
 
-    vol_origin = (
-        tuple(float(v) for v in grid_d["vol_origin"])
-        if grid_d.get("vol_origin") is not None
-        else None
-    )
-    vol_center = (
-        tuple(float(v) for v in grid_d["vol_center"])
-        if grid_d.get("vol_center") is not None
-        else None
-    )
-
-    if grid_override is not None:
-        nx, ny, nz = map(int, grid_override)
-        return Grid(
-            nx=nx,
-            ny=ny,
-            nz=nz,
-            vx=float(grid_d["vx"]),
-            vy=float(grid_d["vy"]),
-            vz=float(grid_d["vz"]),
-            vol_origin=vol_origin,
-            vol_center=vol_center,
-        )
-
-    return Grid(
-        nx=int(grid_d["nx"]),
-        ny=int(grid_d["ny"]),
-        nz=int(grid_d["nz"]),
-        vx=float(grid_d["vx"]),
-        vy=float(grid_d["vy"]),
-        vz=float(grid_d["vz"]),
-        vol_origin=vol_origin,
-        vol_center=vol_center,
-    )
+    grid = Grid.from_dict(grid_d)
+    if grid_override is None:
+        return grid
+    nx, ny, nz = map(int, grid_override)
+    return replace(grid, nx=nx, ny=ny, nz=nz)
 
 
 def _resolve_angles(
@@ -260,7 +232,7 @@ def _base_geometry(
     meta: LoadedGeometryMeta,
     grid: Grid,
     detector: Detector,
-    angles: Sequence[float],
+    angles: Sequence[float] | np.ndarray,
 ) -> ScanGeometry:
     gtype = normalize_geometry_type(meta.get("geometry_type"))
     roll = float(meta.get("detector_roll", 0.0))
@@ -350,9 +322,10 @@ def _saved_poses(
     meta: LoadedGeometryMeta, views: int, *, default_frame: str
 ) -> tuple[np.ndarray, str] | None:
     """Validated saved six-column poses and their translation frame."""
-    if meta.get("align_params") is None:
+    saved = meta.get("align_params")
+    if saved is None:
         return None
-    params = np.asarray(meta["align_params"], dtype=np.float32)
+    params = np.asarray(saved, dtype=np.float32)
     if params.ndim != 2:
         raise ValueError("align_params must be a 2-D array with shape (n_views, 6)")
     if params.shape[0] != views:

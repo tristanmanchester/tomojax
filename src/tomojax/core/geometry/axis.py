@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
+from .base import Angles, Detector, Grid, PoseMatrix, RayPair, parallel_detector_rays
 from .transforms import align_u_to_v, rot_axis_angle
 
 if TYPE_CHECKING:
@@ -40,7 +40,8 @@ def normalize_axis_unit(axis_unit: Sequence[float]) -> tuple[float, float, float
     norm = float(np.linalg.norm(axis))
     if norm < 1e-12:
         raise ValueError("axis_unit must be non-zero")
-    return tuple(float(v) for v in axis / norm)
+    x, y, z = (float(v) for v in axis / norm)
+    return x, y, z
 
 
 @dataclass
@@ -73,7 +74,7 @@ class RotationAxisGeometry:
 
     grid: Grid
     detector: Detector
-    angles: Sequence[float]
+    angles: Angles
     axis_unit: Sequence[float]
     detector_roll: float = 0.0
 
@@ -134,4 +135,4 @@ class RotationAxisGeometry:
             Origin and unit-direction callbacks taking detector pixel indices (u, v).
         """
         del i
-        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll)
+        return parallel_detector_rays(self.grid, self.detector, self.detector_roll)

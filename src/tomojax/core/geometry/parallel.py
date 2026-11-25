@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
+from .base import Angles, Detector, Grid, PoseMatrix, RayPair, parallel_detector_rays
 from .transforms import rotz
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 @dataclass
@@ -37,7 +33,7 @@ class ParallelGeometry:
 
     grid: Grid
     detector: Detector
-    angles: Sequence[float]
+    angles: Angles
     detector_roll: float = 0.0
 
     def pose_matrix(self, i: int) -> PoseMatrix:
@@ -76,4 +72,4 @@ class ParallelGeometry:
             Origin and unit-direction callbacks taking detector pixel indices (u, v).
         """
         del i
-        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll)
+        return parallel_detector_rays(self.grid, self.detector, self.detector_roll)

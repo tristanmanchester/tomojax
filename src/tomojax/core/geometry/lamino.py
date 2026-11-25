@@ -3,15 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 import numpy as np
 
-from .base import Detector, Grid, PoseMatrix, RayPair, _parallel_detector_rays
+from .base import Angles, Detector, Grid, PoseMatrix, RayPair, parallel_detector_rays
 from .transforms import align_u_to_v, rot_axis_angle
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 def laminography_tilt_matrix(tilt: float, tilt_about: str) -> np.ndarray:
@@ -69,7 +65,7 @@ class LaminographyGeometry:
 
     grid: Grid
     detector: Detector
-    angles: Sequence[float]
+    angles: Angles
     tilt: float = 30.0
     tilt_about: str = "x"  # or "z"
     detector_roll: float = 0.0
@@ -136,4 +132,4 @@ class LaminographyGeometry:
         """
         del i
         # Use the same detector plane and beam direction as parallel CT.
-        return _parallel_detector_rays(self.grid, self.detector, self.detector_roll)
+        return parallel_detector_rays(self.grid, self.detector, self.detector_roll)

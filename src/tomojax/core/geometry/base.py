@@ -25,6 +25,8 @@ Vec3 = tuple[float, float, float]
 PoseMatrix = tuple[tuple[float, ...], ...]
 RayFunction = Callable[[int, int], Vec3]
 RayPair = tuple[RayFunction, RayFunction]
+# View angles in degrees, as the caller gave them: a sequence or a NumPy array.
+type Angles = Sequence[float] | np.ndarray
 
 
 class GridDictRequired(TypedDict):
@@ -147,11 +149,10 @@ class Grid:
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
 
-    def __reduce__(self) -> tuple[Callable[..., Grid], tuple[object, ...]]:
+    def __reduce__(self) -> tuple[Callable[..., Grid], tuple[int, int, int, float, float, float]]:
         # Unpickling rebuilds through the constructor, so a stored grid is checked too.
-        return _grid_from_fields, (
-            self.nx, self.ny, self.nz, self.vx, self.vy, self.vz, self.vol_origin, self.vol_center,
-        )  # fmt: skip
+        placed = functools.partial(Grid, vol_origin=self.vol_origin, vol_center=self.vol_center)
+        return placed, (self.nx, self.ny, self.nz, self.vx, self.vy, self.vz)
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -264,19 +265,6 @@ class Grid:
             vol_origin=data.get("vol_origin"),
             vol_center=data.get("vol_center"),
         )
-
-
-def _grid_from_fields(
-    nx: int,
-    ny: int,
-    nz: int,
-    vx: float,
-    vy: float,
-    vz: float,
-    vol_origin: Vec3 | None,
-    vol_center: Vec3 | None,
-) -> Grid:
-    return Grid(nx, ny, nz, vx, vy, vz, vol_origin=vol_origin, vol_center=vol_center)
 
 
 def grid_volume_origin(grid: Grid) -> Vec3:
@@ -421,7 +409,7 @@ def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
     return jnp.asarray(u, dtype=jnp.float32), jnp.asarray(v, dtype=jnp.float32)
 
 
-def _parallel_detector_rays(
+def parallel_detector_rays(
     grid: Grid,
     detector: Detector,
     detector_roll: float = 0.0,
@@ -476,6 +464,7 @@ class Geometry(Protocol):
         tuple of tuple of float
             Row-major 4 x 4 homogeneous world-from-object transform.
         """
+        ...
 
 
 class ScanGeometry(Geometry, Protocol):
@@ -508,12 +497,12 @@ class ScanGeometry(Geometry, Protocol):
         ...
 
     @property
-    def angles(self) -> Sequence[float]:
+    def angles(self) -> Angles:
         """Each view's rotation angle, in degrees.
 
         Returns
         -------
-        sequence of float
+        sequence of float or numpy.ndarray
             One rotation angle per view, in degrees.
         """
         ...

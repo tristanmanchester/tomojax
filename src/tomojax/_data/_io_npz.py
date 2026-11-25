@@ -49,7 +49,9 @@ def save_npz(
         payload[_AXES_KEY] = "zyx"
     parts = sizes_of(projections, metadata.volume)
     with replaced_when_complete(path, parts) as temporary, temporary.open("wb") as stream:
-        arrays = {k: json.dumps(v) if k in _JSON_FIELDS else v for k, v in payload.items()}
+        arrays = {
+            k: json.dumps(v) if k in _JSON_FIELDS else np.asarray(v) for k, v in payload.items()
+        }
         np.savez_compressed(stream, allow_pickle=False, **arrays)
 
 

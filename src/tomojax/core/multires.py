@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     import jax.numpy as jnp
 
 
-def validate_scale_factor(factor: object) -> int:
+def validate_scale_factor(factor: float) -> int:
     """Return ``factor`` as an integer scale >= 1 or raise a clear ValueError."""
     try:
         value = float(factor)
@@ -44,9 +44,11 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
     coarse_spacing = tuple(
         v * n / nc for v, n, nc in zip(spacing, shape, coarse_shape, strict=True)
     )
-    origin = grid_volume_origin(grid)
-    coarse_origin = tuple(
-        o + (vc - v) / 2 for o, v, vc in zip(origin, spacing, coarse_spacing, strict=True)
+    ox, oy, oz = grid_volume_origin(grid)
+    coarse_origin = (
+        ox + (coarse_spacing[0] - spacing[0]) / 2,
+        oy + (coarse_spacing[1] - spacing[1]) / 2,
+        oz + (coarse_spacing[2] - spacing[2]) / 2,
     )
     return Grid(
         nx=coarse_shape[0],

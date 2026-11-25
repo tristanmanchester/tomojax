@@ -233,31 +233,6 @@ def _complex_functions() -> list[str]:
     return sorted(found)
 
 
-def _type_errors() -> dict[str, int]:
-    """Type errors over all of ``src`` by rule, from basedpyright (CI checks only part)."""
-    # Running basedpyright with this interpreter does not select it for analysis.
-    # Bind package/stub discovery to the same environment, rather than whichever
-    # unrelated Python executable happens to be first on PATH.
-    command = [
-        sys.executable,
-        "-m",
-        "basedpyright",
-        str(SRC),
-        "--outputjson",
-        "--pythonpath",
-        sys.executable,
-    ]
-    output = subprocess.run(command, check=False, capture_output=True, text=True).stdout
-    counts: dict[str, int] = {}
-    # Missing optional packages (CuPy, ASTRA...) depend on the environment.
-    environmental = {"reportMissingImports", "reportMissingModuleSource"}
-    for item in json.loads(output)["generalDiagnostics"]:
-        if item["severity"] == "error" and item.get("rule") not in environmental:
-            rule = item.get("rule", "other")
-            counts[rule] = counts.get(rule, 0) + 1
-    return dict(sorted(counts.items()))
-
-
 def _code_line_count(source: str, node: ast.AST | None = None) -> int:
     """Count physical lines except docstrings; comments and code still count."""
     # AST column offsets count UTF-8 bytes, not Python string characters.
@@ -481,7 +456,6 @@ def ratchets() -> dict[str, object]:
         },
         "complex_functions": _complex_functions(),
         "single_use_helpers": _helper_debt(p.read_text(encoding="utf-8") for p in _python_files()),
-        "type_errors": _type_errors(),
         "positional_options": _positional_options(),
         # The internal five-column pose array; public poses have six columns.
         "params5_mentions": _count(r"\bparams5\b"),

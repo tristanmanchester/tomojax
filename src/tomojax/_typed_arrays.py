@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
@@ -66,7 +67,7 @@ def object_mapping(value: object) -> dict[str, object]:
     return {str(key): cast("object", item) for key, item in value.items()}
 
 
-def write_image(path: object, image: object) -> None:
+def write_image(path: str | os.PathLike[str], image: np.ndarray) -> None:
     """Write an image through a typed boundary for imageio's overloads, moved on once whole."""
     from pathlib import Path
 
@@ -74,19 +75,9 @@ def write_image(path: object, image: object) -> None:
 
     from tomojax.core.files import replaced_when_complete
 
-    target = Path(cast("str", path))
+    target = Path(path)
     with replaced_when_complete(target, "image") as temporary:
         iio.imwrite(temporary, image, extension=target.suffix or ".png")
-
-
-def scalar_int(value: object) -> int:
-    """Convert a scalar-like value to int."""
-    return int(value)
-
-
-def scalar_float(value: object) -> float:
-    """Convert a scalar-like value to float."""
-    return float(value)
 
 
 def true_count(mask: object) -> int:

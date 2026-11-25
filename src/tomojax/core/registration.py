@@ -98,14 +98,15 @@ def planes(
         key: list[slice | int] = [slice(None)] * 3
         key[2 - i if reversed_axes else i] = index
         plane = volume[tuple(key)]
+        if hasattr(plane, "get"):  # a CuPy plane copies to the host
+            plane = plane.get()
+        plane = np.asarray(plane)
         if observed is not None:
-            plane = np.where(np.asarray(observed[tuple(key)]), np.asarray(plane), 0)
+            plane = np.where(np.asarray(observed[tuple(key)]), plane, 0)
         if reversed_axes:
             plane = plane.T
         if image_scale.get() != 1.0:
             plane = plane / np.float32(image_scale.get())
-        if hasattr(plane, "get"):
-            plane = plane.get()
         images[axis.name] = registered_plane(plane, axes, i, index, unit)
     return images
 
@@ -208,8 +209,9 @@ def correction_images(
         ("after", after, factor, kept, "line_integrals"),
     ):
         row = data.shape[1] // 2
-        if hasattr(data, "window"):
-            pixels = data.window(slice(row, row + 1), slice(None))[:][:, 0, :]
+        window = getattr(data, "window", None)
+        if window is not None:  # a lazy frame source reads only this row
+            pixels = window(slice(row, row + 1), slice(None))[:][:, 0, :]
         else:
             pixels = data[:, row, :]
         if name == "after":

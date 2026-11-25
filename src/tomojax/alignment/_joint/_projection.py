@@ -316,6 +316,8 @@ class Projection:
     def raw_coefficients(self, poses, frames=None):
         """Unmasked core coefficients; their pose derivative excludes the mask."""
         if self.cone:
+            if frames is None:
+                raise ValueError("cone coefficients need each view's lab frame")
             return frame_coefficients(poses, frames, self.grid, self.detector)
         return plane_coefficients(poses, self.grid, self.detector)
 

@@ -921,7 +921,7 @@ def parallel_fbp(
             cfg.backend,
             cone=False,
             context="fbp",
-            devices=T_all.devices() if on_host else proj.devices(),
+            devices=proj.devices() if isinstance(proj, jax.Array) else T_all.devices(),
         )
         plan = _plan(
             geometry,
