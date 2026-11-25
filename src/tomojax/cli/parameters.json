@@ -90,6 +90,10 @@
           "type": "boolean",
           "default": false
         },
+        "traceback": {
+          "type": "boolean",
+          "default": false
+        },
         "aliases": {
           "type": "object",
           "additionalProperties": {
@@ -505,6 +509,9 @@
             },
             {
               "$ref": "#/$defs/Combine"
+            },
+            {
+              "$ref": "#/$defs/Feature"
             }
           ],
           "discriminator": {
@@ -524,7 +531,8 @@
               "crop": "#/$defs/Crop",
               "bin": "#/$defs/Bin",
               "poses": "#/$defs/Poses",
-              "combine": "#/$defs/Combine"
+              "combine": "#/$defs/Combine",
+              "feature": "#/$defs/Feature"
             }
           }
         },
@@ -4173,6 +4181,338 @@
         }
       }
     },
+    "Feature": {
+      "title": "Feature",
+      "description": "Make a named mask on the source array's grid.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "feature"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Npy"
+                },
+                {
+                  "$ref": "#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "#/$defs/Npy",
+                  "hdf5": "#/$defs/Hdf5",
+                  "member": "#/$defs/Member"
+                }
+              }
+            },
+            {
+              "$ref": "#/$defs/PathInput"
+            }
+          ]
+        },
+        "recipe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Box"
+            },
+            {
+              "$ref": "#/$defs/Sphere"
+            },
+            {
+              "$ref": "#/$defs/Cylinder"
+            },
+            {
+              "$ref": "#/$defs/Prism"
+            },
+            {
+              "$ref": "#/$defs/Seeded"
+            },
+            {
+              "$ref": "#/$defs/Band"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "box": "#/$defs/Box",
+              "sphere": "#/$defs/Sphere",
+              "cylinder": "#/$defs/Cylinder",
+              "prism": "#/$defs/Prism",
+              "seeded": "#/$defs/Seeded",
+              "band": "#/$defs/Band"
+            }
+          }
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "recipe"
+      ],
+      "additionalProperties": false
+    },
+    "Box": {
+      "title": "Box",
+      "description": "Voxels between two opposite corners, inclusive, in array indices.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "box"
+          ]
+        },
+        "corners": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "number"
+              }
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "corners"
+      ],
+      "additionalProperties": false
+    },
+    "Sphere": {
+      "title": "Sphere",
+      "description": "Voxels within ``radius`` index units of ``at``.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "sphere"
+          ]
+        },
+        "at": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "radius": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "at",
+        "radius"
+      ],
+      "additionalProperties": false
+    },
+    "Cylinder": {
+      "title": "Cylinder",
+      "description": "A disc of ``radius`` around ``at`` across ``axis``, extruded over ``extent``.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "cylinder"
+          ]
+        },
+        "at": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          }
+        },
+        "radius": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "axis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extent": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "at",
+        "radius",
+        "axis",
+        "extent"
+      ],
+      "additionalProperties": false
+    },
+    "Prism": {
+      "title": "Prism",
+      "description": "A polygon across ``axis`` through ``points``, extruded over ``extent`` along it.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "prism"
+          ]
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "axis": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extent": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "prefixItems": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "number"
+            }
+          ],
+          "items": false
+        }
+      },
+      "required": [
+        "type",
+        "points",
+        "axis",
+        "extent"
+      ],
+      "additionalProperties": false
+    },
+    "Seeded": {
+      "title": "Seeded",
+      "description": "The voxels connected to the seeds whose value stays near the value at the seeds.\n\n    The level is the median around each seed, averaged over seeds. ``tolerance`` is in\n    units of the local noise or, with ``tolerance_unit=\"value\"``, of the source.\n    ``smoothing`` is a Gaussian sigma in voxels applied first, for very noisy data; it\n    pulls the edges in. ``max_radius`` limits growth to that many index units from the\n    nearest seed.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "seeded"
+          ]
+        },
+        "seeds": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        },
+        "tolerance": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 3.0
+        },
+        "tolerance_unit": {
+          "enum": [
+            "noise",
+            "value"
+          ],
+          "default": "noise"
+        },
+        "smoothing": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.0
+        },
+        "max_radius": {
+          "anyOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "seeds"
+      ],
+      "additionalProperties": false
+    },
+    "Band": {
+      "title": "Band",
+      "description": "Voxels whose signed distance from a feature lies in (inner, outer] index units.\n\n    The feature's own boundary voxels are at 0 and distances fall inward, so inner=0,\n    outer=3 is a three-voxel shell outside it and inner=-3, outer=0 the three-voxel rim\n    inside it.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "band"
+          ]
+        },
+        "feature": {
+          "$ref": "#/$defs/Member"
+        },
+        "outer": {
+          "type": "number"
+        },
+        "inner": {
+          "type": "number",
+          "default": 0.0
+        }
+      },
+      "required": [
+        "type",
+        "feature",
+        "outer"
+      ],
+      "additionalProperties": false
+    },
     "Plane": {
       "title": "Plane",
       "description": "Browse one plane from a registered volume.",
@@ -4917,6 +5257,7 @@
         "kind": {
           "enum": [
             "alignment",
+            "feature",
             "frames",
             "reconstruction",
             "scan",
@@ -5463,6 +5804,9 @@
                 },
                 {
                   "$ref": "#/$defs/Combine"
+                },
+                {
+                  "$ref": "#/$defs/Feature"
                 }
               ],
               "discriminator": {
@@ -5482,7 +5826,8 @@
                   "crop": "#/$defs/Crop",
                   "bin": "#/$defs/Bin",
                   "poses": "#/$defs/Poses",
-                  "combine": "#/$defs/Combine"
+                  "combine": "#/$defs/Combine",
+                  "feature": "#/$defs/Feature"
                 }
               }
             },

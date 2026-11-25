@@ -51,3 +51,16 @@ def test_annotations_and_results_conform(tmp_path):
             ),
         )
         conforms("control", c.call("control", action="close", target=made["handle"]))
+
+
+def test_describe_replies_stand_on_their_own(tmp_path):
+    import json
+
+    with connection(tmp_path) as c:
+        for operation in ("evaluate", "align", "correct", "feature"):
+            reply = c.call("describe", operation=operation)
+            assert not reply["isError"], reply["content"][0]["text"]
+            text = json.dumps(reply["structuredContent"])
+            assert "$ref" not in text, operation
+        candidates = json.dumps(c.call("describe", operation="evaluate")["structuredContent"])
+        assert "tv_weight" in candidates and "image_iterations" in candidates

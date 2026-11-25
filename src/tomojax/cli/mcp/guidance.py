@@ -76,8 +76,33 @@ async def operation_parameters(
     return {
         "operation": operation,
         "method": method,
-        "parameters": {k: v for k, v in entry["properties"].items() if k != "type"},
+        "parameters": {
+            k: inline(v, definitions) for k, v in entry["properties"].items() if k != "type"
+        },
     }
+
+
+def inline(schema: object, definitions: Object, seen: frozenset[str] = frozenset()) -> object:
+    """Replace each ``$ref`` with its definition so the reply stands on its own.
+
+    A definition already being expanded on the current path stays a named reference,
+    and so do solver configurations, which describe with a method lists in full.
+    """
+    if isinstance(schema, list):
+        return [inline(item, definitions, seen) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        name = ref.removeprefix("#/$defs/")
+        if name in seen or name not in definitions:
+            return {"title": name}
+        if name.endswith("Config"):
+            return {"title": name, "description": "Expert settings: describe with method"}
+        expanded = inline(definitions[name], definitions, seen | {name})
+        assert isinstance(expanded, dict)
+        return {**expanded, **{k: v for k, v in schema.items() if k != "$ref"}}
+    return {k: inline(v, definitions, seen) for k, v in schema.items()}
 
 
 def install_guidance(server: MCPServer, supervisor: Supervisor) -> None:
