@@ -343,7 +343,7 @@ def test_general_slabs_release_outputs_and_retry_only_unfinished_slab(monkeypatc
         start = round((module.grid_volume_origin(local)[2] - origin) / grid.vz)
         calls.append((start, local.nz, batch))
         if start and (local.nz > 1 or batch > 1):
-            raise RuntimeError("RESOURCE_EXHAUSTED: simulated device allocation failure")
+            raise jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: simulated allocation failure")
         value = original(*args, **kwargs)
         previous[0] = weakref.ref(value)
         return value

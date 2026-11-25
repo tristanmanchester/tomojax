@@ -10,13 +10,13 @@ import jax
 import numpy as np
 
 from tomojax import progress
+from tomojax.backends.api import is_oom_error
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import (
     FourierPlan,
     PendingSlab,
     fourier_slab_depth,
-    is_cuda_oom,
     resolve_fourier_backend,
 )
 from ._fourier_grid import (
@@ -125,7 +125,7 @@ def fourier_slabs[T](
                     start = slab.stop
                     yield slab
         except Exception as error:
-            if backend != "cupy" or depth == 1 or not is_cuda_oom(error):
+            if backend != "cupy" or depth == 1 or not is_oom_error(error):
                 raise
             progress.retried("slab depth")
             depth = max(1, depth // 2)

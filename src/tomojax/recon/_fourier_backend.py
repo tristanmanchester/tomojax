@@ -73,17 +73,6 @@ def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, ba
     return min(depth, grid.nz)
 
 
-def is_cuda_oom(error: Exception) -> bool:
-    """Recognize allocator exhaustion without swallowing unrelated failures."""
-    if progress.handler_failed(error) or not isinstance(error, MemoryError):
-        return False
-    try:
-        import cupy
-    except ImportError:
-        return False
-    return isinstance(error, cupy.cuda.memory.OutOfMemoryError)
-
-
 class _Geometry:
     def __init__(self, grid, detector, nviews, flipped, angles, backend) -> None:
         self.cuda = backend == "cupy"

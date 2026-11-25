@@ -17,6 +17,8 @@ from jax.scipy.linalg import cho_solve, lu_factor, lu_solve
 import numpy as np
 from scipy import sparse
 
+from tomojax.errors import device_out_of_memory
+
 from . import _spline, _spline_solve
 from ._stacks import temporaries
 
@@ -439,7 +441,7 @@ class MotionPrior:
         try:
             return self._compiled["factor"](self.matrices, blocks, w, out)
         except jax.errors.JaxRuntimeError as err:
-            if "RESOURCE_EXHAUSTED" not in str(err):
+            if not device_out_of_memory(err):
                 raise
             gib = self.temporaries("factor") / 2**30
             raise MemoryError(

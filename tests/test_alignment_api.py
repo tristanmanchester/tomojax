@@ -3,6 +3,7 @@
 import inspect
 import json
 
+import jax
 import numpy as np
 import pytest
 
@@ -191,12 +192,14 @@ def test_cli_rejects_unknown_or_repeated_fit_names(fit, capsys):
 
 def test_running_out_of_memory_on_an_explicit_grid_says_how_to_bound_it(monkeypatch):
     def exhausted(*args, **kwargs):
-        raise RuntimeError("RESOURCE_EXHAUSTED: Out of memory while trying to allocate 789.17MiB")
+        raise jax.errors.JaxRuntimeError(
+            "RESOURCE_EXHAUSTED: Out of memory while trying to allocate 789.17MiB"
+        )
 
     monkeypatch.setattr(_smooth_alignment, "fit_poses", exhausted)
     scan = _scan()
     with pytest.raises(MemoryError, match="used as given.*Omit grid= to let the fit bound its own"):
         tj.align(scan, grid=scan.grid)
     # Without an explicit grid the fit already chose its scale: the device error is unchanged.
-    with pytest.raises(RuntimeError, match="RESOURCE_EXHAUSTED"):
+    with pytest.raises(jax.errors.JaxRuntimeError, match="RESOURCE_EXHAUSTED"):
         tj.align(scan)

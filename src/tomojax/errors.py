@@ -41,29 +41,66 @@ def within(path: str) -> Iterator[None]:
         raise InvalidParameter(f"{path}.{exc.path}", str(exc)) from exc
 
 
-def classify(exc: Exception) -> Error:
-    """Classify a failure by exception type and structured status along its cause chain."""
-    import jax
-
-    # A CuPy exception implies its defining module is already loaded. Classifying
-    # an unrelated exception must not initialise CUDA or require optional CuPy.
-    memory_module = sys.modules.get("cupy.cuda.memory")
-    cupy_oom = getattr(memory_module, "OutOfMemoryError", MemoryError)
+def _causes(exc: BaseException) -> Iterator[BaseException]:
     cause: BaseException | None = exc
     seen: set[int] = set()
-    kind = "internal"
     while cause is not None and id(cause) not in seen:
         seen.add(id(cause))
+        yield cause
+        cause = cause.__cause__
+
+
+def _device_allocation_failed(error: BaseException) -> bool:
+    import jax
+
+    # A CuPy exception implies its defining module is already loaded. Checking an
+    # unrelated exception must not initialise CUDA or require optional CuPy.
+    cupy_oom = getattr(sys.modules.get("cupy.cuda.memory"), "OutOfMemoryError", None)
+    if cupy_oom is not None and isinstance(error, cupy_oom):
+        return True
+    if not isinstance(error, jax.errors.JaxRuntimeError):
+        return False
+    if getattr(error, "error_code", None) == 8:  # absl::RESOURCE_EXHAUSTED
+        return True
+    message = str(error).lower()
+    return (
+        "resource_exhausted" in message
+        or "out of memory" in message
+        or ("fft_plan != nullptr" in message and "cufft batched plan with scratch" in message)
+    )
+
+
+def device_out_of_memory(exc: BaseException) -> bool:
+    """Whether a device allocation failed anywhere along the cause chain of ``exc``.
+
+    XLA reports allocator exhaustion as ``RESOURCE_EXHAUSTED``, but some device
+    allocations (kernel images, cuFFT plan scratch) fail as ``INTERNAL`` errors that
+    only the message identifies. CuPy raises its own allocator error. A host
+    ``MemoryError`` is not a device failure: smaller device batches do not help it.
+
+    Parameters
+    ----------
+    exc : BaseException
+        Exception to inspect, with its ``__cause__`` chain.
+
+    Returns
+    -------
+    bool
+        True if any exception in the chain is a failed device allocation.
+    """
+    return any(_device_allocation_failed(cause) for cause in _causes(exc))
+
+
+def classify(exc: Exception) -> Error:
+    """Classify a failure by exception type and status along its cause chain."""
+    kind = "internal"
+    for cause in _causes(exc):
         if isinstance(cause, InvalidParameter):
             return Error(2, "invalid_parameter", str(exc), cause.path)
         if isinstance(cause, Cancelled):
             return Error(2, "cancelled", str(exc))
-        if isinstance(cause, MemoryError | cupy_oom) or (
-            isinstance(cause, jax.errors.JaxRuntimeError)
-            and getattr(cause, "error_code", None) == 8  # absl::RESOURCE_EXHAUSTED
-        ):
+        if isinstance(cause, MemoryError) or _device_allocation_failed(cause):
             return Error(2, "out_of_memory", str(exc))
         if isinstance(cause, OSError | ValueError | KeyError):
             kind = "input"
-        cause = cause.__cause__
-    return Error(2, "input" if kind == "input" else "internal", str(exc))
+    return Error(2, kind, str(exc))

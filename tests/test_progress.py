@@ -1064,9 +1064,8 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
             return 8
 
     assert classify(Exhausted("no message")).kind == "out_of_memory"
-    assert (
-        classify(jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")).kind == "internal"
-    )
+    assert classify(jax.errors.JaxRuntimeError("INTERNAL: an unrelated failure")).kind == "internal"
+    assert classify(RuntimeError("RESOURCE_EXHAUSTED: from user code")).kind == "internal"
     wrapper = ValueError("solve could not allocate")
     wrapper.__cause__ = MemoryError()
     assert classify(wrapper).kind == "out_of_memory"
@@ -1074,6 +1073,25 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
         raise tj.InvalidParameter("filter", "unknown")
     assert classify(failure.value).path == "config.filter"
     assert classify(failure.value).kind == "invalid_parameter"
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "INTERNAL: fft_plan != nullptr: Failed to create cuFFT batched plan with scratch allocator",
+        "INTERNAL: Failed to load in-memory CUBIN: CUDA_ERROR_OUT_OF_MEMORY: out of memory",
+    ],
+)
+def test_device_allocation_failures_reported_as_internal_are_out_of_memory(message):
+    # The retry paths and the error a client sees must agree on what ran out of memory.
+    from tomojax.backends.api import is_oom_error
+    from tomojax.errors import classify
+
+    error = jax.errors.JaxRuntimeError(message)
+    wrapped = ValueError("reconstruction failed")
+    wrapped.__cause__ = error
+    assert is_oom_error(error) and is_oom_error(wrapped)
+    assert classify(error).kind == classify(wrapped).kind == "out_of_memory"
 
 
 def test_logger_notes_between_and_inside_operations(caplog):

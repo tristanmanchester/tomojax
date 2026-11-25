@@ -48,6 +48,7 @@ from tomojax import progress
 from tomojax.backends.host_stream import host_source, read_block, write_block
 from tomojax.core.devices import block_fits, pool_stats
 from tomojax.core.host_volume import close_work_file, host_array
+from tomojax.errors import device_out_of_memory
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -112,10 +113,6 @@ class Stack:
             return self
         data = jax.lax.dynamic_update_slice_in_dim(self.data, value, i * self.batch, 0)
         return Stack(data, host=False, shape=self.shape, dtype=self.dtype, batch=self.batch)
-
-
-def _exhausted(err: Exception) -> bool:
-    return "RESOURCE_EXHAUSTED" in str(err)
 
 
 def _device_stats() -> dict[str, int] | None:
@@ -244,7 +241,7 @@ class LevelStacks:
         try:
             array = self._device(shape, dtype, value)
         except jax.errors.JaxRuntimeError as err:
-            if not _exhausted(err):
+            if not device_out_of_memory(err):
                 raise
             progress.retried("host stack")
             self.raised.append(name)
@@ -364,7 +361,7 @@ def level_stacks(
 
 def unplaced(err: Exception, stacks: LevelStacks) -> Exception:
     """A plain error for a level that ran out of device memory after its stacks were placed."""
-    if not _exhausted(err):
+    if not device_out_of_memory(err):
         return err
     gib = 2**30
     held = ", ".join(f"{n} on the {p}" for n, p in stacks.placed.items())

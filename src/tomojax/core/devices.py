@@ -30,7 +30,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._typed_arrays import device_id
-from tomojax.errors import InvalidParameter
+from tomojax.errors import InvalidParameter, device_out_of_memory
 
 if TYPE_CHECKING:
     from jax.typing import ArrayLike
@@ -322,7 +322,7 @@ def block_available(size: int) -> bool:
         block = jnp.zeros((-(-size // 4),), jnp.float32)
         block.block_until_ready()
     except Exception as exc:
-        if "resource_exhausted" in str(exc).lower():
+        if device_out_of_memory(exc):
             return False
         raise
     block.delete()
