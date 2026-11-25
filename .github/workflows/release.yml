@@ -135,7 +135,7 @@ jobs:
 
   pypi:
     if: github.event_name == 'push'
-    needs: build
+    needs: [build, build-studio]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -152,7 +152,7 @@ jobs:
 
   pypi-studio:
     if: github.event_name == 'push'
-    needs: build-studio
+    needs: [build, build-studio]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -171,7 +171,7 @@ jobs:
 
   github-release:
     if: github.event_name == 'push'
-    needs: [pypi, build-studio]
+    needs: [pypi, pypi-studio]
     runs-on: ubuntu-latest
     permissions:
       contents: write

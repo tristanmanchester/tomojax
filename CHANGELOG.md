@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc2 (2026-11-25)
 
 `tomojax mcp` runs a Model Context Protocol server over stdio, so an AI agent such
 as Claude Code can inspect, open, correct, align, reconstruct, simulate, evaluate
@@ -10,7 +10,9 @@ agent](docs/mcp.md).
 
 `tomojax studio` opens TomoJAX Studio, a native workspace for tomography projects that
 runs every operation through the worker and shows slices, sinograms and volume renderings
-while jobs run. It is built from `studio/` with Rust; see [studio/README.md](studio/README.md).
+while jobs run. On Linux `x86_64`, install the prebuilt `tomojax-studio` wheel (with
+statically linked HDF5) alongside `tomojax`, download the release tarball, or build from
+`studio/` with Rust; see [studio/README.md](studio/README.md).
 
 The `tomojax` command prints short usage errors with hints, nested live progress, and a
 one-line plan as `reconstruct` and `align` start. `--dry-run` prints the plan as text (JSON
