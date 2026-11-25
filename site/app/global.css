@@ -10,9 +10,24 @@
   --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
 }
 
+:root {
+  --tj-inline-code-bg: hsl(200, 18%, 90%);
+  --tj-inline-code-border: hsl(200, 18%, 81%);
+  --tj-inline-code-fg: hsl(195, 76%, 22%);
+  --tj-inline-code-link-bg: hsl(192, 32%, 90%);
+  --tj-inline-code-link-border: hsl(192, 30%, 76%);
+  --tj-inline-code-link-fg: hsl(190, 82%, 26%);
+}
+
 .dark {
   --color-fd-primary: hsl(188, 70%, 62%);
   --color-fd-ring: hsl(188, 70%, 52%);
+  --tj-inline-code-bg: hsl(200, 18%, 16%);
+  --tj-inline-code-border: hsl(200, 20%, 27%);
+  --tj-inline-code-fg: hsl(188, 70%, 77%);
+  --tj-inline-code-link-bg: hsl(192, 30%, 17%);
+  --tj-inline-code-link-border: hsl(190, 34%, 30%);
+  --tj-inline-code-link-fg: hsl(188, 74%, 66%);
 }
 
 html {
@@ -24,10 +39,35 @@ html > body[data-scroll-locked] {
   --removed-body-scroll-bar-size: 0px !important;
 }
 
+/* Inline code: distinct surface, border and tint against neutral prose and table cards. */
+.prose :where(code):not(:where(.not-prose, .not-prose *, pre, pre *)) {
+  background: var(--tj-inline-code-bg);
+  border-color: var(--tj-inline-code-border);
+  color: var(--tj-inline-code-fg);
+  font-size: 0.855em;
+  font-weight: 500;
+  padding: 0.14em 0.38em;
+  border-radius: 5px;
+}
+
+.prose :where(a:not([data-card]) code):not(:where(.not-prose, .not-prose *, pre, pre *)) {
+  background: var(--tj-inline-code-link-bg);
+  border-color: var(--tj-inline-code-link-border);
+  color: var(--tj-inline-code-link-fg);
+}
+
 /* API pages: a signature block sits directly under each name. */
+.prose h1 code,
+.prose h2 code,
+.prose h3 code,
+.prose h4 code {
+  color: var(--tw-prose-headings);
+  font-weight: 600;
+}
+
 .prose h2 code,
 .prose h3 code {
-  font-size: 0.95em;
+  font-size: 0.92em;
 }
 
 /* Tables: let long commands in cells wrap so a wide table fits the column. */
