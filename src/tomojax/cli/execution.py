@@ -63,6 +63,20 @@ class RegisteredArray:
     metadata: Array
 
 
+@dataclass(frozen=True)
+class Feature:
+    """A named boolean mask on the grid of the array it was made on.
+
+    ``mask`` has that array's shape and ``registration`` its axes and unit, so the
+    mask applies unchanged to any other array registered on the same grid.
+    """
+
+    name: str
+    mask: np.ndarray
+    registration: Array
+    recipe: dict[str, Any]
+
+
 type HandleValue = (
     tj.Scan
     | tj.Frames
@@ -70,6 +84,7 @@ type HandleValue = (
     | tj.Alignment
     | tj.Simulation
     | tj.RegionEstimate
+    | Feature
     | RegisteredArray
 )
 

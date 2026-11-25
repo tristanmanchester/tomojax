@@ -142,6 +142,24 @@ class Region(Record, tag="region"):
     arrays: dict[str, Array]
 
 
+class Feature(Record, tag="feature"):
+    """A named mask, its size and extent, and the source values inside it.
+
+    ``bounds`` holds a half-open index interval per axis; ``mean`` and ``std`` are
+    over the finite source values inside the mask. ``recipe`` is how it was made,
+    with the level, band and noise a seeded region resolved.
+    """
+
+    handle: Id
+    name: str
+    mask: Array
+    voxels: int
+    bounds: tuple[tuple[int, int], ...]
+    mean: float | None
+    std: float | None
+    recipe: dict[str, Any]
+
+
 class Files(Record, tag="files"):
     """All committed output destinations, including adjacent manifests."""
 
@@ -220,7 +238,7 @@ class Provenance(Record):
     inputs: tuple[Provenance, ...]
 
 
-type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region
+type HandleProduct = Scan | Frames | Reconstruction | Alignment | Simulation | Region | Feature
 type DataProduct = (
     Layout
     | DisplayPlanes

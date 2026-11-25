@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import AsyncExitStack, asynccontextmanager
-from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
@@ -173,27 +172,11 @@ def render(
     groups = {(p.domain, p.unit) for p in panels}
     ranges = {key: limits([p for p in panels if (p.domain, p.unit) == key]) for key in groups}
     scales = [ranges[p.domain, p.unit] for p in panels]
-    placed: list[list[Object]] = [[] for _ in marks]
-
-    def decorate(
-        picture: Image.Image, j: int, rect: tuple[float, float, float, float], first: int
-    ) -> None:
-        assert overlays is not None
-        cell = _marks.Cell(first // 3, *rect)
-        found = _marks.draw(picture, overlays[first + j], cell, panels[first + j].pixels)
-        for m, report in enumerate(found):
-            placed[m].append({"panel": first + j, **report})
-
-    images = [
-        image(
-            montage(
-                panels[i : i + 3],
-                scales[i : i + 3],
-                None if overlays is None else partial(decorate, first=i),
-            )
-        )
-        for i in range(0, len(panels), 3)
-    ]
+    if overlays is None:
+        images = [montage(panels[i : i + 3], scales[i : i + 3]) for i in range(0, len(panels), 3)]
+        reports = []
+    else:
+        images, reports = _marks.annotate(panels, scales, overlays, marks)
     reply = result(
         {
             **({"intensity_limits": scales[0]} if len(groups) == 1 else {}),
@@ -201,23 +184,10 @@ def render(
                 {"array": p.title, "labels": p.labels, "unit": p.unit, "intensity_limits": scale}
                 for p, scale in zip(panels, scales, strict=True)
             ],
-            **(
-                {
-                    "marks": [
-                        {
-                            "type": _marks.name(mark),
-                            **({"label": mark.label} if mark.label else {}),
-                            "panels": found,
-                        }
-                        for mark, found in zip(marks, placed, strict=True)
-                    ]
-                }
-                if marks
-                else {}
-            ),
+            **({"marks": reports} if marks else {}),
         }
     )
-    reply.content.extend(images)
+    reply.content.extend(image(png) for png in images)
     return reply
 
 

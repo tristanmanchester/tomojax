@@ -211,6 +211,12 @@ class Admission:
         raise ValueError(f"operation unavailable: {operation.__struct_config__.tag}")
 
     @prepare.register
+    def feature(self, operation: op.Feature) -> Work:
+        from tomojax.cli._features import feature_work
+
+        return feature_work(operation, self.context)
+
+    @prepare.register
     def browse(self, operation: op.Read | op.Statistics) -> Work:
         from tomojax.cli._browse import browse
 

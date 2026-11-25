@@ -179,6 +179,96 @@
       ],
       "additionalProperties": false
     },
+    "tomojax.cli.operations.Feature": {
+      "title": "Feature",
+      "description": "Make a named mask on the source array's grid.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "feature"
+          ]
+        },
+        "source": {
+          "anyOf": [
+            {
+              "anyOf": [
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+                  "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5",
+                  "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+                }
+              }
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/PathInput"
+            }
+          ]
+        },
+        "recipe": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Box"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Sphere"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Cylinder"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Prism"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Seeded"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Band"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "box": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Box",
+              "sphere": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Sphere",
+              "cylinder": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Cylinder",
+              "prism": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Prism",
+              "seeded": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Seeded",
+              "band": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Band"
+            }
+          }
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "source",
+        "recipe"
+      ],
+      "additionalProperties": false
+    },
     "Describe": {
       "title": "Describe",
       "description": "Return cached form descriptions.",
@@ -578,6 +668,83 @@
         "request",
         "channel",
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "tomojax.cli.products.Feature": {
+      "title": "Feature",
+      "description": "A named mask, its size and extent, and the source values inside it.\n\n    ``bounds`` holds a half-open index interval per axis; ``mean`` and ``std`` are\n    over the finite source values inside the mask. ``recipe`` is how it was made,\n    with the level, band and noise a seeded region resolved.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "feature"
+          ]
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string"
+        },
+        "mask": {
+          "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Array"
+        },
+        "voxels": {
+          "type": "integer"
+        },
+        "bounds": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          }
+        },
+        "mean": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "std": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recipe": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "type",
+        "handle",
+        "name",
+        "mask",
+        "voxels",
+        "bounds",
+        "mean",
+        "std",
+        "recipe"
       ],
       "additionalProperties": false
     },

@@ -535,6 +535,12 @@ class Tools:
             "termination",
             "converged",
             "placement",
+            "name",
+            "voxels",
+            "bounds",
+            "mean",
+            "std",
+            "recipe",
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))

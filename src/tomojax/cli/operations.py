@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 import msgspec
 
@@ -262,6 +262,82 @@ class Combine(Record, tag="combine"):
     name: str | None = None
 
 
+type Position = tuple[float, ...]
+Radius = Annotated[float, msgspec.Meta(gt=0)]
+Extent = tuple[float, float]
+
+
+class Box(Record, tag="box"):
+    """Voxels between two opposite corners, inclusive, in array indices."""
+
+    corners: tuple[Position, Position]
+
+
+class Sphere(Record, tag="sphere"):
+    """Voxels within ``radius`` index units of ``at``."""
+
+    at: Position
+    radius: Radius
+
+
+class Cylinder(Record, tag="cylinder"):
+    """A disc of ``radius`` around ``at`` across ``axis``, extruded over ``extent``."""
+
+    at: Position
+    radius: Radius
+    axis: Id
+    extent: Extent
+
+
+class Prism(Record, tag="prism"):
+    """A polygon across ``axis`` through ``points``, extruded over ``extent`` along it."""
+
+    points: tuple[Position, ...]
+    axis: Id
+    extent: Extent
+
+
+class Seeded(Record, tag="seeded"):
+    """The voxels connected to the seeds whose value stays near the value at the seeds.
+
+    The level is the median around each seed, averaged over seeds. ``tolerance`` is in
+    units of the local noise or, with ``tolerance_unit="value"``, of the source.
+    ``smoothing`` is a Gaussian sigma in voxels applied first, for very noisy data; it
+    pulls the edges in. ``max_radius`` limits growth to that many index units from the
+    nearest seed.
+    """
+
+    seeds: tuple[Position, ...]
+    tolerance: Annotated[float, msgspec.Meta(gt=0)] = 3.0
+    tolerance_unit: Literal["noise", "value"] = "noise"
+    smoothing: Annotated[float, msgspec.Meta(ge=0)] = 0.0
+    max_radius: Radius | None = None
+
+
+class Band(Record, tag="band"):
+    """Voxels whose signed distance from a feature lies in (inner, outer] index units.
+
+    The feature's own boundary voxels are at 0 and distances fall inward, so inner=0,
+    outer=3 is a three-voxel shell outside it and inner=-3, outer=0 the three-voxel rim
+    inside it.
+    """
+
+    feature: Member
+    outer: float
+    inner: float = 0.0
+
+
+type Recipe = Box | Sphere | Cylinder | Prism | Seeded | Band
+
+
+class Feature(Record, tag="feature"):
+    """Make a named mask on the source array's grid."""
+
+    source: Storage | PathInput
+    recipe: Recipe
+    name: str | None = None
+
+
 class Window(Record):
     """Half-open ROI in storage axis order. Omitted bounds select the whole array."""
 
@@ -336,6 +412,7 @@ type Workflow = (
     | Bin
     | Poses
     | Combine
+    | Feature
 )
 type Interactive = Plane | Slice | CentreSweep | CorrectionPreview | RegionPreview
 

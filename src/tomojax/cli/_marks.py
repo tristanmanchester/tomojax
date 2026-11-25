@@ -9,6 +9,7 @@ every plane, ROI, stride and zoom. A plane shows a mark when the mark reaches wi
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from math import floor, log10, sqrt
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -16,6 +17,7 @@ import msgspec
 import numpy as np
 from PIL import Image, ImageDraw
 
+from tomojax.cli.images import Panel, montage
 from tomojax.wire.arrays import Record
 
 if TYPE_CHECKING:
@@ -420,3 +422,36 @@ def frame_of(
         (cols, window[cols][0], window[cols][2]),
         None if normal is None else (normal, window[normal][0]),
     )
+
+
+def annotate(
+    panels: list[Panel],
+    scales: list[tuple[float, float]],
+    overlays: list[Overlay],
+    marks: Sequence[AnyMark],
+) -> tuple[list[bytes], list[dict[str, object]]]:
+    """Montage planes three to an image with their overlays, and report every mark.
+
+    Each mark's report lists, per plane, whether it was drawn, its pixel in which
+    returned image, and the value or mean under it.
+    """
+    placed: list[list[dict[str, object]]] = [[] for _ in marks]
+
+    def decorate(
+        picture: Image.Image, j: int, rect: tuple[float, float, float, float], first: int
+    ) -> None:
+        cell = Cell(first // 3, *rect)
+        for m, report in enumerate(
+            draw(picture, overlays[first + j], cell, panels[first + j].pixels)
+        ):
+            placed[m].append({"panel": first + j, **report})
+
+    images = [
+        montage(panels[i : i + 3], scales[i : i + 3], partial(decorate, first=i))
+        for i in range(0, len(panels), 3)
+    ]
+    reports = [
+        {"type": name(mark), **({"label": mark.label} if mark.label else {}), "panels": found}
+        for mark, found in zip(marks, placed, strict=True)
+    ]
+    return images, reports

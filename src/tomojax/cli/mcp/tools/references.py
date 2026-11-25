@@ -22,6 +22,7 @@ PRIMARY = {
     "reconstruction": "volume",
     "alignment": "image",
     "simulation": "phantom",
+    "feature": "mask",
 }
 
 

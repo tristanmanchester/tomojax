@@ -34,6 +34,9 @@
                 },
                 {
                   "$ref": "#/$defs/Region"
+                },
+                {
+                  "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Feature"
                 }
               ],
               "discriminator": {
@@ -44,7 +47,8 @@
                   "reconstruction": "#/$defs/Reconstruction",
                   "alignment": "#/$defs/Alignment",
                   "simulation": "#/$defs/Simulation",
-                  "region": "#/$defs/Region"
+                  "region": "#/$defs/Region",
+                  "feature": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Feature"
                 }
               }
             },
@@ -755,6 +759,9 @@
                   },
                   {
                     "$ref": "#/$defs/Region"
+                  },
+                  {
+                    "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Feature"
                   }
                 ],
                 "discriminator": {
@@ -765,7 +772,8 @@
                     "reconstruction": "#/$defs/Reconstruction",
                     "alignment": "#/$defs/Alignment",
                     "simulation": "#/$defs/Simulation",
-                    "region": "#/$defs/Region"
+                    "region": "#/$defs/Region",
+                    "feature": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Feature"
                   }
                 }
               },
