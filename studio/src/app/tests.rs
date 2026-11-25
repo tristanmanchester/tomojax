@@ -218,12 +218,12 @@ fn window_fields_show_the_rendered_range_without_overwriting_unfinished_edits() 
     let (_directory, mut state) = registered_projection_fixture();
     let current = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text.parse::<f32>().unwrap(),
-        current[0]
+        state.ui.display.window_low.text,
+        crate::ui::compact_number(f64::from(current[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text.parse::<f32>().unwrap(),
-        current[1]
+        state.ui.display.window_high.text,
+        crate::ui::compact_number(f64::from(current[1]))
     );
     state.ui.display.window_low.replace_text("-");
     state.ui.display.window_high.replace_text("2.5");
@@ -1586,4 +1586,78 @@ fn reopening_uses_the_saved_view_or_centres_the_newest_result() {
         }
         reopened.shutdown();
     }
+}
+
+#[test]
+fn the_palette_opens_every_operation_in_its_own_workspace() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("project"), true)
+        .unwrap();
+    state.refresh_model();
+    let align = state
+        .model
+        .commands
+        .iter()
+        .find(|command| command.id == "operation:align")
+        .expect("Alignment is a command");
+    assert_eq!((align.title.as_str(), align.enabled), ("Alignment", true));
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:align".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.workspace, Workspace::Prepare);
+    assert_eq!(runtime.state.ui.operation, "align");
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:slice".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.workspace, Workspace::Reconstruct);
+    assert_eq!(runtime.state.ui.operation, "slice");
+    // Each processing workspace returns to the operation it last showed.
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Prepare), tx));
+    assert_eq!(runtime.state.ui.operation, "align");
+}
+
+#[test]
+fn activity_closes_once_the_work_it_opened_for_ends_but_not_when_the_user_opened_it() {
+    let mut state = AppState::init();
+    state.ui.jobs_open = false;
+    state.open_activity();
+    assert!(state.ui.jobs_open && state.ui.jobs_auto_open);
+    state.refresh_model();
+    assert!(
+        !state.ui.jobs_open,
+        "no active jobs: Activity closes itself"
+    );
+
+    state.ui.jobs_open = true;
+    state.ui.jobs_auto_open = false;
+    state.open_activity();
+    state.refresh_model();
+    assert!(state.ui.jobs_open, "Activity the user opened stays open");
+}
+
+#[test]
+fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
+    let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
+    let _ = std::fs::remove_dir_all(&folder);
+    let mut state = AppState::init();
+    state.open_demo_project().unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(folder.join("Demo project")).unwrap()
+    );
+    state.open_demo_project().unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(folder.join("Demo project 2")).unwrap()
+    );
+    drop(state);
+    std::fs::remove_dir_all(&folder).unwrap();
 }

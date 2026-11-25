@@ -627,7 +627,7 @@ impl AppState {
             return;
         }
         if let Some([low, high]) = self.current_window() {
-            let values = [low.to_string(), high.to_string()];
+            let values = [low, high].map(|v| crate::ui::compact_number(f64::from(v)));
             self.ui.display.window_low.replace_text(values[0].clone());
             self.ui.display.window_high.replace_text(values[1].clone());
             self.window_prefill = Some(values);
@@ -1155,6 +1155,14 @@ impl AppState {
             .collect();
     }
 
+    /// Show Activity for newly queued work unless the user already has it open.
+    pub(super) fn open_activity(&mut self) {
+        if !self.ui.jobs_open {
+            self.ui.jobs_open = true;
+            self.ui.jobs_auto_open = true;
+        }
+    }
+
     pub(super) fn refresh_model(&mut self) {
         self.model.preview_choices = if self.preview_context.active
             == Some(crate::previews::PreviewKind::Corrections)
@@ -1386,6 +1394,10 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
+        if self.ui.jobs_auto_open && self.model.active_jobs() == 0 {
+            self.ui.jobs_open = false;
+            self.ui.jobs_auto_open = false;
+        }
         self.model.commands = crate::preferences::COMMANDS
             .iter()
             .map(|(id, title, category, default)| CommandView {
@@ -1403,6 +1415,15 @@ impl AppState {
                     _ => true,
                 },
             })
+            .chain(crate::operations::GROUPS.iter().flat_map(|group| {
+                group.operations.iter().map(|operation| CommandView {
+                    id: format!("operation:{}", operation.id),
+                    title: operation.title.into(),
+                    category: group.title.into(),
+                    binding: String::new(),
+                    enabled: self.project.is_some(),
+                })
+            }))
             .collect();
         self.model.shortcuts = crate::preferences::COMMANDS
             .iter()

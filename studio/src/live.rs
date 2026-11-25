@@ -18,7 +18,25 @@ pub struct CheckpointInfo {
     pub request: String,
     pub task: u64,
     pub time: f64,
-    pub step: Option<u64>,
+    /// How far the task that emitted the checkpoint had come, in its own unit.
+    pub position: Option<CheckpointPosition>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct CheckpointPosition {
+    pub done: u64,
+    pub total: Option<u64>,
+    pub unit: String,
+}
+
+impl CheckpointPosition {
+    /// "8 / 8 steps", or "3 steps" when the total is open.
+    pub fn label(&self) -> String {
+        match self.total {
+            Some(total) => format!("{} / {total} {}", self.done, self.unit),
+            None => format!("{} {}", self.done, self.unit),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -189,7 +207,7 @@ impl LiveCheckpoints {
         request: &str,
         task: u64,
         time: f64,
-        step: Option<u64>,
+        position: Option<CheckpointPosition>,
         arrays: BTreeMap<String, ArrayDescriptor>,
     ) {
         self.generation += 1;
@@ -208,7 +226,7 @@ impl LiveCheckpoints {
                 request: request.into(),
                 task,
                 time,
-                step,
+                position,
             },
             arrays,
             artifacts,
@@ -245,7 +263,7 @@ impl LiveCheckpoints {
                     request: String::new(),
                     task: 0,
                     time: 0.,
-                    step: None,
+                    position: None,
                 },
                 arrays,
                 artifacts,
@@ -409,6 +427,14 @@ fn read(checkpoint: &Checkpoint) -> Result<LiveFrame, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn step(done: u64) -> Option<CheckpointPosition> {
+        Some(CheckpointPosition {
+            done,
+            total: None,
+            unit: "steps".into(),
+        })
+    }
     use crate::protocol::{Axis, Coordinates, Storage};
     use npyz::WriterBuilder;
     use std::time::{Duration, Instant};
@@ -466,7 +492,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         while live
             .frame()
-            .is_none_or(|frame| frame.info.step != Some(step))
+            .is_none_or(|frame| frame.info.position.as_ref().map(|p| p.done) != Some(step))
         {
             live.poll();
             assert!(Instant::now() < deadline, "checkpoint failed to finish");
@@ -480,7 +506,7 @@ mod tests {
         let (resume, blocked) = mpsc::sync_channel(1);
         let blocked = Mutex::new(Some(blocked));
         let mut live = LiveCheckpoints::with_reader(Arc::new(move |checkpoint| {
-            if checkpoint.info.step == Some(1) {
+            if checkpoint.info.position.as_ref().map(|p| p.done) == Some(1) {
                 entered.send(()).unwrap();
                 blocked.lock().unwrap().take().unwrap().recv().unwrap();
             }
@@ -495,7 +521,7 @@ mod tests {
             "run",
             1,
             1.,
-            Some(1),
+            step(1),
             BTreeMap::from([("z".into(), descriptor("first", "coords"))]),
         );
         started.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -504,7 +530,7 @@ mod tests {
             "run",
             1,
             2.,
-            Some(2),
+            step(2),
             BTreeMap::from([("z".into(), descriptor("second", "coords"))]),
         );
         assert!(
@@ -514,7 +540,10 @@ mod tests {
         resume.send(()).unwrap();
         wait_for(&mut live, 2);
         assert_eq!(live.drain_releases(), ["first"]);
-        assert_eq!(live.frame().unwrap().info.step, Some(2));
+        assert_eq!(
+            live.frame().unwrap().info.position.as_ref().map(|p| p.done),
+            Some(2)
+        );
         live.clear();
         let released = live.drain_releases().into_iter().collect::<BTreeSet<_>>();
         assert_eq!(released, BTreeSet::from(["coords".into(), "second".into()]));
@@ -543,7 +572,7 @@ mod tests {
             "run-request",
             1,
             1.,
-            Some(1),
+            step(1),
             BTreeMap::from([("z".into(), descriptor("scalar", "coordinates"))]),
         );
         started.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -570,7 +599,7 @@ mod tests {
         assert_eq!(live.drain_releases(), ["coordinates", "scalar"]);
         assert_eq!(live.drain_handles(), ["opaque-result-handle"]);
         assert_eq!(
-            live.frame().unwrap().info.step,
+            live.frame().unwrap().info.position.as_ref().map(|p| p.done),
             Some(1),
             "owned displayed checkpoint was cleared"
         );
@@ -596,7 +625,7 @@ mod tests {
             "run",
             1,
             1.,
-            Some(1),
+            step(1),
             BTreeMap::from([("z".into(), descriptor("image", "coords"))]),
         );
         assert_eq!(live.drain_releases(), ["coords", "image"]);
@@ -609,7 +638,7 @@ mod tests {
         let (resume, blocked) = mpsc::sync_channel(1);
         let blocked = Mutex::new(Some(blocked));
         let mut live = LiveCheckpoints::with_reader(Arc::new(move |checkpoint| {
-            if checkpoint.info.step == Some(1) {
+            if checkpoint.info.position.as_ref().map(|p| p.done) == Some(1) {
                 entered.send(()).unwrap();
                 blocked.lock().unwrap().take().unwrap().recv().unwrap();
             }
@@ -624,7 +653,7 @@ mod tests {
             "run-1",
             1,
             1.,
-            Some(1),
+            step(1),
             BTreeMap::from([("z".into(), descriptor("image-1", "axis-1"))]),
         );
         started.recv_timeout(Duration::from_secs(3)).unwrap();
@@ -634,7 +663,7 @@ mod tests {
             "run-1",
             1,
             1.,
-            Some(2),
+            step(2),
             BTreeMap::from([("z".into(), descriptor("image-1", "axis-1"))]),
         );
         resume.send(()).unwrap();
@@ -726,7 +755,7 @@ mod tests {
             "run",
             2,
             4.,
-            Some(3),
+            step(3),
             BTreeMap::from([("z".into(), image), ("poses".into(), poses)]),
         );
         wait_for(&mut live, 3);

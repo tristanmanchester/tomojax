@@ -34,16 +34,23 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if event.key == Key::Escape {
-        if state.ui.jobs_open {
-            state.ui.jobs_open = false;
-            return true;
-        }
+        // The topmost layer closes first: dialogs, then open menus, then Activity.
         if state.ui.palette_open || state.ui.shortcuts_open {
             state.ui.palette_open = false;
             state.ui.shortcuts_open = false;
             return true;
         }
+        if state.ui.operation_menu || state.ui.choice_menu.is_some() {
+            state.ui.operation_menu = false;
+            state.ui.choice_menu = None;
+            return true;
+        }
         if state.ui.rename.take().is_some() {
+            return true;
+        }
+        if state.ui.jobs_open {
+            state.ui.jobs_open = false;
+            state.ui.jobs_auto_open = false;
             return true;
         }
         return false;

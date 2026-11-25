@@ -272,18 +272,21 @@ impl AppState {
         if matches!(workspace, Workspace::Prepare | Workspace::Reconstruct)
             && Workspace::for_operation(&self.ui.operation) != workspace
         {
-            self.set_operation(
-                if workspace == Workspace::Prepare {
-                    "open"
-                } else {
-                    "reconstruct"
-                },
-                None,
-            );
+            let (last, first) = if workspace == Workspace::Prepare {
+                (&self.ui.prepare_operation, "open")
+            } else {
+                (&self.ui.reconstruct_operation, "reconstruct")
+            };
+            let operation = if last.is_empty() { first } else { last }.to_owned();
+            self.set_operation(&operation, None);
         }
     }
 
     pub fn set_operation(&mut self, operation: &str, values: Option<&Value>) {
+        match Workspace::for_operation(operation) {
+            Workspace::Reconstruct => self.ui.reconstruct_operation = operation.into(),
+            _ => self.ui.prepare_operation = operation.into(),
+        }
         self.model.parameters = forms::initialise(&mut self.ui, &self.catalog, operation, values);
         if operation == "open"
             && values.is_none()
@@ -348,6 +351,13 @@ impl AppState {
                     ));
                     self.startup_input = Some(path);
                 }
+            }
+            if self.auto_demo && self.project.is_none() && self.startup_input.is_none() {
+                if let Err(error) = self.open_demo_project() {
+                    self.auto_demo = false;
+                    self.model.error = Some(error);
+                }
+                self.refresh_model();
             }
             if self.auto_demo && self.project.is_some() {
                 self.auto_demo = false;
@@ -578,6 +588,20 @@ impl AppState {
         {
             self.model.error = Some(error);
         }
+    }
+
+    /// Create and open a new project under the demo folder, named "Demo project", "Demo
+    /// project 2" and so on, so earlier demos are kept.
+    fn open_demo_project(&mut self) -> Result<(), String> {
+        let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
+        let path = (1..)
+            .map(|n| match n {
+                1 => folder.join("Demo project"),
+                n => folder.join(format!("Demo project {n}")),
+            })
+            .find(|path| !path.exists())
+            .expect("an unused demo project name");
+        self.open_project(&path, true)
     }
 
     fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {

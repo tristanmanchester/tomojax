@@ -141,6 +141,7 @@ fn label(key: &str) -> String {
         "n_views" => "Number of views".into(),
         "source_to_axis" => "Source to axis".into(),
         "source_to_detector" => "Source to detector".into(),
+        "translation_sigma" => "Per-view shift (SD)".into(),
         "nonnegative" => "Nonnegative constraint".into(),
         "fit" => "Geometry parameters to fit".into(),
         "data_path" => "HDF5 data dataset".into(),
@@ -242,6 +243,8 @@ pub fn initialise(
         );
         let structured =
             !matches!(data_type, "integer" | "number" | "string" | "boolean") && choices.is_empty();
+        // The value TomoJAX uses when a null setting is left blank, when the schema states it.
+        let effective_default = p.schema.get("x-default").cloned();
         views.push(ParameterView {
             name: p.name.clone(),
             label: label(&p.name),
@@ -260,7 +263,11 @@ pub fn initialise(
             placeholder: if p.required || !matches!(p.default, None | Some(Value::Null)) {
                 String::new()
             } else {
-                "Default".into()
+                match &effective_default {
+                    Some(Value::String(s)) => s.clone(),
+                    Some(value @ (Value::Number(_) | Value::Bool(_))) => value.to_string(),
+                    _ => "Default".into(),
+                }
             },
             choices: choices
                 .iter()
@@ -281,7 +288,12 @@ pub fn initialise(
                         }
                         .into(),
                         Value::String(s) => sentence(&s.replace('_', " ")),
-                        Value::Null => "Default".into(),
+                        Value::Null => match &effective_default {
+                            Some(Value::String(s)) => {
+                                format!("Default ({})", sentence(&s.replace('_', " ")))
+                            }
+                            _ => "Default".into(),
+                        },
                         Value::Bool(true) => "Enabled".into(),
                         Value::Bool(false) => "Disabled".into(),
                         v => v.to_string(),
@@ -377,6 +389,17 @@ pub fn method_setting(ui: &UiState, name: &str) -> bool {
 }
 
 pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
+    if ui.operation == "simulate" {
+        let geometry = ui
+            .parameter_choices
+            .get("geometry")
+            .map_or("parallel", String::as_str);
+        return match name {
+            "source_to_axis" | "source_to_detector" => geometry == "cone",
+            "tilt" => geometry != "parallel",
+            _ => true,
+        };
+    }
     if !method_setting(ui, name) {
         return true;
     }
@@ -523,13 +546,66 @@ mod tests {
         assert_eq!(sentence(""), "");
         assert_eq!(crate::ui::unit_name("geometry_length"), "scan unit");
         assert_eq!(crate::ui::unit_name("degree"), "degree");
+        assert_eq!(crate::ui::unit_name("counts_per_line_integral"), "counts");
+        assert_eq!(crate::ui::unit_name("working_pixel"), "working px");
+        assert_eq!(crate::ui::unit_name("1"), "");
+    }
+
+    #[test]
+    fn simulation_shows_only_the_settings_its_geometry_uses() {
+        let catalog = SchemaCatalog::new(
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        initialise(&mut ui, &catalog, "simulate", None);
+        let shown = |ui: &UiState| {
+            ["tilt", "source_to_axis", "source_to_detector"].map(|name| applies(ui, &catalog, name))
+        };
+        assert_eq!(shown(&ui), [false, false, false]);
+        ui.parameter_choices
+            .insert("geometry".into(), "lamino".into());
+        assert_eq!(shown(&ui), [true, false, false]);
+        ui.parameter_choices
+            .insert("geometry".into(), "cone".into());
+        assert_eq!(shown(&ui), [true, true, true]);
+    }
+
+    #[test]
+    fn a_blank_setting_shows_the_value_tomojax_will_use_when_the_schema_states_it() {
+        let catalog = SchemaCatalog::new(
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        let views = initialise(&mut ui, &catalog, "align", None);
+        let view = |name: &str| views.iter().find(|view| view.name == name).unwrap();
+        assert_eq!(view("iterations").placeholder, "8");
+        assert_eq!(view("interpolation").placeholder, "Default");
+        let motion = view("motion");
+        assert!(
+            motion
+                .choices
+                .iter()
+                .any(|c| c.label == "Default (Independent)")
+        );
     }
 
     #[test]
     fn catalog_refresh_preserves_unfinished_drafts_and_initialises_only_new_fields() {
-        let mut described: Value =
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap();
+        let mut described: Value = serde_json::from_str(
+            // The description the worker sends: the wire schema with help, units and defaults.
+            include_str!("../../src/tomojax/cli/parameters.json"),
+        )
+        .unwrap();
         described["$defs"]["Reconstruct"]["properties"]["seed"]["default"] = 17.into();
         described["$defs"]["Reconstruct"]["properties"]["config"]["description"] =
             "Current worker configuration metadata".into();
@@ -585,8 +661,11 @@ mod tests {
     #[test]
     fn catalog_refresh_preserves_ordered_corrections_and_invalid_json() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let ordered = r#"[ {"type":"BeamHardening","rates":[1,2],"weights":[0.5,0.5]}, {"type":"Zingers","threshold":0.2}, {"type":"Rings","views":null} ]"#;
@@ -632,8 +711,11 @@ mod tests {
     #[test]
     fn a_recipe_path_survives_the_form() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -666,8 +748,11 @@ mod tests {
     #[test]
     fn a_scalar_or_pair_field_takes_either() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -702,8 +787,11 @@ mod tests {
     #[test]
     fn nullable_booleans_preserve_automatic_and_required_json_is_validated() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -732,8 +820,11 @@ mod tests {
     #[test]
     fn nested_worker_paths_identify_the_owning_control_without_losing_indices() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -783,8 +874,11 @@ mod tests {
     #[test]
     fn full_grid_plan_uses_schema_intersection_and_does_not_change_on_slice_index() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(
+                // The description the worker sends: the wire schema with help, units and defaults.
+                include_str!("../../src/tomojax/cli/parameters.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
         let operation = serde_json::json!({"type":"centre_sweep","source":{"type":"member","handle":"h1","member":"scan"},"method":"cgls","iterations":5,"axis":"x","index":2,"centres":[-1.0,0.0,1.0]});

@@ -48,7 +48,7 @@ uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio
 tomojax studio
 ```
 
-Use `cpu` on CPU-only machines, or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`; see [install and run](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#install-and-run)). Choose **Create a project**, add scans or run `tomojax studio --demo`, and reopen saved workspaces later with `tomojax studio /path/to/project`.
+Use `cpu` on CPU-only machines, or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`; see [install and run](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#install-and-run)). Choose **Create a project** and add scans, or **Try a demo project** to simulate a scan and reconstruct it. Reopen a project later with `tomojax studio /path/to/project`.
 
 See the [Studio guide](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) for calibration, live previews, measurements, comparison modes, exports, and verification, and [studio/ARCHITECTURE.md](https://github.com/tristanmanchester/tomojax/blob/main/studio/ARCHITECTURE.md) for its persistence and rendering architecture.
 

@@ -305,12 +305,12 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     assert!(state.applied_window.is_none());
     let window = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text.parse::<f32>().unwrap(),
-        window[0]
+        state.ui.display.window_low.text,
+        crate::ui::compact_number(f64::from(window[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text.parse::<f32>().unwrap(),
-        window[1]
+        state.ui.display.window_high.text,
+        crate::ui::compact_number(f64::from(window[1]))
     );
 }
 

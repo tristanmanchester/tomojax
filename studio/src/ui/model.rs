@@ -115,6 +115,8 @@ pub struct UiState {
     pub tree_open: bool,
     pub inspector_open: bool,
     pub jobs_open: bool,
+    /// Activity opened itself for new work, so it closes once that work is done.
+    pub jobs_auto_open: bool,
     pub palette_open: bool,
     pub shortcuts_open: bool,
     pub advanced_open: bool,
@@ -145,6 +147,9 @@ pub struct UiState {
     pub parameter_toggles: BTreeMap<String, bool>,
     pub corrections: super::corrections::CorrectionEditor,
     pub operation: String,
+    /// The operation each processing workspace last showed, restored on return.
+    pub prepare_operation: String,
+    pub reconstruct_operation: String,
     pub operation_menu: bool,
     pub choice_menu: Option<String>,
     pub export_format: String,
@@ -165,6 +170,7 @@ impl Default for UiState {
             tree_open: true,
             inspector_open: true,
             jobs_open: false,
+            jobs_auto_open: false,
             palette_open: false,
             shortcuts_open: false,
             advanced_open: false,
@@ -190,6 +196,8 @@ impl Default for UiState {
             parameter_toggles: BTreeMap::new(),
             corrections: super::corrections::CorrectionEditor::default(),
             operation: "reconstruct".into(),
+            prepare_operation: String::new(),
+            reconstruct_operation: String::new(),
             operation_menu: false,
             choice_menu: None,
             export_format: "nxs".into(),
@@ -288,11 +296,10 @@ impl UiModel {
     /// written for volumes only, and an array-only result exports as NPY.
     pub fn export_format<'a>(&self, chosen: &'a str) -> &'a str {
         match self.active().map(|asset| asset.export) {
-            Some(Export::Volume) | None if chosen != "array" => chosen,
-            Some(Export::Volume) | None => "nxs",
-            Some(Export::Dataset) => "nxs",
+            Some(Export::Volume) if chosen != "array" => chosen,
+            Some(Export::Volume | Export::Dataset) => "nxs",
             Some(Export::Array) => "array",
-            Some(Export::Unavailable) => "",
+            Some(Export::Unavailable) | None => "",
         }
     }
     pub fn tiff_export(&self) -> bool {
@@ -531,6 +538,7 @@ pub struct ShortcutView {
 pub enum UiAction {
     NewProject,
     OpenProject,
+    OpenDemo,
     OpenRecent(String),
     ImportFiles,
     ImportFolder,

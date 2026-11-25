@@ -136,6 +136,11 @@ fn heading(state: &AppState) -> El {
             "{} × {} × {} voxels",
             dimensions[0], dimensions[1], dimensions[2]
         ));
+    } else if asset.kind == AssetKind::Scan
+        && let [views, rows, columns] = asset.shape[..]
+    {
+        // Projection stacks are (view, v, u), as `tomojax inspect` reports them.
+        details.push(format!("{views} views of {rows} × {columns} pixels"));
     } else if !asset.shape.is_empty() {
         details.push(
             asset

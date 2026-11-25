@@ -174,13 +174,7 @@ def description() -> dict[str, Any]:
     definitions["Save"]["properties"]["path"]["description"] = (
         "Output dataset path. Set force to replace existing files."
     )
-    # The everyday alignment controls replace fields on this same configuration.
-    align = definitions["Align"]["properties"]
-    for name, field in definitions["AlignConfig"]["properties"].items():
-        if name in align and name != "type":
-            for key in ("description", "x-unit", "x-choices"):
-                if key in field:
-                    align[name][key] = field[key]
+    inherit_align_config(definitions)
     for target, source in (
         (op.Slice, op.Reconstruct),
         (op.CentreSweep, op.Reconstruct),
@@ -191,6 +185,19 @@ def description() -> dict[str, Any]:
             if name != "type":
                 props[name] = field
     return schema
+
+
+def inherit_align_config(definitions: dict[str, Any]) -> None:
+    """Describe the everyday alignment controls from the configuration fields they replace."""
+    align = definitions["Align"]["properties"]
+    for name, field in definitions["AlignConfig"]["properties"].items():
+        if name in align and name != "type":
+            for key in ("description", "x-unit", "x-choices"):
+                if key in field:
+                    align[name][key] = field[key]
+            # A null setting takes the configuration's value; publish it for form placeholders.
+            if align[name].get("default") is None and field.get("default") is not None:
+                align[name]["x-default"] = field["default"]
 
 
 def describe_models(definitions: dict[str, Any]) -> None:

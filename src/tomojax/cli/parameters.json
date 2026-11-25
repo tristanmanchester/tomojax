@@ -3082,7 +3082,8 @@
           "x-choices": [
             "independent",
             "smooth"
-          ]
+          ],
+          "x-default": "independent"
         },
         "iterations": {
           "anyOf": [
@@ -3094,7 +3095,8 @@
             }
           ],
           "default": null,
-          "description": "Gauss-Newton iterations at the working resolution. Default is 8."
+          "description": "Gauss-Newton iterations at the working resolution. Default is 8.",
+          "x-default": 8
         },
         "image_iterations": {
           "anyOf": [
@@ -3106,7 +3108,8 @@
             }
           ],
           "default": null,
-          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16."
+          "description": "Conjugate-gradient iterations of the image solve in each Gauss-Newton iteration. Default is 16.",
+          "x-default": 16
         },
         "tolerance": {
           "anyOf": [
@@ -3119,7 +3122,8 @@
           ],
           "default": null,
           "description": "A level stops when two successive pose proposals move the views by less than this, in working pixels; 0 runs every level to its iterations. Default is 0.01.",
-          "x-unit": "working_pixel"
+          "x-unit": "working_pixel",
+          "x-default": 0.01
         },
         "interpolation": {
           "anyOf": [
@@ -3151,7 +3155,8 @@
           ],
           "default": null,
           "description": "The working detector's longest side, in pixels. Default is 320.",
-          "x-unit": "working_pixel"
+          "x-unit": "working_pixel",
+          "x-default": 320
         },
         "config": {
           "anyOf": [

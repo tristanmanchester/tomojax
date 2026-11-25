@@ -110,7 +110,7 @@ impl AppState {
             }
         }
         self.mark_dirty();
-        self.ui.jobs_open = true;
+        self.open_activity();
         self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())
@@ -935,8 +935,15 @@ impl AppState {
                 && matches!(job.operation.as_str(), "reconstruct" | "align")
                 && matches!(self.pending.get(request), Some(Pending::Execute(_)))
             {
-                let step = job.telemetry.task(request, task).map(|task| task.done);
-                self.live.accept(&id, request, task, time, step, arrays);
+                let position =
+                    job.telemetry
+                        .task(request, task)
+                        .map(|task| crate::live::CheckpointPosition {
+                            done: task.done,
+                            total: task.total,
+                            unit: task.unit.clone(),
+                        });
+                self.live.accept(&id, request, task, time, position, arrays);
             } else {
                 self.live.discard(arrays);
             }

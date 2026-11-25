@@ -59,9 +59,11 @@ impl AppState {
     fn action(&mut self, action: UiAction, tx: &mut Tx) -> Result<(), String> {
         match action {
             UiAction::NewProject => {
-                tx.open_folder(
+                // A save dialog names a folder that does not exist yet; the project creates it.
+                tx.save_file(
                     FileDialogOptions {
-                        title: "Choose a directory for the new project".into(),
+                        title: "Create a project".into(),
+                        file_name: Some("TomoJAX project".into()),
                         ..Default::default()
                     },
                     |s: &mut AppState, result, tx| match result {
@@ -97,6 +99,10 @@ impl AppState {
                 );
             }
             UiAction::OpenRecent(path) => self.open_project(Path::new(&path), false)?,
+            UiAction::OpenDemo => {
+                self.open_demo_project()?;
+                self.auto_demo = true;
+            }
             UiAction::ImportFiles => {
                 if self.project.is_none() {
                     return Err("Create or open a project before importing scans".into());
@@ -610,6 +616,11 @@ impl AppState {
     }
 
     fn run_command(&mut self, id: &str, tx: &mut Tx) -> Result<(), String> {
+        if let Some(operation) = id.strip_prefix("operation:") {
+            self.set_workspace(Workspace::for_operation(operation));
+            self.set_operation(operation, None);
+            return Ok(());
+        }
         let action = match id {
             "new" => UiAction::NewProject,
             "open" => UiAction::OpenProject,
@@ -769,7 +780,7 @@ impl AppState {
         if let Some(project) = &mut self.project {
             project.document.jobs.push(job);
             self.mark_dirty();
-            self.ui.jobs_open = true;
+            self.open_activity();
             self.refresh_model();
         }
     }

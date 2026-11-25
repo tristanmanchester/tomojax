@@ -699,10 +699,18 @@ pub fn status_dot(colour: Color) -> El {
     el().size(6., 6.).radius(3.).fill(colour)
 }
 
+/// A unit as people read it; the schema and arrays name units with identifiers.
 pub fn unit_name(unit: &str) -> &str {
     match unit {
         "scan_length" | "geometry_length" => "scan unit",
-        "1/scan_length" => "1/scan unit",
+        "1/scan_length" | "1/geometry_length" => "1/scan unit",
+        "1" => "",
+        "counts_per_line_integral" => "counts",
+        "line_integral" => "line integral",
+        "native_pixel" => "detector px",
+        "working_pixel" => "working px",
+        "pixel" => "px",
+        "noise_sigma" => "noise SD",
         other => other,
     }
 }

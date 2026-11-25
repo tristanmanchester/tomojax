@@ -12,8 +12,8 @@ mod tokens;
 mod viewer;
 
 use crate::AppState;
-pub(crate) use controls::unit_name;
 use controls::*;
+pub(crate) use controls::{compact_number, unit_name};
 use model::*;
 use rune::{Cx, El, ScrollSpec, col, el, row};
 use tokens::*;
@@ -187,6 +187,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         bar = bar
             .child(
                 quiet_button("toggle-jobs", &title, state.ui.jobs_open, |s, _| {
+                    s.ui.jobs_auto_open = false;
                     s.ui.jobs_open = !s.ui.jobs_open
                 })
                 .label("Activity"),
@@ -632,6 +633,16 @@ fn welcome(state: &AppState) -> El {
                         false,
                         true,
                         UiAction::OpenProject,
+                    )
+                    .h(42.),
+                )
+                .child(
+                    action_button(
+                        "open-demo",
+                        "Try a demo project",
+                        false,
+                        state.model.backend.ready,
+                        UiAction::OpenDemo,
                     )
                     .h(42.),
                 ),
