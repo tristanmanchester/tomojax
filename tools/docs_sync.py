@@ -34,12 +34,6 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
             ("docs/installation.md", "installation", None, "CPU or CUDA dependencies."),
             ("docs/quickstart.md", "quickstart", None, "From a scan file to inspected slices."),
             (
-                "docs/beamline-exports.md",
-                "beamline-exports",
-                None,
-                "First slices from ESRF, TOMCAT/SYRMEP and I13 exports.",
-            ),
-            (
                 "docs/synthetic-tomography.md",
                 "synthetic-tomography",
                 None,
@@ -54,6 +48,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
         "Reconstruct",
         [
             (
+                "docs/beamline-exports.md",
+                "beamline-exports",
+                None,
+                "First slices from ESRF, TOMCAT/SYRMEP and I13 exports.",
+            ),
+            (
                 "docs/real-laminography.md",
                 "real-laminography",
                 None,
@@ -66,34 +66,22 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "Import, calibrate and reconstruct a lab cone-beam scan.",
             ),
             (
-                "studio/README.md",
-                "studio",
-                "TomoJAX Studio",
-                "Native workspace for persistent tomography projects, previews and 3D viewing.",
-            ),
-            (
-                "src/tomojax/cli/README.md",
-                "command-line",
-                "Command line",
-                "The commands, their conventions and --config files.",
-            ),
-            (
-                "docs/pytorch.md",
-                "pytorch",
+                "docs/large-scans.md",
+                "large-scans",
                 None,
-                "Use the projector as a differentiable PyTorch operator.",
-            ),
-            (
-                "docs/mcp.md",
-                "mcp",
-                None,
-                "Let an AI agent drive TomoJAX through the Model Context Protocol.",
+                "Scans larger than the GPU, and several GPUs.",
             ),
         ],
     ),
     (
-        "Align",
+        "Correct and align",
         [
+            (
+                "src/tomojax/corrections/README.md",
+                "corrections",
+                "Correction steps",
+                "From detector counts to line integrals, and steps on line integrals.",
+            ),
             (
                 "docs/align-a-scan.md",
                 "align-a-scan",
@@ -109,13 +97,72 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
         ],
     ),
     (
-        "Correct data",
+        "Interfaces",
         [
             (
-                "src/tomojax/corrections/README.md",
-                "corrections",
-                "Correction steps",
-                "From detector counts to line integrals, and steps on line integrals.",
+                "studio/README.md",
+                "studio",
+                "TomoJAX Studio",
+                "Native workspace for persistent tomography projects, previews and 3D viewing.",
+            ),
+            (
+                "src/tomojax/cli/README.md",
+                "command-line",
+                "Command line",
+                "The commands, their conventions and --config files.",
+            ),
+            (
+                "docs/mcp.md",
+                "mcp",
+                None,
+                "Let an AI agent drive TomoJAX through the Model Context Protocol.",
+            ),
+            (
+                "docs/pytorch.md",
+                "pytorch",
+                None,
+                "Use the projector as a differentiable PyTorch operator.",
+            ),
+            (
+                "docs/protocol.md",
+                "protocol",
+                None,
+                "JSON Lines worker protocol and standalone progress contract.",
+            ),
+            (
+                "docs/progress-metrics.md",
+                "progress-metrics",
+                None,
+                "Scalar diagnostics emitted during reconstruction and alignment.",
+            ),
+        ],
+    ),
+    (
+        "Scope and performance",
+        [
+            (
+                "docs/support-matrix.md",
+                "support-matrix",
+                None,
+                "Geometries, units, algorithms and GPU scope.",
+            ),
+            (
+                "docs/known-limitations.md",
+                "known-limitations",
+                None,
+                "What does not work yet, or needs checking.",
+            ),
+            (
+                "docs/measurements.md",
+                "measurements",
+                None,
+                "Measured speed, accuracy and memory, against ASTRA and TIGRE.",
+            ),
+            (
+                "CONTRIBUTING.md",
+                "contributing",
+                None,
+                "Tests, packaging and repository conventions.",
             ),
         ],
     ),
@@ -151,68 +198,6 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "alignment-configuration",
                 "Alignment configuration",
                 "The joint solver behind tj.align and its numerical contracts.",
-            ),
-            (
-                "docs/protocol.md",
-                "protocol",
-                None,
-                "JSON Lines worker protocol and standalone progress contract.",
-            ),
-            (
-                "docs/progress-metrics.md",
-                "progress-metrics",
-                None,
-                "Scalar diagnostics emitted during reconstruction and alignment.",
-            ),
-        ],
-    ),
-    (
-        "Large scans",
-        [
-            (
-                "docs/large-scans.md",
-                "large-scans",
-                None,
-                "Scans larger than the GPU, and several GPUs.",
-            ),
-        ],
-    ),
-    (
-        "Scope",
-        [
-            (
-                "docs/support-matrix.md",
-                "support-matrix",
-                None,
-                "Geometries, units, algorithms and GPU scope.",
-            ),
-            (
-                "docs/known-limitations.md",
-                "known-limitations",
-                None,
-                "What does not work yet, or needs checking.",
-            ),
-        ],
-    ),
-    (
-        "Measurements",
-        [
-            (
-                "docs/measurements.md",
-                "measurements",
-                None,
-                "Measured speed, accuracy and memory, against ASTRA and TIGRE.",
-            ),
-        ],
-    ),
-    (
-        "Contributing",
-        [
-            (
-                "CONTRIBUTING.md",
-                "contributing",
-                None,
-                "Tests, packaging and repository conventions.",
             ),
         ],
     ),
