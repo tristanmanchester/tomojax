@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import ExitStack
 import math
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, overload, runtime_checkable
 
 import jax
 import jax.numpy as jnp
@@ -51,9 +51,36 @@ from tomojax.core.host_volume import close_work_file, host_array
 from tomojax.errors import device_out_of_memory
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
+
+    from jax.stages import Lowered
+    from numpy.typing import DTypeLike
+
+    from ._operators import Operators
+    from ._pose import FactorShape, PoseFactor
 
 Place = Literal["device", "host"]
+type StackSpec = tuple[tuple[int, ...], DTypeLike]
+type VolumeName = Literal["x", "other", "gx0", "dd", "invdiag", "step", "gx", "d", "images", "free"]
+type _StackName = Literal["sw", "r", "j", "y", "precision", "residual"]
+
+
+class _StorageRecord(TypedDict):
+    placement: dict[str, Place]
+    raised: list[str]
+    stack_bytes: dict[str, int]
+    room_bytes: int | None
+    reserve_bytes: int
+    reserve_parts: dict[str, int]
+    volume_bytes: dict[str, int]
+    setup_waste_bytes: int
+    in_use_bytes: int | None
+    free_bytes: int
+
+
+class StorageRecord(_StorageRecord, total=False):
+    transients: dict[str, int]
+
 
 # Who most deserves the device: read in every matvec (sw, r, j), then the data
 # (each linearisation and line-search trial), then the residual (the trials at
@@ -69,21 +96,35 @@ class Stack:
     """
 
     def __init__(
-        self, data: Any, *, host: bool, shape: tuple[int, ...], dtype: Any, batch: int
+        self,
+        data: jax.Array | jax.ShapeDtypeStruct,
+        *,
+        host: bool,
+        shape: tuple[int, ...],
+        dtype: DTypeLike,
+        batch: int,
     ) -> None:
         self.data, self.host, self.shape, self.batch = data, host, tuple(shape), int(batch)
         self.dtype = np.dtype(dtype)
 
-    def tree_flatten(self):
+    def tree_flatten(
+        self,
+    ) -> tuple[
+        tuple[jax.Array | jax.ShapeDtypeStruct], tuple[bool, tuple[int, ...], np.dtype, int]
+    ]:
         return (self.data,), (self.host, self.shape, self.dtype, self.batch)
 
     @classmethod
-    def tree_unflatten(cls, aux: tuple, children: tuple) -> Stack:
+    def tree_unflatten(
+        cls,
+        aux: tuple[bool, tuple[int, ...], np.dtype, int],
+        children: tuple[jax.Array | jax.ShapeDtypeStruct],
+    ) -> Stack:
         host, shape, dtype, batch = aux
         return cls(children[0], host=host, shape=shape, dtype=dtype, batch=batch)
 
     @classmethod
-    def shaped(cls, spec: tuple[tuple[int, ...], Any], batch: int) -> Stack:
+    def shaped(cls, spec: StackSpec, batch: int) -> Stack:
         """A resident stack as a shape, for a compile before the stack exists."""
         shape, dtype = spec
         return cls(
@@ -98,6 +139,8 @@ class Stack:
         the FP64 reductions downstream (scores, moments) would round differently by
         placement. With the barrier every consumer compiles the same, bit for bit.
         """
+        if TYPE_CHECKING:
+            assert isinstance(self.data, jax.Array)
         start = i * self.batch
         if self.host:
             block = read_block(self.data, start, (self.batch, *self.shape[1:]), self.dtype)
@@ -107,6 +150,8 @@ class Stack:
 
     def write(self, i: jax.Array, value: jax.Array) -> Stack:
         """The stack with batch ``i`` replaced by ``value``."""
+        if TYPE_CHECKING:
+            assert isinstance(self.data, jax.Array)
         value = value.astype(self.dtype)
         if self.host:
             write_block(self.data, i * self.batch, value)
@@ -149,13 +194,13 @@ class LevelStacks:
 
     def __init__(
         self,
-        specs: Mapping[str, tuple[tuple[int, ...], Any]],
+        specs: Mapping[str, StackSpec],
         batch: int,
         *,
         data: Mapping[str, np.ndarray],
         room: int | None,
         reserve: int | Mapping[str, int],
-        volumes: Mapping[str, Any] | None = None,
+        volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape] | None = None,
         placement: Mapping[str, Place] | None = None,
     ) -> None:
         self.names = [name for name in ORDER if name in specs]
@@ -173,7 +218,7 @@ class LevelStacks:
             raise ValueError(
                 f"placement takes {ORDER} mapped to 'device' or 'host', not {placement}"
             )
-        self.volumes: dict[str, Any] = {}
+        self.volumes: dict[str, jax.Array | PoseFactor] = {}
         self.volume_bytes: dict[str, int] = {}
         self.stacks: dict[str, Stack] = {}
         self.placed: dict[str, Place] = {}
@@ -190,7 +235,7 @@ class LevelStacks:
             self.close()
             raise
 
-    def _own(self, volumes: Mapping[str, Any]) -> None:
+    def _own(self, volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape]) -> None:
         """Allocate the volumes, and count them with what the device holds above them."""
         before = _in_use()
         for name, spec in volumes.items():
@@ -229,7 +274,9 @@ class LevelStacks:
             self.stacks[name] = Stack(key, host=True, shape=shape, dtype=dtype, batch=self.batch)
             self.placed[name] = "host"
 
-    def _fitting(self, name, shape, dtype, value) -> jax.Array | None:
+    def _fitting(
+        self, name: str, shape: tuple[int, ...], dtype: np.dtype, value: np.ndarray | None
+    ) -> jax.Array | None:
         """The stack on the device, or None if no block fits it, it raised, or it took the last.
 
         The last block is the one the level's largest transient needs. A forced stack is
@@ -252,27 +299,46 @@ class LevelStacks:
         return None
 
     @staticmethod
-    def _device(shape: tuple[int, ...], dtype: Any, value: np.ndarray | None) -> jax.Array:
+    def _device(shape: tuple[int, ...], dtype: np.dtype, value: np.ndarray | None) -> jax.Array:
         """Allocate one stack on the device and wait for it: the allocator is the judge."""
         array = jnp.zeros(shape, dtype) if value is None else jax.device_put(value)
         return array.block_until_ready()
 
-    def __getitem__(self, name: str) -> Any:
+    @overload
+    def __getitem__(self, name: _StackName) -> Stack: ...
+    @overload
+    def __getitem__(self, name: VolumeName) -> jax.Array: ...
+    @overload
+    def __getitem__(self, name: Literal["factor"]) -> PoseFactor: ...
+    @overload
+    def __getitem__(self, name: str) -> Stack | jax.Array | PoseFactor: ...
+    def __getitem__(self, name: str) -> Stack | jax.Array | PoseFactor:
         return self.stacks[name] if name in self.stacks else self.volumes[name]
 
     def get(self, name: str) -> Stack | None:
         return self.stacks.get(name)
 
-    def update(self, arrays: Iterable[tuple[str, Any]]) -> None:
+    def update(self, arrays: Iterable[tuple[str, Stack | jax.Array | PoseFactor]]) -> None:
         """Hold the stacks or volumes a donating call returned in place of the ones it consumed."""
         for name, array in arrays:
-            (self.volumes if name in self.volumes else self.stacks)[name] = array
+            if name in self.volumes:
+                if TYPE_CHECKING:
+                    assert not isinstance(array, Stack)
+                self.volumes[name] = array
+            else:
+                if TYPE_CHECKING:
+                    assert isinstance(array, Stack)
+                self.stacks[name] = array
 
-    def take(self, name: str) -> Any:
+    @overload
+    def take(self, name: VolumeName) -> jax.Array: ...
+    @overload
+    def take(self, name: Literal["factor"]) -> PoseFactor: ...
+    def take(self, name: str) -> jax.Array | PoseFactor:
         """Hand a volume to the caller: it is no longer the level's, and outlives it."""
         return self.volumes.pop(name)
 
-    def record(self) -> dict[str, Any]:
+    def record(self) -> _StorageRecord:
         """What ``info`` reports: each stack's placement and size, and the plan it came from."""
         return {
             "placement": dict(self.placed),
@@ -309,11 +375,20 @@ def transient_reserve(transients: Mapping[str, int]) -> dict[str, int]:
     return {"transient": transient, "chunk": min(transient, CHUNK)}
 
 
-def temporaries(compiled: Any, *args: Any) -> int:
+if TYPE_CHECKING:
+
+    @runtime_checkable
+    class _Lowerable(Protocol):
+        def lower(self, *args: object) -> Lowered: ...
+
+
+def temporaries(compiled: Callable[..., object], *args: object) -> int:
     """The temporary bytes of ``compiled`` (a jitted function) at ``args``, from its compile.
 
     The compile is the one its calls with arguments of the same shapes then reuse.
     """
+    if TYPE_CHECKING:
+        assert isinstance(compiled, _Lowerable)
     with progress.preparing("compile alignment workspace"):
         analysis = compiled.lower(*args).compile().memory_analysis()
     if analysis is None:
@@ -329,12 +404,12 @@ def device_room() -> int | None:
 
 
 def level_stacks(
-    ops: Any,
-    y: np.ndarray,
-    precision: np.ndarray | None,
+    ops: Operators,
+    y: np.ndarray | jax.Array,
+    precision: np.ndarray | jax.Array | None,
     *,
     reserve: Mapping[str, int],
-    volumes: Mapping[str, Any] | None = None,
+    volumes: Mapping[str, jax.ShapeDtypeStruct | FactorShape] | None = None,
     names: Iterable[str] | None = None,
     placement: Mapping[str, Place] | None = None,
 ) -> LevelStacks:

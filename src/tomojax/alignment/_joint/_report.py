@@ -9,6 +9,10 @@ step); a photometric flag marks a view the fitted image explains unusually
 badly (a broken frame, diffraction), which need not move its pose at all.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, TypedDict
+
 import numpy as np
 from scipy.spatial.transform import Rotation
 
@@ -16,11 +20,39 @@ from tomojax.core.robust import MAD_TO_SD
 
 from ._pose import ViewOrder
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from numpy.typing import ArrayLike
+
+    from ._parameters import CalibrationCorrections
+    from ._refine import RefinementRecord
+    from ._solver import LevelSummary
+
+    class _RefinementStatus(TypedDict, total=False):
+        status: str
+
+
+# The report is passed to callers that consume its ordinary dictionary interface.
+type AlignmentReport = dict[
+    str,
+    list[dict[str, str | int]]
+    | str
+    | None
+    | CalibrationCorrections
+    | dict[str, dict[str, str | float]]
+    | dict[str, list[float]]
+    | list[int]
+    | list[str],
+]
+
 # An isolated view leaves both neighbours by this many robust standard deviations
 # of the scan's view-to-view change.
 _OUTLIER_SIGMAS = 5.0
 # An unusual view's residual RMS is at least this multiple of its neighbours'.
 _UNUSUAL_RMS_FACTOR = 3.0
+
+
 # An isolated view must also stand out by this much, in working pixels.
 _ISOLATED_MIN_WORKING_PX = 0.1
 # A rotation axis within this angle of perpendicular to the beam is axial.
@@ -34,7 +66,7 @@ _AXIAL_ROTATIONS = (
 )
 
 
-def axial(nominal, beam):
+def axial(nominal: ArrayLike, beam: ArrayLike) -> bool:
     """Whether the scan's rotation axis is perpendicular to the beam, within ``_AXIAL_TILT_DEG``."""
     rotations = np.asarray(nominal, np.float64)[:, :3, :3]
     turns = Rotation.from_matrix(rotations @ rotations[0].T).as_rotvec()
@@ -46,7 +78,7 @@ def axial(nominal, beam):
     return bool(abs(axis @ beam) < np.sin(np.deg2rad(_AXIAL_TILT_DEG)))
 
 
-def isolated_views(steps, order=None):
+def isolated_views(steps: ArrayLike, order: ViewOrder | None = None) -> list[int]:
     """Views whose (views, k) value leaves both neighbours' in the same direction.
 
     The departure from each neighbour must exceed both ``_OUTLIER_SIGMAS``
@@ -75,7 +107,7 @@ def isolated_views(steps, order=None):
     return (np.flatnonzero(np.any(same & apart & judged, axis=1)) + 1).tolist()
 
 
-def unusual_views(energy, order=None):
+def unusual_views(energy: ArrayLike, order: ViewOrder | None = None) -> list[int]:
     """Views whose residual RMS is ``_UNUSUAL_RMS_FACTOR`` times their neighbours'.
 
     A view's residual varies smoothly with angle, as the object presents more or
@@ -101,7 +133,9 @@ def unusual_views(energy, order=None):
     return np.flatnonzero(ratio >= _UNUSUAL_RMS_FACTOR**2).tolist()
 
 
-def _split(columns, spacing, order=None):
+def _split(
+    columns: np.ndarray, spacing: int, order: ViewOrder | None = None
+) -> tuple[np.ndarray, np.ndarray]:
     """The part of each column the prior's drift spline explains, and the rest."""
     order = ViewOrder(len(columns)) if order is None else order
     basis, tree = order.drift((spacing,), (True,))
@@ -114,20 +148,20 @@ def _split(columns, spacing, order=None):
 
 def build(
     *,
-    table,
-    local,
-    fit,
-    axial,
-    calibration,
-    native,
-    binning,
-    levels,
-    refinement,
-    offsets,
-    energy,
-    spacing,
-    order=None,
-):
+    table: np.ndarray,
+    local: tuple[int, ...],
+    fit: Sequence[str],
+    axial: bool,
+    calibration: CalibrationCorrections,
+    native: tuple[float, float],
+    binning: int,
+    levels: Sequence[LevelSummary],
+    refinement: RefinementRecord | _RefinementStatus,
+    offsets: np.ndarray,
+    energy: np.ndarray,
+    spacing: int,
+    order: ViewOrder | None = None,
+) -> AlignmentReport:
     """The report: per-level endings, correction sizes, offsets and flagged views.
 
     ``table`` is the (views, 6) correction table in physical units, ``local``

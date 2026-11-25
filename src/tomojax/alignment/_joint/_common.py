@@ -21,24 +21,30 @@ residual rows [B D]. They couple every view, which is why the pose block is
 solved by Woodbury rather than by the prior's own factor alone.
 """
 
-from typing import NamedTuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def rows(nv):
+
+def rows(nv: int) -> jax.Array:
     """The row coordinate the profile's ramp uses: -1 at the top row, +1 at the bottom."""
     return jnp.linspace(-1, 1, nv, dtype=jnp.float64)[:, None]
 
 
-def view_grams(precision):
+def view_grams(precision: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Each view's (g00, g01, g11), the Gram matrix of its whitened offset and ramp."""
     w, v = precision.astype(jnp.float64), rows(precision.shape[-2])
-    return tuple(jnp.sum(w * v**k, axis=(-2, -1)) for k in (0, 1, 2))
+    g00, g01, g11 = (jnp.sum(w * v**k, axis=(-2, -1)) for k in (0, 1, 2))
+    return g00, g01, g11
 
 
-def profiled_views(precision):
+def profiled_views(precision: jax.Array) -> jax.Array:
     """Whether the profile removes each view's offset and ramp.
 
     A view whose ramp is not distinct from its offset (one measured row, or none) is left
@@ -48,7 +54,7 @@ def profiled_views(precision):
     return g00 * g11 - g01 * g01 > 1e-12 * jnp.maximum(g00 * g11, 1e-300)
 
 
-def shared_weights(precision):
+def shared_weights(precision: jax.Array) -> jax.Array:
     """The precision of the views the profile removes a level from.
 
     The others carry their shared part already, unprofiled.
@@ -57,14 +63,14 @@ def shared_weights(precision):
     return precision * keep.reshape((*keep.shape, 1, 1)).astype(precision.dtype)
 
 
-def moments(residual, precision):
+def moments(residual: jax.Array, precision: jax.Array) -> jax.Array:
     """The moments [sum w r, sum w v r] over the profiled views of residuals (view, v, u)."""
     w, r = shared_weights(precision).astype(jnp.float64), residual.astype(jnp.float64)
     v = rows(r.shape[-2])
     return jnp.stack([jnp.sum(w * r), jnp.sum(w * v * r)])
 
 
-def metric(precision):
+def metric(precision: jax.Array) -> jax.Array:
     """G, the Gram matrix of the whitened shared offset and ramp over the profiled views."""
     g00, g01, g11 = (jnp.sum(g) for g in view_grams(shared_weights(precision)))
     return jnp.array([[g00, g01], [g01, g11]])
@@ -84,22 +90,22 @@ class Common(NamedTuple):
     poses: jax.Array
     moments: jax.Array
 
-    def value(self, b=None):
+    def value(self, b: jax.Array | None = None) -> jax.Array:
         """0.5 b^T G^-1 b, at the state or at moments ``b``."""
         b = self.moments if b is None else b
         return 0.5 * jnp.vdot(b, self.inverse @ b)
 
-    def image(self, m):
+    def image(self, m: jax.Array) -> jax.Array:
         """sum_i m_i B_i, a volume."""
         return (m[0] * self.images[0] + m[1] * self.images[1]).astype(jnp.float32)
 
-    def of_image(self, v):
+    def of_image(self, v: jax.Array) -> jax.Array:
         """B v, the moments a volume step changes."""
         return jnp.stack([jnp.vdot(self.images[0], v), jnp.vdot(self.images[1], v)]).astype(
             jnp.float64
         )
 
-    def pose_score(self):
+    def pose_score(self) -> jax.Array:
         return self.poses.T @ (self.inverse @ self.moments)
 
 
@@ -113,10 +119,18 @@ class PoseSolve(NamedTuple):
     m: jax.Array
 
     @classmethod
-    def build(cls, solve, factor, common) -> "PoseSolve":
+    def build[FactorT](
+        cls, solve: Callable[[FactorT, jax.Array], jax.Array], factor: FactorT, common: Common
+    ) -> PoseSolve:
         z = jnp.stack([solve(factor, common.poses[0]), solve(factor, common.poses[1])])
         return cls(z, jnp.linalg.pinv(common.gram + common.poses @ z.T))
 
-    def __call__(self, solve, factor, common, g) -> jax.Array:
+    def __call__[FactorT](
+        self,
+        solve: Callable[[FactorT, jax.Array], jax.Array],
+        factor: FactorT,
+        common: Common,
+        g: jax.Array,
+    ) -> jax.Array:
         h = solve(factor, g)
         return h - self.z.T @ (self.m @ (common.poses @ h))

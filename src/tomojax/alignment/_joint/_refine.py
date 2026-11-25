@@ -11,7 +11,10 @@ where a view's non-geometric residual energy is ordinary for its neighbours,
 and lets an inconsistent view move.
 """
 
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -24,6 +27,45 @@ from tomojax.core.robust import MAD_TO_SD
 from ._operators import column_gram, column_score, robust_batch, robust_value
 from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from ._operators import AffineGeometry, IndexedViewBatch, Operators
+    from ._pose import MotionPrior
+    from ._solver import LevelRecord
+    from ._stacks import Place, StorageRecord
+
+type _EdgeInputs = tuple[
+    jax.Array | AffineGeometry,
+    jax.Array,
+    jax.Array,
+    jax.Array,
+    jax.Array | None,
+    jax.Array,
+    jax.Array | None,
+]
+type _Stats = tuple[jax.Array, jax.Array, jax.Array]
+type _RefinementStep = tuple[jax.Array, float, float, jax.Array, float]
+type _StepStatus = Literal["stationary", "pose_steps_below_tolerance", "line_search_stalled"]
+
+
+class _RefinementRecord(TypedDict):
+    status: str
+    steps: list[dict[str, float]]
+
+
+class _RefinementSettings(TypedDict):
+    iterations: int
+    neighbors: int
+    loss_width: NotRequired[float]
+
+
+class RefinementRecord(_RefinementRecord, total=False):
+    delta: float
+    seconds: float
+    stacks: StorageRecord
+
+
 # A smaller proposed step is converged: it cannot change the pose error, and
 # its decrease is below what the FP32 objective resolves, so backtracking on it
 # only spends objective evaluations.
@@ -31,7 +73,7 @@ _FP32_STEP_PX = 1e-4
 _LM_INITIAL = 0.01
 
 
-def _kernel(sigma):
+def _kernel(sigma: float) -> jax.Array:
     radius = max(1, int(np.ceil(3.0 * float(sigma))))
     t = np.arange(-radius, radius + 1, dtype=np.float64)
     k = np.exp(-0.5 * (t / float(sigma)) ** 2)
@@ -45,12 +87,12 @@ class EdgeFilter:
     the smoothed precision avoids artificial edges at masks and borders.
     """
 
-    def __init__(self, ratios, smoothing=8.0) -> None:
+    def __init__(self, ratios: tuple[float, float], smoothing: float = 8.0) -> None:
         """``smoothing`` is the local mean's width in native pixels; ``ratios`` scale it."""
         self.ku = _kernel(smoothing * ratios[0])
         self.kv = _kernel(smoothing * ratios[1])
 
-    def smooth(self, a):
+    def smooth(self, a: jax.Array) -> jax.Array:
         """Zero-extended separable Gaussian; symmetric, so its own transpose."""
         shape = a.shape
         x = a.reshape((-1, 1, *shape[-2:]))
@@ -66,7 +108,7 @@ class EdgeFilter:
             )
         return x.reshape(shape)
 
-    def forward(self, a, precision):
+    def forward(self, a: jax.Array, precision: jax.Array | np.ndarray) -> jax.Array:
         """H a."""
         p = jnp.asarray(precision, jnp.float32)
         m = p > 0
@@ -76,7 +118,7 @@ class EdgeFilter:
         den = jnp.maximum(self.smooth(p), jnp.finfo(jnp.float32).tiny)
         return jnp.where(m, a - self.smooth(p * a) / den, 0)
 
-    def transpose(self, z, precision):
+    def transpose(self, z: jax.Array, precision: jax.Array | np.ndarray) -> jax.Array:
         """H^T z."""
         p = jnp.asarray(precision, jnp.float32)
         m = p > 0
@@ -87,7 +129,9 @@ class EdgeFilter:
         return jnp.where(m, q - p * jnp.sum(q, axis=-1, keepdims=True) / rows, 0)
 
 
-def relative_precision(energy, sigma, neighbors=5):
+def relative_precision(
+    energy: jax.Array, sigma: float | jax.Array, neighbors: int = 5
+) -> jax.Array:
     """2 (B + s^2) / (B + E + 2 s^2), B the median energy of the neighbouring views.
 
     ``neighbors`` views on each side make B.
@@ -107,7 +151,7 @@ def relative_precision(energy, sigma, neighbors=5):
 class _EdgeObjective:
     """Batch-wise filtered residuals and columns; only per-view summaries survive."""
 
-    def __init__(self, ops, smoothing) -> None:
+    def __init__(self, ops: Operators, smoothing: float) -> None:
         self.ops = ops
         self.filter = EdgeFilter(ops.ratios, smoothing)
         self.stats = jax.jit(self._stats)
@@ -115,15 +159,15 @@ class _EdgeObjective:
         self.consistency = jax.jit(self._consistency)
         self.scale = jax.jit(self._scale)
 
-    def _batches(self, q):
+    def _batches(self, q: jax.Array) -> IndexedViewBatch:
         return (jnp.arange(self.ops.nb), *self.ops.views(q))
 
-    def _z(self, z, y, precision):
+    def _z(self, z: IndexedViewBatch, y: Stack, precision: Stack | None) -> _EdgeInputs:
         """One batch's geometry, data and precision, read from the level's stacks."""
-        i, *views = z
-        return (*views, y.read(i), self.ops.batch_of(precision, i))
+        i = z[0]
+        return (*z[1:], y.read(i), self.ops.batch_of(precision, i))
 
-    def _residual(self, z, x):
+    def _residual(self, z: _EdgeInputs, x: jax.Array) -> jax.Array:
         nominal, qb, valid, scales, frames, yy, w = z
         w = self.ops.batch_precision(w, valid)
         return self.filter.forward(
@@ -131,10 +175,17 @@ class _EdgeObjective:
             w,
         )
 
-    def _stats(self, q, x, y, precision, delta):
+    def _stats(
+        self,
+        q: jax.Array,
+        x: jax.Array,
+        y: Stack,
+        precision: Stack | None,
+        delta: float | jax.Array,
+    ) -> _Stats:
         o, h = self.ops, self.filter
 
-        def step(z):
+        def step(z: IndexedViewBatch) -> _Stats:
             nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
             raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
@@ -150,19 +201,28 @@ class _EdgeObjective:
             jnp.sum(energy),
         )
 
-    def _value(self, q, x, y, precision, delta):
-        def step(total, z):
-            z = self._z(z, y, precision)
-            w = self.ops.batch_precision(z[-1], z[2])
-            return total + robust_value(self._residual(z, x), w, delta), None
+    def _value(
+        self,
+        q: jax.Array,
+        x: jax.Array,
+        y: Stack,
+        precision: Stack | None,
+        delta: float | jax.Array,
+    ) -> jax.Array:
+        def step(total: jax.Array, z: IndexedViewBatch) -> tuple[jax.Array, None]:
+            inputs = self._z(z, y, precision)
+            w = self.ops.batch_precision(inputs[-1], inputs[2])
+            return total + robust_value(self._residual(inputs, x), w, delta), None
 
         return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), self._batches(q))[0]
 
-    def _consistency(self, q, x, y, precision):
+    def _consistency(
+        self, q: jax.Array, x: jax.Array, y: Stack, precision: Stack | None
+    ) -> jax.Array:
         """Per-view mean energy of the smooth residual left after the best pose step."""
         o, h = self.ops, self.filter
 
-        def step(z):
+        def step(z: IndexedViewBatch) -> jax.Array:
             nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
             raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
@@ -179,13 +239,13 @@ class _EdgeObjective:
 
         return jax.lax.map(step, self._batches(q)).reshape(-1)[: o.n]
 
-    def _scale(self, q, x, y, precision):
+    def _scale(self, q: jax.Array, x: jax.Array, y: Stack, precision: Stack | None) -> jax.Array:
         """Median over views of each view's MAD of the filtered residual."""
 
-        def step(z):
-            z = self._z(z, y, precision)
-            w = self.ops.batch_precision(z[-1], z[2])
-            r = jnp.where(w > 0, self._residual(z, x), jnp.nan)
+        def step(z: IndexedViewBatch) -> jax.Array:
+            inputs = self._z(z, y, precision)
+            w = self.ops.batch_precision(inputs[-1], inputs[2])
+            r = jnp.where(w > 0, self._residual(inputs, x), jnp.nan)
             med = jnp.nanmedian(r, axis=(-1, -2), keepdims=True)
             return MAD_TO_SD * jnp.nanmedian(jnp.abs(r - med), axis=(-1, -2))
 
@@ -196,7 +256,18 @@ class _Refinement:
     """The fixed-volume edge objective, its anchored prior and one damped step."""
 
     def __init__(
-        self, x, y, precision, prior, objective, ops, sigma, c0, *, loss_width, neighbors
+        self,
+        x: jax.Array,
+        y: Stack,
+        precision: Stack | None,
+        prior: MotionPrior,
+        objective: _EdgeObjective,
+        ops: Operators,
+        sigma: float,
+        c0: jax.Array,
+        *,
+        loss_width: float,
+        neighbors: int,
     ) -> None:
         self.x, self.y, self.precision = x, y, precision
         self.prior, self.ops, self.c0 = prior, ops, c0
@@ -214,18 +285,20 @@ class _Refinement:
         energy = self.objective.consistency(q, x, y, precision)
         self.anchor = relative_precision(energy, float(sigma), neighbors)[:, None, None] * gram
 
-    def penalty(self, c):
+    def penalty(self, c: jax.Array) -> jax.Array:
         """Motion prior plus the anchor towards the joint fit's poses."""
         d = self.prior.expand(c - self.c0)
         return self.prior.value(c, self.weight) + 0.5 * jnp.einsum("vi,vij,vj->", d, self.anchor, d)
 
-    def value(self, c):
+    def value(self, c: jax.Array) -> float:
         """The objective at pose parameters ``c``."""
         q = self.ops.pad_poses(c)
         data = self.objective.value(q, self.x, self.y, self.precision, self.delta)
         return float(data + self.penalty(c))
 
-    def step(self, c, stats, f, lm):
+    def step(
+        self, c: jax.Array, stats: _Stats, f: float, lm: float
+    ) -> _RefinementStep | _StepStatus:
         """Constrained Gauss-Newton with Armijo backtracking; damping x10 up to four times.
 
         A proposal no trial along which lowers the objective, and whose predicted decrease is
@@ -267,23 +340,23 @@ class _Refinement:
         return "line_search_stalled"
 
 
-def _rms(steps):
+def _rms(steps: jax.Array) -> float:
     return float(jnp.sqrt(jnp.mean(jnp.sum(steps**2, axis=1))))
 
 
 def refine(
-    x,
-    p,
-    y,
-    precision,
-    prior,
+    x: jax.Array,
+    p: jax.Array | np.ndarray,
+    y: np.ndarray | jax.Array,
+    precision: np.ndarray | jax.Array | None,
+    prior: MotionPrior,
     *,
-    ops,
-    sigma,
-    last=None,
-    placement=None,
-    config=None,
-):
+    ops: Operators,
+    sigma: float,
+    last: LevelRecord | None = None,
+    placement: Mapping[str, Place] | None = None,
+    config: AlignConfig | None = None,
+) -> tuple[jax.Array | np.ndarray, RefinementRecord, tuple[np.ndarray, np.ndarray]]:
     """Refine local innovations; the jointly fitted global values stay fixed.
 
     ``config`` (an ``AlignConfig``; None: its defaults) gives the steps at most
@@ -308,30 +381,41 @@ def refine(
     names = ("y", "precision")
     stacks = level_stacks(ops, y, precision, reserve=reserve, names=names, placement=placement)
     try:
-        y, precision = stacks["y"], stacks.get("precision")
+        data, weights = stacks["y"], stacks.get("precision")
+        record: RefinementRecord
         if prior.nlocal == 0 or iterations == 0:
             status = "no_local_parameters" if prior.nlocal == 0 else "off"
-            c, record = p, {"status": status, "steps": []}
+            c = p
+            record = {"status": status, "steps": []}
         else:
-            settings = {"iterations": iterations, "neighbors": config.refine_neighbors}
+            settings: _RefinementSettings = {
+                "iterations": iterations,
+                "neighbors": config.refine_neighbors,
+            }
             settings["loss_width"] = config.loss_width
             c, record = _refine(
-                x, p, y, precision, prior, objective, ops=ops, sigma=sigma, last=last, **settings
+                x, p, data, weights, prior, objective, ops=ops, sigma=sigma, last=last, **settings
             )
-        summary = ops.view_summary(ops.pad_poses(c), x, y, precision)
-        summary = tuple(np.asarray(a) for a in summary)
+        summary = ops.view_summary(ops.pad_poses(c), x, data, weights)
+        offsets, energy = (np.asarray(a) for a in summary)
     except jax.errors.JaxRuntimeError as err:
         if progress.handler_failed(err):
             raise
         raise unplaced(err, stacks) from err
     finally:
         stacks.close()
-    stacks_record = {**stacks.record(), "transients": transients}
+    stacks_record: StorageRecord = {**stacks.record(), "transients": transients}
     record = {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
-    return c, record, summary
+    return c, record, (offsets, energy)
 
 
-def _transients(objective, x, prior, ops, precision):
+def _transients(
+    objective: _EdgeObjective,
+    x: jax.Array,
+    prior: MotionPrior,
+    ops: Operators,
+    precision: np.ndarray | jax.Array | None,
+) -> dict[str, int]:
     """The temporary bytes of the stage's compiled functions, from their compiles here.
 
     Its stacks are resident in the compile; the calls later reuse it.
@@ -353,8 +437,20 @@ def _transients(objective, x, prior, ops, precision):
 
 
 def _refine(
-    x, p, y, precision, prior, objective, *, ops, sigma, last, iterations, neighbors, loss_width
-):
+    x: jax.Array,
+    p: jax.Array | np.ndarray,
+    y: Stack,
+    precision: Stack | None,
+    prior: MotionPrior,
+    objective: _EdgeObjective,
+    *,
+    ops: Operators,
+    sigma: float,
+    last: LevelRecord | None,
+    iterations: int,
+    neighbors: int,
+    loss_width: float,
+) -> tuple[jax.Array, RefinementRecord]:
     c = prior.project_gauge(jnp.asarray(p, jnp.float64).reshape(-1))
     problem = _Refinement(
         x, y, precision, prior, objective, ops, sigma, c, loss_width=loss_width, neighbors=neighbors

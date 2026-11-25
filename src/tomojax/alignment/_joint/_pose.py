@@ -8,8 +8,10 @@ use cyclic reduction with a small Woodbury border. Gauge constraints and
 shared calibration columns border either local factor.
 """
 
+from __future__ import annotations
+
 import math
-from typing import NamedTuple, cast
+from typing import TYPE_CHECKING, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -22,11 +24,21 @@ from tomojax.errors import device_out_of_memory
 from . import _spline, _spline_solve
 from ._stacks import temporaries
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from numpy.typing import ArrayLike
+
+    from ._parameters import Parameters
+
+type PoseWeight = float | tuple[float, float]
+type _PCRFactor = tuple[tuple[tuple[jax.Array, jax.Array], ...], jax.Array]
+
 # Standard deviation of the per-view rotation size prior.
 ROTATION_SIGMA_DEG = 0.5
 
 
-def _shift(a, offset):
+def _shift(a: jax.Array, offset: int) -> jax.Array:
     """out[i] = a[i + offset], zero filled."""
     n = a.shape[0]
     if abs(offset) >= n:
@@ -39,7 +51,7 @@ def _shift(a, offset):
     return jnp.pad(a[:offset], pads)
 
 
-def _inverse(blocks):
+def _inverse(blocks: jax.Array) -> jax.Array:
     """Small SPD block inverse, retaining the two-translation fit's direct arithmetic."""
     if blocks.shape[-1] == 1:
         return 1 / blocks
@@ -52,7 +64,7 @@ def _inverse(blocks):
     return jnp.linalg.inv(blocks)
 
 
-def _pcr_factor(diag, upper, lower):
+def _pcr_factor(diag: jax.Array, upper: jax.Array, lower: jax.Array) -> _PCRFactor:
     """Parallel cyclic reduction on the remaining short chain."""
     d, factors = diag, []
     for level in range(math.ceil(math.log2(len(diag)))):
@@ -67,7 +79,7 @@ def _pcr_factor(diag, upper, lower):
     return tuple(factors), _inverse(d)
 
 
-def _pcr_solve(factor, rhs):
+def _pcr_solve(factor: _PCRFactor, rhs: jax.Array) -> jax.Array:
     factors, inverse = factor
     vector = rhs.ndim == 2
     if vector:
@@ -80,11 +92,11 @@ def _pcr_solve(factor, rhs):
 
 
 class _Tridiagonal(NamedTuple):
-    levels: tuple
-    coarse: tuple
+    levels: tuple[tuple[jax.Array, jax.Array, jax.Array], ...]
+    coarse: _PCRFactor
 
     @classmethod
-    def build(cls, blocks, w) -> "_Tridiagonal":
+    def build(cls, blocks: jax.Array, w: jax.Array) -> _Tridiagonal:
         """Eliminate alternate views until ordinary parallel reduction fits in 512 rows."""
         kdiag = jnp.pad(w, ((0, 1), (0, 0))) + jnp.pad(w, ((1, 0), (0, 0)))
         diag = blocks + jax.vmap(jnp.diag)(kdiag)
@@ -103,7 +115,7 @@ class _Tridiagonal(NamedTuple):
         lower = _shift(upper.mT if levels else upper, -1)
         return cls(tuple(levels), _pcr_factor(diag, upper, lower))
 
-    def solve(self, rhs):
+    def solve(self, rhs: jax.Array) -> jax.Array:
         vector = rhs.ndim == 2
         rhs = rhs[..., None] if vector else rhs
         saved = []
@@ -126,10 +138,10 @@ class _Woodbury(NamedTuple):
     tri: _Tridiagonal
     b: jax.Array
     solved: jax.Array
-    lu: tuple | None
+    lu: tuple[jax.Array, jax.Array] | None
 
     @classmethod
-    def build(cls, tri, u, ku) -> "_Woodbury":
+    def build(cls, tri: _Tridiagonal, u: jax.Array, ku: jax.Array) -> _Woodbury:
         b = jnp.concatenate([u, ku], axis=1)
         k = u.shape[1]
         if k:
@@ -143,7 +155,7 @@ class _Woodbury(NamedTuple):
             ab, fac = b, None
         return cls(tri, b, ab, fac)
 
-    def solve(self, rhs):
+    def solve(self, rhs: jax.Array) -> jax.Array:
         k = self.tri.coarse[1].shape[-1]
         n = len(rhs) // k
         direct = self.tri.solve(rhs.reshape(n, k, *rhs.shape[1:])).reshape(rhs.shape)
@@ -152,6 +164,12 @@ class _Woodbury(NamedTuple):
             if self.lu is not None
             else direct
         )
+
+
+type _LocalFactor = tuple[_Woodbury | _spline_solve.Factor, jax.Array, jax.Array | None, jax.Array]
+type PoseFactor = tuple[_LocalFactor | None, jax.Array, jax.Array, jax.Array | None]
+# eval_shape preserves the factor's tuple tree and replaces its leaves with shapes.
+type FactorShape = tuple[jax.ShapeDtypeStruct | FactorShape | None, ...]
 
 
 class ViewOrder:
@@ -164,7 +182,7 @@ class ViewOrder:
     the median gap, so a regular selection has unit steps.
     """
 
-    def __init__(self, views, positions=None) -> None:
+    def __init__(self, views: int, positions: ArrayLike | None = None) -> None:
         self.n = int(views)
         if positions is None:
             gaps = np.ones(max(self.n - 1, 0))
@@ -179,15 +197,20 @@ class ViewOrder:
         starts = np.r_[0, np.flatnonzero(~self.linked) + 1]
         self.segments = list(zip(starts, np.r_[starts[1:], self.n], strict=True))
 
-    def spline_design(self, spacing):
+    def spline_design(self, spacing: int) -> sparse.csr_array | sparse.csr_matrix:
         """Block-diagonal drift design: one spline per acquisition segment."""
         blocks = []
         for start, stop in self.segments:
             steps = np.r_[0.0, np.cumsum(self.steps[start : stop - 1])]
             blocks.append(_spline.sampled(steps, spacing))
-        return blocks[0] if len(blocks) == 1 else sparse.block_diag(blocks, format="csr")
+        design = blocks[0] if len(blocks) == 1 else sparse.block_diag(blocks, format="csr")
+        if TYPE_CHECKING:
+            assert isinstance(design, sparse.csr_array | sparse.csr_matrix)
+        return design
 
-    def drift(self, spacing, translated):
+    def drift(
+        self, spacing: Sequence[int], translated: Sequence[bool] | np.ndarray
+    ) -> tuple[np.ndarray, _spline.Drift | None]:
         """The explicit basis for a narrow knot border or the interval decomposition."""
         views, nlocal = self.n, len(spacing)
         # A bounded knot border costs O(views), even for a long acquisition.
@@ -196,7 +219,11 @@ class ViewOrder:
             s: self.spline_design(s) for s in {s for i, s in enumerate(spacing) if translated[i]}
         }
         axes = [(i, designs[s]) for i, s in enumerate(spacing) if translated[i]]
-        widths = [cast("tuple[int,int]", b.shape)[1] for _, b in axes]
+        widths = []
+        for _, b in axes:
+            if TYPE_CHECKING:
+                assert b.shape is not None
+            widths.append(b.shape[1])
         empty = np.empty((views * nlocal, 0))
         if not axes:
             return empty, None
@@ -214,20 +241,23 @@ class ViewOrder:
                 u = _orthonormal_columns(sampled)
             return u, None
         columns = [sparse.kron(b, np.eye(nlocal)[:, [i]], format="csr") for i, b in axes]
-        return empty, _spline.Drift.build(sparse.hstack(columns, format="csr"), views, nlocal)
+        design = sparse.hstack(columns, format="csr")
+        if TYPE_CHECKING:
+            assert isinstance(design, sparse.csr_array | sparse.csr_matrix)
+        return empty, _spline.Drift.build(design, views, nlocal)
 
     @property
-    def jump_scale(self):
+    def jump_scale(self) -> np.ndarray:
         """Per link: 1/sqrt(steps), so a jump over n steps counts as n steps would; 0 unlinked."""
         return np.where(self.linked, 1 / np.sqrt(np.where(self.linked, self.steps, 1.0)), 0.0)
 
     @property
-    def edge_scale(self):
+    def edge_scale(self) -> np.ndarray:
         """Per link: 1/steps, the precision of an n-step difference; 0 unlinked."""
         return np.where(self.linked, 1 / np.where(self.linked, self.steps, 1.0), 0.0)
 
 
-def _orthonormal_columns(matrix):
+def _orthonormal_columns(matrix: np.ndarray) -> np.ndarray:
     """An orthonormal basis without null or repeated constraint columns."""
     matrix = np.asarray(matrix, np.float64)
     if not matrix.size:
@@ -284,11 +314,11 @@ class MotionPrior:
         knot_spacing: tuple[int, ...],
         delta: float,
         independent: bool = False,
-        parameters=None,
-        rotation_scales=None,
-        noise_sigma=0.0,
-        rotation_sigma_deg=ROTATION_SIGMA_DEG,
-        order=None,
+        parameters: Parameters | None = None,
+        rotation_scales: ArrayLike | None = None,
+        noise_sigma: float = 0.0,
+        rotation_sigma_deg: float = ROTATION_SIGMA_DEG,
+        order: ViewOrder | None = None,
     ) -> None:
         self.parameters, self.n = parameters, views
         self.order = order = ViewOrder(views) if order is None else order
@@ -375,7 +405,7 @@ class MotionPrior:
         # solve's compiled program without bringing a matrix into it as a constant.
         self.solve = jax.jit(self._solve)
 
-    def _factor_arguments(self):
+    def _factor_arguments(self) -> tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct, FactorShape]:
         """The factor's arguments but the matrices, and its result, as shapes."""
         m = self.matrices
         p = jax.ShapeDtypeStruct((self.size,), m.U.dtype)
@@ -383,12 +413,12 @@ class MotionPrior:
         blocks = jax.ShapeDtypeStruct((self.n, self.k, self.k), m.U.dtype)
         return blocks, w, jax.eval_shape(self._factor, m, blocks, w)
 
-    def factor_shapes(self):
+    def factor_shapes(self) -> FactorShape:
         """The factor's arrays as shapes (``factor``), for a buffer to hold it."""
         with jax.enable_x64(self.matrices.U.dtype == jnp.float64):
             return self._factor_arguments()[2]
 
-    def temporaries(self, name="factor") -> int:
+    def temporaries(self, name: Literal["factor", "innovation_solve"] = "factor") -> int:
         """The temporary bytes of ``factor`` (into a buffer) or ``innovation_solve``, compiled.
 
         Their calls reuse the compile.
@@ -399,38 +429,38 @@ class MotionPrior:
             return temporaries(self._compiled[name], self.matrices, blocks, w, last)
 
     @property
-    def U(self):
+    def U(self) -> jax.Array:
         """The Woodbury solver's explicit orthonormal drift columns."""
         return self.matrices.U
 
     @property
-    def G(self):
+    def G(self) -> jax.Array:
         """The gauge constraints' rows (local rows by gauge directions)."""
         return self.matrices.G
 
     @property
-    def C(self):
+    def C(self) -> jax.Array:
         """The explicit innovation constraints. The tree fixes drift internally."""
         return self.matrices.C
 
     @property
-    def rotation_precision(self):
+    def rotation_precision(self) -> jax.Array:
         """The rotation increments' size precision, per local row."""
         return self.matrices.rotation_precision
 
-    def value(self, p, weight):
+    def value(self, p: jax.Array, weight: PoseWeight) -> jax.Array:
         """The prior's value at compact poses ``p`` with motion weight ``weight``."""
         return self._compiled["value"](self.matrices, p, weight)
 
-    def weights(self, p, weight):
+    def weights(self, p: jax.Array, weight: PoseWeight) -> jax.Array:
         """Per link and local column, the IRLS weights at ``p``."""
         return self._compiled["weights"](self.matrices, p, weight)
 
-    def apply(self, p, w):
+    def apply(self, p: jax.Array, w: jax.Array) -> jax.Array:
         """The prior's quadratic form at weights ``w`` applied to ``p``."""
         return self._compiled["apply"](self.matrices, p, w)
 
-    def factor(self, blocks, w, out=None):
+    def factor(self, blocks: jax.Array, w: jax.Array, out: PoseFactor | None = None) -> PoseFactor:
         """The pose normal system with the prior at weights ``w``, factored for ``solve``.
 
         Raises
@@ -450,42 +480,42 @@ class MotionPrior:
                 "and the device has none. Align fewer views or use a GPU with more memory"
             ) from err
 
-    def innovation_solve(self, blocks, w, rhs):
+    def innovation_solve(self, blocks: jax.Array, w: jax.Array, rhs: jax.Array) -> jax.Array:
         """The local innovation step with drift, gauge and globals held."""
         return self._compiled["innovation_solve"](self.matrices, blocks, w, rhs)
 
-    def project_gauge(self, state):
+    def project_gauge(self, state: jax.Array) -> jax.Array:
         """``state`` with its gauge coordinates fixed by the constraints."""
         return self._compiled["project_gauge"](self.matrices, state)
 
-    def expand(self, state):
+    def expand(self, state: jax.Array | np.ndarray) -> jax.Array:
         """Projector rows with one shared value per global coordinate."""
         if self.parameters is None:
             return jnp.asarray(state).reshape(self.n, self.k)
         return self.parameters.expand(state)
 
-    def reduce_score(self, rows):
+    def reduce_score(self, rows: jax.Array | np.ndarray) -> jax.Array:
         """Transpose of the parameter broadcast."""
         if self.parameters is None:
             return jnp.asarray(rows).reshape(-1)
         return self.parameters.reduce_score(rows)
 
-    def _project_gauge(self, m, state):
+    def _project_gauge(self, m: PriorMatrices, state: jax.Array) -> jax.Array:
         local = state[: self.local_size]
         local = local - m.gauge_step @ (m.G.T @ local)
         return jnp.concatenate([local, state[self.local_size :]])
 
-    def _residual(self, m, p):
+    def _residual(self, m: PriorMatrices, p: jax.Array) -> jax.Array:
         if m.chain is None:
             return p - m.U @ (m.U.T @ p)
         return m.chain.residual(p.reshape(self.n, self.nlocal, 1)).reshape(-1)
 
-    def _squared_jumps(self, m, p):
+    def _squared_jumps(self, m: PriorMatrices, p: jax.Array) -> jax.Array:
         residual = self._residual(m, p[: self.local_size]).reshape(self.n, self.nlocal)
         jumps = jnp.diff(residual, axis=0) * self.translation_mask * self.order.jump_scale[:, None]
         return jnp.sum(jumps**2, axis=1)
 
-    def _weights(self, m, p, weight):
+    def _weights(self, m: PriorMatrices, p: jax.Array, weight: PoseWeight) -> jax.Array:
         """Per link and local column: robust for translations, constant for rotations."""
         if self.independent:  # no term ties a view to its neighbours
             return jnp.zeros_like(jnp.asarray(self.order.edge_scale)[:, None] * self.rotation_mask)
@@ -495,7 +525,7 @@ class MotionPrior:
         rotation = turn_weight / self.delta * self.rotation_mask
         return edge * (robust * self.translation_mask + rotation)
 
-    def _value(self, m, p, weight):
+    def _value(self, m: PriorMatrices, p: jax.Array, weight: PoseWeight) -> jax.Array:
         if self.independent:  # the rotations' size prior alone
             return 0.5 * jnp.sum(m.rotation_precision * p[: self.local_size] ** 2)
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
@@ -505,7 +535,7 @@ class MotionPrior:
         size = m.rotation_precision * p[: self.local_size] ** 2
         return jumps + 0.5 * (turn_weight / self.delta * jnp.sum(turns**2) + jnp.sum(size))
 
-    def _laplacian(self, p, w):
+    def _laplacian(self, p: jax.Array, w: jax.Array) -> jax.Array:
         shape = p.shape
         p = p.reshape((self.n, self.nlocal, *shape[1:]))
         weights = w.reshape((*w.shape, *((1,) * (p.ndim - 2))))
@@ -516,12 +546,14 @@ class MotionPrior:
         pad[0] = (1, 0)
         return (jnp.pad(dif, pad) - left).reshape(shape)
 
-    def _apply(self, m, p, w):
+    def _apply(self, m: PriorMatrices, p: jax.Array, w: jax.Array) -> jax.Array:
         local = p[: self.local_size]
         jump = self._residual(m, self._laplacian(self._residual(m, local), w))
         return jnp.concatenate([jump + m.rotation_precision * local, jnp.zeros(self.nglobal)])
 
-    def _local_factor(self, m, blocks, w, *, innovation=False):
+    def _local_factor(
+        self, m: PriorMatrices, blocks: jax.Array, w: jax.Array, *, innovation: bool = False
+    ) -> _LocalFactor:
         blocks = blocks[:, : self.nlocal, : self.nlocal]
         blocks = blocks + jax.vmap(jnp.diag)(m.rotation_precision.reshape(self.n, self.nlocal))
         if m.chain is None:
@@ -536,29 +568,49 @@ class MotionPrior:
         chol = jnp.linalg.cholesky((gram + gram.T) * 0.5) if g.shape[1] else None
         return base, hg, chol, g
 
-    def _local_solve(self, factor, rhs):
+    def _local_solve(self, factor: _LocalFactor, rhs: jax.Array) -> jax.Array:
         base, hg, chol, g = factor
         result = base.solve(rhs)
-        return result - hg @ cho_solve((chol, True), g.T @ result) if g.shape[1] else result
+        if g.shape[1]:
+            if TYPE_CHECKING:
+                assert chol is not None
+            return result - hg @ cho_solve((chol, True), g.T @ result)
+        return result
 
-    def _factor(self, m, blocks, w, _out=None):
+    def _factor(
+        self, m: PriorMatrices, blocks: jax.Array, w: jax.Array, _out: PoseFactor | None = None
+    ) -> PoseFactor:
         """The factor, written into ``_out`` (donated, unread) when given."""
         local = self._local_factor(m, blocks, w) if self.nlocal else None
         border = blocks[:, : self.nlocal, self.nlocal :].reshape(self.local_size, self.nglobal)
-        solved = self._local_solve(local, border) if self.nlocal and self.nglobal else border
+        if self.nlocal and self.nglobal:
+            if TYPE_CHECKING:
+                assert local is not None
+            solved = self._local_solve(local, border)
+        else:
+            solved = border
         schur = jnp.sum(blocks[:, self.nlocal :, self.nlocal :], axis=0) - border.T @ solved
         chol = jnp.linalg.cholesky((schur + schur.T) * 0.5) if self.nglobal else None
         return local, border, solved, chol
 
-    def _solve(self, factor, rhs):
+    def _solve(self, factor: PoseFactor, rhs: jax.Array) -> jax.Array:
         local, border, solved, chol = factor
-        direct = self._local_solve(local, rhs[: self.local_size]) if self.nlocal else rhs[:0]
+        if self.nlocal:
+            if TYPE_CHECKING:
+                assert local is not None
+            direct = self._local_solve(local, rhs[: self.local_size])
+        else:
+            direct = rhs[:0]
         if not self.nglobal:
             return direct
+        if TYPE_CHECKING:
+            assert chol is not None
         shared = cho_solve((chol, True), rhs[self.local_size :] - border.T @ direct)
         return jnp.concatenate([direct - solved @ shared, shared])
 
-    def _innovation_solve(self, m, blocks, w, rhs):
+    def _innovation_solve(
+        self, m: PriorMatrices, blocks: jax.Array, w: jax.Array, rhs: jax.Array
+    ) -> jax.Array:
         """Exact local innovation step with drift, rigid gauge and globals held."""
         if not self.nlocal:
             return jnp.zeros_like(rhs)

@@ -7,7 +7,9 @@ for a cone beam, lab y translation. ``scales`` converts each numerical parameter
 to radians or physical lengths; it may vary by view.
 """
 
-from typing import NamedTuple, overload
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal, NamedTuple, overload
 
 import jax
 import jax.numpy as jnp
@@ -29,6 +31,12 @@ from tomojax.core.joseph import (
     sum_backproject_planes,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from tomojax.alignment._config import Interpolation
+    from tomojax.core.geometry.base import Detector, Grid
+
 
 class Coefficients(NamedTuple):
     """Ray coefficients and the padded-view mask."""
@@ -37,7 +45,7 @@ class Coefficients(NamedTuple):
     valid: jax.Array
 
 
-def posed(nominal, q, scales):
+def posed(nominal: jax.Array, q: jax.Array, scales: jax.Array) -> jax.Array:
     """Apply scaled 5/6-DOF corrections to world-from-object nominal poses.
 
     ``q`` has columns alpha, beta, phi, x, z, and optionally y. Rotations are
@@ -61,7 +69,7 @@ def posed(nominal, q, scales):
     return out.at[:, :3, 3].add(shift.astype(nominal.dtype))
 
 
-def rigid_gauge(nominal, scales):
+def rigid_gauge(nominal: np.ndarray | jax.Array, scales: np.ndarray | jax.Array) -> np.ndarray:
     """Parameter tangents of the six common rigid object-coordinate changes.
 
     This is the gauge at zero correction. For a right rigid coordinate change
@@ -78,7 +86,12 @@ def rigid_gauge(nominal, scales):
     return out.reshape(n * k, 6)
 
 
-def shared_axis_patterns(nominal, scales, fit, pivot):
+def shared_axis_patterns(
+    nominal: np.ndarray | jax.Array,
+    scales: np.ndarray | jax.Array,
+    fit: Sequence[str],
+    pivot: tuple[float, float],
+) -> np.ndarray | None:
     """Per-view pose tangents that a fitted tilt or roll can also be written as.
 
     A tilt turns every nominal orientation R by a lab ``Rx``: in the object frame
@@ -112,7 +125,13 @@ def shared_axis_patterns(nominal, scales, fit, pivot):
     return np.column_stack(columns) if columns else None
 
 
-def fit_gauge(nominal, scales, fit, pivot, frames=None):
+def fit_gauge(
+    nominal: np.ndarray | jax.Array,
+    scales: np.ndarray | jax.Array,
+    fit: Sequence[str],
+    pivot: tuple[float, float],
+    frames: np.ndarray | jax.Array | None = None,
+) -> tuple[np.ndarray, np.ndarray | None]:
     """The fit's gauge columns and their constraint rows (None for parallel beams).
 
     The rigid object motions (:func:`rigid_gauge`, or :func:`cone_gauge` with its
@@ -132,7 +151,9 @@ def fit_gauge(nominal, scales, fit, pivot, frames=None):
     return gauge, constraint
 
 
-def cone_gauge(nominal, scales, frames):
+def cone_gauge(
+    nominal: np.ndarray | jax.Array, scales: np.ndarray | jax.Array, frames: np.ndarray | jax.Array
+) -> np.ndarray:
     """Rigid object gauge plus the cone's unobservable common physical scale.
 
     With an unknown image and free beam-depth poses, scaling the image support
@@ -149,7 +170,9 @@ def cone_gauge(nominal, scales, frames):
     return np.column_stack([rigid_gauge(nominal, scales), dilation.reshape(-1)])
 
 
-def cone_gauge_constraint(nominal, scales, frames):
+def cone_gauge_constraint(
+    nominal: np.ndarray | jax.Array, scales: np.ndarray | jax.Array, frames: np.ndarray | jax.Array
+) -> np.ndarray:
     """Rows fixing :func:`cone_gauge`: the rigid tangents and the mean beam depth.
 
     The scale is fixed by keeping the views' mean object displacement along
@@ -169,7 +192,12 @@ def cone_gauge_constraint(nominal, scales, frames):
     return np.column_stack([rigid_gauge(nominal, scales), depth.reshape(-1)])
 
 
-def cone_parameter_scales(nominal, frames, grid, native):
+def cone_parameter_scales(
+    nominal: np.ndarray | jax.Array,
+    frames: np.ndarray | jax.Array,
+    grid: Grid,
+    native: tuple[float, float],
+) -> np.ndarray:
     """Six physical increments that each move the volume by about one native pixel.
 
     The geometry-only scale is the reciprocal RMS detector displacement of a
@@ -213,7 +241,9 @@ def cone_parameter_scales(nominal, frames, grid, native):
     return 1 / rms
 
 
-def cropped_frames(frames, detector, *, high_u, high_v):
+def cropped_frames(
+    frames: np.ndarray, detector: Detector, *, high_u: int, high_v: int
+) -> np.ndarray:
     """Cone frames after removing high-index detector columns/rows.
 
     Binning the remaining complete blocks keeps this physical centre. A roll
@@ -231,7 +261,7 @@ def cropped_frames(frames, detector, *, high_u, high_v):
 def residual_filter(images: np.ndarray) -> np.ndarray: ...
 @overload
 def residual_filter(images: jax.Array) -> jax.Array: ...
-def residual_filter(images):
+def residual_filter(images: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
     """K = [1, 2, 1] / 4 along u and along v of (..., v, u) images, the edges replicated.
 
     The alignment compares its model with the data through K at every level: the
@@ -246,7 +276,7 @@ def residual_filter(images):
     """
     xp = np if isinstance(images, np.ndarray) else jnp  # host data stay on the host
 
-    def along(a, axis):
+    def along(a: np.ndarray | jax.Array, axis: int) -> np.ndarray | jax.Array:
         n = a.shape[axis]
         if n == 1:
             return a
@@ -262,7 +292,7 @@ def residual_filter(images):
     return along(along(images, images.ndim - 1), images.ndim - 2)
 
 
-def filtered_precision(precision):
+def filtered_precision(precision: np.ndarray | None) -> np.ndarray | None:
     """The precision of K-filtered data: zero wherever a tap of K falls on an unmeasured pixel.
 
     K mixes each pixel with its neighbours, so a filtered sample is known only where all
@@ -295,12 +325,12 @@ class Projection:
 
     def __init__(
         self,
-        grid,
-        detector,
+        grid: Grid,
+        detector: Detector,
         *,
-        cone=False,
-        backend=None,
-        interpolation="linear",
+        cone: bool = False,
+        backend: Literal["cuda", "jax"] | None = None,
+        interpolation: Interpolation | None = "linear",
     ) -> None:
         if interpolation not in {"linear", "cubic"}:
             raise ValueError("joint plane interpolation must be 'linear' or 'cubic'")
@@ -313,7 +343,7 @@ class Projection:
         self.backend = backend or ("cuda" if cuda_backend() else "jax")
         self.diagonal_kind = "normal_row_sum" if self.cone else "normal_diagonal"
 
-    def raw_coefficients(self, poses, frames=None):
+    def raw_coefficients(self, poses: jax.Array, frames: jax.Array | None = None) -> jax.Array:
         """Unmasked core coefficients; their pose derivative excludes the mask."""
         if self.cone:
             if frames is None:
@@ -321,15 +351,19 @@ class Projection:
             return frame_coefficients(poses, frames, self.grid, self.detector)
         return plane_coefficients(poses, self.grid, self.detector)
 
-    def coefficients(self, poses, valid, frames=None):
+    def coefficients(
+        self, poses: jax.Array, valid: jax.Array, frames: jax.Array | None = None
+    ) -> Coefficients:
         """Keep padding as an explicit mask; cone ray coordinates stay physical."""
         return Coefficients(self.raw_coefficients(poses, frames), jnp.asarray(valid, jnp.bool_))
 
-    def tangent(self, nominal, q, scales, frames=None):
+    def tangent(
+        self, nominal: jax.Array, q: jax.Array, scales: jax.Array, frames: jax.Array | None = None
+    ) -> jax.Array:
         """Exact coefficient derivatives, (views, dofs, coefficients), at ``q``."""
         scales = jnp.broadcast_to(jnp.asarray(scales, q.dtype), q.shape)
 
-        def one(n, p, scale, frame):
+        def one(n: jax.Array, p: jax.Array, scale: jax.Array, frame: jax.Array | None) -> jax.Array:
             return self.raw_coefficients(posed(n[None], p[None], scale), frame)[0]
 
         columns = jax.vmap(
@@ -337,7 +371,9 @@ class Projection:
         )(nominal, q, scales, frames)
         return jnp.swapaxes(columns, 1, 2)
 
-    def project(self, cf, x, *, absolute=False, z_fast=False):
+    def project(
+        self, cf: Coefficients, x: jax.Array, *, absolute: bool = False, z_fast: bool = False
+    ) -> jax.Array:
         """Apply A, or |A| for bounds. A z-fast plane volume has shape (nx, ny, nz)."""
         if self.cone:
             image = cone_project(x, cf.rays, self.grid, self.detector, backend=self.backend)
@@ -354,13 +390,21 @@ class Projection:
             )
         return residual_filter(image) * cf.valid[:, None, None]
 
-    def active(self, mask):
+    def active(self, mask: jax.Array) -> tuple[jax.Array, ...] | None:
         """Work lists for ``back`` when only the nonzero ``mask`` voxels are needed."""
         if self.cone:
             return None
         return active_voxels(mask, backend=self.backend, interpolation=self.interpolation)
 
-    def back(self, accumulator, cf, y, *, absolute=False, active=None):
+    def back(
+        self,
+        accumulator: jax.Array | None,
+        cf: Coefficients,
+        y: jax.Array,
+        *,
+        absolute: bool = False,
+        active: tuple[jax.Array, ...] | None = None,
+    ) -> jax.Array:
         """Accumulate A.T y (or |A|.T y) over the valid views.
 
         With ``active`` lists, voxels outside their mask may lack the transpose.
@@ -387,7 +431,7 @@ class Projection:
             active=active,
         )
 
-    def columns(self, cf, x, tangent):
+    def columns(self, cf: Coefficients, x: jax.Array, tangent: jax.Array) -> jax.Array:
         """Prediction and its pose columns, (views, 1 + dofs, v, u)."""
         if not self.cone:
             images = plane_pose_columns(
@@ -405,7 +449,7 @@ class Projection:
             )
         else:
 
-            def predict(coeff):
+            def predict(coeff: jax.Array) -> jax.Array:
                 return cone_project(x, coeff, self.grid, self.detector, backend="jax")
 
             columns = jax.vmap(
@@ -414,7 +458,9 @@ class Projection:
             images = jnp.concatenate([predict(cf.rays)[:, None], columns], axis=1)
         return residual_filter(images) * cf.valid[:, None, None, None]
 
-    def diagonal(self, cf, sqrtweights, accumulator):
+    def diagonal(
+        self, cf: Coefficients, sqrtweights: jax.Array, accumulator: jax.Array
+    ) -> jax.Array:
         """Accumulate a positive image preconditioner, preserving the image operator.
 
         Parallel rays use the exact ``diag(A.T W A)`` of their own linear or
@@ -438,7 +484,9 @@ class Projection:
             )
         return self.majorizer(cf, weights, accumulator)
 
-    def majorizer(self, cf, sqrtweights, accumulator):
+    def majorizer(
+        self, cf: Coefficients, sqrtweights: jax.Array, accumulator: jax.Array
+    ) -> jax.Array:
         """Accumulate (K |A|).T W (K |A|) 1, bounding (K A).T W (K A).
 
         Cubic interpolation has signed lobes. Using A.T W A 1 instead would

@@ -12,18 +12,27 @@ T = A - B Hxx^-1 Hxz and J = B Hxx^-1 B.T carry right-hand sides: send T.T b
 up the tree, and return J b + T z down it. At a leaf these maps give poses.
 """
 
-from typing import NamedTuple
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, NamedTuple
 
 import jax
 import jax.numpy as jnp
 
+if TYPE_CHECKING:
+    import numpy as np
 
-def _columns(a, start, width):
+    from ._spline import Drift
+
+
+def _columns(a: jax.Array | np.ndarray, start: int, width: int) -> jax.Array:
     """Embed a coordinate map at its columns of the joint system."""
     return jnp.pad(a, ((0, 0), (0, 0), (start, width - start - a.shape[-1])))
 
 
-def _eliminate(h, nx, coordinates):
+def _eliminate(
+    h: jax.Array, nx: int, coordinates: jax.Array
+) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
     a, coupling = h[:, :nx, :nx], h[:, :nx, nx:]
     # Pose coefficients and dual link forces have reciprocal physical
     # scalings. Equilibrate the pivot before factoring it so changing the
@@ -39,7 +48,7 @@ def _eliminate(h, nx, coordinates):
     return schur, (transfer, response)
 
 
-def factor(tree, blocks, w, innovation):
+def factor(tree: Drift, blocks: jax.Array, w: jax.Array, innovation: bool | np.bool_) -> Factor:
     """Factor the pose normal system, or restrict it to innovation alone."""
     k = blocks.shape[-1]
     edge = jnp.pad(w, ((0, 1), (0, 0)))
@@ -97,11 +106,11 @@ def factor(tree, blocks, w, innovation):
 
 
 class Factor(NamedTuple):
-    maps: tuple
-    views: jax.Array
-    unpack: jax.Array
+    maps: tuple[tuple[jax.Array, jax.Array], ...]
+    views: jax.Array | np.ndarray
+    unpack: jax.Array | np.ndarray
 
-    def solve(self, rhs):
+    def solve(self, rhs: jax.Array) -> jax.Array:
         """Apply the inverse using precomputed transfers and local responses."""
         maps, views, unpack = self
         cols = 1 if rhs.ndim == 1 else rhs.shape[1]

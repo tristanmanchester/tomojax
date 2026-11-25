@@ -16,10 +16,12 @@ right at Nyquist. Image TV is off by default, so the fit imposes no shape prefer
 on weak geometry modes.
 """
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass
 import math
 import time
-from typing import cast
+from typing import TYPE_CHECKING, TypedDict
 
 import jax
 import numpy as np
@@ -47,11 +49,66 @@ from ._refine import refine
 from ._report import axial as axial_geometry, build as build_report
 from ._solver import Budget, solve
 
+if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
+    from numpy.typing import ArrayLike
+
+    from ._noise import ProjectionSource
+    from ._parameters import CalibrationCorrections
+    from ._refine import RefinementRecord
+    from ._report import AlignmentReport
+    from ._solver import LevelRecord
+    from ._stacks import Place
+
+    class _LevelCalibration(TypedDict):
+        tv_weight: float
+        eps: float
+        delta: _DataScale
+        sigma: _DataScale
+        scale: _DataScale
+        scales: tuple[float, float, float]
+
+    class FitLevelRecord(LevelRecord):
+        binning: int
+        grid: dict[str, object]
+
+    class _RefineStage(TypedDict):
+        ops: Operators
+        sigma: float
+        last: LevelRecord
+        placement: Mapping[str, Place] | None
+
+    class FitRecord(TypedDict):
+        fit: list[str]
+        calibration: CalibrationCorrections
+        config: dict[str, object]
+        working_grid: dict[str, object]
+        detector_binning: int
+        lever: float
+        ray_geometry: str
+        pose_columns: list[str]
+        image_preconditioner: str
+        noise_estimator: str
+        motion_penalty: str
+        gauge: str
+        trimmed_pixels: dict[str, int]
+        levels: list[FitLevelRecord]
+        refinement: RefinementRecord
+        offsets: list[list[float]]
+        report: AlignmentReport
+        seconds: float
+
+
+type _Binned = tuple[np.ndarray, np.ndarray | None]
+type _DataScale = float | np.float64
+
+
 # Every number a user may set is a field of AlignConfig. The active model is the same at
 # every level; held coordinates have neither unknowns nor derivative columns.
 
 
-def _resized(grid, shape_xyz):
+def _resized(grid: Grid, shape_xyz: tuple[int, ...]) -> Grid:
     """``grid`` resampled to ``shape_xyz`` cells over the same six cell faces."""
     old = np.asarray((grid.nx, grid.ny, grid.nz))
     new = np.asarray(shape_xyz, dtype=int)
@@ -63,7 +120,7 @@ def _resized(grid, shape_xyz):
     )
 
 
-def _magnification(poses, frames):
+def _magnification(poses: np.ndarray | None, frames: np.ndarray | None) -> float:
     """Least detector over object distance along the detector normal; 1 for parallel rays.
 
     The least magnification gives the widest pixel footprint at the object, so
@@ -71,13 +128,15 @@ def _magnification(poses, frames):
     """
     if frames is None:
         return 1.0
+    if TYPE_CHECKING:
+        assert poses is not None
     normal = np.cross(frames[:, 1], frames[:, 2])
     distance = np.einsum("ni,ni->n", frames[:, 0] - frames[:, 3], normal)
     depth = np.einsum("ni,ni->n", poses[:, :3, 3] - frames[:, 3], normal)
     return float(np.min(distance / depth))
 
 
-def _padded(grid, bins, margin):
+def _padded(grid: Grid, bins: Sequence[int], margin: float) -> tuple[Grid, int]:
     """``grid`` extended along z past each end, and the cells added at each end.
 
     Moving views bring material from above and below the field into the outer
@@ -102,7 +161,9 @@ def _padded(grid, bins, margin):
     return extended, cells
 
 
-def _read(measured, bins, views_per_batch=16):
+def _read(
+    measured: ProjectionSource, bins: Sequence[int], views_per_batch: int = 16
+) -> tuple[list[_Binned], _DataScale, float]:
     """What the levels take from the frames, in one front-to-back pass over them.
 
     Returns each binning's block means over complete b x b pixel blocks and observed
@@ -143,7 +204,7 @@ def _read(measured, bins, views_per_batch=16):
     return binned, scale, sd
 
 
-def _capped_contrast(y, rms, precision):
+def _capped_contrast(y: np.ndarray, rms: float, precision: np.ndarray | None) -> float:
     """The contrast RMS, capped at three central interdecile scales of offset-free samples."""
     total = y.size
     rng = np.random.default_rng(19871)
@@ -163,23 +224,23 @@ def _capped_contrast(y, rms, precision):
 
 
 def _level(
-    binned,
-    scale,
-    noise,
-    poses,
-    g,
-    detector,
-    center,
-    total_bin,
+    binned: _Binned,
+    scale: _DataScale,
+    noise: float,
+    poses: np.ndarray,
+    g: Grid,
+    detector: Detector,
+    center: tuple[float, float],
+    total_bin: int,
     *,
-    lever,
-    native,
-    frames=None,
-    scales=None,
-    parameters=None,
-    detector_roll=0.0,
-    config,
-):
+    lever: float,
+    native: tuple[float, float],
+    frames: np.ndarray | None = None,
+    scales: np.ndarray | None = None,
+    parameters: Parameters | None = None,
+    detector_roll: float = 0.0,
+    config: AlignConfig,
+) -> tuple[np.ndarray, np.ndarray | None, Grid, Operators, _LevelCalibration]:
     """Observations, grid, operators and calibration at one binning.
 
     The observations are multiplied by a power of two bringing them near one,
@@ -226,13 +287,13 @@ def _level(
         native=native,
         frames=frames,
         scales=scales,
-        interpolation=cast("str", config.interpolation),  # resolved by fit_poses
+        interpolation=config.interpolation,  # resolved by fit_poses
         parameters=parameters,
         detector_roll=detector_roll,
         detector_pivot=detector.center,
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
-    calibration = {
+    calibration: _LevelCalibration = {
         "tv_weight": float(metric.weight_over_contrast) * contrast,
         "eps": max(1e-8, config.image_tv_huber * contrast * h / float(metric.length_scale) ** 2),
         "delta": max(config.loss_width * sigma, config.loss_contrast_floor * contrast, 1e-8),
@@ -243,13 +304,20 @@ def _level(
     return y, precision, g, ops, calibration
 
 
-def _finest(grid):
+def _finest(grid: Grid) -> float:
     """The finest voxel pitch along axes with more than one cell."""
     pitches = ((grid.nx, grid.vx), (grid.ny, grid.vy), (grid.nz, grid.vz))
     return min((h for n, h in pitches if n > 1), default=math.inf)
 
 
-def working_scale(grid, detector, *, keep_grid=False, magnification=1.0, config=None):
+def working_scale(
+    grid: Grid,
+    detector: Detector,
+    *,
+    keep_grid: bool = False,
+    magnification: float = 1.0,
+    config: AlignConfig | None = None,
+) -> tuple[Grid, int, tuple[int, ...]]:
     """The bounded working grid, the detector binning and each level's binning.
 
     The grid keeps its six cell faces and has at most ``config.max_voxels`` cells,
@@ -298,9 +366,20 @@ class FitSchedule:
     levels: tuple[FitLevel, ...]
 
 
-def fit_schedule(grid, detector, poses, frames, *, keep_grid, config):
+def fit_schedule(
+    grid: Grid,
+    detector: Detector,
+    poses: np.ndarray | None,
+    frames: np.ndarray | None,
+    *,
+    keep_grid: bool,
+    config: AlignConfig,
+) -> FitSchedule:
     """Plan from declared poses, independent of the current fitted corrections."""
-    frames = None if frames is None else np.broadcast_to(frames, (len(poses), 4, 3))
+    if frames is not None:
+        if TYPE_CHECKING:
+            assert poses is not None
+        frames = np.broadcast_to(frames, (len(poses), 4, 3))
     base, dbin, bins = working_scale(
         grid,
         detector,
@@ -321,7 +400,13 @@ def fit_schedule(grid, detector, poses, frames, *, keep_grid, config):
     return FitSchedule(base, dbin, margin, levels)
 
 
-def _physical_frame(poses, grid, native, lever, frames):
+def _physical_frame(
+    poses: np.ndarray,
+    grid: Grid,
+    native: tuple[float, float],
+    lever: float,
+    frames: ArrayLike | jax.Array | None,
+) -> tuple[np.ndarray, np.ndarray | None]:
     """The pose scales, and the per-view lab frame for cone-beam scans."""
     if frames is None:
         validate_physical_poses(poses, "tj.align", rigid=True)
@@ -333,21 +418,21 @@ def _physical_frame(poses, grid, native, lever, frames):
 
 
 def fit_poses(
-    projections,
-    nominal_poses,
-    grid,
-    detector,
+    projections: ArrayLike | jax.Array,
+    nominal_poses: ArrayLike | jax.Array,
+    grid: Grid,
+    detector: Detector,
     *,
-    fit=("translations",),
-    keep_grid=False,
-    frames=None,
-    detector_roll=0.0,
-    view_positions=None,
-    declared_poses=None,
-    schedule=None,
-    placement=None,
-    config=None,
-):
+    fit: str | tuple[str, ...] = ("translations",),
+    keep_grid: bool = False,
+    frames: ArrayLike | jax.Array | None = None,
+    detector_roll: float = 0.0,
+    view_positions: ArrayLike | None = None,
+    declared_poses: np.ndarray | None = None,
+    schedule: FitSchedule | None = None,
+    placement: Mapping[str, Place] | None = None,
+    config: AlignConfig | None = None,
+) -> tuple[jax.Array, Grid, np.ndarray | None, FitRecord]:
     """Fit a volume and the selected geometry parameters to line-integral projections.
 
     ``projections`` are (views, nv, nu), NaN where unobserved; ``nominal_poses``
@@ -418,7 +503,7 @@ def fit_poses(
         x = p = None
         order = ViewOrder(len(y0), view_positions)
         prior = None
-        levels = []
+        levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(measured, bins)
         for level in schedule.levels:
             with (
@@ -485,7 +570,14 @@ def fit_poses(
                 )
         assert x is not None  # every schedule has at least one level
         assert prior is not None
-        stage = {"ops": ops, "sigma": cal["sigma"], "last": levels[-1], "placement": placement}
+        if TYPE_CHECKING:
+            assert p is not None
+        stage: _RefineStage = {
+            "ops": ops,
+            "sigma": cal["sigma"],
+            "last": levels[-1],
+            "placement": placement,
+        }
         total = config.refine_iterations if prior.nlocal else 0
         with scaled_images(scale), progress.task("refine", "refine poses", total, "updates"):
             p, refinement, (offsets, energy) = refine(
@@ -493,7 +585,7 @@ def fit_poses(
             )
         table, changes = parameters.physical(np.asarray(p, np.float64), pose_scales)
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])
-    record = {
+    info: FitRecord = {
         "fit": list(parameters.fit),
         "calibration": changes,
         "config": asdict(config),
@@ -531,4 +623,4 @@ def fit_poses(
         ),
         "seconds": time.perf_counter() - started,
     }
-    return x, base, table if parameters.local else None, record
+    return x, base, table if parameters.local else None, info
