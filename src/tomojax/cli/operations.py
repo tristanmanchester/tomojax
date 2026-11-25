@@ -123,7 +123,7 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
 class AlignSettings(Record, tag="align", kw_only=True):
     """Return geometry-corrected scan and fitted pose table."""
 
-    fit: str | tuple[str, ...] = "translations"
+    fit: str | tuple[str, ...] | None = None
     grid: w.Grid | None = None
     region: Region | None = None
     method: AlignMethod | None = None

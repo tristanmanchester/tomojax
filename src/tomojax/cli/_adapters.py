@@ -27,6 +27,7 @@ from tomojax._smooth_alignment import resolve_alignment
 from tomojax._workflow import (
     align_resolved,
     alignment_from_record,
+    alignment_task,
     reconstruct_resolved,
     reconstruction_from_record,
     simulation_from_record,
@@ -398,13 +399,8 @@ class Admission:
             alignment = resolve_alignment(scan, **options)
 
             def apply_alignment() -> tj.Alignment:
-                with progress.task(
-                    "align",
-                    ", ".join(operation.fit) if isinstance(operation.fit, tuple) else operation.fit,
-                    None,
-                    "fit",
-                ):
-                    return align_resolved(scan, operation.fit, alignment)
+                with alignment_task(operation.method, operation.fit):
+                    return align_resolved(scan, alignment)
 
             compute = apply_alignment
             work = alignment

@@ -89,7 +89,7 @@ Binning reduces detector resolution without changing a recorded reconstruction g
 import tomojax as tj
 
 scan = tj.load_frames("raw.nxs").selected(slice(None, None, 4)).corrected(binning=8)
-scan = tj.align(scan, fit="center", method="opposite-views").scan
+scan = tj.align(scan, method="opposite-views").scan
 d = scan.detector
 grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))

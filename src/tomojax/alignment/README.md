@@ -8,4 +8,4 @@ The line search compares each pose trial against the image-only trial at the sam
 
 A pyramid level stops after two consecutive small geometry updates (following at least `min_iterations` steps) when damping is at or below its starting value. Step size is measured before line-search scaling.
 
-`tomojax.alignment.api` also exposes the projection-only centre estimator and its diagnostic report (used by `tj.align(..., fit="center", method="opposite-views")`).
+`tomojax.alignment.api` also exposes the projection-only centre estimator and its diagnostic report (used by `tj.align(..., method="opposite-views")`).

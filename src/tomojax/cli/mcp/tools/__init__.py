@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, get_args
 from mcp_types import CallToolResult, ImageContent, ResourceLink, TextContent
 import msgspec
 
+from tomojax._parameters import method_fit
 from tomojax.cli import operations as op, wire_options as w
 from tomojax.cli.mcp.guidance import operation_parameters
 from tomojax.cli.mcp.supervisor import WorkerError, activity
@@ -502,8 +503,11 @@ class Tools:
             reply.content.append(
                 ResourceLink(type="resource_link", uri=path.as_uri(), name=path.name)
             )
-        if command["type"] in ("align", "reconstruct"):
-            await seeing.default_panels(self, data, reply, fit=command.get("fit", ()))
+        if command["type"] == "align":
+            fit = method_fit(command.get("method"), command.get("fit"))
+            await seeing.default_panels(self, data, reply, fit=fit)
+        elif command["type"] == "reconstruct":
+            await seeing.default_panels(self, data, reply, fit=())
         return reply
 
     def publish_handle(

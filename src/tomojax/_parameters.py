@@ -19,6 +19,17 @@ type TiltAbout = Literal["x", "z"]
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
 
 
+def method_fit(method: str | None, fit: str | tuple[str, ...] | None) -> tuple[str, ...]:
+    """The fit selection as a tuple of names; None selects the method's own fit.
+
+    Opposite views fit the centre alone; the joint fit (the default method) fits
+    per-view translations.
+    """
+    if fit is None:
+        return ("center",) if method == "opposite-views" else ("translations",)
+    return (fit,) if isinstance(fit, str) else fit
+
+
 def check_backend(backend: str, context: str) -> None:
     """Check the backend vocabulary before querying any device."""
     if backend not in get_args(ProjectorBackend.__value__):

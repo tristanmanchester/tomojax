@@ -360,11 +360,16 @@ def test_reconstruction_preserves_region_evidence_and_rejects_mismatched_scan(cy
         tj.reconstruct(other_scan, region=estimate)
 
 
-def test_opposite_views_records_method_and_rejects_joint_options(cylinder_scan):
+def test_opposite_views_fits_the_centre_and_rejects_other_fits_and_joint_options(cylinder_scan):
     with pytest.raises(ValueError, match="opposite-views.*iterations"):
-        tj.align(cylinder_scan, method="opposite-views", fit="center", iterations=3)
-    result = tj.align(cylinder_scan, method="opposite-views", fit="center")
-    assert result.info["method"] == "opposite-views"
+        tj.align(cylinder_scan, method="opposite-views", iterations=3)
+    for fit in ("translations", ("center", "tilt")):
+        with pytest.raises(tj.InvalidParameter, match="fit"):
+            tj.align(cylinder_scan, method="opposite-views", fit=fit)
+    result = tj.align(cylinder_scan, method="opposite-views")
+    assert result.info["method"] == "opposite-views" and result.info["fit"] == ["center"]
+    explicit = tj.align(cylinder_scan, method="opposite-views", fit="center")
+    assert explicit.scan.detector.center == result.scan.detector.center
 
 
 @pytest.mark.filterwarnings("ignore:tj.align.*views fit unusually badly:UserWarning")
@@ -372,7 +377,9 @@ def test_joint_alignment_masks_image_outside_cylinder(cylinder_scan, cylinder_ma
     from tomojax.alignment import AlignConfig
 
     config = AlignConfig(levels=(1,), iterations=1, image_iterations=2)
-    full = tj.align(cylinder_scan, config=config).image
+    joint = tj.align(cylinder_scan, config=config)
+    assert joint.info["fit"] == ["translations"]  # the joint method's own fit
+    full = joint.image
     result = tj.align(cylinder_scan, config=config, region="cyl")
     assert np.any(np.asarray(full)[:, ~cylinder_mask] != 0.0)
     np.testing.assert_allclose(result.image, np.where(cylinder_mask, full, 0), atol=1e-6)

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
+  `tomojax align --method opposite-views` and the worker's `align` operation fit the centre
+  without `fit="center"`; joint alignment still defaults to `"translations"`.
+
 ## 1.0.0rc5 (2026-11-25)
 
 Synthetic scans support random per-view translations (`translation_sigma`,

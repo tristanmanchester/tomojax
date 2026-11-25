@@ -255,9 +255,8 @@ def test_combined_scan_keeps_repeated_parents_and_alignment_exposes_scan(worker)
     assert result["manifest"]["inputs"] == [cone["manifest"], cone["manifest"]]
     # An opposite-view centre fit is defined for axial parallel scans.
     parallel = output(worker("run", operation={**recipe, "geometry": "parallel", "rotation": 360}))
-    fit = dict(
-        type="align", source=parallel["value"]["scan"], fit="center", method="opposite-views"
-    )
+    # Opposite views fit the centre without being told to.
+    fit = dict(type="align", source=parallel["value"]["scan"], method="opposite-views")
     assert output(worker("plan", operation=fit))["value"]["pairs"] > 0
     alignment = output(worker("run", operation=fit))
     poses = alignment["value"]["poses"]

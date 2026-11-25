@@ -28,7 +28,15 @@ import numpy as np
 
 from tomojax import _typed_arrays, progress, recon
 from tomojax._loading import Frames, load
-from tomojax._parameters import AlignMethod, AnnotationModule, Filter, Fit, Method, RegionName
+from tomojax._parameters import (
+    AlignMethod,
+    AnnotationModule,
+    Filter,
+    Fit,
+    Method,
+    RegionName,
+    method_fit,
+)
 from tomojax._scan import (
     Alignment,
     Reconstruction,
@@ -922,7 +930,7 @@ def _estimate_center(scan: Scan, selection: CentreSelection) -> tuple[Scan, dict
 def align(
     scan: Scan,
     *,
-    fit: Fit | tuple[Fit, ...] = "translations",
+    fit: Fit | tuple[Fit, ...] | None = None,
     grid: Grid | None = None,
     region: Region | None = None,
     method: AlignMethod | None = None,
@@ -952,7 +960,7 @@ def align(
     poses are preserved and the fitted correction is composed with them. The
     returned scan carries both calibrated global geometry and local poses, so
     reconstructing or saving it preserves the fitted ray geometry. "opposite-views"
-    fits ``fit="center"`` alone, without an image, from near-opposite views of an
+    fits the centre alone, without an image, from near-opposite views of an
     unposed axial parallel scan (within two degrees): a quick estimate from
     row-wise gradient correlations, which can be ambiguous for repetitive
     structure and records its pair diagnostics in ``info``.
@@ -962,7 +970,8 @@ def align(
     scan : Scan
         Measured line integrals with their declared acquisition geometry.
     fit : str or tuple of str, optional
-        Parameters to fit. Defaults to ``"translations"``.
+        Parameters to fit. None fits the method's own: ``"translations"`` for
+        "joint" and ``"center"`` for "opposite-views".
     grid : Grid or None, optional
         Reconstruction region and sampling. None uses a bounded working grid
         with the scan's physical field of view; an explicit grid is kept.
@@ -1014,7 +1023,7 @@ def align(
     """
     from tomojax._smooth_alignment import resolve_alignment
 
-    with alignment_task(fit):
+    with alignment_task(method, fit):
         plan = resolve_alignment(
             scan,
             fit=fit,
@@ -1029,18 +1038,18 @@ def align(
             resolution=resolution,
             config=config,
         )
-        return align_resolved(scan, fit, plan)
+        return align_resolved(scan, plan)
 
 
-def alignment_task(fit: str | tuple[str, ...]) -> AbstractContextManager[None]:
+def alignment_task(
+    method: str | None, fit: str | tuple[str, ...] | None
+) -> AbstractContextManager[None]:
     """The outer progress task of one alignment, around its resolution and its fit."""
-    label = ", ".join(map(str, fit)) if isinstance(fit, tuple) else str(fit)
+    label = ", ".join(map(str, method_fit(method, fit)))
     return progress.task("align", label, None, "fit")
 
 
-def align_resolved(
-    scan: Scan, fit: str | tuple[str, ...], plan: CentreSelection | JointSelection
-) -> Alignment:
+def align_resolved(scan: Scan, plan: CentreSelection | JointSelection) -> Alignment:
     """Execute the selected centre or joint-image fit."""
     from tomojax._smooth_alignment import CentreSelection, align_poses
 
@@ -1052,7 +1061,7 @@ def align_resolved(
         )
     radius = None if plan.cylinder is None else plan.cylinder.radius
     with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
-        result = align_poses(scan, fit=fit, plan=plan)
+        result = align_poses(scan, plan)
     slabbed = any(
         "host" in level["stacks"]["placement"].values()
         for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))

@@ -891,6 +891,9 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
 
     plan = document()
     assert plan["output_path"] is None and plan["method"] == "joint"
+    assert plan["fit"] == ["translations"]
+    centre = document("--method", "opposite-views")
+    assert centre["type"] == "opposite_views_plan" and centre["fit"] == ["center"]
     assert plan["bounded_working_grid"] is True
     assert plan["type"] == "joint_plan" and plan["config"]["levels"]
     assert document("--region", "auto")["bounded_working_grid"] is False
@@ -918,8 +921,6 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
                 str(out),
                 "--method",
                 "opposite-views",
-                "--fit",
-                "center",
                 "--manifest",
                 str(manifest),
             ]
@@ -928,7 +929,7 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
     )
     assert "Shared corrections  center" in capsys.readouterr().out
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
-    assert resolved["method"] == "opposite-views"
+    assert resolved["method"] == "opposite-views" and resolved["fit"] == ["center"]
     assert "explicit_cli_keys" in resolved and "effective_options" in resolved
 
 
