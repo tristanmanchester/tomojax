@@ -72,7 +72,7 @@ def scan():
 @pytest.mark.parametrize("kind", [progress.Started, progress.Advanced, progress.Finished])
 def test_handler_exception_is_the_last_delivery(kind):
     events = []
-    failure = RuntimeError("out of memory")
+    failure = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def handler(event):
         events.append(event)
@@ -393,7 +393,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
 
     before = mapped_files()
     workers = set(threading.enumerate())
-    failure_object = RuntimeError("out of memory")
+    failure_object = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
     token = progress.Control()
     events = []
 
@@ -529,7 +529,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
 
     events = []
     token = progress.Control()
-    problem = RuntimeError("out of memory")
+    problem = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def observe(event):
         json.dumps(progress.to_json(event), allow_nan=False)
@@ -898,7 +898,7 @@ def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
     detector = tj.Detector(7, 11, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, np.arange(7))
     events, reads = [], []
-    error = RuntimeError("out of memory")
+    error = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
 
     def read(first, stop):
         reads.append((first, stop))
@@ -910,7 +910,7 @@ def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
         if isinstance(event, progress.Advanced):
             raise error
 
-    slabs = api.reconstruct_slabs("sirt", geometry, grid, detector, read, config=SIRTConfig())
+    slabs = api.reconstruct_slabs(geometry, grid, detector, read, config=SIRTConfig())
     with progress.watch(observe), closing(slabs), pytest.raises(RuntimeError) as failure:
         next(slabs)
     validate_tree(events, interrupted=True)

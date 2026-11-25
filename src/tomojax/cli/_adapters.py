@@ -524,8 +524,8 @@ class Admission:
                 omit=("source", "path", "force"),
                 layout_only=self.validating,
             )
-            grid, _, _ = slab_settings(item, **settings)
-            validate_slab_grid(operation.method, item.geometry, grid, item.geometry.detector)
+            grid, cfg, _ = slab_settings(item, **settings)
+            validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
             path = Path(operation.path)
             if dataset_output_format(path) != "hdf5":
                 raise InvalidParameter(

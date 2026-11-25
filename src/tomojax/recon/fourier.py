@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, replace
 import operator
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
@@ -70,6 +70,8 @@ class FourierConfig:
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["fourier"]] = "fourier"
 
     slices_per_batch: int | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"

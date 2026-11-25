@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import TYPE_CHECKING, Any, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
 
 import jax
 import jax.numpy as jnp
@@ -93,6 +93,8 @@ class SIRTConfig:
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["sirt"]] = "sirt"
 
     iterations: int = 50
     subsets: int = 1

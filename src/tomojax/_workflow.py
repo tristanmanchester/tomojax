@@ -735,14 +735,14 @@ def slab_settings(
 
     cone = is_cone_beam(frames.geometry)
     cfg = method_config(method, config=config, warm_start=warm_start)
-    if method not in {"fbp", "fourier", "sirt", "mlem"} or not (
-        type(frames.geometry) is ParallelGeometry or (cone and method == "fbp")
+    if cfg.method not in {"fbp", "fourier", "sirt", "mlem"} or not (
+        type(frames.geometry) is ParallelGeometry or (cone and cfg.method == "fbp")
     ):
         raise InvalidParameter(
             "method", "reconstruct_slabs requires cone FBP or unposed axial FBP/Fourier/SIRT/MLEM"
         )
     target = frames.geometry.grid if grid is None else grid
-    validate_reconstruction(method, frames.geometry, target, cfg, warm_start=bool(warm_start))
+    validate_reconstruction(frames.geometry, target, cfg, warm_start=bool(warm_start))
     bound = bind_step_geometry(corrections, frames.geometry)
     slab_steps(bound)
     positive_finite(epsilon, "epsilon")
@@ -762,10 +762,10 @@ def _reconstruct_slabs_context(
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     from tomojax.corrections.api import corrected_row_source
     from tomojax.geometry.api import is_cone_beam
-    from tomojax.recon.api import reconstruct_slabs as array_slabs
+    from tomojax.recon.api import reconstruct_slabs as array_slabs, solver_name
 
     cone = is_cone_beam(frames.geometry)
-    with progress.task("reconstruct", "fdk" if cone else method, None, "slabs"):
+    with progress.task("reconstruct", solver_name(method, frames.geometry), None, "slabs"):
         target, cfg, bound = slab_settings(
             frames,
             method,
@@ -796,7 +796,6 @@ def _reconstruct_slabs_context(
                 return corrected.projections, corrected
 
             completed = array_slabs(
-                method,
                 frames.geometry,
                 target,
                 frames.geometry.detector,

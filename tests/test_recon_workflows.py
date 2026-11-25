@@ -4,6 +4,7 @@ from dataclasses import dataclass, replace
 import importlib
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -225,13 +226,13 @@ def test_fbp_halves_view_batches_after_a_cufft_scratch_failure(monkeypatch):
 
     def fail(*args, **kwargs):
         calls.append(kwargs["batch_size"])
-        raise RuntimeError(
+        raise jax.errors.JaxRuntimeError(
             "INTERNAL: RET_CHECK failure (fft_thunk.cc:201) fft_plan != nullptr "
             "Failed to create cuFFT batched plan with scratch allocator"
         )
 
     monkeypatch.setattr(module, "_run_fbp_streamed", fail)
-    with pytest.raises(RuntimeError, match="Failed to create cuFFT"):
+    with pytest.raises(jax.errors.JaxRuntimeError, match="Failed to create cuFFT"):
         fbp(geometry, grid, detector, jnp.ones((4, 4, 4)))
     assert calls == [4, 2, 1]
 

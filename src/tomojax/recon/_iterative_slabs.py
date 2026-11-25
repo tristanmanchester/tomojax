@@ -27,7 +27,6 @@ def iterative_slabs[T](
     detector: Detector,
     read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
     *,
-    method: str,
     config: SIRTConfig | MLEMConfig,
     warm_start: bool = False,
 ) -> Generator[ReconstructionSlab[T], None, None]:
@@ -40,7 +39,7 @@ def iterative_slabs[T](
     """
     from .api import validate_slab_grid
 
-    validate_slab_grid(method, geometry, grid, detector)
+    validate_slab_grid(config, geometry, grid, detector)
     origin = grid_volume_origin(grid)
     free = device_free_memory_bytes()
     per_row = 4 * (
@@ -71,7 +70,7 @@ def iterative_slabs[T](
             if support is not None and np.ndim(support) == 3 and np.shape(support)[0] != 1:
                 support = support[start:stop]
             result, info = reconstruct_arrays(
-                method,
+                config.method,
                 local_geometry,
                 local_grid,
                 local_detector,

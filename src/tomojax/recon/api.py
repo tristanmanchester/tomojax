@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from tomojax.recon.fbp import FBPConfig, default_fbp_scale
     from tomojax.recon.filters import clear_filter_caches
     from tomojax.recon.fista_tv import FISTAConfig
-    from tomojax.recon.fourier import FourierConfig
     from tomojax.recon.mlem import MLEMConfig
     from tomojax.recon.sirt import SIRTConfig
     from tomojax.recon.spdhg_tv import SPDHGConfig
@@ -125,7 +124,7 @@ def method_config(
         raise InvalidParameter(
             "method", f"method must be one of {', '.join(_CONFIGS)}; got {method!r}"
         )
-    kind = cast("type[MethodConfig]", getattr(recon, name))
+    kind: type[MethodConfig] = getattr(recon, name)
     if warm_start and method in {"fbp", "fourier"}:
         raise InvalidParameter("warm_start", f"method {method!r} does not take warm_start")
     if config is not None and not isinstance(config, kind):
@@ -178,12 +177,31 @@ def _replace_settings(base: MethodConfig, settings: dict[str, object]) -> Method
         raise InvalidParameter(f"config.{err.path}", str(err)) from err
 
 
+def solver_name(method: str, geometry: Geometry) -> str:
+    """Return the method as users name it: FDK for a cone-beam FBP.
+
+    Parameters
+    ----------
+    method : str
+        Reconstruction method, as :func:`method_config` takes it.
+    geometry : Geometry
+        Acquisition the method reconstructs.
+
+    Returns
+    -------
+    str
+        ``"fdk"`` for FBP of a cone-beam geometry, otherwise ``method``.
+    """
+    from tomojax.core.geometry.cone import is_cone_beam
+
+    return "fdk" if method == "fbp" and is_cone_beam(geometry) else method
+
+
 class AngularCoverageError(InvalidParameter):
     """The resolved cone acquisition does not cover the angles needed for FDK."""
 
 
 def validate_reconstruction(
-    method: str,
     geometry: ScanGeometry,
     grid: Grid,
     config: MethodConfig,
@@ -197,14 +215,12 @@ def validate_reconstruction(
 
     Parameters
     ----------
-    method : str
-        Resolved reconstruction method.
     geometry : ScanGeometry
         Calibrated views and detector.
     grid : Grid
         Working volume grid.
     config : MethodConfig
-        Settings for the resolved method.
+        Settings for the resolved method; its class names the method.
     warm_start : bool, optional
         Initialise an iterative solve with filtered backprojection.
     axial_index : int or None, optional
@@ -226,8 +242,9 @@ def validate_reconstruction(
         validate_optional_same_shape,
     )
 
+    method = config.method
     validate_angles(geometry, method)
-    _check_solver_inputs(method, geometry, config, projections, check_samples=check_samples)
+    _check_solver_inputs(geometry, config, projections, check_samples=check_samples)
     views = len(geometry.angles)
     if subsets := getattr(config, "subsets", None):
         from tomojax.errors import within
@@ -238,7 +255,7 @@ def validate_reconstruction(
     try:
         check_support = (
             validate_optional_same_shape
-            if method == "sirt"
+            if config.method == "sirt"
             else validate_optional_broadcastable_shape
         )
         check_support(
@@ -250,22 +267,20 @@ def validate_reconstruction(
         )
     except ValueError as err:
         raise InvalidParameter("config.support", str(err)) from err
-    if (warm_start or method == "fbp") and is_cone_beam(geometry):
+    if (warm_start or config.method == "fbp") and is_cone_beam(geometry):
         from tomojax.recon.fdk import check_angular_coverage
 
-        if method == "fbp":
-            fdk_config(cast("FBPConfig", config))
+        if config.method == "fbp":
+            fdk_config(config)
         try:
             check_angular_coverage(geometry, geometry.detector, views)
         except ValueError as err:
             raise AngularCoverageError("warm_start" if warm_start else "method", str(err)) from err
-    if method == "fista" and projections is not None:
+    if config.method == "fista" and projections is not None:
         from tomojax.recon._fista_host import check_fista_storage
 
-        check_fista_storage(
-            geometry, grid, projections, cast("FISTAConfig", config), warm_start=warm_start
-        )
-    if method == "fbp" and projections is not None and check_samples:
+        check_fista_storage(geometry, grid, projections, config, warm_start=warm_start)
+    if config.method == "fbp" and projections is not None and check_samples:
         from tomojax.recon._fbp_storage import check_host_fbp_samples
 
         check_host_fbp_samples(
@@ -273,17 +288,16 @@ def validate_reconstruction(
             grid,
             geometry.detector,
             projections,
-            cast("FBPConfig", config),
+            config,
             axial_index=axial_index,
         )
-    if method == "fourier":
+    if config.method == "fourier":
         from tomojax.recon.fourier import check_fourier_inputs
 
         check_fourier_inputs(geometry, grid, projections, check_samples=check_samples)
 
 
 def _check_solver_inputs(
-    method: str,
     geometry: ScanGeometry,
     config: MethodConfig,
     projections: jnp.ndarray | np.ndarray | None,
@@ -293,6 +307,7 @@ def _check_solver_inputs(
     """Check interpolation, accelerator placement and measured values for this inverse."""
     from tomojax.core.geometry.cone import is_cone_beam
 
+    method = config.method
     if method != "fourier":
         from tomojax.core.geometry.views import host_view_poses, stack_view_poses
         from tomojax.core.validation import validate_physical_poses, validate_pose_stack
@@ -305,10 +320,10 @@ def _check_solver_inputs(
         except ValueError as err:
             raise InvalidParameter("source", str(err)) from err
         validate_physical_poses(poses, method, rigid=method != "fbp" and not is_cone_beam(geometry))
-    if method == "cgls":
+    if config.method == "cgls":
         from tomojax.recon.cgls import check_cgls_geometry
 
-        check_cgls_geometry(geometry, cast("CGLSConfig", config).interpolation)
+        check_cgls_geometry(geometry, config.interpolation)
     if config.backend == "cuda":
         import jax
 
@@ -318,7 +333,7 @@ def _check_solver_inputs(
         reconstruction_backend(
             config.backend,
             cone=cone,
-            context="fdk" if method == "fbp" and cone else method,
+            context=solver_name(method, geometry),
             devices=projections.devices()
             if method == "fbp" and isinstance(projections, jax.Array)
             else None,
@@ -333,13 +348,15 @@ def _check_solver_inputs(
         resolve_fourier_backend(config.backend)
 
 
-def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: Detector) -> None:
+def validate_slab_grid(
+    config: MethodConfig, geometry: Geometry, grid: Grid, detector: Detector
+) -> None:
     """Check that iterative raw reconstruction uses independent axial planes.
 
     Parameters
     ----------
-    method : str
-        Slab method.
+    config : MethodConfig
+        Settings of the slab method.
     geometry : Geometry
         Acquisition geometry.
     grid : Grid
@@ -352,7 +369,7 @@ def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: De
     InvalidParameter
         If a voxel plane depends on multiple detector rows in an iterative solve.
     """
-    if method in {"sirt", "mlem"} and not getattr(geometry, "detector_roll", 0):
+    if config.method in {"sirt", "mlem"} and not getattr(geometry, "detector_roll", 0):
         from tomojax.recon._axial_slabs import independent_planes
 
         if not independent_planes(geometry, grid, detector):
@@ -364,7 +381,6 @@ def validate_slab_grid(method: str, geometry: Geometry, grid: Grid, detector: De
 
 
 def reconstruct_slabs[T](
-    method: str,
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -377,8 +393,6 @@ def reconstruct_slabs[T](
 
     Parameters
     ----------
-    method : {'fbp', 'fourier', 'sirt', 'mlem'}
-        Reconstruction method.
     geometry : Geometry
         Cone-beam FDK or unposed axial parallel-beam geometry.
     grid : Grid
@@ -389,7 +403,8 @@ def reconstruct_slabs[T](
         ``read(first_row, stop_row)`` returning corrected rows and the producer's
         context for that interval.
     config : MethodConfig
-        Method configuration, as for ``tomojax.reconstruct``.
+        Configuration of an FBP, Fourier, SIRT or MLEM reconstruction, as for
+        ``tomojax.reconstruct``; its class names the method.
     warm_start : bool, optional
         Start SIRT/OSEM from FBP. Default is False.
 
@@ -403,62 +418,49 @@ def reconstruct_slabs[T](
     ValueError
         If the method or a setting does not support slabs.
     """
-    cfg = method_config(method, config=config, warm_start=warm_start or None)
+    cfg = method_config(config.method, config=config, warm_start=warm_start or None)
     from tomojax.geometry import ParallelGeometry
 
     if (
-        method in {"fbp", "sirt", "mlem"}
+        cfg.method in {"fbp", "sirt", "mlem"}
         and isinstance(geometry, ParallelGeometry)
         and geometry.detector_roll
     ):
-        return _coupled_detector_volume(
-            method, geometry, grid, detector, read, cfg, warm_start=warm_start
-        )
-    if method in {"fbp", "fourier"}:
-        if method == "fbp":
+        return _coupled_detector_volume(geometry, grid, detector, read, cfg, warm_start=warm_start)
+    match cfg.method:
+        case "fbp":
             from tomojax.core.geometry.cone import is_cone_beam
 
             if is_cone_beam(geometry):
                 from .fdk import fdk_slabs
 
-                return fdk_slabs(
-                    geometry, grid, detector, read, config=fdk_config(cast("FBPConfig", cfg))
-                )
+                return fdk_slabs(geometry, grid, detector, read, config=fdk_config(cfg))
             from .fbp_host import fbp_slabs
 
-            return fbp_slabs(
-                cast("ParallelGeometry", geometry),
-                grid,
-                detector,
-                read,
-                config=cast("FBPConfig", cfg),
+            return fbp_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+        case "fourier":
+            from ._fourier_stream import fourier_slabs
+
+            return fourier_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+        case "sirt" | "mlem":
+            from ._iterative_slabs import iterative_slabs
+
+            return iterative_slabs(
+                _parallel(geometry), grid, detector, read, config=cfg, warm_start=warm_start
             )
-        from ._fourier_stream import fourier_slabs
+        case _:
+            raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
 
-        return fourier_slabs(
-            cast("ParallelGeometry", geometry),
-            grid,
-            detector,
-            read,
-            config=cast("FourierConfig", cfg),
-        )
-    if method not in {"sirt", "mlem"}:
-        raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
-    from ._iterative_slabs import iterative_slabs
 
-    return iterative_slabs(
-        cast("ParallelGeometry", geometry),
-        grid,
-        detector,
-        read,
-        method=method,
-        config=cast("SIRTConfig | MLEMConfig", cfg),
-        warm_start=warm_start,
-    )
+def _parallel(geometry: Geometry) -> ParallelGeometry:
+    from tomojax.geometry import ParallelGeometry
+
+    if not isinstance(geometry, ParallelGeometry):
+        raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
+    return geometry
 
 
 def _coupled_detector_volume[T](
-    method: str,
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -474,7 +476,7 @@ def _coupled_detector_volume[T](
 
     data, context = read(0, detector.nv)
     volume, info = reconstruct_arrays(
-        method, geometry, grid, detector, data, config=config, warm_start=warm_start
+        config.method, geometry, grid, detector, data, config=config, warm_start=warm_start
     )
     yield ReconstructionSlab(
         0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
@@ -545,15 +547,14 @@ def reconstruct_arrays(
         is requested for a noniterative method, or out is unsupported.
     """
     cfg = method_config(method, config=config, warm_start=warm_start or None)
-    if method == "fourier":
-        cfg = cast("FourierConfig", cfg)
+    if cfg.method == "fourier":
         import numpy as np
 
         from tomojax.recon._fourier_backend import resolve_fourier_backend
 
         backend = resolve_fourier_backend(cfg.backend)
         volume = recon.fourier(
-            cast("ParallelGeometry", geometry),
+            _parallel(geometry),
             grid,
             detector,
             np.asarray(projections),
@@ -569,22 +570,17 @@ def reconstruct_arrays(
         if not is_cone_beam(geometry):
             raise ValueError(f"method {method!r} takes out for cone-beam geometry only")
     det_grid = _detector_grid(geometry, detector)
-    if method == "fbp":
-        cfg = cast("FBPConfig", cfg)
+    if cfg.method == "fbp":
         return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
-    # The method name has ruled out the FBP and Fourier configurations above.
-    iterative = cast("CGLSConfig | FISTAConfig | SPDHGConfig | SIRTConfig | MLEMConfig", cfg)
     from tomojax import progress
 
-    with progress.task("reconstruct", method, iterative.iterations, "iterations"):
+    with progress.task("reconstruct", method, cfg.iterations, "iterations"):
         return _iterative_result(
-            method, geometry, grid, detector, projections, iterative, det_grid,
-            warm_start=warm_start, out=out,
-        )  # fmt: skip
+            geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
+        )
 
 
 def _iterative_result(
-    method: str,
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -596,16 +592,20 @@ def _iterative_result(
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Plan independent axial slabs before allocating a full warm initializer."""
-    if method in {"sirt", "mlem"}:
+    match cfg.method:
+        case "sirt" | "mlem":
+            algebraic = cfg
+        case _:
+            algebraic = None
+    if algebraic is not None:
         from tomojax.recon._axial_slabs import axial_slabs, independent_planes
 
-        algebraic = cast("SIRTConfig | MLEMConfig", cfg)
         if det_grid is None and independent_planes(geometry, grid, detector):
             support = algebraic.support
             if support is not None:
                 import numpy as np
 
-                if method == "sirt":
+                if algebraic.method == "sirt":
                     from tomojax.core.validation import validate_volume
 
                     validate_volume(support, grid, context="sirt", name="support")
@@ -613,7 +613,7 @@ def _iterative_result(
                 support = np.broadcast_to(np.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 
             solver = None
-            if method == "sirt":
+            if algebraic.method == "sirt":
                 from tomojax.recon.sirt import SIRTCall
 
                 solver = SIRTCall().solve
@@ -625,7 +625,7 @@ def _iterative_result(
                 local_support: jnp.ndarray | np.ndarray | None,
             ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
                 return _iterative_incore(
-                    method, local, local.grid, local.detector, data,
+                    local, local.grid, local.detector, data,
                     replace(algebraic, support=local_support), None,
                     warm_start=warm_start, solver=solver,
                 )  # fmt: skip
@@ -639,13 +639,11 @@ def _iterative_result(
                 volume, record = result
                 return volume, {**record, "config": cfg, "warm_start": warm_start}
     return _iterative_incore(
-        method, geometry, grid, detector, projections, cfg, det_grid,
-        warm_start=warm_start, out=out,
-    )  # fmt: skip
+        geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
+    )
 
 
 def _iterative_incore(
-    method: str,
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
@@ -658,11 +656,11 @@ def _iterative_incore(
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Initialize and dispatch an iterative solve with its method's data model."""
-    if method == "mlem":
+    if cfg.method == "mlem":
         from .mlem import run_mlem
 
         volume, record = run_mlem(
-            geometry, projections, grid=grid, detector=detector, config=cast("MLEMConfig", cfg),
+            geometry, projections, grid=grid, detector=detector, config=cfg,
             det_grid=det_grid, warm_start=warm_start, out=out,
         )  # fmt: skip
         return volume, {"config": cfg, "warm_start": warm_start, **record}
@@ -681,13 +679,7 @@ def _iterative_incore(
 
             start = jnp.maximum(start, float(lower))
     args = (geometry, grid, detector, projections)
-    name = {
-        "cgls": "cgls",
-        "fista": "fista",
-        "spdhg": "spdhg",
-        "sirt": "sirt",
-    }[method]
-    solve = getattr(recon, name) if solver is None else solver
+    solve = getattr(recon, cfg.method) if solver is None else solver
     storage = {} if out is None else {"out": out}
     volume, record = solve(*args, init_x=start, config=cfg, det_grid=det_grid, **storage)
     return volume, {"config": cfg, "warm_start": warm_start, **record}
@@ -834,6 +826,7 @@ __all__ = [
     "project",
     "reconstruct_arrays",
     "reconstruct_slabs",
+    "solver_name",
     "validate_reconstruction",
     "validate_slab_grid",
 ]

@@ -4,7 +4,7 @@ from collections.abc import Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import Literal
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -64,6 +64,8 @@ class FBPConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     """
+
+    method: ClassVar[Literal["fbp"]] = "fbp"
 
     filter: Filter = "ramp"
     scale: float | None = None

@@ -154,7 +154,7 @@ def saved_result(
     """Describe the arrays actually saved and externalise array-valued diagnostics."""
     import tomojax as tj
     from tomojax.cli.execution import summarise, volume_metadata
-    from tomojax.geometry.api import is_cone_beam
+    from tomojax.recon.api import solver_name
 
     with ExitStack() as cleanup:
         files = TerminalFiles(Path(path), cleanup)
@@ -163,9 +163,7 @@ def saved_result(
         arrays: dict[str, Array] = {}
         info: Mapping[str, object] = {}
         if isinstance(item, tj.Reconstruction):
-            method, info = item.method, item.info
-            if method == "fbp" and is_cone_beam(item.geometry):
-                method = "fdk"
+            method, info = solver_name(item.method, item.geometry), item.info
             grid, volume, key = item.grid, item.volume, "volume"
         elif isinstance(item, tj.Alignment):
             info = item.info

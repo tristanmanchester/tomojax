@@ -43,10 +43,10 @@ def plan_product(
             levels,
             placement,
         )
-    from tomojax.geometry.api import is_cone_beam
+    from tomojax.recon.api import solver_name
 
     return p.ReconPlan(
-        "fdk" if work.method == "fbp" and is_cone_beam(work.scan.geometry) else work.method,
+        solver_name(work.method, work.scan.geometry),
         work.reasons,
         getattr(work.config, "iterations", None),
         msgspec.convert(work.scan.grid, type=Grid, from_attributes=True),

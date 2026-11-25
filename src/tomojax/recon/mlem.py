@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import operator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -118,6 +118,8 @@ class MLEMConfig:
         Execution backend: "auto", "jax" or "cuda". An explicit accelerator
         request never silently falls back. Default is 'auto'.
     """
+
+    method: ClassVar[Literal["mlem"]] = "mlem"
 
     iterations: int = 50
     subsets: int = 1

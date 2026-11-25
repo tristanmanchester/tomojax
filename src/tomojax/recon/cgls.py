@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 import math
 import operator
-from typing import Literal, get_args
+from typing import ClassVar, Literal, get_args
 
 import numpy as np
 
@@ -104,6 +104,8 @@ class CGLSConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     """
+
+    method: ClassVar[Literal["cgls"]] = "cgls"
 
     data_term: DataTerm = "absolute"
     iterations: int = 50

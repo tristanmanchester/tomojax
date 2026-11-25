@@ -3,6 +3,7 @@
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, fields, replace
 import functools
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -244,6 +245,8 @@ class FISTAConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     """
+
+    method: ClassVar[Literal["fista"]] = "fista"
 
     iterations: int = 50
     data_term: DataTerm = "absolute"

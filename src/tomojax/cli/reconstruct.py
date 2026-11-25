@@ -24,7 +24,7 @@ from tomojax._field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
 )
-from tomojax._parameters import Filter, Method
+from tomojax._parameters import Filter, Method, ReconMethod
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
-_METHODS = get_args(Method.__value__)[1:]
+_METHODS = get_args(ReconMethod.__value__)
 # The options that are tj.reconstruct keywords besides the method and grid.
 _KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.

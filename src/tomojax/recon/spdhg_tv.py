@@ -5,7 +5,7 @@ import contextlib
 from dataclasses import dataclass, field, fields, replace
 import functools
 import math
-from typing import NamedTuple
+from typing import ClassVar, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -139,6 +139,8 @@ class SPDHGConfig:
         Read host projections one view batch at a time. None selects streaming from
         available device memory; False keeps them resident.
     """
+
+    method: ClassVar[Literal["spdhg"]] = "spdhg"
 
     iterations: int = 600
     tv_weight: float | None = None

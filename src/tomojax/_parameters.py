@@ -7,6 +7,7 @@ from typing import Any, Literal, get_args
 from tomojax.errors import InvalidParameter
 
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
+type ReconMethod = Literal["fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 type Filter = Literal["ramp", "hann", "shepp-logan"]
 type RegionName = Literal["auto", "bbox", "cube", "cyl"]
 type AlignMethod = Literal["joint", "opposite-views"]
