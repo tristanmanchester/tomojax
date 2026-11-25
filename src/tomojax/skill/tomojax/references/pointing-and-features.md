@@ -4,9 +4,14 @@ Marks let you show the user exactly where you mean; features turn an agreed loca
 
 ## Coordinates
 
-Every position is a list of array indices in the source's storage order: `[z, y, x]` for a volume and `[view, v, u]` for projections. Fractions are allowed. The same position names the same voxel in every plane, ROI, stride and zoom, so a mark placed on an axial slice appears in the right place on a vertical slice through it.
+A position is one of:
 
-To find indices, read them off the ticks `view` draws along the image edges, or take them from data: `bounds` of a feature, a `profile`, or a `python` call such as `np.unravel_index(np.argmax(volume), volume.shape)`.
+- **A pixel of an image you were shown:** `{"pixel": [x, y], "image": "render-12"}`, with x to the right and y down from the image's top-left corner, and the image ID from that view's `images` list. This is usually the most accurate way to point at what you see. The server converts it to array indices and reports them back.
+- **Array indices** in the source's storage order: `[z, y, x]` for a volume and `[view, v, u]` for projections. Fractions are allowed.
+
+The same position names the same voxel in every plane, ROI, stride and zoom, so a mark placed on an axial slice appears in the right place on a vertical slice through it.
+
+`view` images stay within 1568 pixels on the long edge and 1.15 megapixels, so you see them at full size and a pixel you read off one is the pixel the server means. To aim at a small or thin target, zoom in first with an `roi` around it; `grid=true` adds a pixel grid, and the index ticks along the edges give array indices. Indices also come from data: the `bounds` of a feature, a `profile`, or a `python` call such as `np.unravel_index(np.argmax(volume), volume.shape)`.
 
 ## Marks on `view`
 
@@ -27,7 +32,7 @@ Pass `marks` to `view` in the `planes`, `projection`, `sinogram` or `difference`
            {"type": "circle", "at": [120, 260, 300], "radius": 15, "colour": "cyan"}]}
 ```
 
-The structured result has a `marks` list in the same order. Each entry lists every rendered plane (`panel`, the index into `panels`) with `drawn`, the mark's `pixel` `[x, y]` in the returned image numbered by `image`, and the `value` under a point-like mark or the `mean` inside a box, circle or polygon, from the displayed samples. A mark not drawn has `reason`: `off_plane` (with its `distance`) or `outside_roi`. Check this before showing the user: if the value under your point is background, you missed.
+The structured result has a `marks` list in the same order. Each entry gives the mark's `positions` in array indices and lists every rendered plane (`panel`, the index into `panels`) with `drawn`, the mark's `pixel` `[x, y]` in the returned image `image`, and the `value` under a point-like mark or the `mean` inside a box, circle or polygon, from the displayed samples. `percentile` is the share of the plane's samples below that value and `display` its place between the display limits (0 the lower, 1 the upper). A mark not drawn has `reason`: `off_plane` (with its `distance`) or `outside_roi`. Check this before showing the user: a value at a low percentile, or near 0 on the display scale, under a mark meant for a bright structure means you missed.
 
 Ticks are on by default when marks or features are given; pass `ticks=false` to hide them, or `ticks=true` to get them without marks.
 

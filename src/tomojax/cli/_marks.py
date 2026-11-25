@@ -2,8 +2,10 @@
 
 A mark's coordinates are array indices in the source's storage order: (z, y, x) for
 volumes and (view, v, u) for projections, so the same mark lands on the same voxel in
-every plane, ROI, stride and zoom. A plane shows a mark when the mark reaches within
-``TOLERANCE`` index units of it along the plane normal.
+every plane, ROI, stride and zoom. A position may instead be a pixel in an image an
+earlier view returned, which that render's placements convert to array indices. A
+plane shows a mark when the mark reaches within ``TOLERANCE`` index units of it along
+the plane normal.
 """
 
 from __future__ import annotations
@@ -17,11 +19,11 @@ import msgspec
 import numpy as np
 from PIL import Image, ImageDraw
 
-from tomojax.cli.images import Panel, montage
+from tomojax.cli.images import Panel, compose, png
 from tomojax.wire.arrays import Record
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 TOLERANCE = 2.0
 PALETTE = {
@@ -33,8 +35,17 @@ PALETTE = {
     "red": (255, 48, 48),
 }
 type Colour = Literal["yellow", "cyan", "magenta", "orange", "green", "red"]
-type Position = tuple[float, ...]
 Radius = Annotated[float, msgspec.Meta(gt=0)]
+
+
+class PixelPosition(Record):
+    """A pixel (x right, y down, from the top-left corner) of a returned image."""
+
+    pixel: tuple[float, float]
+    image: str
+
+
+type Position = tuple[float, ...] | PixelPosition
 
 
 class Mark(Record, kw_only=True):
@@ -121,6 +132,64 @@ class Cell:
         return self.x + (col + 0.5) * self.sx, self.y + (row + 0.5) * self.sy
 
 
+@dataclass(frozen=True)
+class Placement:
+    """One plane of a returned image: where it sits in the source and in the image."""
+
+    frame: Frame
+    cell: Cell
+    size: tuple[int, int]  # sample rows and columns
+
+    def contains(self, x: float, y: float) -> bool:
+        """Whether an image pixel falls on this plane."""
+        c = self.cell
+        return c.x <= x < c.x + self.size[1] * c.sx and c.y <= y < c.y + self.size[0] * c.sy
+
+    def index(self, row: float, col: float) -> tuple[float, ...]:
+        """Array indices of a sample-grid position on this plane."""
+        f = self.frame
+        position = [0.0] * len(f.axes)
+        position[f.rows[0]] = f.rows[1] + row * f.rows[2]
+        position[f.cols[0]] = f.cols[1] + col * f.cols[2]
+        if f.normal is not None:
+            position[f.normal[0]] = f.normal[1]
+        return tuple(position)
+
+    def located(self, x: float, y: float) -> tuple[float, ...]:
+        """Array indices of an image pixel on this plane."""
+        c = self.cell
+        return self.index((y - c.y) / c.sy - 0.5, (x - c.x) / c.sx - 0.5)
+
+
+def locate(
+    marks: Sequence[AnyMark], renders: Callable[[str], Sequence[Placement]]
+) -> tuple[AnyMark, ...]:
+    """Convert pixel positions to array indices through the renders they refer to."""
+
+    def index(position: Position, field: str) -> tuple[float, ...]:
+        if not isinstance(position, PixelPosition):
+            return position
+        x, y = position.pixel
+        plane = next((p for p in renders(position.image) if p.contains(x, y)), None)
+        if plane is None:
+            raise ValueError(f"{field}: pixel ({x:g}, {y:g}) is not on a plane of {position.image}")
+        return tuple(round(v, 2) for v in plane.located(x, y))
+
+    def one(mark: AnyMark, field: str) -> AnyMark:
+        if isinstance(mark, ArrowMark):
+            return msgspec.structs.replace(
+                mark, tail=index(mark.tail, field), to=index(mark.to, field)
+            )
+        if isinstance(mark, BoxMark):
+            corners = (index(mark.corners[0], field), index(mark.corners[1], field))
+            return msgspec.structs.replace(mark, corners=corners)
+        if isinstance(mark, PolylineMark | PolygonMark):
+            return msgspec.structs.replace(mark, points=tuple(index(q, field) for q in mark.points))
+        return msgspec.structs.replace(mark, at=index(mark.at, field))
+
+    return tuple(one(mark, f"marks[{i}]") for i, mark in enumerate(marks))
+
+
 def parse(marks: Sequence[object]) -> tuple[AnyMark, ...]:
     """Validate marks given as JSON-like dictionaries or as mark records."""
     return msgspec.convert(list(marks), type=tuple[AnyMark, ...], from_attributes=True)
@@ -150,6 +219,8 @@ def check(marks: Sequence[AnyMark], axes: Sequence[str]) -> None:
         if len(points) < least:
             raise ValueError(f"marks[{i}] needs at least {least} points")
         for point in points:
+            if isinstance(point, PixelPosition):
+                raise ValueError(f"marks[{i}] gives a pixel; here give array indices")
             if len(point) != len(axes):
                 raise ValueError(
                     f"marks[{i}] has {len(point)} coordinates; give one per source axis "
@@ -170,19 +241,26 @@ class Shape:
     reason: str | None = None
 
 
+def indices(position: Position) -> tuple[float, ...]:
+    """A position known to be in array indices (pixels are located first)."""
+    assert not isinstance(position, PixelPosition), "locate pixel positions before projecting"
+    return position
+
+
 def project(mark: AnyMark, frame: Frame) -> Shape:
     """Map a mark onto one plane in sample-grid coordinates (row, col)."""
     kind = name(mark)
     (rd, r0, rs), (cd, c0, cs) = frame.rows, frame.cols
 
     def grid(point: Position) -> tuple[float, float]:
+        point = indices(point)
         return ((point[rd] - r0) / rs, (point[cd] - c0) / cs)
 
     def away(point: Position) -> float:
-        return 0.0 if frame.normal is None else point[frame.normal[0]] - frame.normal[1]
+        return 0.0 if frame.normal is None else indices(point)[frame.normal[0]] - frame.normal[1]
 
     if isinstance(mark, BoxMark):
-        a, b = mark.corners
+        a, b = (indices(c) for c in mark.corners)
         if frame.normal is not None:
             d = frame.normal[0]
             lo, hi = sorted((a[d], b[d]))
@@ -347,9 +425,20 @@ class Overlay:
 
 
 def draw(
-    image: Image.Image, overlay: Overlay, cell: Cell, pixels: np.ndarray
+    image: Image.Image,
+    overlay: Overlay,
+    cell: Cell,
+    pixels: np.ndarray,
+    scale: tuple[float, float],
 ) -> list[dict[str, object]]:
-    """Draw one plane's overlay and report where each mark landed and the value under it."""
+    """Draw one plane's overlay and report where each mark landed and the value under it.
+
+    A drawn mark's report places its value in the plane: ``percentile`` is the share
+    of the plane's samples below it and ``display`` its position between the display
+    limits (0 the lower, 1 the upper), so a mark on background reads as a miss.
+    """
+    finite = np.sort(np.asarray(pixels, float)[np.isfinite(pixels)])
+    lo, hi = scale
     canvas = ImageDraw.Draw(image)
     size = pixels.shape[:2]
     for mask, colour in overlay.outlines:
@@ -389,14 +478,17 @@ def draw(
         values = pixels[covered]
         values = values[np.isfinite(values)]
         value = float(f"{values.mean():.6g}") if values.size else None
-        reports.append(
-            {
-                "drawn": True,
-                "image": cell.image,
-                "pixel": [round(x, 1), round(y, 1)],
-                "mean" if extended else "value": value,
-            }
-        )
+        report: dict[str, object] = {
+            "drawn": True,
+            "image": cell.image,
+            "pixel": [round(x, 1), round(y, 1)],
+            "mean" if extended else "value": value,
+        }
+        if value is not None and finite.size:
+            below = np.searchsorted(finite, value) / finite.size
+            report["percentile"] = round(100 * float(below), 1)
+            report["display"] = round((value - lo) / (hi - lo), 2) if hi > lo else None
+        reports.append(report)
     box = (
         round(cell.x),
         round(cell.y),
@@ -428,34 +520,59 @@ def frame_of(
     )
 
 
+def draw_grid(image: Image.Image, every: int = 100) -> None:
+    """Dotted lines every ``every`` image pixels, labelled in pixels, for aiming by pixel."""
+    canvas = ImageDraw.Draw(image)
+    colour = (90, 170, 255)
+    width, height = image.size
+    for x in range(every, width, every):
+        canvas.point([(x, y) for y in range(0, height, 4)], fill=colour)
+        canvas.text((x + 2, 2), str(x), fill=colour)
+    for y in range(every, height, every):
+        canvas.point([(x, y) for x in range(0, width, 4)], fill=colour)
+        canvas.text((2, y + 2), str(y), fill=colour)
+
+
 def annotate(
     panels: list[Panel],
     scales: list[tuple[float, float]],
     overlays: list[Overlay],
     marks: Sequence[AnyMark],
-) -> tuple[list[bytes], list[dict[str, object]]]:
+    *,
+    grid: bool = False,
+) -> tuple[list[bytes], list[dict[str, object]], list[list[Placement]]]:
     """Montage planes three to an image with their overlays, and report every mark.
 
-    Each mark's report lists, per plane, whether it was drawn, its pixel in which
-    returned image, and the value or mean under it.
+    Each mark's report gives its positions in array indices and lists, per plane,
+    whether it was drawn, its pixel in which returned image and the value under it.
+    The placements say where each plane landed, for marks given later as pixels.
     """
     placed: list[list[dict[str, object]]] = [[] for _ in marks]
+    layouts: list[list[Placement]] = []
 
     def decorate(
         picture: Image.Image, j: int, rect: tuple[float, float, float, float], first: int
     ) -> None:
+        i = first + j
         cell = Cell(first // 3, *rect)
-        for m, report in enumerate(
-            draw(picture, overlays[first + j], cell, panels[first + j].pixels)
-        ):
-            placed[m].append({"panel": first + j, **report})
+        layouts[-1].append(Placement(overlays[i].frame, cell, panels[i].pixels.shape[:2]))
+        for m, report in enumerate(draw(picture, overlays[i], cell, panels[i].pixels, scales[i])):
+            placed[m].append({"panel": i, **report})
 
-    images = [
-        montage(panels[i : i + 3], scales[i : i + 3], partial(decorate, first=i))
-        for i in range(0, len(panels), 3)
-    ]
+    images = []
+    for i in range(0, len(panels), 3):
+        layouts.append([])
+        picture = compose(panels[i : i + 3], scales[i : i + 3], partial(decorate, first=i))
+        if grid:
+            draw_grid(picture)
+        images.append(png(picture))
     reports = [
-        {"type": name(mark), **({"label": mark.label} if mark.label else {}), "panels": found}
+        {
+            "type": name(mark),
+            **({"label": mark.label} if mark.label else {}),
+            "positions": [[round(v, 2) for v in indices(q)] for q in positions(mark)],
+            "panels": found,
+        }
         for mark, found in zip(marks, placed, strict=True)
     ]
-    return images, reports
+    return images, reports, layouts

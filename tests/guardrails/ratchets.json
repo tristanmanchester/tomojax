@@ -46,7 +46,7 @@
   "long_files": {
     "src/tomojax/_loading.py": 821,
     "src/tomojax/alignment/_joint/_solver.py": 962,
-    "src/tomojax/cli/mcp/tools/__init__.py": 816,
+    "src/tomojax/cli/mcp/tools/__init__.py": 818,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
@@ -66,7 +66,7 @@
     "_data": 2231,
     "alignment": 5435,
     "backends": 269,
-    "cli": 12755,
+    "cli": 12980,
     "core": 10115,
     "corrections": 3232,
     "datasets": 1087,
@@ -85,7 +85,7 @@
   "suppressions": {
     "noqa": 5,
     "type: ignore": 8,
-    "pyright: ignore": 12
+    "pyright: ignore": 13
   },
   "complex_functions": [
     "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
@@ -94,6 +94,8 @@
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_python.py::C901::registered",
     "src/tomojax/cli/_staging.py::C901::install",
+    "src/tomojax/cli/mcp/tools/seeing.py::C901::finish",
+    "src/tomojax/cli/mcp/tools/seeing.py::C901::view",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",

@@ -64,21 +64,30 @@ def thumbnail(image: Image.Image) -> bytes:
     return png(image)
 
 
-def montage(
+# Models see an image at full resolution only within about 1568 px per edge and
+# 1.15 megapixels; beyond that a client scales it down and pixel positions shift.
+MAX_EDGE = 1568
+MAX_PIXELS = 1_150_000
+# Plane cell (width, height) by the number of planes in one decorated image.
+LARGE = {1: (960, 720), 2: (768, 576), 3: (512, 400)}
+
+type Rect = tuple[float, float, float, float]
+
+
+def compose(
     panels: list[Panel],
     scales: list[tuple[float, float]],
-    decorate: Callable[[Image.Image, int, tuple[float, float, float, float]], None] | None = None,
-) -> bytes:
+    decorate: Callable[[Image.Image, int, Rect], None] | None = None,
+    placed: list[Rect] | None = None,
+) -> Image.Image:
     """Draw up to three planes side by side, mapping equal intensities to equal greys.
 
     ``decorate`` draws over each placed plane, given the plane's index and its
-    rectangle in the image as (left, top, horizontal scale, vertical scale). A
-    decorated montage is in colour, with room for index ticks around each plane and
-    larger planes when there is only one.
+    rectangle in the image as (left, top, horizontal scale, vertical scale); each
+    rectangle is also appended to ``placed``. A decorated image is in colour, with
+    room for index ticks and larger planes, and stays within ``MAX_EDGE`` and
+    ``MAX_PIXELS``.
     """
-    if len(panels) == 1 and not panels[0].labels and decorate is None:
-        return thumbnail(raster(panels[0], *scales[0]))
-
     labels = [
         [
             line
@@ -87,18 +96,17 @@ def montage(
                 *p.labels,
                 f"limits [{label_number(lo)}, {label_number(hi)}] {p.unit}",
             )
-            for line in wrap(label, 49, max_lines=3, placeholder="...")
+            for line in wrap(label, 49 if decorate is None else 70, max_lines=3, placeholder="...")
         ]
         for p, (lo, hi) in zip(panels, scales, strict=True)
     ]
-    width, height = (656, 480) if decorate and len(panels) == 1 else (328, 240)
+    width, height = LARGE[len(panels)] if decorate else (328, 240)
     # Margins (left, top, right, bottom) leave room for tick labels on decorated planes.
     left, top, right, bottom = (40, 16, 14, 14) if decorate else (6, 0, 6, 0)
-    image = Image.new(
-        "RGB" if decorate else "L",
-        (width * len(panels), height + 18 * max(map(len, labels)) + 10),
-        (28, 28, 28) if decorate else 28,
-    )
+    size = (width * len(panels), height + 18 * max(map(len, labels)) + 10)
+    assert max(size) <= MAX_EDGE, size
+    assert size[0] * size[1] <= MAX_PIXELS, size
+    image = Image.new("RGB" if decorate else "L", size, (28, 28, 28) if decorate else 28)
     draw = ImageDraw.Draw(image)
     for i, (panel, lines) in enumerate(zip(panels, labels, strict=True)):
         h, w = panel.pixels.shape[:2]
@@ -111,12 +119,26 @@ def montage(
         x = i * width + left + (room_w - resized.width) // 2
         y = top + (room_h - resized.height) // 2
         image.paste(resized, (x, y))
+        rect = (x, y, resized.width / w, resized.height / h)
+        if placed is not None:
+            placed.append(rect)
         if decorate:
-            decorate(image, i, (x, y, resized.width / w, resized.height / h))
+            decorate(image, i, rect)
         for j, label in enumerate(lines):
             fill = (248, 248, 248) if decorate else 248
             draw.text((i * width + 6, height + 5 + j * 18), label, fill=fill)
-    return png(image)
+    return image
+
+
+def montage(
+    panels: list[Panel],
+    scales: list[tuple[float, float]],
+    decorate: Callable[[Image.Image, int, Rect], None] | None = None,
+) -> bytes:
+    """``compose`` as PNG bytes; a single unlabelled plane becomes a plain thumbnail."""
+    if len(panels) == 1 and not panels[0].labels and decorate is None:
+        return thumbnail(raster(panels[0], *scales[0]))
+    return png(compose(panels, scales, decorate))
 
 
 def pose_plot(values: np.ndarray, columns: list[dict], views: np.ndarray, view_unit: str) -> bytes:

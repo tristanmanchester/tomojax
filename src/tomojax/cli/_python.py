@@ -24,7 +24,7 @@ from tomojax.cli._handles import handle, stage_array
 from tomojax.cli._marks import Overlay, annotate, check, frame_of, parse
 from tomojax.cli._planes import plane_windows
 from tomojax.cli.envelope import INLINE_LIMIT
-from tomojax.cli.images import Panel, limits, raster
+from tomojax.cli.images import Panel, limits as display_limits, raster
 from tomojax.cli.mcp.ledger import new_reference
 from tomojax.wire.arrays import Member, Npy
 from tomojax.wire.progress import Info
@@ -175,7 +175,7 @@ class Registrations:
         pixels = np.asarray(array)
         if not marks and not ticks:
             panel = Panel("Python", pixels, (), "unspecified")
-            self.images.append(stage_array(self.context, raster(panel, *limits([panel]))))
+            self.images.append(stage_array(self.context, raster(panel, *display_limits([panel]))))
             return None
         names = ("row", "col")
         window = [(0, n, 1) for n in pixels.shape[:2]]
@@ -195,6 +195,8 @@ class Registrations:
         marks: Sequence[object] = (),
         features: Sequence[object] = (),
         ticks: bool | None = None,
+        limits: tuple[float, float] | None = None,
+        grid: bool = False,
     ) -> list[dict[str, object]]:
         """Render planes like the view tool; with ``other``, the difference from it."""
         data, meta, _ = self.registered(source)
@@ -247,7 +249,7 @@ class Registrations:
             outlines.append(
                 [(flat(mask).astype(bool), c) for mask, c in zip(masks, colours, strict=False)]
             )
-        return self.overlaid(panels, frames, marks, outlines, ticks)
+        return self.overlaid(panels, frames, marks, outlines, ticks, shown=limits, grid=grid)
 
     def overlaid(
         self,
@@ -256,16 +258,19 @@ class Registrations:
         marks: Sequence[object],
         outlines: list[list[tuple[np.ndarray, Colour]]],
         ticks: bool | None,
+        *,
+        shown: tuple[float, float] | None = None,
+        grid: bool = False,
     ) -> list[dict[str, object]]:
         """Stage the annotated montage and return where each mark landed."""
         parsed = parse(marks)
         check(parsed, frames[0].axes)
-        scale = limits(panels)
+        scale = shown if shown is not None else display_limits(panels)
         overlays = [
             Overlay(frame, parsed, tuple(found), ticks is not False)
             for frame, found in zip(frames, outlines, strict=True)
         ]
-        images, reports = annotate(panels, [scale] * len(panels), overlays, parsed)
+        images, reports, _ = annotate(panels, [scale] * len(panels), overlays, parsed, grid=grid)
         for png in images:
             pixels = np.asarray(Image.open(BytesIO(png)).convert("RGB"))
             self.images.append(stage_array(self.context, pixels))

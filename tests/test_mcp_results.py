@@ -32,7 +32,7 @@ def test_budget_and_lossless_reassembly(case):
         data.update(poses=np.random.default_rng(4).normal(size=(1600, 6)).tolist())
     full = tools.result(data, error=case == "traceback")
     if case == "image":
-        pixels = np.random.default_rng(3).integers(0, 256, size=(1024, 1024), dtype=np.uint8)
+        pixels = np.random.default_rng(3).integers(0, 256, size=(1600, 1600), dtype=np.uint8)
         stream = BytesIO()
         Image.fromarray(pixels).save(stream, format="PNG")
         full.content.append(

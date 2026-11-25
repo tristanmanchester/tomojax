@@ -10,7 +10,7 @@ The `python` tool runs your code in the worker process that holds the session's 
 | `handles` | Live IDs to their objects: `handles["@scan-…"]` is a `tj.Scan`, `handles["@recon-…"]` a `tj.Reconstruction`, `handles["@feature-…"]` a feature with a boolean `.mask` (and `.box`, `.inside` for its bounding box), `handles["@array-…"]` a NumPy array. `handles["@sim-….scan"]` selects a member, as the typed tools do. |
 | `register(obj)` | Publish a TomoJAX object or array as a new handle and return its ID |
 | `register_feature(mask, like=..., name=...)` | Publish a boolean mask as a feature on the grid of `like` (an ID or object) and return its ID |
-| `view(source, mode=, axis=, index=, roi=, stride=, other=, marks=, features=, ticks=)` | Render planes like the `view` tool, add the image to the reply and return where each mark landed |
+| `view(source, mode=, axis=, index=, roi=, stride=, other=, marks=, features=, ticks=, limits=, grid=)` | Render planes like the `view` tool, add the image to the reply and return where each mark landed; marks here take array indices, not pixels |
 | `show(plane, marks=)` | Add an image of a 2D array to the reply; marks use the array's own `[row, col]` indices |
 
 These are the worker's own objects: derive new arrays from them and leave theirs unchanged.

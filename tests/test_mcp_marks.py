@@ -147,3 +147,74 @@ def test_marks_reject_wrong_coordinates_and_non_plane_modes(session):
         "view", source=volume, mode="statistics", marks=[{"type": "point", "at": [1] * 3}]
     )
     assert stats["isError"] and "rendered plane" in stats["content"][0]["text"]
+
+
+def test_a_pixel_in_a_returned_image_becomes_array_indices(session):
+    c, (volume, _, _) = session
+    for decorated in (False, True):
+        # Find the bright voxel in a plain or ticked axial render, as a model would by eye.
+        shown = c.call("view", source=volume, axis="z", index=VOXEL[0], ticks=decorated or None)
+        render = shown["structuredContent"]["images"][0]["image"]
+        x, y = white_centre(images(shown)[0])
+        mark = {"type": "point", "at": {"pixel": [x, y], "image": render}}
+        # Shown on the vertical plane through it, it lands on the same voxel.
+        across = c.call("view", source=volume, axis="x", index=VOXEL[2], marks=[mark])
+        found = across["structuredContent"]["marks"][0]
+        assert found["positions"][0] == pytest.approx(VOXEL, abs=0.5)
+        on = found["panels"][0]
+        assert on["drawn"] and on["value"] == 5 and on["percentile"] > 99 and on["display"] == 1
+        assert on["image"] == across["structuredContent"]["images"][0]["image"]
+    margin = c.call(
+        "view", source=volume, marks=[{"type": "point", "at": {"pixel": [1, 1], "image": render}}]
+    )
+    assert margin["isError"] and "not on a plane" in margin["content"][0]["text"]
+    gone = c.call(
+        "view",
+        source=volume,
+        marks=[{"type": "point", "at": {"pixel": [1, 1], "image": "render-0"}}],
+    )
+    assert gone["isError"] and "view images" in gone["content"][0]["text"]
+
+
+def test_a_mark_on_background_reads_as_a_miss(session):
+    c, (volume, _, _) = session
+    miss = c.call(
+        "view",
+        source=volume,
+        axis="z",
+        index=VOXEL[0],
+        marks=[{"type": "point", "at": [VOXEL[0], 3, 3]}],
+    )
+    found = miss["structuredContent"]["marks"][0]["panels"][0]
+    assert found["value"] == 0 and found["percentile"] == 0 and found["display"] == 0
+
+
+def test_images_fit_the_model_budget_and_take_limits_sources_and_a_grid(session):
+    c, (volume, _, _) = session
+    twice = f"r = handles[{volume!r}]\nregister(tj.Reconstruction(r.volume * 2, r.geometry, 'fbp', {{}}))"
+    other = python(c, twice)["value"]
+    marks = [{"type": "box", "corners": [[5, 20, 6], [5, 25, 13]], "colour": "magenta"}]
+    for count, sources in ((1, volume), (2, [volume, other]), (3, [volume, other, volume])):
+        reply = c.call(
+            "view", source=sources, axis="z", index=5, marks=marks, limits=[0, 4], grid=True
+        )
+        assert not reply["isError"], reply["content"][0]["text"]
+        data = reply["structuredContent"]
+        assert data["image_limits"] == {"edge": 1568, "pixels": 1_150_000}
+        pictures = images(reply)
+        assert len(pictures) == 1 and len(data["panels"]) == count
+        h, w = pictures[0].shape[:2]
+        assert (w, h) == (data["images"][0]["width"], data["images"][0]["height"])
+        assert max(w, h) <= 1568 and w * h <= 1_150_000
+        assert all(p["intensity_limits"] == [0, 4] for p in data["panels"])
+        means = [p["mean"] for p in data["marks"][0]["panels"]]
+        assert means == [2, 4, 2][:count]  # the same box on each source
+        assert (pictures[0][:, 100] == (90, 170, 255)).all(axis=1).sum() > 20  # the grid line
+    bad = c.call("view", source=volume, limits=[1, 1])
+    assert bad["isError"] and "low < high" in bad["content"][0]["text"]
+    small = python(
+        c,
+        "g = tj.simulate(size=8, n_views=4).scan.geometry\nregister(tj.Reconstruction(np.zeros((8, 8, 8), np.float32), g, 'fbp', {}))",
+    )["value"]
+    mixed = c.call("view", source=[volume, small], axis="z")
+    assert mixed["isError"] and "shape" in mixed["content"][0]["text"]

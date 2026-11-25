@@ -757,6 +757,8 @@ TEXT = {"type": "string"}
 LIST = {"type": "array"}
 PLANES = {
     "panels": {"type": "array", "items": ANY},
+    "images": {"type": "array", "items": ANY},
+    "image_limits": ANY,
     "intensity_limits": LIST,
     "marks": {"type": "array", "items": ANY},
     "features": {"type": "array", "items": ANY},

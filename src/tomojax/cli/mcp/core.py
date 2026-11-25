@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import itertools
 import os
 from pathlib import Path
 import signal
@@ -121,6 +122,9 @@ class Core:
         self.bus = InMemorySubscriptionBus()
         self.parts = Parts()
         self.tasks = Tasks(self.parts)
+        # Where each returned view image's planes sit, by render ID, for pixel marks.
+        self.renders: dict[str, Any] = {}
+        self.render_count = itertools.count(1)
         self.server = Server(
             "tomojax",
             version=__version__,
