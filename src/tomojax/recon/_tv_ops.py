@@ -6,7 +6,7 @@ import functools
 import importlib.util
 import math
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import jax
 import jax.numpy as jnp
@@ -277,16 +277,16 @@ def cuda_tv_workspace_bytes(shape: tuple[int, ...], dtype: np.dtype, iterations:
 
 @functools.partial(jax.custom_jvp, nondiff_argnums=(4, 5, 6, 7, 8))
 def _tv_execution(
-    x,
-    lam,
-    huber_delta,
-    support,
-    iterations,
-    nonnegative,
-    lower_bound,
-    upper_bound,
-    gradient_scale_xyz,
-):
+    x: jax.Array,
+    lam: jax.Array,
+    huber_delta: jax.Array | None,
+    support: jax.Array | None,
+    iterations: int,
+    nonnegative: Literal[True, False],
+    lower_bound: float | None,
+    upper_bound: float | None,
+    gradient_scale_xyz: tuple[float, float, float],
+) -> jax.Array:
     reference = functools.partial(
         _tv_proximal_jax,
         iterations=iterations,
@@ -316,8 +316,14 @@ def _tv_execution(
 
 @_tv_execution.defjvp
 def _tv_execution_jvp(
-    iterations, nonnegative, lower_bound, upper_bound, gradient_scale_xyz, primals, tangents
-):
+    iterations: int,
+    nonnegative: Literal[True, False],
+    lower_bound: float | None,
+    upper_bound: float | None,
+    gradient_scale_xyz: tuple[float, float, float],
+    primals: tuple[jax.Array, jax.Array, jax.Array | None, jax.Array | None],
+    tangents: tuple[jax.Array, jax.Array, jax.Array | None, jax.Array | None],
+) -> tuple[jax.Array, jax.Array]:
     reference = functools.partial(
         _tv_proximal_jax,
         iterations=iterations,

@@ -23,20 +23,28 @@ if TYPE_CHECKING:
     from .geometry import Detector, Grid
 
 
-def _scatter(coeff, sqrtweights, accumulator, *, grid, detector, interpolation):
+def _scatter(
+    coeff: jax.Array,
+    sqrtweights: jax.Array,
+    accumulator: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    interpolation: str,
+) -> jax.Array:
     shape = (grid.nx, grid.ny, grid.nz)
     u, v = jnp.meshgrid(
         jnp.arange(detector.nu, dtype=jnp.float32), jnp.arange(detector.nv, dtype=jnp.float32)
     )
 
-    def view(i, out):
+    def view(i: jax.Array, out: jax.Array) -> jax.Array:
         cf = coeff[i]
         axis = cf[0].astype(jnp.int32)
         na = select_axis(axis, *shape)
         nb = select_axis(axis, shape[1], shape[2], shape[0])
         nc = select_axis(axis, shape[2], shape[0], shape[1])
 
-        def plane(k, target):
+        def plane(k: jax.Array, target: jax.Array) -> jax.Array:
             kf = k.astype(jnp.float32)
             qb = (cf[1] * u + cf[2] * v) + (cf[3] * kf + cf[4])
             qc = (cf[5] * u + cf[6] * v) + (cf[7] * kf + cf[8])

@@ -42,6 +42,8 @@ from tomojax.wire.metrics import Metric
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
+    from ._chunks import Drive, Metrics
+    from ._volume_storage import Model
     from .types import DataTerm
 
 
@@ -542,26 +544,26 @@ def _laid_out(
 
 
 def _cgls_program(
-    poses,
-    data,
-    initial,
-    det_grid,
-    iterations,
-    tolerances,
-    damping,
+    poses: jax.Array,
+    data: jax.Array,
+    initial: jax.Array | None,
+    det_grid: tuple[jax.Array, jax.Array] | None,
+    iterations: int,
+    tolerances: tuple[jax.Array, jax.Array],
+    damping: jax.Array,
     *,
-    streamed,
-    grid,
-    detector,
-    backend,
-    batch_size,
-    model,
-    interpolation,
-    gradient_damping,
-    data_term,
-    split,
-    drive,
-):
+    streamed: bool,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    batch_size: int,
+    model: Model,
+    interpolation: str,
+    gradient_damping: jax.Array | None,
+    data_term: DataTerm,
+    split: ViewSplit | None,
+    drive: Drive[_State],
+) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
     options = {
         "grid": grid,
         "detector": detector,
@@ -582,7 +584,7 @@ def _cgls_program(
             **options,
         )
 
-        def advance(state, end):
+        def advance(state: _State, end: int) -> _State:
             return _solve_streamed(
                 state, first_gamma, threshold, poses, data, end, damping, **options
             )
@@ -599,7 +601,7 @@ def _cgls_program(
             **options,
         )
 
-        def advance(state, end):
+        def advance(state: _State, end: int) -> _State:
             return _solve(
                 state,
                 first_gamma,
@@ -613,7 +615,7 @@ def _cgls_program(
                 **options,
             )
 
-    def completed(state):
+    def completed(state: _State) -> tuple[int, bool, Metrics]:
         count, gamma, threshold_host, failed, roundoff = jax.device_get(
             (state.iteration, state.gamma, threshold, state.failed, state.roundoff)
         )

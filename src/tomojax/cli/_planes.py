@@ -1,6 +1,12 @@
 """Resolve preview planes on the original sampling grid."""
 
+from __future__ import annotations
+
 from math import ceil
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
 
 
 def display_sampling(
@@ -15,7 +21,15 @@ def display_sampling(
     return steps, (label,) if max(*strides, *factors) > 1 else ()
 
 
-def plane_windows(axes, shape, mode, requested_axis, index, roi, strides):
+def plane_windows(
+    axes: Sequence[str],
+    shape: tuple[int, ...],
+    mode: str,
+    requested_axis: str | None,
+    index: int | None,
+    roi: Sequence[tuple[int, int]],
+    strides: tuple[int, ...],
+) -> Iterator[tuple[int | None, int, Sequence[tuple[int, int]], Sequence[int], tuple[str, ...]]]:
     if len(axes) == 2 and mode == "planes":
         yield None, 0, roi, strides, ()
         return

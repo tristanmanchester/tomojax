@@ -27,6 +27,7 @@ from ._projection import least_squares_operators, projection_operators
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
+    from ._tv_metric import TVMetric
     from .fista_tv import FISTAConfig, FistaRuntime
 
 
@@ -62,14 +63,23 @@ class FistaScanState(NamedTuple):
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
-def _residual(grid, detector, data, z, runtime):
+def _residual(
+    grid: Grid, detector: Detector, data: jax.Array, z: jax.Array, runtime: FistaRuntime
+) -> jax.Array:
     return project_residual(
         _norm_forward(grid, detector, z, runtime) - data, runtime.config.data_term
     )
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"), donate_argnums=(2,))
-def _apply(grid, detector, z, residual, limit, runtime):
+def _apply(
+    grid: Grid,
+    detector: Detector,
+    z: jax.Array,
+    residual: jax.Array,
+    limit: jax.Array | float,
+    runtime: FistaRuntime,
+) -> jax.Array:
     model, backend, batch = runtime.projector
     adjoint = projection_operators(
         runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
@@ -78,14 +88,22 @@ def _apply(grid, detector, z, residual, limit, runtime):
 
 
 @partial(jax.jit, static_argnames=("clipped",), donate_argnums=(0,))
-def _momentum(old, new, t, *, clipped):
+def _momentum(
+    old: jax.Array, new: jax.Array, t: jax.Array, *, clipped: bool
+) -> tuple[jax.Array, jax.Array]:
     tn = (1 + jnp.sqrt(1 + 4 * t * t)) / 2
     z = new + (t - 1) / tn * (new - old)
     return jnp.maximum(z, 0) if clipped else z, tn
 
 
 def store_residuals(
-    grid: Grid, projections, cfg: FISTAConfig, *, zero_start: bool, stream: bool, joseph: bool
+    grid: Grid,
+    projections: jax.Array | np.ndarray,
+    cfg: FISTAConfig,
+    *,
+    zero_start: bool,
+    stream: bool,
+    joseph: bool,
 ) -> bool:
     """Whether this objective and projection layout can keep residuals in place of two volumes."""
     return (
@@ -103,7 +121,9 @@ def store_residuals(
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
-def _zero_gradient(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
+def _zero_gradient(
+    grid: Grid, detector: Detector, data: jax.Array, runtime: FistaRuntime
+) -> tuple[jax.Array, jax.Array]:
     model, backend, batch = runtime.projector
     return least_squares_operators(
         runtime.poses,
@@ -118,7 +138,9 @@ def _zero_gradient(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
-def _norm_forward(grid: Grid, detector: Detector, vector, runtime: FistaRuntime):
+def _norm_forward(
+    grid: Grid, detector: Detector, vector: jax.Array, runtime: FistaRuntime
+) -> jax.Array:
     model, backend, batch = runtime.projector
     return projection_operators(
         runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
@@ -126,7 +148,9 @@ def _norm_forward(grid: Grid, detector: Detector, vector, runtime: FistaRuntime)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector"))
-def _norm_adjoint(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
+def _norm_adjoint(
+    grid: Grid, detector: Detector, data: jax.Array, runtime: FistaRuntime
+) -> jax.Array:
     model, backend, batch = runtime.projector
     return projection_operators(
         runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model
@@ -134,7 +158,7 @@ def _norm_adjoint(grid: Grid, detector: Detector, data, runtime: FistaRuntime):
 
 
 @jax.jit
-def _norm_start(gradient):
+def _norm_start(gradient: jax.Array) -> jax.Array:
     return unit(power_start(gradient))[0]
 
 
@@ -143,11 +167,13 @@ _collatz = jax.jit(collatz_ratio)
 
 
 @partial(jax.jit, donate_argnums=(0,))
-def _first_step(gradient, limit):
+def _first_step(gradient: jax.Array, limit: jax.Array | float) -> jax.Array:
     return jnp.maximum(-(1 / limit) * gradient, 0)
 
 
-def _zero_start(grid, detector, data, runtime):
+def _zero_start(
+    grid: Grid, detector: Detector, data: jax.Array, runtime: FistaRuntime
+) -> tuple[jax.Array, jax.Array, float | jax.Array]:
     """Release each owned norm vector before allocating its transpose."""
     value, gradient = _zero_gradient(grid, detector, data, runtime)
     jax.block_until_ready((value, gradient))
@@ -179,7 +205,15 @@ def _zero_start(grid, detector, data, runtime):
     return x, value, limit
 
 
-def _refine(grid, detector, data, runtime, x, limit, first_value=None):
+def _refine(
+    grid: Grid,
+    detector: Detector,
+    data: jax.Array,
+    runtime: FistaRuntime,
+    x: jax.Array,
+    limit: float | jax.Array,
+    first_value: jax.Array | None = None,
+) -> tuple[FistaResult, jax.Array]:
     cfg = runtime.config
     z = jnp.array(x, copy=True)
     t = jnp.float32(1) if first_value is None else 0.5 * (1 + jnp.sqrt(jnp.float32(5)))
@@ -228,7 +262,9 @@ def _refine(grid, detector, data, runtime, x, limit, first_value=None):
     return state, jnp.asarray(limit, jnp.float32)
 
 
-def run_owned_fista(grid, detector, projections, runtime):
+def run_owned_fista(
+    grid: Grid, detector: Detector, projections: jax.Array | np.ndarray, runtime: FistaRuntime
+) -> tuple[FistaResult, jax.Array, TVMetric | None]:
     """Run nonnegative least squares with owned, reusable volume buffers."""
     data = jnp.asarray(projections)
     with progress.preparing("initialise fista"):

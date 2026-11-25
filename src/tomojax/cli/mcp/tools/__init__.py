@@ -423,7 +423,7 @@ class Tools:
             g = await self.supervisor.worker()
             if model is op.RegionPreview:
 
-                def publish(output):
+                def publish(output: Object) -> Object:
                     value = output["value"]
                     data = self.publish_handle(command, output)
                     return {
@@ -598,7 +598,7 @@ class Tools:
             "aliases": aliases,
         }
 
-        def publish(output):
+        def publish(output: Object) -> Object:
             value = output["value"]
             records = {}
             summaries = {}

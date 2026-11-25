@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -17,6 +17,9 @@ from tomojax.geometry import Detector, Grid
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
 from ._edf import EdfFrames
+
+if TYPE_CHECKING:
+    from typing import Literal
 
 
 def _parameters(path: Path) -> dict[str, str] | None:
@@ -89,7 +92,11 @@ def _geometry(fields: dict[str, str], count: int) -> tuple[Detector, Grid, np.nd
     return detector, grid, angles.astype(np.float32)
 
 
-def _calibration(owner: Path, fields: dict[str, str], indices: np.ndarray):
+def _calibration(
+    owner: Path, fields: dict[str, str], indices: np.ndarray
+) -> tuple[
+    EdfFrames | None, EdfFrames | Literal[0], np.ndarray | None, np.ndarray | None, float | None
+]:
     darks = (
         EdfFrames.open([_path(owner, fields["BACKGROUND_FILE"])])
         if _yes(fields, "SUBTRACT_BACKGROUND")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any, overload
 
 import jax
 from jax.core import Tracer
@@ -12,6 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.geometry.cone import cone_parts
+
+if TYPE_CHECKING:
+    from types import ModuleType
+
+    from tomojax.geometry import Detector, Geometry, Grid
 
 
 @jax.tree_util.register_dataclass
@@ -29,7 +34,28 @@ class TVMetric:
     observed_count: Any
 
 
-def _contrast_sums(y, w, xp):
+if TYPE_CHECKING:
+
+    @overload
+    def _contrast_sums(
+        y: jax.Array, w: jax.Array | None, xp: ModuleType
+    ) -> tuple[jax.Array, jax.Array, jax.Array | int]: ...
+
+    @overload
+    def _contrast_sums(
+        y: np.ndarray, w: np.ndarray | None, xp: ModuleType
+    ) -> tuple[np.ndarray | np.floating, np.floating, np.floating | np.integer | int]: ...
+
+
+def _contrast_sums(
+    y: jax.Array | np.ndarray,
+    w: jax.Array | np.ndarray | None,
+    xp: ModuleType,
+) -> tuple[
+    jax.Array | np.ndarray | np.floating,
+    jax.Array | np.floating,
+    jax.Array | np.floating | np.integer | int,
+]:
     if w is None:
         centered = y - xp.mean(y, axis=(-2, -1), keepdims=True)
         return xp.asarray(y.size, dtype=y.dtype), xp.sum(centered * centered), y.size
@@ -42,7 +68,14 @@ def _contrast_sums(y, w, xp):
 
 
 def resolve_tv_metric(
-    geometry, grid, detector, projections, *, weights=None, tv_weight, huber_delta
+    geometry: Geometry | None,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    *,
+    weights: jax.Array | np.ndarray | None = None,
+    tv_weight: float | jax.Array,
+    huber_delta: float | jax.Array,
 ) -> TVMetric:
     """Convert dimensionless TV/Huber weights to the summed data objective.
 
@@ -75,7 +108,9 @@ def resolve_tv_metric(
         y = jnp.asarray(projections, dtype=jnp.float32)
         w = None if weights is None else jnp.asarray(weights, dtype=jnp.float32)
 
-        def body(i, state):
+        def body(
+            i: jax.Array, state: tuple[jax.Array, jax.Array, jax.Array]
+        ) -> tuple[jax.Array, jax.Array, jax.Array]:
             valid = jnp.minimum(batch, n - i * batch)
             start = jnp.minimum(i * batch, n - batch)
             values = jax.lax.dynamic_slice_in_dim(y, start, batch)
@@ -119,7 +154,7 @@ def resolve_tv_metric(
     )
 
 
-def raise_tv_weight(metric: TVMetric, noise_gradient_rms) -> TVMetric:
+def raise_tv_weight(metric: TVMetric, noise_gradient_rms: float | jax.Array) -> TVMetric:
     """Raise the empirical TV minimum to the noise's contrast-gradient RMS.
 
     The supplied RMS is sigma * RMS(A.T @ (w * C_w(epsilon))) for one iid

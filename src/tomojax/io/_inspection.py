@@ -430,7 +430,12 @@ def _alignment_report(file: h5py.File | None) -> AlignmentReport:
     )
 
 
-def alignment_fields(params, angle_offset, misalign_spec, gauge_fix) -> AlignmentReport:
+def alignment_fields(
+    params: h5py.Dataset | h5py.Group | np.ndarray | None,
+    angle_offset: h5py.Dataset | h5py.Group | np.ndarray | None,
+    misalign_spec: object,
+    gauge_fix: object,
+) -> AlignmentReport:
     params_found = isinstance(params, h5py.Dataset | np.ndarray)
     angle_offset_found = isinstance(angle_offset, h5py.Dataset | np.ndarray)
     return {

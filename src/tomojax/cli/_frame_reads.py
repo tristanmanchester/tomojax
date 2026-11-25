@@ -1,18 +1,34 @@
 """Bounded detector reads for the worker's logical (view, row, column) selections."""
 
+from __future__ import annotations
+
 from itertools import product
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 import h5py
 import numpy as np
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
-def frame_pixels(data, ranges, budget):
+    from tomojax._data import FrameStack, Hdf5Frames
+    from tomojax.io._frame_blocks import FrameBlocks
+
+
+def frame_pixels(
+    data: np.ndarray | FrameStack, ranges: tuple[range, ...], budget: int
+) -> np.ndarray:
     views, rows, cols = ranges
     selected = slice(views.start, views.stop, views.step)
     if not hasattr(data, "window"):
+        if TYPE_CHECKING:
+            assert isinstance(data, np.ndarray)
         return np.asarray(data[tuple(slice(r.start, r.stop, r.step) for r in ranges)])
+    if TYPE_CHECKING:
+        assert isinstance(data, FrameStack)
     if hasattr(data, "blocks"):
+        if TYPE_CHECKING:
+            assert isinstance(data, FrameBlocks)
         out = np.empty(tuple(map(len, ranges)), data.dtype)
         for mask, block, tile in block_windows(data, ranges):
             out[mask] = frame_pixels(block, tile, budget)
@@ -20,6 +36,8 @@ def frame_pixels(data, ranges, budget):
     if rows.step == cols.step == 1:
         return data.window(slice(rows.start, rows.stop), slice(cols.start, cols.stop))[selected]
     if hasattr(data, "dataset"):
+        if TYPE_CHECKING:
+            assert isinstance(data, Hdf5Frames)
         return hdf5_pixels(data, ranges)
 
     # Other frame stacks expose contiguous detector windows. Account for all
@@ -41,7 +59,9 @@ def frame_pixels(data, ranges, budget):
     return out
 
 
-def block_windows(stack, ranges):
+def block_windows(
+    stack: FrameBlocks, ranges: tuple[range, ...]
+) -> Iterator[tuple[np.ndarray, FrameStack, tuple[range, ...]]]:
     """Map a logical window of a multi-file acquisition into its contributing blocks."""
     views, rows, cols = ranges
     indices = stack.indices[stack.frames[views.start : views.stop : views.step]]
@@ -55,7 +75,7 @@ def block_windows(stack, ranges):
         yield mask, block, (range(len(block)), *detector)
 
 
-def hdf5_pixels(data, ranges):
+def hdf5_pixels(data: Hdf5Frames, ranges: tuple[range, ...]) -> np.ndarray:
     views, rows, cols = ranges
     selected = slice(views.start, views.stop, views.step)
     # Map the logical view indices and cropped detector origin back to disk.

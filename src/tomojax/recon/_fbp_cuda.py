@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import cache, partial
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -12,6 +12,9 @@ import numpy as np
 
 from tomojax.core.cuda import launch_kernel
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
+
+if TYPE_CHECKING:
+    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext
 
 _SOURCE = r"""
 __device__ __forceinline__ float sample(
@@ -171,7 +174,18 @@ def _source(
     )
 
 
-def _launch(context, out, poses, images, *initial: Any, grid, detector, mode, run, axial):
+def _launch(
+    context: CallbackContext,
+    out: CallbackBuffer,
+    poses: CallbackBuffer,
+    images: CallbackBuffer,
+    *initial: CallbackBuffer,
+    grid: Grid,
+    detector: Detector,
+    mode: int,
+    run: int,
+    axial: bool,
+) -> None:
     count = grid.nx * grid.ny * grid.nz
     launch_kernel(
         _source(grid, detector, mode, run, accumulate=bool(initial), axial=axial),

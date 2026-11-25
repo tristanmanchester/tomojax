@@ -698,10 +698,8 @@ def _correct_row_slabs(
                 jax.block_until_ready(done)
             return start, stop, *done
 
-    def now(
-        function, *args: Any
-    ) -> Future[tuple[int, int, jax.Array, jax.Array, jax.Array, jax.Array]]:
-        done = Future()
+    def now[R, *Args](function: Callable[[*Args], R], *args: *Args) -> Future[R]:
+        done: Future[R] = Future()
         done.set_result(function(*args))
         return done
 

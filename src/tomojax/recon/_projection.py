@@ -7,7 +7,7 @@ measurements remain host resident.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, Protocol, overload
 
 import jax
 import jax.numpy as jnp
@@ -31,6 +31,34 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
     from .types import DataTerm
+
+    class _ResidualAdjoint(Protocol):
+        @overload
+        def __call__(
+            self,
+            volume: jax.Array,
+            data: jax.Array,
+            weights: jax.Array | None,
+            *,
+            row_support: jax.Array | None = None,
+            return_column: Literal[False] = False,
+        ) -> jax.Array: ...
+
+        @overload
+        def __call__(
+            self,
+            volume: jax.Array,
+            data: jax.Array,
+            weights: jax.Array | None,
+            *,
+            row_support: jax.Array | None = None,
+            return_column: Literal[True],
+        ) -> tuple[jax.Array, ...]: ...
+
+
+type SubsetOperators = tuple[
+    Callable[[jax.Array], jax.Array], Callable[[jax.Array], jax.Array], _ResidualAdjoint
+]
 
 
 def resolve_projector(
@@ -225,7 +253,7 @@ def subset_operators(
     subsets: int,
     *,
     stream: bool = False,
-):
+) -> Callable[[jax.Array | int], SubsetOperators]:
     """A factory for interleaved subsets of a matched, nonnegative operator.
 
     ``select(index)`` returns ``(forward, adjoint, residual_adjoint)``. Each subset has
@@ -247,24 +275,53 @@ def subset_operators(
         absolute_weights=False,
     )  # fmt: skip
 
-    def select(index):
+    def select(index: jax.Array | int) -> SubsetOperators:
         indices = index + subsets * jnp.arange(size)
         valid = indices < ops.n
         indices = jnp.minimum(indices, ops.n - 1)
         selected = ops.share(tuple(a[indices] for a in ops.per_view()), valid)
 
-        def forward(volume):
+        def forward(volume: jax.Array) -> jax.Array:
             return _forward_views(selected, volume)
 
-        def adjoint(images):
+        def adjoint(images: jax.Array) -> jax.Array:
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
+        if TYPE_CHECKING:
+
+            @overload
+            def residual_adjoint(
+                volume: jax.Array,
+                data: jax.Array,
+                weights: jax.Array | None,
+                *,
+                row_support: jax.Array | None = None,
+                return_column: Literal[False] = False,
+            ) -> jax.Array: ...
+
+            @overload
+            def residual_adjoint(
+                volume: jax.Array,
+                data: jax.Array,
+                weights: jax.Array | None,
+                *,
+                row_support: jax.Array | None = None,
+                return_column: Literal[True],
+            ) -> tuple[jax.Array, ...]: ...
+
         def residual_adjoint(
-            volume, data, weights, *, row_support: jax.Array | None = None, return_column=False
-        ):
+            volume: jax.Array,
+            data: jax.Array,
+            weights: jax.Array | None,
+            *,
+            row_support: jax.Array | None = None,
+            return_column: bool = False,
+        ) -> jax.Array | tuple[jax.Array, ...]:
             project = selected.projector(volume)
 
-            def body(chunk, output):
+            def body(
+                chunk: jax.Array, output: jax.Array | tuple[jax.Array, jax.Array] | None
+            ) -> jax.Array | tuple[jax.Array, ...]:
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
                 measured = (
@@ -288,10 +345,14 @@ def subset_operators(
                     )
                 residual = jnp.where(counts[:, None, None], residual, 0.0)
                 if return_column:
+                    if TYPE_CHECKING:
+                        assert isinstance(output, tuple)  # The loop starts with two volumes.
                     ones = jnp.broadcast_to(
                         counts[:, None, None].astype(jnp.float32), residual.shape
                     )
                     return selected.backproject_pair((residual, ones), start, batch, output)
+                if TYPE_CHECKING:
+                    assert not isinstance(output, tuple)
                 return selected.backproject(residual, start, batch, output)
 
             # A single transpose has no previous batch to accumulate.

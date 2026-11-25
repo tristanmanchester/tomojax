@@ -203,22 +203,66 @@ class CudaEngine:
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
-def _project(volume, coeff, *, grid, detector, backend):
+def _project(
+    volume: jax.Array | np.ndarray,
+    coeff: jax.Array | np.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+) -> jax.Array:
+    if TYPE_CHECKING:
+        # JIT converts NumPy inputs before tracing the projector.
+        assert isinstance(volume, jax.Array)
+        assert isinstance(coeff, jax.Array)
     return cone_project(volume, coeff, grid, detector, backend=backend)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
-def _project_ones(coeff, *, grid, detector, backend):
+def _project_ones(
+    coeff: jax.Array | np.ndarray, *, grid: Grid, detector: Detector, backend: str
+) -> jax.Array:
+    if TYPE_CHECKING:
+        assert isinstance(coeff, jax.Array)
     return cone_project_ones(coeff, grid, detector, backend=backend)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
-def _transpose(images, coeff, accumulate, *, grid, detector, backend):
+def _transpose(
+    images: jax.Array | np.ndarray,
+    coeff: jax.Array | np.ndarray,
+    accumulate: jax.Array | np.ndarray | None,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+) -> jax.Array:
+    if TYPE_CHECKING:
+        assert isinstance(images, jax.Array)
+        assert isinstance(coeff, jax.Array)
+        assert accumulate is None or isinstance(accumulate, jax.Array)
     return cone_backproject(images, coeff, grid, detector, backend=backend, accumulate=accumulate)
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend"))
-def _transpose_pair(images, coeff, accumulate, *, grid, detector, backend):
+def _transpose_pair(
+    images: tuple[jax.Array, jax.Array] | tuple[np.ndarray, ...],
+    coeff: jax.Array | np.ndarray,
+    accumulate: tuple[jax.Array, jax.Array] | tuple[np.ndarray, ...],
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+) -> tuple[jax.Array, jax.Array]:
+    if TYPE_CHECKING:
+        assert isinstance(coeff, jax.Array)
+        # Both channels have been traced as JAX arrays.
+        assert isinstance(images[0], jax.Array)
+        assert isinstance(images[1], jax.Array)
+        assert isinstance(accumulate[0], jax.Array)
+        assert isinstance(accumulate[1], jax.Array)
+        images = (images[0], images[1])
+        accumulate = (accumulate[0], accumulate[1])
     return cone_backproject_pair(
         images, coeff, grid, detector, backend=backend, accumulate=accumulate
     )

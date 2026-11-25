@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 from zipfile import ZipFile
 
 import numpy as np
@@ -55,10 +56,15 @@ def save_npz(
         np.savez_compressed(stream, allow_pickle=False, **arrays)
 
 
-def npz_layout(path: Path, *, volume_only: bool = False):
+def npz_layout(
+    path: Path, *, volume_only: bool = False
+) -> tuple[LoadedNXTomo, dict[str, np.ndarray]]:
     """The archive's record and its saved arrays, read whole."""
     with ZipFile(path) as archive:
         payload = LoadedNXTomo.from_dataset(_load_npz_dataset(archive, volume_only=volume_only))
+    if TYPE_CHECKING:
+        # NPZ members are read whole, so there is no lazy HDF5 projection stack.
+        assert payload.projections is None or isinstance(payload.projections, np.ndarray)
     arrays = {"projections": payload.projections, "volume": payload.metadata.volume}
     return payload, {key: value for key, value in arrays.items() if value is not None}
 

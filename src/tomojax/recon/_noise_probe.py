@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax
 import jax.numpy as jnp
 
 from ._data_term import project_residual
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def gaussian_probe(view_indices, detector_shape: tuple[int, int], *, weights=None):
+    from tomojax.geometry import Detector, Grid
+
+
+def gaussian_probe(
+    view_indices: jax.Array, detector_shape: tuple[int, int], *, weights: jax.Array | None = None
+) -> jax.Array:
     """One reproducible centered iid probe, weighted for a data-gradient transpose.
 
     Each full detector view has its own seed derived from its global index.
@@ -22,8 +31,16 @@ def gaussian_probe(view_indices, detector_shape: tuple[int, int], *, weights=Non
 
 
 def probe_gradient_rms(
-    poses, grid, detector, backproject, *, batch_size, shape=None, support=None, read_weights=None
-):
+    poses: jax.Array,
+    grid: Grid,
+    detector: Detector,
+    backproject: Callable[[jax.Array, jax.Array, jax.Array, jax.Array], jax.Array],
+    *,
+    batch_size: int,
+    shape: tuple[int, int, int] | None = None,
+    support: jax.Array | None = None,
+    read_weights: Callable[[jax.Array, int], jax.Array] | None = None,
+) -> jax.Array:
     """RMS of one full-scan contrast-noise transpose through the solver's BP.
 
     ``backproject(images, start, poses, total)`` is the solver's matched batch
@@ -36,7 +53,7 @@ def probe_gradient_rms(
     n = poses.shape[0]
     batch = min(n, batch_size)
 
-    def accumulate(k, total):
+    def accumulate(k: jax.Array, total: jax.Array) -> jax.Array:
         start = jnp.minimum(k * batch, n - batch)
         indices = start + jnp.arange(batch)
         valid = indices >= k * batch

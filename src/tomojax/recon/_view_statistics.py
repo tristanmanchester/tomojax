@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
 from . import _cone_slabs
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tomojax.core._cuda_types import CuPyValue
+
+    from ._cone_slabs import Batch
 
 
 class ViewStatistics:
@@ -41,7 +50,13 @@ class ViewStatistics:
         self.absolute_mean = (sums[1] / self.pixels).astype(xp.float32)
         self.outside_sum, self.outside_square = sums[2], sums[3]
 
-    def project(self, source, *, absolute: bool = False, prefetch=None):
+    def project(
+        self,
+        source: Callable[[int], tuple[np.ndarray | CuPyValue, ...]],
+        *,
+        absolute: bool = False,
+        prefetch: Callable[[int], None] | None = None,
+    ) -> np.ndarray | CuPyValue:
         """Mean of the complete projection (or its magnitude), in a forward-only sweep.
 
         ``source(k)`` supplies one volume channel and must be safe to read again
@@ -50,7 +65,9 @@ class ViewStatistics:
         problem, xp = self.problem, self.problem.engine.xp
         total = xp.zeros(problem.data.shape[0], xp.float64)
 
-        def finish(batch, _first, _stop, rows):
+        def finish(
+            batch: Batch, _first: int, _stop: int, rows: tuple[np.ndarray | CuPyValue, ...]
+        ) -> None:
             values = xp.abs(rows[0]) if absolute else rows[0]
             total[batch.index] += values.sum((1, 2), dtype=xp.float64)
 
@@ -60,7 +77,9 @@ class ViewStatistics:
         )  # fmt: skip
         return (total / self.pixels).astype(xp.float32)
 
-    def projection_mean(self, rows, *, absolute: bool = False):
+    def projection_mean(
+        self, rows: np.ndarray | CuPyValue, *, absolute: bool = False
+    ) -> np.ndarray | CuPyValue:
         """Reduce an already resident full-detector projection in ``views`` order.
 
         Bounded row/view chunks match :meth:`project` without an extra forward
@@ -78,7 +97,7 @@ class ViewStatistics:
                 total[xp.asarray(self.views[start:end])] += values.sum((1, 2), dtype=xp.float64)
         return (total / self.pixels).astype(xp.float32)
 
-    def outside_energy(self, offset):
+    def outside_energy(self, offset: float | np.ndarray | CuPyValue) -> np.floating | CuPyValue:
         """Squared norm of ``data-offset`` on rows omitted from every slab window."""
         offset = self.problem.engine.xp.asarray(offset, dtype=self.problem.engine.xp.float64)
         return (

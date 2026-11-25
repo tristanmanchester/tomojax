@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from functools import lru_cache
 import operator
 from threading import Lock
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 
@@ -18,6 +18,11 @@ from tomojax.geometry import Detector, Grid, grid_volume_origin
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 from ._pinned import PinnedPool
+
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax.core._cuda_types import CuPyValue
 
 
 def _cupy_device() -> int:
@@ -74,7 +79,15 @@ def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, ba
 
 
 class _Geometry:
-    def __init__(self, grid, detector, nviews, flipped, angles, backend) -> None:
+    def __init__(
+        self,
+        grid: Grid,
+        detector: Detector,
+        nviews: int,
+        flipped: np.ndarray | tuple[int, ...],
+        angles: tuple[float, ...] | np.ndarray,
+        backend: Literal["numpy", "cupy"],
+    ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
             import cupy as xp
@@ -121,7 +134,14 @@ class _Geometry:
                 y_boundary=self.y_boundary is not None, repeats=self.groups is not None
             )
 
-    def _coordinates(self, angles, *, mirror=False):
+    def _coordinates(
+        self, angles: np.ndarray, *, mirror: bool = False
+    ) -> tuple[
+        np.ndarray | CuPyValue,
+        np.ndarray | CuPyValue,
+        np.ndarray | CuPyValue,
+        np.ndarray | CuPyValue,
+    ]:
         if self.cuda:
             return self._cuda_coordinates(angles, mirror=mirror)
         xp, grid, detector = self.xp, self.grid, self.detector
@@ -154,7 +174,9 @@ class _Geometry:
         ).astype(complex_dtype)
         return angle, radial.astype(real), phase, detector_phase
 
-    def _cuda_coordinates(self, angles, *, mirror):
+    def _cuda_coordinates(
+        self, angles: np.ndarray, *, mirror: bool
+    ) -> tuple[CuPyValue, CuPyValue, CuPyValue, CuPyValue]:
         from ._fourier_cuda import coordinates_kernel
 
         xp, grid, detector = self.xp, self.grid, self.detector
@@ -197,7 +219,14 @@ class _Geometry:
 
 
 @lru_cache(maxsize=8)
-def _cached_geometry(grid, detector, nviews, flipped, angles, device) -> tuple[_Geometry, Any]:
+def _cached_geometry(
+    grid: Grid,
+    detector: Detector,
+    nviews: int,
+    flipped: tuple[int, ...],
+    angles: tuple[float, ...],
+    device: int,
+) -> tuple[_Geometry, CuPyValue]:
     """Retain small immutable geometry arrays; no mutable slab buffers."""
     import cupy
 
@@ -208,7 +237,14 @@ def _cached_geometry(grid, detector, nviews, flipped, angles, device) -> tuple[_
     return geometry, ready
 
 
-def _plan_geometry(grid, detector, nviews, flipped, angles, backend):
+def _plan_geometry(
+    grid: Grid,
+    detector: Detector,
+    nviews: int,
+    flipped: np.ndarray | tuple[int, ...],
+    angles: tuple[float, ...],
+    backend: Literal["numpy", "cupy"],
+) -> _Geometry:
     """Acquire immutable geometry and make its initialization visible to this stream."""
     shape, _ = transform_grid(grid, detector)
     if backend == "cupy" and shape[0] * shape[1] <= 131072:
@@ -226,7 +262,7 @@ _STREAMS_LOCK = Lock()
 
 
 @lru_cache(maxsize=8)
-def _cached_transfer_streams(device):
+def _cached_transfer_streams(device: int) -> tuple[CuPyValue, ...]:
     """Reuse device queues so repeated calls reuse CuPy's stream-local arenas."""
     import cupy
 
@@ -234,13 +270,13 @@ def _cached_transfer_streams(device):
         return tuple(cupy.cuda.Stream(non_blocking=True) for _ in range(3))
 
 
-def _transfer_streams(device):
+def _transfer_streams(device: int) -> tuple[CuPyValue, ...]:
     # lru_cache alone can create duplicate queues on simultaneous first calls.
     with _STREAMS_LOCK:
         return _cached_transfer_streams(device)
 
 
-def _inverse_fft_plan(shape, depth):
+def _inverse_fft_plan(shape: tuple[int, int], depth: int) -> tuple[int, CuPyValue]:
     """Own the batched C2R workspace rather than a global-cache allocation."""
     from cupy.cuda import cufft
 
@@ -277,16 +313,16 @@ class PendingSlab:
 class FourierPlan:
     def __init__(
         self,
-        grid,
-        detector,
-        nviews,
-        flipped,
-        angles,
-        depth,
-        backend,
+        grid: Grid,
+        detector: Detector,
+        nviews: int,
+        flipped: np.ndarray | tuple[int, ...],
+        angles: tuple[float, ...],
+        depth: int,
+        backend: Literal["numpy", "cupy"],
         *,
-        async_transfers=False,
-        shifts=None,
+        async_transfers: bool = False,
+        shifts: np.ndarray | None = None,
     ) -> None:
         self.cuda = backend == "cupy"
         cuda = None
@@ -348,7 +384,7 @@ class FourierPlan:
             if self.cuda:
                 self.inverse_direction, self.inverse_plan = _inverse_fft_plan(self.shape, depth)
 
-    def _interpolate_cuda(self, spectrum):
+    def _interpolate_cuda(self, spectrum: CuPyValue) -> None:
         output = self.frequencies
         angle, radial, phase, detector_phase = self.coordinates
         layers = min(self.depth, 65535)
@@ -394,7 +430,7 @@ class FourierPlan:
             args,
         )
 
-    def _compute_volume(self, raw, count: int) -> Any:
+    def _compute_volume(self, raw: np.ndarray | CuPyValue, count: int) -> np.ndarray | CuPyValue:
         xp = self.xp
         if self.cuda:
             rows = self.depth * self.source_views
@@ -454,7 +490,7 @@ class FourierPlan:
         scale = 1.0 / (self.grid.vx * self.grid.vy * normalization)
         return xp.multiply(volume[:count, cy : cy + self.grid.ny, cx : cx + self.grid.nx], scale)
 
-    def reconstruct(self, host, *, count: int) -> np.ndarray:
+    def reconstruct(self, host: np.ndarray | ProjectionRows, *, count: int) -> np.ndarray:
         xp = self.xp
         with self.compute if self.compute is not None else nullcontext():
             # NumPy must also copy: deapodization must not mutate caller storage.
@@ -471,7 +507,7 @@ class FourierPlan:
                 return cupy.asnumpy(volume)
             return volume.astype(np.float32)
 
-    def enqueue(self, host, *, count: int) -> PendingSlab:
+    def enqueue(self, host: np.ndarray | ProjectionRows, *, count: int) -> PendingSlab:
         import cupy as xp
 
         assert self.upload is not None
@@ -505,7 +541,7 @@ class FourierPlan:
                 raw = source
                 if isinstance(host, ProjectionRows):
                     raw, owners = interpolate_projection_rows(host, source, self.depth, xp)
-                volume = self._compute_volume(raw, count)
+                volume: CuPyValue = self._compute_volume(raw, count)
                 computed = xp.cuda.Event()
                 computed.record()
             output = self._pinned.empty(volume.shape)
@@ -540,7 +576,9 @@ class FourierPlan:
             self.download.synchronize()
             raise
 
-    def enqueue_rows(self, data, order, positions) -> PendingSlab:
+    def enqueue_rows(
+        self, data: jax.Array | np.ndarray, order: np.ndarray, positions: np.ndarray
+    ) -> PendingSlab:
         """Borrow device source rows, making an owned FFT slab and output download."""
         import jax
 
@@ -569,7 +607,7 @@ class FourierPlan:
                 raw, metadata = interpolate_projection_rows(rows, source, self.depth, xp)
                 # The ordered rows were allocated and last used on this compute stream.
                 del rows, source
-                volume = self._compute_volume(raw, len(positions))
+                volume: CuPyValue = self._compute_volume(raw, len(positions))
                 computed = xp.cuda.Event()
                 computed.record()
             assert self._pinned is not None

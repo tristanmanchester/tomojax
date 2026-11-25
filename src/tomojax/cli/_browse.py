@@ -8,7 +8,7 @@ from itertools import product
 import math
 from pathlib import Path
 import tempfile
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import msgspec
@@ -25,6 +25,11 @@ from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
 from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
+
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax._data import FrameStack
 
 READ_BYTES = 16 << 20
 
@@ -190,7 +195,12 @@ def browse(
         return p.DisplayPlanes(tuple(planes))
 
 
-def read_window(context, data, meta, ranges):
+def read_window(
+    context: ex.ExecutionContext,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | FrameStack,
+    meta: Array,
+    ranges: tuple[range, ...],
+) -> Array:
     shape = tuple(map(len, ranges))
     if math.prod(shape) * np.dtype(meta.dtype).itemsize > READ_BYTES:
         raise InvalidParameter("roi", "read exceeds 16 MiB; use a stride or a smaller ROI")
@@ -220,7 +230,7 @@ def read_window(context, data, meta, ranges):
     )
 
 
-def ordered_tiles(ranges, capacity):
+def ordered_tiles(ranges: tuple[range, ...], capacity: int) -> Iterator[tuple[range, ...]]:
     """Partition a window into C-order spans of at most capacity elements."""
     block = [1] * len(ranges)
     for i in reversed(range(len(ranges))):
@@ -231,7 +241,13 @@ def ordered_tiles(ranges, capacity):
         yield tuple(r[start : start + n] for r, start, n in zip(ranges, origin, block, strict=True))
 
 
-def exact_percentiles(samples, percentiles, low, high, control):
+def exact_percentiles(
+    samples: np.ndarray,
+    percentiles: tuple[float, ...],
+    low: float,
+    high: float,
+    control: ex.Control,
+) -> np.ndarray:
     """Find bracketing order statistics by counting in independently sorted runs."""
     step = READ_BYTES // samples.itemsize
     if samples.size <= step:
@@ -269,7 +285,13 @@ def exact_percentiles(samples, percentiles, low, high, control):
     return np.interp(positions, ranks, lower)
 
 
-def statistics(request, context, data, meta, ranges):
+def statistics(
+    request: op.Statistics,
+    context: ex.ExecutionContext,
+    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | FrameStack,
+    meta: Array,
+    ranges: tuple[range, ...],
+) -> p.StatisticsResult:
     """Spool finite samples for exact quantiles while bounding source reads and resident buffers."""
     if not 1 <= request.bins <= 4096:
         raise InvalidParameter("bins", "choose 1 to 4096 histogram bins")

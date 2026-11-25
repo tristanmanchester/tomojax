@@ -51,12 +51,16 @@ from tomojax.progress import warn
 from tomojax.recon.api import MethodConfig
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Callable, Generator
+
+    import jax
 
     from tomojax import _region, corrections
     from tomojax._planning import ResolvedReconstruction
     from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax.corrections._rows import CorrectedRows
     from tomojax.geometry import Detector
+    from tomojax.io import ProjectionDataset
     from tomojax.recon.types import ReconstructionSlab
 else:
     corrections = AnnotationModule("tomojax.corrections")
@@ -107,7 +111,11 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     return reconstruction_from_record(path, load_dataset(os.fspath(path)), load)
 
 
-def reconstruction_from_record(path, record, read_scan):
+def reconstruction_from_record(
+    path: str | PathLike[str],
+    record: ProjectionDataset,
+    read_scan: Callable[[str | PathLike[str]], Scan],
+) -> Reconstruction:
     from tomojax._files import saved_volume_grid
 
     if record.volume is None:
@@ -176,7 +184,11 @@ def load_simulation(path: str | PathLike[str]) -> Simulation:
     return simulation_from_record(path, load_dataset(os.fspath(path)), load)
 
 
-def simulation_from_record(path, record, read_scan):
+def simulation_from_record(
+    path: str | PathLike[str],
+    record: ProjectionDataset,
+    read_scan: Callable[[str | PathLike[str]], Scan],
+) -> Simulation:
     if record.volume is None or record.geometry_metadata.get("volume_role") != "phantom":
         raise ValueError(f"{path} holds no simulation phantom")
     return Simulation(read_scan(path), np.asarray(record.volume))
@@ -216,7 +228,11 @@ def load_alignment(path: str | PathLike[str]) -> Alignment:
     return alignment_from_record(path, load_dataset(os.fspath(path)), load)
 
 
-def alignment_from_record(path, record, read_scan):
+def alignment_from_record(
+    path: str | PathLike[str],
+    record: ProjectionDataset,
+    read_scan: Callable[[str | PathLike[str]], Scan],
+) -> Alignment:
     meta = record.geometry_metadata
     raw_info = meta.get("alignment_info")
     if not isinstance(raw_info, dict):
@@ -725,7 +741,7 @@ def slab_settings(
     warm_start: bool | None,
     corrections: Sequence[corrections.Step],
     epsilon: float,
-):
+) -> tuple[Grid, MethodConfig, tuple[corrections.Step, ...]]:
     """Resolve method, geometry and supported corrections before opening a raw row source."""
     from tomojax.corrections.api import positive_finite, slab_steps
     from tomojax.errors import InvalidParameter
@@ -791,7 +807,9 @@ def _reconstruct_slabs_context(
             linear_limit=frames.linear_limit,
         ) as source:
 
-            def read(first: int, stop: int):
+            def read(
+                first: int, stop: int
+            ) -> tuple[jax.Array | np.ndarray, CorrectedRows | corrections.Corrected]:
                 corrected = source(first, stop)
                 return corrected.projections, corrected
 

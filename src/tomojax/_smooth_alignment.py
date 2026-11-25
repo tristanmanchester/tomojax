@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from tomojax._field_of_view import Cylinder
     from tomojax._parameters import RegionName
     from tomojax._region import RegionEstimate
-    from tomojax._scan import Scan
+    from tomojax._scan import Alignment, Scan
     from tomojax.alignment import AlignConfig
     from tomojax.alignment._integration import FitSchedule
     from tomojax.geometry import Grid
@@ -179,12 +179,25 @@ def resolve_alignment(
     return JointSelection(grid, config, cylinder, info, schedule, frames)
 
 
-def transfer_alignment(train, test, alignment, *, training_segments, held_segments, local):
+def transfer_alignment(
+    train: Scan,
+    test: Scan,
+    alignment: Alignment,
+    *,
+    training_segments: np.ndarray,
+    held_segments: np.ndarray,
+    local: bool,
+) -> Scan:
     """Apply fitted globals and segment-interpolated local updates to unseen views."""
     from scipy.spatial.transform import Rotation
 
     from tomojax.alignment._calibration import publish_calibration
 
+    if TYPE_CHECKING:
+        # The fit records structured calibration changes and the partitions keep positions.
+        assert isinstance(alignment.info["calibration"], dict)
+        assert test.view_positions is not None
+        assert train.view_positions is not None
     corrections = {key: entry["change"] for key, entry in alignment.info["calibration"].items()}
     fitted = None
     if local:

@@ -1,11 +1,46 @@
 """Affine Joseph plane geometry shared by JAX and host CUDA execution."""
 
-from typing import Any
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, overload
 
 from .geometry.base import Detector, Grid, grid_volume_origin
 
+if TYPE_CHECKING:
+    from types import ModuleType
 
-def coefficients(poses, grid: Grid, detector: Detector, det_grid=None, *, xp: Any) -> Any:
+    import jax
+    import numpy as np
+
+    @overload
+    def coefficients(
+        poses: jax.Array,
+        grid: Grid,
+        detector: Detector,
+        det_grid: tuple[jax.Array, jax.Array] | None = None,
+        *,
+        xp: ModuleType,
+    ) -> jax.Array: ...
+
+    @overload
+    def coefficients(
+        poses: np.ndarray,
+        grid: Grid,
+        detector: Detector,
+        det_grid: tuple[np.ndarray, np.ndarray] | None = None,
+        *,
+        xp: ModuleType,
+    ) -> np.ndarray: ...
+
+
+def coefficients(
+    poses: jax.Array | np.ndarray,
+    grid: Grid,
+    detector: Detector,
+    det_grid: tuple[jax.Array, jax.Array] | tuple[np.ndarray, np.ndarray] | None = None,
+    *,
+    xp: ModuleType,
+) -> jax.Array | np.ndarray:
     voxel = xp.asarray((grid.vx, grid.vy, grid.vz), xp.float32)
     origin = xp.asarray(grid_volume_origin(grid), xp.float32)
     rotation = poses[:, :3, :3]
@@ -47,7 +82,7 @@ def coefficients(poses, grid: Grid, detector: Detector, det_grid=None, *, xp: An
     axis = xp.argmax(xp.abs(direction), axis=1)
     b, c = (axis + 1) % 3, (axis + 2) % 3
 
-    def take(values, index):
+    def take[T: jax.Array | np.ndarray](values: T, index: jax.Array | np.ndarray) -> T:
         return xp.take_along_axis(values, index[:, None], axis=1)[:, 0]
 
     da = take(direction, axis)

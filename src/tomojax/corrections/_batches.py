@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from types import TracebackType
 
     import jax
+    from numpy.typing import ArrayLike
+
+    from tomojax._data import FrameStack
 
     from ._steps import Step
 
@@ -79,7 +82,9 @@ def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, in
             yield start, min(start + batch, views), frames
 
 
-def copy_projections(projections, steps):
+def copy_projections(
+    projections: ArrayLike | FrameStack | jax.Array, steps: Sequence[Step]
+) -> np.ndarray:
     """Own the line-integral input before applying corrections in place."""
     from tomojax.core.host_volume import fill, host_array
 
@@ -87,6 +92,8 @@ def copy_projections(projections, steps):
         step.whole_rows or step.selects_views for step in steps
     ):
         return np.array(projections, np.float32, copy=True)
+    if TYPE_CHECKING:
+        assert isinstance(projections, np.ndarray | jax.Array | FrameStack)
     out = host_array(projections.shape)
     depth = max(1, (32 << 20) // (4 * out.shape[1] * out.shape[2]))
     return fill(out, projections, depth=depth)

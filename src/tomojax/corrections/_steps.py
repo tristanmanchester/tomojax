@@ -857,7 +857,7 @@ def _fit_stripe_response(row: jax.Array, width: int, noise: jax.Array, bad: jax.
     """Rank only selected column tiles, with full median halos and a dense fallback."""
     columns, tile, half = row.shape[1], 256, width // 2
 
-    def dense():
+    def dense() -> jax.Array:
         # Matching distributions retains angular features; do not interpolate
         # measured columns. This is also the reference for densely bad rows.
         ranked = jnp.sort(row, axis=0)
@@ -873,7 +873,7 @@ def _fit_stripe_response(row: jax.Array, width: int, noise: jax.Array, bad: jax.
     active = flags.reshape(tiles, tile).any(1)
     count = active.sum()
 
-    def sparse():
+    def sparse() -> jax.Array:
         starts = jnp.nonzero(active, size=slots, fill_value=0)[0] * tile
         indices = starts[:, None] + jnp.arange(tile + 2 * half)[None]
         padded = jnp.pad(row, ((0, 0), (half, half + extra)), mode="edge")
@@ -894,7 +894,7 @@ def _fit_stripe_response(row: jax.Array, width: int, noise: jax.Array, bad: jax.
             :, :columns
         ]
 
-    def identity():
+    def identity() -> jax.Array:
         return jnp.stack((jnp.ones(columns, row.dtype), jnp.zeros(columns, row.dtype)))
 
     return jax.lax.cond(count == 0, identity, lambda: jax.lax.cond(count <= slots, sparse, dense))

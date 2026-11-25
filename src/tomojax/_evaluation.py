@@ -1,8 +1,11 @@
 """Fit and predict on disjoint acquisition partitions."""
 
+from __future__ import annotations
+
 from dataclasses import asdict, dataclass, replace
 import gc
 import math
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
 
@@ -21,6 +24,30 @@ from tomojax.evaluation import Score, Split
 from tomojax.recon import api
 from tomojax.recon.planning import prediction_block_views
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from typing import Literal
+
+    from tomojax.corrections import Step
+    from tomojax.recon.api import MethodConfig
+
+    class _AngularSplit(TypedDict):
+        start: float
+        width: float
+        guard: float
+        period: float
+
+    class _InterleavedSplit(TypedDict):
+        stride: int
+        offset: int
+        guard: int
+
+    type SplitSettings = _AngularSplit | _InterleavedSplit
+
+
+# msgspec and the worker's argument resolver produce dynamic keyword dictionaries.
+type WireValue = Any
+
 
 @dataclass
 class Partition:
@@ -29,8 +56,14 @@ class Partition:
     segments: np.ndarray
 
 
-def native_split(data, kind, settings):
+def native_split(
+    data: tj.Scan | tj.Frames,
+    kind: Literal["angular", "interleaved"],
+    settings: SplitSettings,
+) -> tuple[Split, np.ndarray]:
     shape = (data.counts if isinstance(data, tj.Frames) else data.projections).shape
+    if TYPE_CHECKING:
+        assert len(shape) == 3  # Scan and Frames store (view, v, u) stacks.
     n = shape[0]
     positions = np.arange(n) if data.view_positions is None else np.asarray(data.view_positions)
     starts = np.r_[True, np.diff(positions) <= 0]
@@ -39,8 +72,12 @@ def native_split(data, kind, settings):
     segments = np.cumsum(starts)
     guard = settings["guard"]
     if kind == "angular":
+        if TYPE_CHECKING:
+            assert "start" in settings
         split = Split.angular(shape, np.asarray(data.geometry.angles), **settings)
     else:
+        if TYPE_CHECKING:
+            assert "stride" in settings
         if not 0 <= guard < settings["stride"] / 2:
             raise InvalidParameter("split.guard", "guards must leave training views")
         split = Split.interleaved(shape, stride=settings["stride"], offset=settings["offset"])
@@ -48,6 +85,9 @@ def native_split(data, kind, settings):
     for group in np.unique(segments):
         ids = np.flatnonzero(segments == group)
         if kind == "interleaved":
+            if TYPE_CHECKING:
+                assert "stride" in settings
+                guard = settings["guard"]
             for k in range(1, guard + 1):
                 train[ids[k:]] &= ~test[ids[:-k]]
                 train[ids[:-k]] &= ~test[ids[k:]]
@@ -80,7 +120,7 @@ def native_split(data, kind, settings):
 _PARTITION_BYTES = 32 << 20
 
 
-def _select_views(data, ids, *, raw):
+def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> tj.Scan | tj.Frames:
     source = data.counts if isinstance(data, tj.Frames) else data.projections
     if raw and hasattr(source, "frames_at"):
         return data.selected(ids)
@@ -112,7 +152,14 @@ def _select_views(data, ids, *, raw):
     )
 
 
-def partition_layout(data, kind, settings, steps, *, raw):
+def partition_layout(
+    data: tj.Scan | tj.Frames,
+    kind: Literal["angular", "interleaved"],
+    settings: SplitSettings,
+    steps: Sequence[Step],
+    *,
+    raw: bool,
+) -> tuple[Split, Partition, Partition]:
     """Validate the native split before any data-dependent rejection or calibration."""
     from tomojax.corrections.api import check_scan_steps
     from tomojax.corrections.calibration import check_calibration_layout
@@ -129,7 +176,7 @@ def partition_layout(data, kind, settings, steps, *, raw):
     samples = data.counts if isinstance(data, tj.Frames) else data.projections
     dtype = np.float32 if raw or steps else samples.dtype
 
-    def layout(mask):
+    def layout(mask: np.ndarray) -> Partition:
         ids = np.flatnonzero(mask)
         geometry = views_of(data.geometry, ids)
         bind_step_geometry(tuple(step.retained(ids) for step in steps), geometry)
@@ -147,10 +194,17 @@ def partition_layout(data, kind, settings, steps, *, raw):
     return split, layout(split.train), layout(split.test)
 
 
-def partitions(data, kind, settings, steps, *, raw):
+def partitions(
+    data: tj.Scan | tj.Frames,
+    kind: Literal["angular", "interleaved"],
+    settings: SplitSettings,
+    steps: Sequence[Step],
+    *,
+    raw: bool,
+) -> tuple[Split, Partition, Partition]:
     split, segments = native_split(data, kind, settings)
 
-    def partition(mask):
+    def partition(mask: np.ndarray) -> Partition:
         ids = np.flatnonzero(mask)
         selected = _select_views(data, ids, raw=raw)
         scan = (
@@ -180,7 +234,7 @@ def partitions(data, kind, settings, steps, *, raw):
     return split, train_part, test_part
 
 
-def local_motion(settings):
+def local_motion(settings: dict[str, WireValue]) -> bool:
     """Only global and smooth fits define poses for unseen views."""
     selection = settings["fit"]
     local = bool(
@@ -202,12 +256,20 @@ def local_motion(settings):
     return local
 
 
-def fit_candidate(train, test, kind, settings, reference):
+def fit_candidate(
+    train: Partition,
+    test: Partition,
+    kind: str | int | None,
+    settings: dict[str, WireValue],
+    reference: Callable[[], dict[str, WireValue]],
+) -> tuple[tj.Reconstruction, tj.Scan, MethodConfig, dict[str, object]]:
     held = test.scan
     diagnostic = {}
     scan = train.scan
     if kind == "align":
         local = local_motion(settings)
+        if TYPE_CHECKING:
+            assert scan.view_positions is not None  # partitions retain acquisition positions.
         positions = scan.view_positions.copy()
         for group in np.unique(train.segments):
             members = train.segments == group
@@ -247,8 +309,13 @@ def fit_candidate(train, test, kind, settings, reference):
 _PREDICTION_BYTES = 32 << 20
 
 
-def prediction_score(split, test, held, recon, config):
+def prediction_score(
+    split: Split, test: Partition, held: tj.Scan, recon: tj.Reconstruction, config: MethodConfig
+) -> Score:
     """Project one bounded batch at a time, summing views in acquisition order."""
+    if TYPE_CHECKING:
+        # _select_views stages both partitions in host storage.
+        assert isinstance(test.scan.projections, np.ndarray)
     detector = held.detector
     batch = max(1, _PREDICTION_BYTES // (detector.nv * detector.nu * np.dtype(np.float32).itemsize))
     views = len(test.indices)
@@ -278,7 +345,13 @@ def prediction_score(split, test, held, recon, config):
     return score
 
 
-def score_candidate(domain, kind, settings, description, reference):
+def score_candidate(
+    domain: tuple[Split, Partition, Partition],
+    kind: str | int | None,
+    settings: dict[str, WireValue],
+    description: dict[str, object],
+    reference: Callable[[], dict[str, WireValue]],
+) -> dict[str, object]:
     """Fit and score one candidate, releasing its volume before the next one starts.
 
     Collecting cyclic garbage here frees device buffers that a solver's internal

@@ -47,6 +47,7 @@ from ._slab_engines import CudaEngine, Engine, JaxEngine, engine_for
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
+    from tomojax import progress
     from tomojax.geometry import Detector, Geometry, Grid
 
     from .cgls import CGLSConfig
@@ -301,7 +302,7 @@ class HostVolume:
         if self._worker is not None and (z0, z1) not in self._reads:
             self._reads[z0, z1] = self._worker.submit(self._read, z0, z1)
 
-    def preview(self, grid: Grid):
+    def preview(self, grid: Grid) -> dict[str, progress.Sample]:
         """Read completed planes after this volume's last queued write."""
         for write in self._writes:
             write.result()

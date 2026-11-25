@@ -57,7 +57,7 @@ def forward_cuda(
         )
 
         @sequential_vmap
-        def dispatch(c, x):
+        def dispatch(c: jax.Array, x: jax.Array) -> jax.Array:
             return forward_dispatch_cuda(
                 c, x, grid, detector, generic_source=text, tile_v=tile_v, z_fast=z_fast
             )
@@ -96,7 +96,7 @@ def adjoint_cuda(
     shape = (grid.nx, grid.ny, grid.nz) if z_fast else (grid.nz, grid.ny, grid.nx)
     initial = jnp.zeros(shape, jnp.float32) if accumulate is None else accumulate
 
-    def fallback(args):
+    def fallback(args: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
         c, y, x = args
         if interpolation == "linear" and not absolute_weights and use_cuda_gather(grid):
             y = generic.swap_detector_axes(y)
@@ -116,8 +116,8 @@ def adjoint_cuda(
     if not absolute_weights and use_cuda_gather(grid, axial=True):
 
         @sequential_vmap
-        def dispatch(c, y, x):
-            def native(args):
+        def dispatch(c: jax.Array, y: jax.Array, x: jax.Array) -> jax.Array:
+            def native(args: tuple[jax.Array, jax.Array, jax.Array]) -> jax.Array:
                 c, y, x = args
                 if interpolation == "cubic":
                     y = generic.swap_detector_axes(y)
@@ -141,7 +141,7 @@ def adjoint_cuda(
     if interpolation == "linear" and not absolute_weights and use_cuda_gather(grid):
 
         @sequential_vmap
-        def dispatch(c, y, x):
+        def dispatch(c: jax.Array, y: jax.Array, x: jax.Array) -> jax.Array:
             return fallback((c, y, x))
 
         return dispatch(coeff, images, initial)

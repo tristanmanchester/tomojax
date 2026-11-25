@@ -1,7 +1,10 @@
 """Matched held-out projection from a host volume, one bounded z slab at a time."""
 
+from __future__ import annotations
+
 from dataclasses import replace
 from functools import partial
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -16,11 +19,26 @@ from tomojax.geometry.api import detector_grid_from_geometry_inputs
 from tomojax.recon._cone_slabs import window_coefficients
 from tomojax.recon._projection import resolve_geometry_projector
 
+if TYPE_CHECKING:
+    from tomojax.geometry import Detector, Grid, ScanGeometry
+
 _SLAB_BYTES = 32 << 20
 
 
 @partial(jax.jit, static_argnames=("grid", "detector", "backend", "interpolation", "cone"))
-def add_slab(total, slab, coefficients, *, grid, detector, backend, interpolation, cone):
+def add_slab(
+    total: jax.Array,
+    slab: jax.Array,
+    coefficients: jax.Array | np.ndarray,
+    *,
+    grid: Grid,
+    detector: Detector,
+    backend: str,
+    interpolation: str,
+    cone: bool,
+) -> jax.Array:
+    if TYPE_CHECKING:
+        assert isinstance(coefficients, jax.Array)  # JIT converts the host input.
     if cone:
         return total + cone_project(slab, coefficients, grid, detector, backend=backend)
     return total + forward_project_planes(
@@ -28,7 +46,9 @@ def add_slab(total, slab, coefficients, *, grid, detector, backend, interpolatio
     )
 
 
-def host_prediction(geometry, volume, grid, *, backend, interpolation):
+def host_prediction(
+    geometry: ScanGeometry, volume: np.ndarray, grid: Grid, *, backend: str, interpolation: str
+) -> jax.Array:
     detector = geometry.detector
     lattice = detector_grid_from_geometry_inputs(detector, geometry)
     model, backend = resolve_geometry_projector(

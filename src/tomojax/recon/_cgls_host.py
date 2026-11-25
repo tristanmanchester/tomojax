@@ -38,6 +38,7 @@ if TYPE_CHECKING:
 
     import jax
 
+    from tomojax.core._cuda_types import CuPyValue
     from tomojax.geometry import Detector, Geometry, Grid
 
     from .cgls import CGLSConfig
@@ -330,7 +331,7 @@ class _HostCGLS:
             stats["energy"] = self.statistics.outside_pixels * self.total(mean)
             ahead = self._prefetch(self.D)
 
-            def read(k):
+            def read(k: int) -> tuple[np.ndarray | CuPyValue]:
                 return (self.D.get(*plan.planes(k)),)
 
         self.sweep.run(

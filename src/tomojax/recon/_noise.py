@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 import jax
 from jax.core import Tracer
@@ -12,10 +13,14 @@ import numpy as np
 from tomojax.core.robust import MAD_TO_SD
 
 
-def _gather_samples(array, coordinates):
+def _gather_samples(
+    array: jax.Array | np.ndarray | float, coordinates: tuple[np.ndarray, np.ndarray, np.ndarray]
+) -> jax.Array | np.ndarray:
     """Gather only requested pixels, including broadcast observation weights."""
     if not hasattr(array, "shape"):
         array = np.asarray(array)
+    if TYPE_CHECKING:
+        assert isinstance(array, jax.Array | np.ndarray)
     if not array.shape:
         return array
     indices = tuple(
@@ -25,12 +30,14 @@ def _gather_samples(array, coordinates):
     return array[indices]
 
 
-def _require_samples(present):
+def _require_samples(present: jax.Array | bool | np.bool_) -> None:
     if not bool(present):
         raise ValueError("Noise level cannot be estimated: pass tv_weight explicitly.")
 
 
-def estimate_projection_noise(projections, *, weights=None):
+def estimate_projection_noise(
+    projections: jax.Array | np.ndarray, *, weights: jax.Array | np.ndarray | float | None = None
+) -> jax.Array | np.float64:
     """Estimate one measurement SD from at most 65536 sampled Haar cells.
 
     A fixed seed samples cells uniformly with replacement, independently of the

@@ -63,17 +63,17 @@ def first_gradient(
             runtime.poses, grid, detector, backend, batch, model, det_grid=runtime.detector_grid
         )
 
-        def apply_normal(x):
+        def apply_normal(x: jax.Array) -> jax.Array:
             return normal(x)[1]
     else:
         forward, adjoint = projection_operators(
             runtime.poses, grid, detector, runtime.detector_grid, backend, batch, model, split=split
         )
 
-        def apply_normal(x):
+        def apply_normal(x: jax.Array) -> jax.Array:
             return adjoint(forward(x))
 
-    def masked_normal(x):
+    def masked_normal(x: jax.Array) -> jax.Array:
         y = apply_normal(x if mask is None else x * mask)
         return y if mask is None else y * mask
 

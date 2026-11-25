@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import partial, singledispatchmethod
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import h5py
 import msgspec
@@ -44,6 +44,9 @@ from tomojax.core.array_ops import check_binning
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
+
+if TYPE_CHECKING:
+    from os import PathLike
 
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
@@ -135,7 +138,7 @@ def report_event(context: ex.ExecutionContext, record: progress.Event) -> None:
         context.event(msgspec.convert(progress.to_json(record), type=Event))
 
 
-def result_info(item):
+def result_info(item: Root | p.DataProduct | ex.NewHandle) -> Mapping[str, object]:
     """Geometric registration and solver diagnostics for the public product."""
     info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
     if isinstance(item, tj.Alignment):
@@ -254,7 +257,7 @@ class Admission:
 
                 record, _ = saved_projection_layout(Path(operation.path))
 
-                def stored_scan(path):
+                def stored_scan(path: str | PathLike[str]) -> tj.Scan:
                     frames, raw = projection_frames(Path(path))
                     return scan_layout(frames, raw=raw)
 
@@ -372,7 +375,7 @@ class Admission:
         if isinstance(operation, op.Align):
             alignment = resolve_alignment(scan, **options)
 
-            def apply_alignment():
+            def apply_alignment() -> tj.Alignment:
                 with progress.task(
                     "align",
                     ", ".join(operation.fit) if isinstance(operation.fit, tuple) else operation.fit,
@@ -429,7 +432,7 @@ class Admission:
         if tuple(data.shape) != expected:
             raise InvalidParameter(name, f"{name} shape {data.shape} does not match {expected}")
 
-        def apply():
+        def apply() -> p.Projections | p.Volume:
             unit = unit_of(scan)
             if forward:
                 pixels = np.asarray(tj.project(scan.geometry, data, **options))
@@ -535,7 +538,7 @@ class Admission:
             inputs = set(ancestor_paths((self.manifest,)))
             check_destinations(inputs, (path, sidecar), force=operation.force)
 
-            def fill():
+            def fill() -> p.Files:
                 record = geometry_record(
                     item.geometry, name=item.name, grid=grid, source=item.source
                 )
@@ -621,7 +624,7 @@ class Admission:
             self.details.update(export_summary(operation, value, path, self.details["paths"]))
         check_destinations(set(ancestor_paths((self.manifest,))), paths, force=operation.force)
 
-        def write():
+        def write() -> p.Files:
             staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}
             if isinstance(operation, op.Save):
                 tj.save(staged[path], value, include_scan=operation.include_scan)
@@ -650,7 +653,12 @@ class Admission:
         return write
 
 
-def export_summary(operation: op.Export, value, path: Path, paths: list[str]) -> dict[str, Any]:
+def export_summary(
+    operation: op.Export,
+    value: tj.Reconstruction | tj.Alignment | tj.Simulation,
+    path: Path,
+    paths: list[str],
+) -> dict[str, Any]:
     from tomojax._stack_files import slice_name
 
     grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
@@ -663,7 +671,9 @@ def export_summary(operation: op.Export, value, path: Path, paths: list[str]) ->
     return {"slice_count": grid.nz, "first_file": str(first), "last_file": str(last)}
 
 
-def provenance(command, operation, context):
+def provenance(
+    command: op.ExecutionInput, operation: Record, context: ex.ExecutionContext
+) -> p.Provenance:
     parameters = msgspec.to_builtins(
         command if isinstance(command, op.Validate | op.Plan) else operation
     )

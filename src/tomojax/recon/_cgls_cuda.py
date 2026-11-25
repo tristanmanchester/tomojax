@@ -6,6 +6,7 @@ import functools
 import importlib.util
 import os
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -27,9 +28,22 @@ from ._cgls_stopping import cancellation_magnitude, precision_stalled, terminati
 from ._data_term import project_residual
 from .cgls import CGLSConfig, resident_bytes
 
+if TYPE_CHECKING:
+    import jax
+
+    from tomojax.core._cuda_types import CuPyValue
+    from tomojax.geometry import Detector, Geometry, Grid
+
+    from .types import DataTerm
+
 
 def available(
-    geometry, projections, cfg: CGLSConfig, *, host_initial: bool, canonical: bool
+    geometry: Geometry,
+    projections: jax.Array | np.ndarray,
+    cfg: CGLSConfig,
+    *,
+    host_initial: bool,
+    canonical: bool,
 ) -> bool:
     """Whether the native host path supports this solve and the selected device."""
     if (
@@ -64,7 +78,7 @@ def available(
     return importlib.util.find_spec("cupy") is not None
 
 
-def _device(cp):
+def _device(cp: CuPyValue) -> CuPyValue:
     if "jax" in sys.modules:
         import jax
 
@@ -74,12 +88,19 @@ def _device(cp):
     return cp.cuda.Device(cp.cuda.runtime.getDevice())
 
 
-def native_fits(cfg: CGLSConfig, grid, shape, free: int | None) -> bool:
+def native_fits(cfg: CGLSConfig, grid: Grid, shape: tuple[int, ...], free: int | None) -> bool:
     """Whether the host-input CUDA path would run the entire resident solve."""
     return cfg.stream is False or (free is not None and resident_bytes(grid, shape) <= free)
 
 
-def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
+def solve(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    projections: jax.Array | np.ndarray,
+    initial: jax.Array | np.ndarray | None,
+    cfg: CGLSConfig,
+) -> tuple[np.ndarray, dict[str, object]] | None:
     """Return None only when CUDA is unavailable or the resident data would not fit."""
     import cupy as cp
 
@@ -128,7 +149,7 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
 
 
 @functools.cache
-def _kernels(cp):
+def _kernels(cp: CuPyValue) -> dict[str, CuPyValue]:
     """Fused updates and tests: no volume-sized temporaries beside the iterate.
 
     The solve's device memory is then the iterate, the direction and two
@@ -157,19 +178,28 @@ def _kernels(cp):
     }
 
 
-def _dot(cp, u, v):
+def _dot(cp: CuPyValue, u: CuPyValue, v: CuPyValue) -> CuPyValue:
     """The inner product of two arrays as a device scalar, without a product array."""
     return cp.dot(u.ravel(), v.ravel())
 
 
-def _all(cp, kernel, *args: object):
+def _all(cp: CuPyValue, kernel: CuPyValue, *args: object) -> CuPyValue:
     """Whether ``kernel``'s condition holds at every element, as a device boolean."""
     flag = cp.ones(1, cp.int32)
     kernel(*args, flag)
     return cp.equal(flag[0], np.int32(1))
 
 
-def _iterate(cp, ops, data, x, grid, cfg: CGLSConfig, *, zero_start: bool):
+def _iterate(
+    cp: CuPyValue,
+    ops: JosephCUDA,
+    data: CuPyValue,
+    x: CuPyValue,
+    grid: Grid,
+    cfg: CGLSConfig,
+    *,
+    zero_start: bool,
+) -> tuple[CuPyValue, dict[str, object]]:
     with progress.preparing("initialise cgls"):
         k = _kernels(cp)
         residual = data.copy() if zero_start else data - ops.forward(x)
@@ -259,7 +289,16 @@ def _iterate(cp, ops, data, x, grid, cfg: CGLSConfig, *, zero_start: bool):
     return x, info
 
 
-def _step(cp, ops, x, direction, residual, gamma, damp2, data_term):
+def _step(
+    cp: CuPyValue,
+    ops: JosephCUDA,
+    x: CuPyValue,
+    direction: CuPyValue,
+    residual: CuPyValue,
+    gamma: CuPyValue,
+    damp2: np.float32,
+    data_term: DataTerm,
+) -> tuple[CuPyValue, CuPyValue, CuPyValue, CuPyValue] | None:
     """Advance ``x`` and ``residual`` along ``direction`` in place.
 
     Returns the new gradient, its squared norm and the two round-off tests as
@@ -285,19 +324,19 @@ def _step(cp, ops, x, direction, residual, gamma, damp2, data_term):
 
 
 def _verify(
-    cp,
-    ops,
-    data,
-    x,
-    gradient,
-    gamma,
-    damp2,
+    cp: CuPyValue,
+    ops: JosephCUDA,
+    data: CuPyValue,
+    x: CuPyValue,
+    gradient: CuPyValue,
+    gamma: CuPyValue,
+    damp2: np.float32,
     *,
-    data_term,
+    data_term: DataTerm,
     candidate: bool,
     roundoff: bool,
-    previous,
-):
+    previous: tuple[float, bool | np.bool_],
+) -> tuple[CuPyValue, CuPyValue, CuPyValue, float, bool, bool | np.bool_]:
     """Replace the recurrence with the measured residual before accepting a stop."""
     k = _kernels(cp)
     prediction = ops.forward(x)

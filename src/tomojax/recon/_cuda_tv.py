@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import cache, partial
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -17,6 +17,13 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.cone import xla_stream
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tomojax.core._cuda_types import CallbackBuffer, CallbackContext, CuPyValue
+
+    from ._cone_slabs import HostVolume
 
 _SOURCE = r"""
 __device__ __forceinline__ float clipped(float x, float lo, float hi) {
@@ -124,27 +131,27 @@ def workspace_bytes(shape: tuple[int, ...], iterations: int) -> int:
     return 4 * plane * (5 * width + min(iterations, shape[axis]))
 
 
-def _window(array, axis: int, start: int, stop: int):
+def _window(array: CuPyValue, axis: int, start: int, stop: int) -> CuPyValue:
     selected = [slice(None)] * 3
     selected[axis] = slice(start, stop)
     return array[tuple(selected)]
 
 
 def _iterate(
-    x,
-    duals,
-    primal,
-    out,
-    lam,
+    x: CuPyValue,
+    duals: tuple[CuPyValue, ...],
+    primal: CuPyValue,
+    out: CuPyValue,
+    lam: CuPyValue,
     *,
-    kernels,
+    kernels: tuple[CuPyValue, CuPyValue],
     iterations: int,
     tau: float,
     lower: float,
     upper: float,
-    huber_delta=None,
-    support=None,
-    support_offset=(0, 0, 0),
+    huber_delta: CuPyValue | None = None,
+    support: CuPyValue | None = None,
+    support_offset: tuple[int, ...] = (0, 0, 0),
 ) -> None:
     primal_kernel, dual_kernel = kernels
     dims = tuple(np.int32(size) for size in reversed(x.shape))
@@ -171,20 +178,20 @@ def _iterate(
 
 
 def _tiles(
-    source,
-    target,
-    lam,
+    source: CuPyValue,
+    target: CuPyValue,
+    lam: CuPyValue,
     *,
     axis: int,
     core: int,
     width: int,
-    kernels,
+    kernels: tuple[CuPyValue, CuPyValue],
     iterations: int,
     tau: float,
     lower: float,
     upper: float,
-    huber_delta=None,
-    support=None,
+    huber_delta: CuPyValue | None = None,
+    support: CuPyValue | None = None,
 ) -> None:
     import cupy as cp
 
@@ -234,12 +241,12 @@ def _tiles(
 
 
 def _launch(
-    context,
-    out,
-    x,
-    lam,
-    huber_delta=None,
-    support=None,
+    context: CallbackContext,
+    out: CallbackBuffer,
+    x: CallbackBuffer,
+    lam: CallbackBuffer,
+    huber_delta: CallbackBuffer | None = None,
+    support: CallbackBuffer | None = None,
     *,
     iterations: int,
     tau: float,
@@ -313,8 +320,8 @@ def proximal(
 
 
 def proximal_host(
-    source,
-    sink,
+    source: HostVolume,
+    sink: Callable[[int, int, CuPyValue], None],
     lam: float,
     *,
     iterations: int,

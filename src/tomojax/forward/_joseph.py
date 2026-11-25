@@ -18,10 +18,14 @@ from tomojax.core.joseph import (
 from tomojax.core.validation import validate_pose_stack, validate_volume
 
 if TYPE_CHECKING:
+    import numpy as np
+
     from tomojax.geometry import Detector, Grid
 
 
-def _inputs(volume, poses, grid, backend):
+def _inputs(
+    volume: jax.Array | np.ndarray, poses: jax.Array | np.ndarray, grid: Grid, backend: str
+) -> tuple[jax.Array, jax.Array]:
     context = "Joseph projection"
     validate_volume(volume, grid, context=context)
     if jnp.iscomplexobj(volume) or jnp.iscomplexobj(poses):
