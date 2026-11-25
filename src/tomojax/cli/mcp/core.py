@@ -92,7 +92,12 @@ class Server(MCPServer):
                 record["handler"],
                 name=record["name"],
                 description=record["description"],
-                annotations=ToolAnnotations(read_only_hint=record["read_only"]),
+                annotations=ToolAnnotations(
+                    read_only_hint=record["read_only"],
+                    # The spec's default is destructive; most tools only add handles.
+                    destructive_hint=None if record["read_only"] else record["destructive"],
+                    open_world_hint=False,  # local files and the local worker only
+                ),
             )
             tool.parameters = record["schema"]
             tool.fn_metadata.output_schema = record["output_schema"]

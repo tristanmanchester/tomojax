@@ -125,6 +125,8 @@ Once you agree on a structure, the `feature` tool turns it into a named mask hel
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.
 
+The tools carry MCP annotations for clients that decide what to confirm: `status`, `inspect`, `describe`, `view` and `preview` are read-only; `save`, `export`, `reconstruct_slabs`, `control` (which can close handles and restart the worker) and `python` (which runs any code) are marked destructive; the others only add handles. None reaches beyond the local machine.
+
 ## Python
 
 `python` runs code in the worker, beside the loaded data, with `tj`, `np` and `handles` in scope. `handles` maps live IDs to their TomoJAX objects, and `ID.member` selects a member as in the typed tools. `register(obj)` publishes a new handle from a `Scan`, `Reconstruction`, array or other result, and `register_feature(mask, like=ID)` a feature on that object's grid. `view(...)` renders planes with the same arguments as the `view` tool, marks and features included, and `show(array, marks=...)` adds an image of a 2D array to the reply. Variables persist between calls until `reset` or a worker restart.

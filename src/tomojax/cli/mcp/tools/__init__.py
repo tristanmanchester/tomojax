@@ -752,6 +752,59 @@ def workflow_output() -> Object:
     }
 
 
+ANY = {"type": "object"}
+TEXT = {"type": "string"}
+LIST = {"type": "array"}
+PLANES = {
+    "panels": {"type": "array", "items": ANY},
+    "intensity_limits": LIST,
+    "marks": {"type": "array", "items": ANY},
+    "features": {"type": "array", "items": ANY},
+}
+# Concise result schemas: the fields a client can rely on, none of them required, so a
+# result clipped to its paging link or an error still conforms.
+OUTPUTS: dict[str, Object] = {
+    "status": {
+        "versions": ANY,
+        "devices": LIST,
+        "allocators": LIST,
+        "jobs": ANY,
+        "handles": ANY,
+        "python_namespace_bytes": {"type": "integer"},
+    },
+    "inspect": {
+        "valid": {"type": "boolean"},
+        "issues": LIST,
+        "projection": ANY,
+        "volume": ANY,
+        "geometry": ANY,
+        "directory": TEXT,
+        "datasets": ANY,
+    },
+    "describe": {"operation": TEXT, "parameters": ANY},
+    "control": {"action": TEXT, "tools": LIST},
+    "python": {"stdout": TEXT, "stderr": TEXT, "value": {}, "handles": ANY},
+    "view": {
+        **PLANES,
+        "count": {"type": "integer"},
+        "mean": {"type": ["number", "null"]},
+        "histogram": LIST,
+        "profile": LIST,
+        "columns": LIST,
+        "table": LIST,
+    },
+    "preview": {**PLANES, "handle": TEXT, "bounds": LIST},
+}
+
+
+def output_schema(name: str) -> Object:
+    """The declared structured result of one tool."""
+    if name in {*MODELS, "edit_scan", "open"}:
+        return workflow_output()
+    common = {"continuation": TEXT, "message": TEXT, "next": TEXT, "notes": LIST}
+    return {"type": "object", "properties": {**OUTPUTS.get(name, {}), **common}}
+
+
 def binding(
     cls: type[Record],
     handler: Callable[..., Awaitable[CallToolResult]],
@@ -794,10 +847,10 @@ def binding(
         ),
         "long": name in {*MODELS, "open", "edit_scan", "preview", "python"},
         "read_only": name in {"status", "inspect", "describe", "view", "preview"},
+        # Writes or replaces files, discards handles, or runs arbitrary code.
+        "destructive": name in {"save", "export", "reconstruct_slabs", "control", "python"},
         "schema": spec,
-        "output_schema": workflow_output()
-        if name in {*MODELS, "edit_scan", "open"}
-        else {"type": "object"},
+        "output_schema": output_schema(name),
         "handler": invoke,
     }
 
