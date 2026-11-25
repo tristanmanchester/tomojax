@@ -136,7 +136,7 @@ pub struct AppState {
     /// Project names read once from each recent project's manifest.
     recent_names: std::collections::HashMap<PathBuf, String>,
     applied_window: Option<[f32; 2]>,
-    window_prefill: Option<[String; 2]>,
+    window_prefill: [viewing::Prefilled; 2],
     centre_sinogram: bool,
     form_context: editing::FormContext,
     last_autosave: Instant,
@@ -193,7 +193,7 @@ impl AppState {
             split: None,
             recent_names: Default::default(),
             applied_window: None,
-            window_prefill: Some([String::new(), String::new()]),
+            window_prefill: Default::default(),
             centre_sinogram: true,
             form_context: editing::FormContext::default(),
             last_autosave: Instant::now(),

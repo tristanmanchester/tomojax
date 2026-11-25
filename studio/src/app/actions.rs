@@ -268,7 +268,7 @@ impl AppState {
                 self.ui.display.window_low.replace_text("");
                 self.ui.display.window_high.replace_text("");
                 self.applied_window = None;
-                self.window_prefill = Some([String::new(), String::new()]);
+                self.window_prefill = Default::default();
             }
             UiAction::Simulate => self.open_operation("simulate"),
             UiAction::SetOperation(operation) => self.set_operation(&operation, None),
@@ -446,14 +446,17 @@ impl AppState {
                 let window = self.valid_window()?;
                 self.remember_view();
                 self.applied_window = window;
-                self.window_prefill = Some(fields);
+                self.window_prefill = [0, 1].map(|i| viewing::Prefilled {
+                    text: fields[i].clone(),
+                    exact: window.map(|limits| limits[i]),
+                });
             }
             UiAction::AutoWindow => {
                 self.remember_view();
                 self.applied_window = None;
                 self.ui.display.window_low.replace_text("");
                 self.ui.display.window_high.replace_text("");
-                self.window_prefill = Some([String::new(), String::new()]);
+                self.window_prefill = Default::default();
                 self.prefill_window();
             }
             UiAction::SetColormap(map) => {

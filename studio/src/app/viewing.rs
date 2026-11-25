@@ -120,7 +120,7 @@ impl AppState {
         self.applied_window = None;
         self.ui.display.window_low.replace_text("");
         self.ui.display.window_high.replace_text("");
-        self.window_prefill = Some([String::new(), String::new()]);
+        self.window_prefill = Default::default();
         self.centre_sinogram = true;
         self.ui.display.indices = self
             .volume_dimensions()
@@ -616,22 +616,26 @@ impl AppState {
             }
         })
     }
+    /// Whether both window fields still show what Studio last wrote into them.
+    fn window_untouched(&self) -> bool {
+        self.window_prefill[0].text == self.ui.display.window_low.text
+            && self.window_prefill[1].text == self.ui.display.window_high.text
+    }
+
     pub(super) fn prefill_window(&mut self) {
-        let Some(previous) = &self.window_prefill else {
-            return;
-        };
-        if self.ui.display.window_low.text != previous[0]
-            || self.ui.display.window_high.text != previous[1]
-        {
-            // An unfinished edit belongs to the user, even when it is invalid.
-            self.window_prefill = None;
+        // An unfinished edit belongs to the user, even when it is invalid; the prefill stays
+        // so an untouched field keeps its exact limit.
+        if !self.window_untouched() {
             return;
         }
-        if let Some([low, high]) = self.current_window() {
-            let values = window_text(low, high);
+        if let Some(window) = self.current_window() {
+            let values = window_text(window[0], window[1]);
             self.ui.display.window_low.replace_text(values[0].clone());
             self.ui.display.window_high.replace_text(values[1].clone());
-            self.window_prefill = Some(values);
+            self.window_prefill = [0, 1].map(|i| Prefilled {
+                text: values[i].clone(),
+                exact: Some(window[i]),
+            });
         }
     }
 
@@ -645,11 +649,11 @@ impl AppState {
         }
         // A field still showing the prefilled window, rounded for reading, stands for the
         // exact limit; only the fields the user edited are read as typed.
-        let exact = self.current_window();
-        let limit = |i: usize, name: &str| match (&self.window_prefill, exact) {
-            (Some(prefill), Some(exact)) if !fields[i].is_empty() && *fields[i] == prefill[i] => {
-                Ok(exact[i])
-            }
+        let limit = |i: usize, name: &str| match &self.window_prefill[i] {
+            Prefilled {
+                text,
+                exact: Some(exact),
+            } if text == fields[i] => Ok(*exact),
             _ => fields[i]
                 .trim()
                 .parse::<f32>()
@@ -922,16 +926,7 @@ impl AppState {
 
     pub(super) fn capture_workspace(&self) -> project::Workspace {
         let mut draft_choices = self.ui.parameter_choices.clone();
-        draft_choices.insert(
-            "studio:prefill".into(),
-            self.window_prefill
-                .as_ref()
-                .is_some_and(|v| {
-                    v[0] == self.ui.display.window_low.text
-                        && v[1] == self.ui.display.window_high.text
-                })
-                .to_string(),
-        );
+        draft_choices.insert("studio:prefill".into(), self.window_untouched().to_string());
         draft_choices.insert("studio:preview_array".into(), self.ui.preview_array.clone());
         draft_choices.insert(
             "studio:compare_linked".into(),
@@ -1031,10 +1026,12 @@ impl AppState {
             self.ui.display.window_low = TextEdit::new(low.to_string());
             self.ui.display.window_high = TextEdit::new(high.to_string());
         }
-        self.window_prefill = Some([
-            self.ui.display.window_low.text.clone(),
-            self.ui.display.window_high.text.clone(),
-        ]);
+        self.window_prefill = [0, 1].map(|i| Prefilled {
+            text: [&self.ui.display.window_low, &self.ui.display.window_high][i]
+                .text
+                .clone(),
+            exact: context.window.map(|window| window[i]),
+        });
         if !context.colormap.is_empty() {
             self.ui.display.colormap = context.colormap.clone();
         }
@@ -1127,10 +1124,13 @@ impl AppState {
             .get("studio:prefill")
             .map_or_else(|| self.valid_window().is_ok(), |v| v == "true")
         {
-            self.window_prefill = Some([
-                self.ui.display.window_low.text.clone(),
-                self.ui.display.window_high.text.clone(),
-            ]);
+            self.window_prefill =
+                [&self.ui.display.window_low, &self.ui.display.window_high].map(|field| {
+                    Prefilled {
+                        text: field.text.clone(),
+                        exact: field.text.trim().parse().ok(),
+                    }
+                });
         }
         if let Some(value) = context.draft_choices.get("studio:preview_array")
             && matches!(value.as_str(), "before" | "after")
@@ -1584,6 +1584,14 @@ fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
 
 /// A display window as field text: rounded for reading while the rounded bounds stay in
 /// order, else the shortest text that reads back as each exact bound.
+/// What Studio last wrote into a display-window field, and the exact limit that text
+/// stands for (None for a blank field, the automatic window).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Prefilled {
+    pub text: String,
+    pub exact: Option<f32>,
+}
+
 pub(crate) fn window_text(low: f32, high: f32) -> [String; 2] {
     let rounded = [low, high].map(|v| crate::ui::compact_number(f64::from(v)));
     let read = |text: &str| text.parse::<f32>().unwrap_or(f32::NAN);

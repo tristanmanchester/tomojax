@@ -1882,6 +1882,8 @@ fn applying_the_window_the_fields_show_keeps_it_exact() {
     state.prefill_window();
     assert_eq!(state.ui.display.window_low.text, "1.0001");
     state.ui.display.window_high.replace_text("1.00008");
+    state.prefill_window(); // a viewer refresh while the edit is pending
+    assert_eq!(state.ui.display.window_high.text, "1.00008");
     assert_eq!(state.valid_window(), Ok(Some([1.000051, 1.00008])));
 }
 

@@ -292,7 +292,8 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     state.applied_window = Some([-100., 100.]);
     state.ui.display.window_low.replace_text("-100");
     state.ui.display.window_high.replace_text("100");
-    state.window_prefill = None;
+    // The user typed the window: the fields no longer show what Studio wrote.
+    state.window_prefill = Default::default();
     state.complete_asset(&id, result);
     let until = Instant::now() + Duration::from_secs(3);
     while state.imaging.plane(5).is_none() || state.imaging.plane(4).is_none() {
