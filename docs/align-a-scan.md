@@ -31,7 +31,7 @@ On the command line:
 tomojax align corrected.nxs -o aligned.nxs --fit translations roll
 ```
 
-Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. Note that after a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
+Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. After a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |

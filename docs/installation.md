@@ -1,6 +1,6 @@
 # Install TomoJAX
 
-TomoJAX runs on Linux with Python 3.12–3.14 on CPU or NVIDIA CUDA 12. Both CPU and CUDA installs include `imagecodecs` for compressed TIFFs (including LZW-compressed beamline files). Python 3.15 is not yet supported because `h5py` and `CuPy` do not publish 3.15 wheels.
+TomoJAX runs on Linux with Python 3.12–3.14 on CPU or NVIDIA CUDA 12. Both CPU and CUDA installs include `imagecodecs` for compressed TIFFs (including LZW-compressed beamline files). Python 3.15 is unsupported because `h5py` and `CuPy` publish no 3.15 wheels.
 
 ## Install a published release
 
