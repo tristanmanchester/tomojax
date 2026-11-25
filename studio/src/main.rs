@@ -48,8 +48,8 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
         if state.ui.rename.take().is_some() {
             return true;
         }
-        if state.ui.jobs_open {
-            state.ui.close_activity();
+        if state.ui.activity.is_open() {
+            state.ui.activity = crate::ui::model::Activity::Closed;
             return true;
         }
         return false;

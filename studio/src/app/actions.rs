@@ -626,6 +626,7 @@ impl AppState {
     fn run_command(&mut self, id: &str, tx: &mut Tx) -> Result<(), String> {
         if let Some(operation) = id.strip_prefix("operation:") {
             self.set_workspace(Workspace::for_operation(operation));
+            self.ui.inspector_open = true;
             // The workspace may already show it; resetting the form would lose its draft.
             if self.ui.operation != operation {
                 self.set_operation(operation, None);

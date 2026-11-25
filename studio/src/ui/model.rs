@@ -114,11 +114,7 @@ pub struct UiState {
     pub preview_span: TextEdit,
     pub tree_open: bool,
     pub inspector_open: bool,
-    pub jobs_open: bool,
-    /// The jobs Activity opened itself for. It closes when they all succeed; a failed one
-    /// stays listed with its error until the user closes Activity. Empty while the user
-    /// controls Activity.
-    pub activity_for: Vec<String>,
+    pub activity: Activity,
     pub palette_open: bool,
     pub shortcuts_open: bool,
     pub advanced_open: bool,
@@ -171,8 +167,7 @@ impl Default for UiState {
             preview_span: TextEdit::new("8"),
             tree_open: true,
             inspector_open: true,
-            jobs_open: false,
-            activity_for: Vec::new(),
+            activity: Activity::Closed,
             palette_open: false,
             shortcuts_open: false,
             advanced_open: false,
@@ -523,11 +518,29 @@ pub struct Choice {
     pub value: String,
     pub label: String,
 }
-impl UiState {
-    /// Close Activity as the user's choice: work Activity opened for no longer reopens it.
-    pub fn close_activity(&mut self) {
-        self.jobs_open = false;
-        self.activity_for.clear();
+/// The Activity popover over the jobs panel.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum Activity {
+    #[default]
+    Closed,
+    Open {
+        /// Jobs queued while it was open. Active jobs are listed anyway; a failed one stays
+        /// listed with its error until Activity closes.
+        jobs: Vec<String>,
+        /// Opened for queued work rather than by the user, so it closes once that work
+        /// succeeds.
+        closes_itself: bool,
+    },
+}
+
+impl Activity {
+    pub fn is_open(&self) -> bool {
+        matches!(self, Self::Open { .. })
+    }
+
+    /// Whether Activity was opened for, or saw queued, the job `id`.
+    pub fn tracks(&self, id: &str) -> bool {
+        matches!(self, Self::Open { jobs, .. } if jobs.iter().any(|job| job == id))
     }
 }
 

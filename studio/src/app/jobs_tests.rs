@@ -441,7 +441,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
         );
     }
     state.ui.workspace = Workspace::Jobs;
-    state.ui.jobs_open = false;
+    state.ui.activity = crate::ui::model::Activity::Closed;
     state.ui.selected_job = Some(id.clone());
     state.refresh_model();
     for mark in [40, 41, 42] {

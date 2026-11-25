@@ -77,7 +77,7 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
         .child(body)
         .child(separator())
         .child(statusbar(state));
-    if state.ui.jobs_open && state.ui.workspace != Workspace::Jobs {
+    if state.ui.activity.is_open() && state.ui.workspace != Workspace::Jobs {
         result = result.child(overlays::jobs_drawer(state));
     }
     if state.ui.palette_open {
@@ -186,13 +186,21 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         };
         bar = bar
             .child(
-                quiet_button("toggle-jobs", &title, state.ui.jobs_open, |s, _| {
-                    if s.ui.jobs_open {
-                        s.ui.close_activity();
-                    } else {
-                        s.ui.jobs_open = true;
-                    }
-                })
+                quiet_button(
+                    "toggle-jobs",
+                    &title,
+                    state.ui.activity.is_open(),
+                    |s, _| {
+                        s.ui.activity = if s.ui.activity.is_open() {
+                            Activity::Closed
+                        } else {
+                            Activity::Open {
+                                jobs: Vec::new(),
+                                closes_itself: false,
+                            }
+                        };
+                    },
+                )
                 .label("Activity"),
             )
             .child(icon_button(

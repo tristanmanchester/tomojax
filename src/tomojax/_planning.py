@@ -194,27 +194,7 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        # Parallel rays, as declared or with per-view poses. Rays run along the lab's +y
-        # axis; in the object frame that is row 1 of each view's rotation, so saved
-        # rotation corrections count. Opposite views measure the same direction.
-        poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
-        directions = np.sort(np.mod(np.degrees(np.arctan2(poses[:, 1, 1], poses[:, 1, 0])), 180.0))
-        angles = directions[np.r_[True, np.diff(directions) > _SAME_DIRECTION]]
-        if len(angles) > 1 and angles[0] + 180.0 - angles[-1] <= _SAME_DIRECTION:
-            angles = angles[:-1]
-        gaps = np.diff(np.r_[angles, angles[0] + 180])
-        recommendation = None
-        if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):
-            recommendation = (
-                "The views leave gaps in the half turn: expect streaks along the unmeasured "
-                "directions. method='fista' with nonnegative=True fills them from "
-                "nonnegativity and regularization."
-            )
-        elif len(angles) < 16:
-            recommendation = (
-                "Fewer than 16 views: expect streaks. method='fista' with nonnegative=True "
-                "reduces them through nonnegativity and regularization."
-            )
+        recommendation = _coverage_advice(scan)
         if type(scan.geometry) is not ParallelGeometry:
             return "fbp", "FBP uses the scan's per-view geometry.", recommendation
         if recommendation is None:
@@ -225,6 +205,31 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             recommendation,
         )
     return "fbp", reason, None
+
+
+def _coverage_advice(scan: Scan) -> str | None:
+    """What a parallel-beam scan's ray directions leave unmeasured, or None."""
+    # Parallel rays, as declared or with per-view poses, run along the lab's +y
+    # axis; in the object frame that is row 1 of each view's rotation, so saved
+    # rotation corrections count. Opposite views measure the same direction.
+    poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
+    directions = np.sort(np.mod(np.degrees(np.arctan2(poses[:, 1, 1], poses[:, 1, 0])), 180.0))
+    angles = directions[np.r_[True, np.diff(directions) > _SAME_DIRECTION]]
+    if len(angles) > 1 and angles[0] + 180.0 - angles[-1] <= _SAME_DIRECTION:
+        angles = angles[:-1]
+    gaps = np.diff(np.r_[angles, angles[0] + 180])
+    if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):
+        return (
+            "The views leave gaps in the half turn: expect streaks along the unmeasured "
+            "directions. method='fista' with nonnegative=True fills them from "
+            "nonnegativity and regularization."
+        )
+    if len(angles) < 16:
+        return (
+            "Fewer than 16 views: expect streaks. method='fista' with nonnegative=True "
+            "reduces them through nonnegativity and regularization."
+        )
+    return None
 
 
 def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:

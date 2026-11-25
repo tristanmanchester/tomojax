@@ -58,11 +58,9 @@ class Simulation(NamedTuple):
         numpy.ndarray or None
             A ``(views, 6)`` table, or None when no motion was simulated.
         """
-        source = self.scan.source
-        info = {} if source is None else source.geometry_metadata.get("simulation_info", {})
-        simulation = info.get("simulation", {}) if isinstance(info, dict) else {}
-        rows = simulation.get("true_poses") if isinstance(simulation, dict) else None
-        if rows is None:
+        from tomojax._scan import simulated_poses
+
+        if (rows := simulated_poses(self.scan.source)) is None:
             return None
         poses = np.asarray(rows, dtype=np.float64)
         if poses.shape != (len(self.scan.angles), 6) or not np.isfinite(poses).all():

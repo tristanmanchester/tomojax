@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -275,8 +276,13 @@ def test_selected_views_keep_their_own_true_poses(tmp_path):
     import tomojax as tj
 
     sim = tj.simulate("sphere", size=8, n_views=20, translation_sigma=0.5, seed=4)
-    kept = [1, 4, 9, 13, 18]
-    selected = tj.Simulation(sim.scan.selected(kept), sim.phantom)
+    # Rejecting view 4 then keeping four of the rest leaves the original views 1, 9, 13, 18.
+    projections = np.array(sim.scan.projections)
+    projections[4] = np.nan
+    rejected = replace(sim.scan, projections=projections).corrected(tj.corrections.RejectViews())
+    assert rejected.projections.shape[0] == 19
+    kept = [1, 9, 13, 18]
+    selected = tj.Simulation(rejected.selected([1, 8, 12, 17]), sim.phantom)
     path = tmp_path / "selected.nxs"
     tj.save(path, selected)
     loaded = tj.load_simulation(path)

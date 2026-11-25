@@ -229,7 +229,7 @@ fn job_actions(job: &JobView, compact: bool) -> El {
                                 tx,
                             );
                             s.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx);
-                            s.ui.close_activity();
+                            s.ui.activity = Activity::Closed;
                         },
                     )
                     .h(30.),
@@ -364,7 +364,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
             matches!(
                 j.status,
                 JobStatus::Running | JobStatus::Paused | JobStatus::Queued
-            ) || (j.status == JobStatus::Failed && state.ui.activity_for.contains(&j.id))
+            ) || (j.status == JobStatus::Failed && state.ui.activity.tracks(&j.id))
         })
         .collect();
     let mut rows = col().gap(8.);
@@ -402,7 +402,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
                     "Close activity",
                     Icon::Close,
                     true,
-                    |s, _| s.ui.close_activity(),
+                    |s, _| s.ui.activity = Activity::Closed,
                 )),
         )
         .child(separator())
@@ -420,7 +420,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
         .child(separator())
         .child(
             button("all-jobs", "View all jobs", false, true, |s, tx| {
-                s.ui.close_activity();
+                s.ui.activity = Activity::Closed;
                 s.dispatch(UiAction::SetWorkspace(Workspace::Jobs), tx);
             })
             .w_full()

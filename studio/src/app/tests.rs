@@ -6,7 +6,7 @@ use super::*;
 pub(crate) fn capture_native(mut state: AppState, path: &Path) {
     // Match the ordinary actions a reviewer would take before inspecting the
     // result. Numerical values and observed worker state remain untouched.
-    state.ui.jobs_open = false;
+    state.ui.activity = crate::ui::model::Activity::Closed;
     if let Some(control) = state
         .model
         .validation
@@ -1623,7 +1623,6 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
     runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Prepare), tx));
     assert_eq!(runtime.state.ui.operation, "align");
 
-    // Reopening it from the palette keeps the settings being edited.
     runtime
         .state
         .ui
@@ -1631,20 +1630,26 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
         .get_mut("iterations")
         .expect("Alignment has an iteration limit")
         .replace_text("21");
+    // Reopening it from the palette keeps the settings being edited, and shows them.
     runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx));
+    runtime.state.ui.inspector_open = false;
     runtime.update(|state, tx| {
         state.dispatch(UiAction::RunCommand("operation:align".into()), tx);
     });
     assert_eq!(runtime.state.ui.parameter_edits["iterations"].text, "21");
+    assert!(runtime.state.ui.inspector_open);
 }
 
 #[test]
 fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
+    use crate::ui::model::Activity;
     let directory = tempfile::tempdir().unwrap();
-    let mut state = AppState::init();
-    state
-        .open_project(&directory.path().join("project"), true)
-        .unwrap();
+    let path = directory.path().join("project");
+    let open = |create: bool| {
+        let mut state = AppState::init();
+        state.open_project(&path, create).unwrap();
+        state
+    };
     // Queues a job, opens Activity for it, then ends the job with `status`.
     let run = |state: &mut AppState, status: JobStatus, close_early: bool| {
         let job = project::Job::new("simulate", serde_json::json!({}), vec![]);
@@ -1653,11 +1658,11 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
         state.open_activity(vec![id.clone()]);
         state.refresh_model();
         assert!(
-            state.ui.jobs_open,
+            state.ui.activity.is_open(),
             "Activity stays open while its job is queued"
         );
         if close_early {
-            state.ui.close_activity();
+            state.ui.activity = Activity::Closed;
         }
         let job = state
             .project
@@ -1675,7 +1680,8 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
         state.refresh_model();
         id
     };
-    let rendered = |state: AppState| {
+    // Renders `state` and checks the failed job is listed with its error.
+    let shows_failure = |state: AppState, failed: &str| {
         let mut runtime = rune::Runtime::new(
             state,
             crate::ui::view,
@@ -1684,40 +1690,43 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
         );
         runtime.frame(0.);
         runtime.frame(1. / 60.);
-        runtime.elements()
-    };
-
-    run(&mut state, JobStatus::Completed, false);
-    assert!(!state.ui.jobs_open, "closes once its job succeeds");
-
-    let failed = run(&mut state, JobStatus::Failed, false);
-    assert!(state.ui.jobs_open, "a failure keeps Activity open");
-    let elements = rendered(state);
-    assert!(
+        let elements = runtime.elements();
         elements
             .iter()
-            .any(|element| element.key.as_deref() == Some(&format!("job-{failed}"))),
-        "the failed job is listed"
-    );
+            .any(|element| element.key.as_deref() == Some(&format!("job-{failed}")))
+            && elements.iter().any(|element| {
+                element.text.as_deref() == Some("Reconstruction ran out of GPU memory.")
+            })
+    };
+
+    let mut state = open(true);
+    run(&mut state, JobStatus::Completed, false);
+    assert!(!state.ui.activity.is_open(), "closes once its job succeeds");
+    let failed = run(&mut state, JobStatus::Failed, false);
+    assert!(state.ui.activity.is_open(), "a failure keeps Activity open");
+    assert!(shows_failure(state, &failed));
+
+    // Activity the user opened is theirs: success never closes it, a failure is listed.
+    let mut state = open(false);
+    state.ui.activity = Activity::Open {
+        jobs: Vec::new(),
+        closes_itself: false,
+    };
+    run(&mut state, JobStatus::Completed, false);
     assert!(
-        elements.iter().any(|element| element.text.as_deref()
-            == Some("Reconstruction ran out of GPU memory.")),
-        "its error is shown"
+        state.ui.activity.is_open(),
+        "the user's Activity stays open"
     );
+    let failed = run(&mut state, JobStatus::Failed, false);
+    assert!(shows_failure(state, &failed));
 
-    // Closing Activity hands it to the user: a later failure leaves it closed.
-    let mut state = AppState::init();
-    state
-        .open_project(&directory.path().join("project"), false)
-        .unwrap();
+    // Closing Activity early leaves it closed when the job later fails.
+    let mut state = open(false);
     run(&mut state, JobStatus::Failed, true);
-    assert!(!state.ui.jobs_open, "stays closed after the user closed it");
-
-    // Activity the user opened is theirs: new work never closes it.
-    state.ui.jobs_open = true;
-    state.open_activity(vec!["later".into()]);
-    state.refresh_model();
-    assert!(state.ui.jobs_open && state.ui.activity_for.is_empty());
+    assert!(
+        !state.ui.activity.is_open(),
+        "stays closed after the user closed it"
+    );
 }
 
 #[test]

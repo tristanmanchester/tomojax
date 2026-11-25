@@ -1,6 +1,7 @@
 use super::*;
 use crate::imaging::{ColorMap, DisplaySettings, ImagingStatus};
 use crate::protocol::{ArrayDescriptor, Coordinates, Storage};
+use crate::ui::model::Activity;
 use crate::volume::{RenderItem, VolumeSettings};
 
 impl AppState {
@@ -1155,11 +1156,17 @@ impl AppState {
             .collect();
     }
 
-    /// Show Activity for newly queued jobs unless the user already has it open.
-    pub(super) fn open_activity(&mut self, jobs: Vec<String>) {
-        if !self.ui.jobs_open || !self.ui.activity_for.is_empty() {
-            self.ui.jobs_open = true;
-            self.ui.activity_for.extend(jobs);
+    /// Show Activity for newly queued jobs; when it opens for them, it closes once they
+    /// succeed.
+    pub(super) fn open_activity(&mut self, queued: Vec<String>) {
+        match &mut self.ui.activity {
+            Activity::Open { jobs, .. } => jobs.extend(queued),
+            Activity::Closed => {
+                self.ui.activity = Activity::Open {
+                    jobs: queued,
+                    closes_itself: true,
+                }
+            }
         }
     }
 
@@ -1394,8 +1401,10 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        if self.ui.jobs_open
-            && !self.ui.activity_for.is_empty()
+        if let Activity::Open {
+            closes_itself: true,
+            ..
+        } = &self.ui.activity
             && let Some(project) = &self.project
         {
             let opened_for = || {
@@ -1403,13 +1412,13 @@ impl AppState {
                     .document
                     .jobs
                     .iter()
-                    .filter(|job| self.ui.activity_for.contains(&job.id))
+                    .filter(|job| self.ui.activity.tracks(&job.id))
             };
             // A failure stays listed, with its error, until the user closes Activity.
             if opened_for().all(|job| !job.status.active())
                 && !opened_for().any(|job| job.status == project::JobStatus::Failed)
             {
-                self.ui.close_activity();
+                self.ui.activity = Activity::Closed;
             }
         }
         self.model.commands = crate::preferences::COMMANDS

@@ -158,9 +158,8 @@ class Scan:
         return replace(
             self,
             projections=done.projections,
-            geometry=self.geometry if everything else views_of(self.geometry, done.kept),
             corrections=(*self.corrections, *done.records),
-            view_positions=self.view_positions if everything else _positions(self)[done.kept],
+            **({} if everything else _view_fields(self, done.kept)),
         )
 
     def cropped(self, rows: slice, cols: slice) -> Scan:
@@ -1012,33 +1011,40 @@ def selected_scan(scan: Scan, kept: np.ndarray, projections: np.ndarray) -> Scan
     return replace(
         scan,
         projections=projections,
-        geometry=views_of(scan.geometry, kept),
-        view_positions=_positions(scan)[kept],
         corrections=(*scan.corrections, cut("selected", views=kept.tolist())),
-        source=_selected_truth(scan.source, kept),
+        **_view_fields(scan, kept),
     )
+
+
+def _view_fields(scan: Scan, kept: np.ndarray) -> dict[str, Any]:
+    """The per-view fields of ``scan`` (geometry, positions, simulated truth) cut to ``kept``.
+
+    Every way of keeping some views replaces these together with the projections.
+    """
+    return {
+        "geometry": views_of(scan.geometry, kept),
+        "view_positions": _positions(scan)[kept],
+        "source": _selected_truth(scan.source, kept),
+    }
+
+
+def simulated_poses(source: ProjectionDataset | None) -> Any:
+    """The per-view true poses a simulation recorded in ``source``, or None."""
+    info = None if source is None else source.geometry_metadata.get("simulation_info")
+    simulation = info.get("simulation") if isinstance(info, dict) else None
+    return simulation.get("true_poses") if isinstance(simulation, dict) else None
 
 
 def _selected_truth(source: ProjectionDataset | None, kept: np.ndarray) -> ProjectionDataset | None:
     """``source`` with any simulated per-view pose truth cut to the ``kept`` views."""
-    if source is None:
-        return None
-    info = source.geometry_metadata.get("simulation_info")
-    if not isinstance(info, dict):
-        return source
-    simulation = info.get("simulation")
-    if not isinstance(simulation, dict) or "true_poses" not in simulation:
+    if source is None or (rows := simulated_poses(source)) is None:
         return source
     from tomojax.io.api import replace_dataset
 
-    rows = np.asarray(simulation["true_poses"])[kept].tolist()
-    return replace_dataset(
-        source,
-        geometry_metadata={
-            **source.geometry_metadata,
-            "simulation_info": {**info, "simulation": {**simulation, "true_poses": rows}},
-        },
-    )
+    info = source.geometry_metadata["simulation_info"]
+    simulation = {**info["simulation"], "true_poses": np.asarray(rows)[kept].tolist()}
+    metadata = {**source.geometry_metadata, "simulation_info": {**info, "simulation": simulation}}
+    return replace_dataset(source, geometry_metadata=metadata)
 
 
 def _positions(scan: Scan) -> np.ndarray:
