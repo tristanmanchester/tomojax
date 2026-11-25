@@ -6,7 +6,7 @@ TomoJAX Studio is a native desktop workspace for tomography projects. Keep raw a
 
 ## Install and run
 
-TomoJAX Studio targets Linux `x86_64` with a working Vulkan driver, matching the rest of TomoJAX.
+TomoJAX Studio runs on Linux `x86_64` and `aarch64` (for example an NVIDIA DGX Spark) with a working Vulkan driver.
 
 ### Install a prebuilt wheel
 
@@ -18,7 +18,7 @@ uv pip install --python .venv/bin/python --prerelease=allow "tomojax[cuda12]" to
 .venv/bin/tomojax studio
 ```
 
-The `tomojax-studio` wheel bundles HDF5 statically (`manylinux_2_28_x86_64`), so it requires no Rust toolchain or system `libhdf5` package. Prebuilt wheels and standalone tarballs are also attached to each GitHub Release.
+The `tomojax-studio` wheels (`manylinux_2_28_x86_64` and `manylinux_2_28_aarch64`) bundle HDF5 statically, so they require no Rust toolchain or system `libhdf5` package. Prebuilt wheels and standalone tarballs are also attached to each GitHub Release.
 
 ### Build from source
 

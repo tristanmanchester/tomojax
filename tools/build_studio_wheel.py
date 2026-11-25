@@ -1,4 +1,4 @@
-"""Package the compiled ``tomojax-studio`` binary into a Linux x86_64 wheel and tarball."""
+"""Package the compiled ``tomojax-studio`` binary into a Linux wheel and tarball."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import argparse
 import base64
 import hashlib
 from pathlib import Path
+import platform
 import re
 import subprocess
 import tarfile
@@ -22,6 +23,7 @@ ALLOWED_SYSTEM_LIBS = frozenset(
     {
         "linux-vdso.so.1",
         "ld-linux-x86-64.so.2",
+        "ld-linux-aarch64.so.1",
         "libc.so.6",
         "libm.so.6",
         "libdl.so.2",
@@ -32,6 +34,7 @@ ALLOWED_SYSTEM_LIBS = frozenset(
 )
 GLIBC_SYMBOL = re.compile(r"GLIBC_(\d+)\.(\d+)")
 MANYLINUX_TAG = re.compile(r"manylinux_(\d+)_(\d+)_")
+PLATFORM_PREFIX = re.compile(r"^(?:manylinux_\d+_\d+|linux)_")
 
 
 def project_version() -> str:
@@ -149,9 +152,12 @@ def build_wheel(binary: Path, version: str, platform_tag: str, out_dir: Path) ->
     return wheel_path
 
 
-def build_tarball(binary: Path, version: str, out_dir: Path) -> tuple[Path, Path]:
-    """Write a standalone Linux x86_64 tarball and its SHA-256 checksum file."""
-    tar_path = out_dir / f"tomojax-studio-{version}-linux-x86_64.tar.gz"
+def build_tarball(
+    binary: Path, version: str, platform_tag: str, out_dir: Path
+) -> tuple[Path, Path]:
+    """Write a standalone Linux tarball for the tag's architecture and its SHA-256 file."""
+    arch = PLATFORM_PREFIX.sub("", platform_tag)
+    tar_path = out_dir / f"tomojax-studio-{version}-linux-{arch}.tar.gz"
     out_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "w:gz") as archive:
         bin_info = archive.gettarinfo(str(binary), arcname="tomojax-studio")
@@ -188,8 +194,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     _ = parser.add_argument(
         "--platform-tag",
-        default="manylinux_2_28_x86_64",
-        help="PEP 425 wheel platform tag (default: manylinux_2_28_x86_64)",
+        default=f"manylinux_2_28_{platform.machine()}",
+        help="PEP 425 wheel platform tag (default: manylinux_2_28_<this machine>)",
     )
     _ = parser.add_argument(
         "--out-dir",
@@ -212,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     if cast("bool", args.check_static):
         verify_static_linux_binary(binary, platform_tag)
     wheel = build_wheel(binary, version, platform_tag, out_dir)
-    tarball, sha = build_tarball(binary, version, out_dir)
+    tarball, sha = build_tarball(binary, version, platform_tag, out_dir)
     print(f"Wrote {wheel}")
     print(f"Wrote {tarball} ({sha.name})")
     return 0
