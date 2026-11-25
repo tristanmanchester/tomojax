@@ -153,6 +153,10 @@ def _methods_taking(options: dict[str, Any]) -> list[str]:
     return taking
 
 
+# Ray directions closer than this, in degrees, are one direction.
+_SAME_DIRECTION = 1e-3
+
+
 def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
     """Choose a method with a reason and an optional recommendation."""
     from tomojax.geometry import (
@@ -190,11 +194,14 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        # Parallel rays, as declared or with per-view poses: each view's angle about the
-        # axis comes from its full pose, so saved rotation corrections count.
+        # Parallel rays, as declared or with per-view poses. Rays run along the lab's +y
+        # axis; in the object frame that is row 1 of each view's rotation, so saved
+        # rotation corrections count. Opposite views measure the same direction.
         poses = np.asarray([scan.geometry.pose_matrix(i) for i in range(len(scan.angles))])
-        turned = np.degrees(np.arctan2(poses[:, 1, 0], poses[:, 0, 0]))
-        angles = np.unique(np.mod(turned, 180.0))
+        directions = np.sort(np.mod(np.degrees(np.arctan2(poses[:, 1, 1], poses[:, 1, 0])), 180.0))
+        angles = directions[np.r_[True, np.diff(directions) > _SAME_DIRECTION]]
+        if len(angles) > 1 and angles[0] + 180.0 - angles[-1] <= _SAME_DIRECTION:
+            angles = angles[:-1]
         gaps = np.diff(np.r_[angles, angles[0] + 180])
         recommendation = None
         if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):

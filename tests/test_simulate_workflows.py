@@ -271,6 +271,21 @@ def test_true_poses_reproduce_the_simulated_projections(tmp_path, geometry, suff
     np.testing.assert_allclose(loaded.scan.projections, expected, rtol=1e-5, atol=1e-5)
 
 
+def test_selected_views_keep_their_own_true_poses(tmp_path):
+    import tomojax as tj
+
+    sim = tj.simulate("sphere", size=8, n_views=20, translation_sigma=0.5, seed=4)
+    kept = [1, 4, 9, 13, 18]
+    selected = tj.Simulation(sim.scan.selected(kept), sim.phantom)
+    path = tmp_path / "selected.nxs"
+    tj.save(path, selected)
+    loaded = tj.load_simulation(path)
+    assert sim.true_poses is not None
+    np.testing.assert_allclose(loaded.true_poses, sim.true_poses[kept], atol=1e-6)
+    expected = tj.project(loaded.scan.with_poses(loaded.true_poses).geometry, loaded.phantom)
+    np.testing.assert_allclose(loaded.scan.projections, expected, rtol=1e-5, atol=1e-5)
+
+
 @pytest.mark.parametrize("sigma", [-1, float("nan"), float("inf")])
 def test_simulate_rejects_invalid_translation_sigma(sigma):
     import tomojax as tj

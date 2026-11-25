@@ -277,3 +277,28 @@ def test_automatic_reconstruction_counts_saved_rotation_corrections_in_coverage(
     poses[:, 2] = np.linspace(4.0, -4.0, 33)
     posed = tj.reconstruct(sim.scan.with_poses(poses))
     assert posed.info["automatic"]["status"] == "limited"
+
+
+def test_automatic_reconstruction_measures_coverage_along_the_rays():
+    # Views 101.2 to 258.8 degrees leave a 22.4 degree gap. Tilting each view 10 degrees
+    # out of plane turns its ray: the rays leave a 22.7 degree gap, past the 22.5 degree
+    # limit, while the object's x axis still shows 22.4.
+    angles = np.linspace(101.2, 258.8, 33)
+    sim = tj.simulate("sphere", size=8, n_views=33)
+    geometry = replace(sim.scan.geometry, angles=tuple(angles))
+    scan = tj.Scan(np.asarray(sim.scan.projections), geometry)
+    assert tj.reconstruct(scan).info["automatic"]["status"] == "ok"
+    poses = np.zeros((33, 6))
+    poses[:, 1] = 10.0
+    posed = tj.reconstruct(scan.with_poses(poses))
+    assert posed.info["automatic"]["status"] == "limited"
+
+
+@pytest.mark.parametrize("posed", [False, True])
+def test_automatic_reconstruction_counts_opposite_views_as_one_direction(posed):
+    # 24 views over a full turn measure 12 directions: fewer than 16, so limited.
+    sim = tj.simulate("sphere", size=8, n_views=24, rotation=360.0)
+    scan = sim.scan.with_poses(np.zeros((24, 6))) if posed else sim.scan
+    actual = tj.reconstruct(scan)
+    assert actual.method == "fbp"
+    assert actual.info["automatic"]["status"] == "limited"

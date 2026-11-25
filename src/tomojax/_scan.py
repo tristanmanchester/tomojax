@@ -1015,6 +1015,29 @@ def selected_scan(scan: Scan, kept: np.ndarray, projections: np.ndarray) -> Scan
         geometry=views_of(scan.geometry, kept),
         view_positions=_positions(scan)[kept],
         corrections=(*scan.corrections, cut("selected", views=kept.tolist())),
+        source=_selected_truth(scan.source, kept),
+    )
+
+
+def _selected_truth(source: ProjectionDataset | None, kept: np.ndarray) -> ProjectionDataset | None:
+    """``source`` with any simulated per-view pose truth cut to the ``kept`` views."""
+    if source is None:
+        return None
+    info = source.geometry_metadata.get("simulation_info")
+    if not isinstance(info, dict):
+        return source
+    simulation = info.get("simulation")
+    if not isinstance(simulation, dict) or "true_poses" not in simulation:
+        return source
+    from tomojax.io.api import replace_dataset
+
+    rows = np.asarray(simulation["true_poses"])[kept].tolist()
+    return replace_dataset(
+        source,
+        geometry_metadata={
+            **source.geometry_metadata,
+            "simulation_info": {**info, "simulation": {**simulation, "true_poses": rows}},
+        },
     )
 
 

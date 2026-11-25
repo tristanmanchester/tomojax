@@ -1622,6 +1622,20 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
     // Each processing workspace returns to the operation it last showed.
     runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Prepare), tx));
     assert_eq!(runtime.state.ui.operation, "align");
+
+    // Reopening it from the palette keeps the settings being edited.
+    runtime
+        .state
+        .ui
+        .parameter_edits
+        .get_mut("iterations")
+        .expect("Alignment has an iteration limit")
+        .replace_text("21");
+    runtime.update(|state, tx| state.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx));
+    runtime.update(|state, tx| {
+        state.dispatch(UiAction::RunCommand("operation:align".into()), tx);
+    });
+    assert_eq!(runtime.state.ui.parameter_edits["iterations"].text, "21");
 }
 
 #[test]
