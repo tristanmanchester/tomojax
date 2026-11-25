@@ -1401,6 +1401,21 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
+        // Open Activity keeps every job it has shown, so a failure stays listed.
+        if let Activity::Open { jobs, .. } = &mut self.ui.activity
+            && let Some(project) = &self.project
+        {
+            for job in project
+                .document
+                .jobs
+                .iter()
+                .filter(|job| job.status.active())
+            {
+                if !jobs.contains(&job.id) {
+                    jobs.push(job.id.clone());
+                }
+            }
+        }
         if let Activity::Open {
             closes_itself: true,
             ..

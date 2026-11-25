@@ -524,8 +524,8 @@ pub enum Activity {
     #[default]
     Closed,
     Open {
-        /// Jobs queued while it was open. Active jobs are listed anyway; a failed one stays
-        /// listed with its error until Activity closes.
+        /// Jobs it has shown or opened for. A failed one stays listed with its error until
+        /// Activity closes.
         jobs: Vec<String>,
         /// Opened for queued work rather than by the user, so it closes once that work
         /// succeeds.
@@ -538,7 +538,7 @@ impl Activity {
         matches!(self, Self::Open { .. })
     }
 
-    /// Whether Activity was opened for, or saw queued, the job `id`.
+    /// Whether open Activity has shown, or opened for, the job `id`.
     pub fn tracks(&self, id: &str) -> bool {
         matches!(self, Self::Open { jobs, .. } if jobs.iter().any(|job| job == id))
     }

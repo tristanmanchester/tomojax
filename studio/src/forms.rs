@@ -392,6 +392,11 @@ pub fn applies(ui: &UiState, catalog: &SchemaCatalog, name: &str) -> bool {
             _ => true,
         };
     }
+    if ui.operation == "align" {
+        // Opposite views fit the centre from paired views alone: no image, no joint options.
+        let method = ui.parameter_choices.get("method").map(String::as_str);
+        return method != Some("opposite-views") || matches!(name, "fit" | "method");
+    }
     if !method_setting(ui, name) {
         return true;
     }
@@ -594,6 +599,31 @@ mod tests {
         ui.parameter_choices
             .insert("geometry".into(), "cone".into());
         assert_eq!(shown(&ui), [true, true, true]);
+    }
+
+    #[test]
+    fn opposite_views_shows_and_sends_only_its_own_settings() {
+        let catalog = SchemaCatalog::new(
+            // The description the worker sends: the wire schema with help, units and defaults.
+            serde_json::from_str(include_str!("../../src/tomojax/cli/parameters.json")).unwrap(),
+        )
+        .unwrap();
+        let mut ui = UiState::default();
+        initialise(&mut ui, &catalog, "align", None);
+        ui.parameter_edits
+            .get_mut("iterations")
+            .unwrap()
+            .replace_text("8");
+        assert!(applies(&ui, &catalog, "iterations"));
+        ui.parameter_choices
+            .insert("method".into(), "opposite-views".into());
+        for name in ["iterations", "motion", "config", "grid", "region"] {
+            assert!(!applies(&ui, &catalog, name), "{name} is a joint option");
+        }
+        assert!(applies(&ui, &catalog, "fit"));
+        let sent = parameters(&ui, &catalog).unwrap();
+        assert!(sent.get("iterations").is_none(), "{sent}");
+        assert_eq!(sent["method"], "opposite-views");
     }
 
     #[test]

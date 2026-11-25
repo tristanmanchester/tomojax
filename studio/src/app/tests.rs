@@ -1720,6 +1720,30 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
     let failed = run(&mut state, JobStatus::Failed, false);
     assert!(shows_failure(state, &failed));
 
+    // A job already running when the user opens Activity stays listed when it fails.
+    let mut state = open(false);
+    let mut job = project::Job::new("simulate", serde_json::json!({}), vec![]);
+    job.status = JobStatus::Running;
+    let running = job.id.clone();
+    state.project.as_mut().unwrap().document.jobs.push(job);
+    state.ui.activity = Activity::Open {
+        jobs: Vec::new(),
+        closes_itself: false,
+    };
+    state.refresh_model();
+    let job = state
+        .project
+        .as_mut()
+        .unwrap()
+        .document
+        .jobs
+        .last_mut()
+        .unwrap();
+    job.status = JobStatus::Failed;
+    job.error = Some("Reconstruction ran out of GPU memory.".into());
+    state.refresh_model();
+    assert!(shows_failure(state, &running));
+
     // Closing Activity early leaves it closed when the job later fails.
     let mut state = open(false);
     run(&mut state, JobStatus::Failed, true);
