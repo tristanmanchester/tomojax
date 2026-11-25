@@ -26,7 +26,8 @@ Warm times on one 8 GB laptop GPU (measured 2026-11-21) on identical corrected d
 
 | Task | Guide |
 | --- | --- |
-| Install CPU or CUDA 12 dependencies | [Installation](installation.md) |
+| Install CPU, CUDA 12, MCP, or Studio dependencies | [Installation](installation.md) |
+| Manage persistent projects, queue work, and explore 3D results in the native GUI | [TomoJAX Studio](../studio/README.md) |
 | Load, correct, and reconstruct NXtomo, Data Exchange, Nikon, or TIFF scans | [Quickstart](quickstart.md) |
 | Run first-slice recipes for ESRF, TOMCAT, SYRMEP, cSAXS, and Diamond I13 | [Beamline exports](beamline-exports.md) |
 | Simulate data or script the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
@@ -47,7 +48,8 @@ Run `just docs` from a development checkout to build the Sphinx API reference at
 
 Import through public package roots or their `.api` facades; modules starting with `_` and `tomojax.core` are internal.
 
-- [Command line](../src/tomojax/cli/README.md): commands, conventions, and `--config` files.
+- [Command line](../src/tomojax/cli/README.md): commands, conventions, live progress, and `--config` files.
+- [Worker protocol](protocol.md): JSON Lines session protocol (`tomojax serve`) and [progress metrics](progress-metrics.md).
 - [Geometry](../src/tomojax/geometry/README.md): grids, detectors, coordinate frames, and poses.
 - [Forward projection](../src/tomojax/forward/README.md): Joseph projection and derivatives.
 - [Reconstruction](../src/tomojax/recon/README.md): solvers and configuration classes.

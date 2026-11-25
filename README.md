@@ -1,8 +1,8 @@
 # TomoJAX
 
-TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab cone-beam CT in JAX with CUDA kernels. It provides differentiable forward projectors with exact transposes, fast analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, SIRT/OS-SART, MLEM/OSEM, FISTA-TV, SPDHG-TV), joint volume-and-pose alignment, and a CLI for NXtomo, APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, ESRF, SkyScan, and TIFF data.
+TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab cone-beam CT in JAX with CUDA kernels. It provides differentiable forward projectors with exact transposes, fast analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, SIRT/OS-SART, MLEM/OSEM, FISTA-TV, SPDHG-TV), joint volume-and-pose alignment, a CLI, an MCP server for AI agents, and a native desktop workspace for NXtomo, APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, ESRF, SkyScan, and TIFF data.
 
-Full documentation is at [tomojax.dev](https://tomojax.dev). Check the [support matrix](https://tomojax.dev/support-matrix/) and [known limitations](https://tomojax.dev/known-limitations/) for geometry, format, and solver details.
+Full documentation is at [tomojax.dev](https://tomojax.dev).
 
 ![A simulated mechanical watch movement reconstructed by TomoJAX and drawn by direct volume rendering: brass wheels and balance in gold, steel parts white and the titanium plate and bridges as blue glass.](https://github.com/tristanmanchester/tomojax/raw/main/images/watch-render.png)
 
@@ -37,24 +37,26 @@ Numerical commands that write data take `-o OUTPUT` and refuse to overwrite exis
 
 ## Studio
 
-[TomoJAX Studio](studio/README.md) is a native [Rune](https://github.com/anomalyco/rune) workspace for persistent tomography projects. Keep several acquisitions, derived results, recipes and job records together; prepare and queue operations through the public TomoJAX engine, then inspect linked slices, projections, sinograms and GPU volume renderings. The viewer remains independent of the numerical worker while jobs run.
+[TomoJAX Studio](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) is a native [Rune](https://github.com/anomalyco/rune) desktop workspace for persistent tomography projects. Keep acquisitions, reconstructions, saved recipes, and job records together; queue operations through TomoJAX's numerical engine; and inspect linked orthogonal slices, sinograms, side-by-side comparisons, and 3D GPU volume renderings while jobs run.
 
-From this source checkout, install Rust **1.99.1** and the [native build dependencies](studio/README.md#build-and-run), then run:
+![TomoJAX Studio showing the aligned FISTA-TV watch movement in 3D volume view with linked axial, coronal, sagittal, projection, and sinogram thumbnails.](https://github.com/tristanmanchester/tomojax/raw/main/docs/images/studio-explore-volume.png)
+
+Build and launch Studio from a source checkout with Rust **1.99.1** and the [native build dependencies](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#build-and-run):
 
 ```bash
-uv sync --locked --extra cpu --dev
+uv sync --locked --extra cuda12 --dev
 uv run --no-sync tomojax studio --build
 ```
 
-Choose **Create a project**, select its directory and add scans, or start with a simulation. Later, `uv run --no-sync tomojax studio /path/to/project` reopens the saved workspace. The launcher uses the same Python environment as the CLI; the Python wheel alone does not include the native binary.
+Use `--extra cpu` on CPU-only machines. Choose **Create a project**, add scans or run a simulation (`tomojax studio --demo`), and reopen saved workspaces later with `uv run --no-sync tomojax studio /path/to/project`.
 
-See the [Studio guide](studio/README.md) for calibration, batch jobs, measurements, recovery, exports and verification, and the [architecture notes](studio/ARCHITECTURE.md) for its persistence and rendering boundaries.
+See the [Studio guide](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) for calibration, live previews, measurements, comparison modes, exports, and verification, and [studio/ARCHITECTURE.md](https://github.com/tristanmanchester/tomojax/blob/main/studio/ARCHITECTURE.md) for its persistence and rendering architecture.
 
 ## Choose a workflow
 
 | Task | Guide |
 | --- | --- |
-| Manage persistent projects, queue work and explore results in the native GUI | [Studio](studio/README.md) |
+| Manage persistent projects, queue work and explore 3D results in the native GUI | [TomoJAX Studio](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) |
 | Load, correct, and reconstruct NXtomo, Data Exchange, Nikon, or TIFF scans | [Quickstart](https://tomojax.dev/quickstart/) |
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
@@ -92,7 +94,7 @@ Build a scan from arrays with `tj.Scan(projections, geometry)` and simulate proj
 | Laminography CGLS to fixed error, 256³ synthetic (smooth / sharp) | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s |
 | TV reconstruction, 128³ synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 |
 
-Warm times on one 8 GB laptop GPU (measured 2026-11-21), with every tool given the same corrected data, geometry, and output grid. ASTRA is faster per CGLS iteration on the walnut, though TomoJAX reaches lower error at 10 iterations. See the [headline comparison](https://tomojax.dev/measurements/#headline-comparison) for full tables and where each library wins.
+Warm times on one 8 GB laptop GPU (measured 2026-11-21), with every tool given the same corrected data, geometry, and output grid. On the walnut, TomoJAX reaches lower error at 10 iterations while ASTRA is slightly faster per iteration. See the [headline comparison](https://tomojax.dev/measurements/#headline-comparison) for full tables and protocols.
 
 Volumes larger than GPU memory stream automatically in slabs: SIRT of a whole Diamond I12 scan (1801 views of 2160 × 2560 pixels into a 56.6 GB volume) ran on an 8 GB laptop GPU using 1.4 GB of VRAM at 1.13× the per-voxel time of an in-core scan ([large scans](https://tomojax.dev/large-scans/)).
 

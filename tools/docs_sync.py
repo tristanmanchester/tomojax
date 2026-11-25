@@ -66,6 +66,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "Import, calibrate and reconstruct a lab cone-beam scan.",
             ),
             (
+                "studio/README.md",
+                "studio",
+                "TomoJAX Studio",
+                "Native workspace for persistent tomography projects, previews and 3D viewing.",
+            ),
+            (
                 "src/tomojax/cli/README.md",
                 "command-line",
                 "Command line",
@@ -145,6 +151,18 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "alignment-configuration",
                 "Alignment configuration",
                 "The joint solver behind tj.align and its numerical contracts.",
+            ),
+            (
+                "docs/protocol.md",
+                "protocol",
+                None,
+                "JSON Lines worker protocol and standalone progress contract.",
+            ),
+            (
+                "docs/progress-metrics.md",
+                "progress-metrics",
+                None,
+                "Scalar diagnostics emitted during reconstruction and alignment.",
             ),
         ],
     ),

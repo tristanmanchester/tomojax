@@ -74,11 +74,11 @@ args = ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
 | `simulate` | Simulate a scan of a phantom, with optional detector artefacts |
 | `project`, `backproject` | Apply the forward projector or its exact transpose |
 | `edit_scan` | Select views, crop, bin, replace poses or combine scans |
-| `preview` | Single slices, centre sweeps, before/after corrections and region estimates |
-| `view` | Planes, projections, sinograms, differences, profiles, statistics and pose tables |
+| `preview` | Single slices, centre sweeps (with optional `roi` zoom), before/after corrections and region estimates |
+| `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots |
 | `evaluate` | Score candidate settings on held-out views |
 | `save`, `export` | Write a dataset with its manifest, or TIFF slices and raw volumes |
-| `control` | Cancel, pause or resume a job; close a handle; restart the worker |
+| `control` | Cancel, pause or resume a job; close a handle; reload tool definitions or restart the worker |
 | `python` | Run Python in the worker, with the live handles and `tj` in scope |
 
 Tools that accept `dry_run` report what a call would do without running it: the method and grid a reconstruction would use and its memory estimate, the files an export would create, or the shapes a simulation would produce. Use `describe` before setting expert keys in `config`.
@@ -87,7 +87,7 @@ Tools that accept `dry_run` report what a call would do without running it: the 
 
 Each result is kept in the server as a handle with an ID such as `@scan-3fa94c1e`. Pass that ID to any tool that takes data. Add a member to choose part of a result, for example `@align-91c0d2aa.scan` for the aligned scan or `@sim-07be55f1.phantom` for a simulation's phantom. A bare handle gives the whole object to `save` and `export`, and its main array (volume, projections, phantom or working image) to an array field.
 
-Workflow `source` fields accept acquisition paths through the normal loader. For array fields, use a handle member, a session array such as `@array-…`, a `.npy` file or an explicit HDF5 dataset such as `scan.h5::/entry/data/data`. Literal arrays use storage order. Relative paths use the project directory. Write `./@name` for a file whose name starts with `@`.
+Workflow `source` fields accept acquisition paths through the normal loader. For array fields, use a handle member, a session array such as `@array-…`, a `.npy` file or an explicit HDF5 dataset such as `scan.h5::/entry/data/data`. Literal arrays use storage order. Relative paths resolve against `CLAUDE_PROJECT_DIR` when set, otherwise the server's working directory. Write `./@name` for a file whose name starts with `@`.
 
 To view or backproject measured line integrals, use `open` and select the scan’s `.projections`. For raw counts, open with `kind=frames` and select `.counts`. Use `inspect` with `preview=true` for a first look, or `preview` with `correction_preview` to compare raw and corrected rows.
 
@@ -117,6 +117,6 @@ Use it for anything the typed tools do not cover: a custom geometry, a direct so
 
 The server publishes workflow guides as resources and as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry` and `calibration`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
 
-## Limits
+## Transport and session lifetime
 
-The server speaks stdio only, so the agent and the GPU run on the same Linux machine. Handles and tasks live only as long as the server process.
+The server communicates over stdio, running alongside the agent on the same Linux machine as the GPU. Live handles and active tasks persist for the lifetime of the server process; use `save` or `export` for results you want to keep across sessions.

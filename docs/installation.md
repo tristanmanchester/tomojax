@@ -26,7 +26,19 @@ JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert
 
 Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialise. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver.
 
-If you installed `tomojax[cpu]` and only want GPU acceleration for the Fourier-slice inverse (`method="fourier"`), install the `fourier-cuda12` extra, which adds CuPy alone. It is already included in `cuda12`.
+## Optional extras and Studio
+
+Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
+
+| Extra | Adds |
+| --- | --- |
+| `cpu` | JAX CPU backend |
+| `cuda12` | JAX CUDA 12 runtime, CuPy, and NVIDIA runtime/NVRTC wheels |
+| `fourier-cuda12` | CuPy alone for GPU-accelerated Fourier-slice inversion (`method="fourier"`) alongside `cpu` |
+| `mcp` | Model Context Protocol server (`tomojax mcp`); see [use TomoJAX from an AI agent](mcp.md) |
+| `spectra` | `xraylib` for physical X-ray tube spectra (`corrections.tube_spectrum`) and beam-hardening curves |
+
+To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)), build it from a source checkout with Rust **1.99.1** and the native HDF5/graphics libraries, then run `uv run --no-sync tomojax studio --build`.
 
 ## Build and install an unreleased wheel
 
@@ -42,7 +54,7 @@ Then install the built wheel from `dist/` into a fresh environment outside the c
 mkdir /tmp/tomojax-user
 cd /tmp/tomojax-user
 uv venv --python 3.12
-uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax-0.3.0-py3-none-any.whl[cpu]"
+uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax-1.0.0rc1-py3-none-any.whl[cpu]"
 .venv/bin/tomojax --help
 ```
 

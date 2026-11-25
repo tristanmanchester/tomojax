@@ -27,6 +27,7 @@ Columns below name accepted input kinds in addition to the options defined by th
 | `run.correct` | Path, scan or frames, ordered corrections and batch size. Frames also take binning and epsilon. | Scan handle with projections. |
 | `run.reconstruct` | Path or scan, method, grid/region, config or public solver options | Reconstruction handle with registered volume, actual method and scan. Owner-managed storage supplies the Python output buffer. |
 | `run.align` | Path or scan, fit, method, grid/region and fit options | Alignment handle with corrected scan, pose table and optional working image. Opposite-views centre estimation selects method `opposite-views`. |
+| `run.evaluate` | Path or scan, candidate reconstruct/align settings, interleaved or angular split, optional per-partition corrections and reference solver | `evaluation` with `split_fingerprint`, reference settings and per-candidate held-out scores. |
 | `run.simulate` | Phantom, acquisition geometry, artefacts and seed | Simulation handle with scan and phantom. |
 | `run.project`, `run.backproject` | Scan or path for geometry, registered volume or projections by storage ref, optional grid/devices | `projections.projections` or `volume.volume`, session npy. The second operation applies the matched transpose. |
 | `run.select`, `run.crop` | Scan, frames or path (scan). Ordered view indices or half-open detector row/column intervals | New handle of the input kind. |
@@ -35,6 +36,8 @@ Columns below name accepted input kinds in addition to the options defined by th
 | `run.reconstruct_slabs` | Raw path or frames, slab method, NeXus destination `path`, optional `force`, grid, corrections, config, warm start and epsilon | `files.paths` contains the reconstruction and manifest. Read the saved reconstruction with `open` or the registered volume at `/entry/processing/tomojax/volume`. |
 | `run.save` | Scan, reconstruction, alignment or simulation member, path, include_scan, force | `files.paths` includes the dataset and manifest. Caller owns committed destinations. |
 | `run.export` | Reconstruction, alignment or simulation member, path, dtype, range, prefix, force | `files.paths` includes the raw file or TIFF stack and sidecars. Caller owns committed destinations. |
+| `read` | Storage ref or saved volume path, optional half-open `roi`, `stride`, `metadata_only`, or display `mode`/`axis`/`index` | `array` (registered hyperslab up to 16 MiB as session npy, or metadata only) or `planes` when `mode` is set. |
+| `statistics` | Storage ref or saved volume path, optional `roi`, `stride`, `percentiles` and histogram `bins` | `statistics` with finite count, non-finite count, mean, std, percentiles, histogram and unit. |
 | `plane` | Volume member (including phantom or alignment image), axis and index | `plane.plane`, session npy. Works with a saved volume that has no scan. |
 | `slice` | Reconstruct parameters, axis and index | `plane.plane` on the full method's grid, session npy. |
 | `centre_sweep` | Slice parameters and ordered signed horizontal detector offsets in pixels, in the centre report's sign convention | `sweep.planes`, session npy. Leading coordinate vector preserves duplicates. |
@@ -83,15 +86,6 @@ Save, export and slab reconstruction adapters reserve a private staging location
 Without `force`, an existing group member causes the commit to fail. With `force`, originals move to private backups while the group is installed. A missing manifest, failed rename or other install error rolls back earlier group members and returns an error. A failed restoration reports the location of the retained original for recovery. Use the successful terminal as the point to open all files. Other filesystem readers can observe individual renames during a group commit. Concurrent external writers and process or machine crashes have no multi-file transaction guarantee.
 
 Release takes only the issued artifact token. A successful release or handle close rejects new references immediately. Earlier admissions retain their leased storage through their terminal. Normal shutdown removes remaining private and published session files. Committed outputs remain caller-owned.
-
-## Ownership after Milestone 0
-
-| Files or registration | Sole owner |
-|---|---|
-| Array, progress, operations and products schemas under `docs/protocol/`, their Python types, wire option generation, input/result matrix and workflow transcripts | Execution agent |
-| Worker schema, `cli/envelope.py`, schema assembly in `tools/build_wire_schemas.py`, session transcript, protocol transport documentation and writer tests | Worker agent |
-| `.importlinter`, `tests/guardrails/api_surface.txt`, `tests/guardrails/ratchets.json`, `tools/check_docstrings.py` and all of `tools/guardrails.py` including `CLI_COMMANDS` | Execution agent integrates registration and measured deltas from both branches |
-| Product commands in `cli/api.py`, dispatch/help in `cli/main.py` and CLI vocabulary/help entries in `tests/test_architecture.py` | Worker agent integrates command changes from both branches. |
 
 ## Standalone commands
 

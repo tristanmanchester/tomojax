@@ -42,6 +42,8 @@ MODULES = [
     ("tomojax.forward", "forward"),
     ("tomojax.datasets", "datasets"),
     ("tomojax.evaluation", "evaluation"),
+    ("tomojax.progress", "progress"),
+    ("tomojax.interactive", "interactive"),
     ("tomojax.torch", "torch"),
     ("tomojax.recon.api", "recon-api"),
     ("tomojax.io.api", "io-api"),

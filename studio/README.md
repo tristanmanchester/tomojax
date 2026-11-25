@@ -1,251 +1,147 @@
 # TomoJAX Studio
 
-Studio is a native Rune workspace for TomoJAX projects. It imports acquisitions,
-queues public TomoJAX operations, saves derived results and restores the project
-when you reopen it. The scientific viewer reads registered scalar arrays on its
-own I/O threads and renders them with the same GPU that draws the interface.
-Every numerical operation runs in `tomojax serve`, the same worker the CLI uses.
+TomoJAX Studio is a native desktop workspace for tomography projects. Keep raw acquisitions, derived volumes, saved recipes, and job records in one project folder; run every correction, alignment, and reconstruction through TomoJAX's numerical engine (`tomojax serve`); and inspect linked slices, sinograms, and GPU volume renderings while jobs run.
+
+![TomoJAX Studio showing the aligned FISTA-TV reconstruction of a 29 mm mechanical watch movement as a 3D GPU volume render, with linked axial, coronal, sagittal, projection, and sinogram thumbnails below, the project tree and saved recipes on the left, and volume appearance and clipping controls on the right.](../docs/images/studio-explore-volume.png)
 
 ## Build and run
 
-Use this source checkout and its locked Python environment. Studio is an optional
-native application; installing the Python wheel alone does not build its binary.
+Studio is built from a TomoJAX source checkout with Rust **1.99.1**, a C compiler, and the HDF5 and graphics development libraries:
 
-1. Install Rust **1.99.1**, a C compiler, and the HDF5 development library.
-   On Debian or Ubuntu, the relevant native packages are `libhdf5-dev`,
-   `libfontconfig1-dev`, `libxkbcommon-dev`, `pkg-config`, and a working Vulkan
-   driver. On macOS, install HDF5 with your package manager. If HDF5 is outside
-   the compiler's search path, set `HDF5_DIR` to its installation prefix.
-2. From the TomoJAX repository root, install the Python dependencies:
+- **Debian / Ubuntu:** install `libhdf5-dev`, `libfontconfig1-dev`, `libxkbcommon-dev`, `pkg-config`, and a working Vulkan driver.
+- **macOS:** install HDF5 via your package manager. If HDF5 sits outside the compiler's search path, set `HDF5_DIR` to its installation prefix.
 
-   ```sh
-   uv sync --locked --extra cpu --dev
-   ```
+From the repository root, sync the Python environment (use `--extra cuda12` on Linux with an NVIDIA GPU, or `--extra cpu` for CPU execution), then build and launch Studio:
 
-   Use the appropriate TomoJAX accelerator extra instead of `cpu` when preparing
-   a GPU reconstruction environment. The renderer's device and TomoJAX's compute
-   device are separate choices made by their respective runtimes.
-3. Build and launch:
+```sh
+uv sync --locked --extra cuda12 --dev
+uv run --no-sync tomojax studio --build
+```
 
-   ```sh
-   uv run --no-sync tomojax studio --build
-   ```
+The launcher forwards the active Python interpreter to Studio. Subsequent launches reuse the compiled binary:
 
-   Later launches reuse the native binary:
+```sh
+uv run --no-sync tomojax studio                        # open the start screen
+uv run --no-sync tomojax studio /path/to/project       # reopen a saved project
+uv run --no-sync tomojax studio /path/to/scan.nxs      # launch with an acquisition ready to import
+uv run --no-sync tomojax studio --demo                 # start a sample simulation project
+```
 
-   ```sh
-   uv run --no-sync tomojax studio /path/to/project
-   ```
+## Workspaces at a glance
 
-The launcher forwards the current Python interpreter to Studio. Rune and its
-patched dependencies are pinned in `Cargo.toml`; `Cargo.lock` records the full
-native dependency graph. The first build needs access to those dependencies.
+Five top-bar workspaces cover the full tomography loop, while the left sidebar keeps the project tree and saved recipes in view:
 
-Linux file dialogs use the desktop's XDG portal. Dragging files or folders into
-an open project is also supported. The file chooser selects one input at a time;
-drop multiple inputs together, or select a directory containing several NXtomo
-files, for a batch import.
-
-## First project
-
-Choose **Create a project** and select its directory. Add your scans in **Prepare**.
-Import references the original files by default. Enable **Copy sources into the
-project** before importing when you want managed copies. Copies are staged in
-the background and the originals are preserved. Choosing a parameter or header
-file, such as a Nikon `.xtekct` or SkyScan `.log`, copies its whole folder, because
-the frames beside it belong to the same acquisition. An HDF5 or NXtomo file that
-reads data from other files (external links, virtual datasets or external raw
-storage) can't be copied; import it without copying.
-
-Standard NXtomo/HDF5 metadata and the first scientific views load independently
-of the numerical worker. **Inspect dataset** requests TomoJAX's full inspection,
-including its projection statistics; this can take longer on a large scan.
-Other supported acquisition formats use TomoJAX's existing inspection and loading
-paths. Raw or vendor acquisitions that need calibration become directly viewable
-after preparation produces a registered result.
-
-Use **Open & calibrate** for explicit loader settings such as raw-frame kind,
-flats, darks, detector calibration, angle paths and declared geometry. The form
-comes from the worker's parameter schema. Supply any calibration the scan lacks;
-the worker reports what is missing.
-
-To try Studio without data, choose **Simulation**, keep the small default
-phantom, and submit it. The result contains the scan and its registered ground
-truth. Select that result, choose **Reconstruct**, set a solver and submit a
-reconstruction. Both outputs become durable project assets.
-
-## Prepare and reconstruct
-
-The operation selector exposes calibration, corrections, alignment, simulation,
-crop, bin, view selection, poses, combine, reconstruction, slab reconstruction,
-slice previews, centre sweeps, correction previews, support estimation, planning,
-forward projection and backprojection.
-
-Slice, centre, correction and region previews update as you edit. They use
-temporary worker results; **Keep result** creates a project result with the
-settings, source paths and worker provenance that produced it. Changing a
-control replaces its earlier request. While the new preview computes, the last
-one stays on screen with an updating label. **Stop** cancels that control's preview;
-**Update preview** explicitly retries it. Preview requests do not wait for the
-project's autosave or become durable queued jobs.
-
-Centre sweeps are browsable at their recorded signed detector offsets. The centre
-slider evaluates one offset; the **Centres** field accepts an ordered sweep.
-Slice previews retain the requested physical orientation. Correction previews
-provide **Before correction** and **After correction** views, with independent
-detector registration and count/line-integral domains. **Estimate support** uses
-TomoJAX's calibrated laminography estimator. Keeping the preview saves its three
-fixed planes and physical bounds.
-
-Common correction controls cover zingers, stripes, rings and Paganin phase
-retrieval. Paganin's physical parameters must be supplied. Ordered correction
-objects, repeated steps, solver configuration objects and uncommon structured
-settings use the JSON editor or advanced parameter fields, with the worker
-schema's field names and tags.
-
-Select several scans to queue the same operation for each. **Combine scans**
-captures the selected inputs in project order. Save a named recipe to reuse
-settings; applying a recipe fills the form and leaves submission to you.
-The form validates after edits settle. A worker parameter error names its exact
-path; **Review** reveals and focuses the corresponding control. Nested JSON
-errors identify the failing path beside the containing editor. A draft with a
-current validation error cannot be queued. Reconstruction and alignment forms also request the worker's plan, including method, reasons,
-grid, placement and memory estimates. Editing settings invalidates the previous
-plan. For a normal batch, the preflight describes the active input. **Combine scans** preflights its selected set.
-
-Each submitted job keeps its own copy of the parameters and records the source
-paths and kinds. Editing a form, applying another recipe or relinking an asset
-leaves submitted work unchanged. Don't modify referenced acquisitions while they
-are being processed.
-
-The local queue admits jobs to one official worker. You can reorder waiting
-jobs, prepare more work, or browse saved data while processing runs. Pause and
-cancel are sent to the worker, and the job shows its new state once the worker
-confirms it. A paused job keeps the worker. Interactive previews share the same
-worker, so a running or paused job holds them until it finishes; the preview
-footer says so and offers the job controls. Background file copies can be
-cancelled, and only completed copies are added to the project.
-
-## Follow a running job
-
-**Jobs** shows the worker's task hierarchy, progress counts and active-time ETA.
-Iterative reconstruction and joint alignment show their registered axial,
-coronal and sagittal checkpoint planes as they arrive. Alignment also shows the
-per-view pose table, with the worker's column order, coordinates and units.
-The panel identifies a completed run's retained frame as its last checkpoint.
-Each live plane shows its physical coordinate and automatic display window.
-
-Pause, resume and cancel controls stay beside the job heading. Expand **Details**
-for current metric values, convergence plots, captured settings and recorded
-warnings; **Show worker trace** lists the worker's internal steps. Alignment
-plots show the objective and accepted pose step against the worker's step
-number, in the units of the protocol metric registry. Every metric sample stays
-in the job record, and plots leave a gap where the worker reports no value.
-**Activity** in the top bar lists running and queued jobs from any workspace.
-
-## Explore and compare
-
-The main viewport can show the GPU volume or an orthogonal plane. Linked
-thumbnails provide axial, coronal and sagittal slices, a projection and a
-sinogram when those arrays are present.
-The sinogram starts at the central detector row unless you restore an explicit
-saved position.
-
-| Interaction | Result |
+| Workspace | Purpose |
 | --- | --- |
-| Drag a volume | Orbit the camera |
-| Wheel over a slice | Move through slices |
-| Wheel over a volume, or primary-modifier + wheel | Zoom |
-| Middle-button drag over a plane | Pan |
-| Click or drag a slice in navigation mode | Move linked crosshairs |
-| Double-click, or **Fit image** | Reset zoom and pan |
-| **Distance**, then drag a slice | Measure between registered sample centres |
-| **Region**, then drag a slice | Report finite-sample mean, spread and range |
+| **Prepare** | Import acquisitions, calibrate raw frames, run corrections, crop/bin/select views, align geometry, and preview slices or centre sweeps |
+| **Reconstruct** | Configure analytical, iterative, or slab reconstructions with live parameter validation and memory plans, then queue jobs |
+| **Explore** | Inspect 3D GPU volume renders and linked axial, coronal, sagittal, projection, and sinogram views; take physical distance and ROI measurements; export volumes |
+| **Compare** | Compare two reconstructions side by side, with a draggable split curtain, or as a difference map on a shared display window |
+| **Jobs** | Follow active progress, live solver checkpoints, per-view pose tables, convergence plots, and the full processing record |
 
-Measurements retain their asset, plane and source index. They are shown only on
-that slice. Distances require axes in the same coordinate frame and unit. ROI
-statistics use the displayed scalar samples and explicitly identify downsampled
-data. Display windows and colour maps change rendering, not stored values.
-**Apply window** commits the entered range; an invalid or unfinished edit leaves
-the current image unchanged. Relinking data clears measurements tied to its old
-pixels or calibration.
-The numeric display-window fields initially show the range used by the current
-image. Automatic updates preserve a text edit you have started.
+## Start a project and import data
 
-Volume controls include colour/opacity mapping, an opacity threshold, density,
-lighting and three clipping positions. Preview quality is labelled. The default
-viewer requests at most 1,024 samples per plane edge and 192 samples per volume
-edge; it reads a coarse result first when appropriate and refines it. Full
-quantitative data remains in the source and in numerical exports.
+Choose **Create a project**, pick a directory, and add acquisitions in **Prepare** using **Add scans**, **Add a scan folder**, or drag-and-drop. Drop multiple files or choose a directory containing several NXtomo files to import a batch.
 
-Open **Compare** and pick a result for each side in the inspector, or select two
-results in the navigator and choose **Compare selection**. Choose the plane (**Axial**, **Coronal** or
-**Sagittal**) and the mode:
+- **Referenced vs managed copies:** by default, Studio references files in place. Enable **Copy sources into the project** before importing to stage managed copies under `inputs/` while leaving originals untouched. For header-driven formats such as Nikon `.xtekct` or SkyScan `.log`, copying brings along the whole acquisition folder. Reference HDF5 files that use external links, virtual datasets, or external raw storage in place.
+- **Supported formats:** NXtomo/HDF5, Data Exchange, ESRF Bliss/EDF/PyHST, Nikon `.xtekct`, Zeiss `.txrm`, SkyScan logs, PSI cSAXS `.mat`, TIFF stacks, and numeric `.npy` arrays. Convert `.npz` archives to NXtomo with `tomojax correct scan.npz -o scan.nxs` before importing.
+- **Native preview and full inspection:** standard NXtomo/HDF5 metadata and initial views load directly in Studio's native I/O threads without waiting for the worker. Click **Inspect dataset** to run TomoJAX's full inspection report, including projection statistics across the stack.
+- **Calibration:** use **Open & calibrate** when an acquisition needs explicit loader settings (raw-frame kind, flats, darks, angles, pixel pitch, or declared geometry). The form is generated from the worker's parameter schema and reports any missing fields before queuing.
+
+To try Studio without scan files on disk, launch with `tomojax studio --demo` or choose **Simulation** in **Prepare** to generate a phantom scan and ground truth, then reconstruct it in **Reconstruct**.
+
+## Prepare, preview, and reconstruct
+
+**Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artefact corrections, joint alignment, simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
+
+### Live interactive previews
+
+Four interactive previews update automatically as you adjust settings, without adding jobs to the project history:
+
+- **Slice preview:** reconstructs a single plane at its physical orientation.
+- **Centre sweep:** evaluates one offset with the centre slider, or an ordered list of signed detector offsets in pixels in **Centres**, so you can step through candidates and pick the sharpest rotation centre.
+- **Correction preview:** switches between **Before correction** and **After correction** sinograms on a row band, keeping native count and corrected line-integral registrations separate.
+- **Estimate support:** runs TomoJAX's calibrated laminography region estimator and displays its three orthogonal overlays and physical bounds.
+
+Changing a control supersedes any in-flight preview request while keeping the last image on screen until the new one arrives. Use **Stop** to cancel a preview, **Update preview** to rerun it, or **Keep result** to promote a preview into a durable project asset with its parameters and provenance.
+
+### Validation, plans, recipes, and batch queuing
+
+- **Guided controls and advanced settings:** common correction options (zingers, stripes, rings, Paganin phase retrieval) have dedicated fields; ordered multi-step corrections, solver `*Config` options, and nested settings are available in the advanced fields and JSON editor using the worker schema's field names.
+- **Live validation and plans:** edits validate automatically against the worker and highlight exact parameter paths on error (**Review** focuses the failing field). Reconstruction and alignment forms also request the worker's execution plan—showing the resolved method, reasons, grid, device placement, and memory estimate—before you submit.
+- **Recipes and batches:** save any configured operation as a named recipe in the sidebar to reuse across scans; applying a recipe populates the form for review before queuing. Select multiple scans in the project tree to queue the same operation across all of them, or choose **Combine scans** to merge selected cone-beam orbits in project order.
+- **Immutable job capture:** submitting a job snapshots its parameters and input paths. Continuing to edit forms, apply recipes, or relink assets leaves queued and running work unchanged.
+
+The worker executes one GPU job at a time. You can reorder waiting jobs, browse volumes, or prepare the next batch while a job runs. Interactive previews share the same worker, so when a durable job is running or paused the preview footer links directly to that job's controls.
+
+## Explore, measure, and compare
+
+**Explore** pairs a main viewport (**3D** volume render or **Slice** view) with a linked thumbnail strip showing **Axial**, **Coronal**, **Sagittal**, **Projection**, and **Sinogram** views whenever those arrays are present.
+
+![Axial slice through the hairspring and balance wheel of the aligned watch movement in Explore, showing physical distance and region attenuation measurements in millimetres and inverse millimetres alongside the display window histogram.](../docs/images/studio-explore-slice.png)
+
+| Interaction | Action |
+| --- | --- |
+| Drag in **3D** mode | Orbit the volume camera |
+| Scroll wheel over a slice | Step through slices |
+| Scroll wheel in **3D**, or primary-modifier + wheel on a slice | Zoom |
+| Middle-button drag over a slice | Pan |
+| Click or drag in **Navigate** mode | Move linked crosshairs across all orthogonal views |
+| Double-click or **Fit image** | Reset zoom and pan |
+| **Distance**, then drag on a slice | Measure physical distance between sample centres |
+| **Region**, then drag a box on a slice | Compute mean, standard deviation, and range of finite samples |
+
+- **Display controls:** adjust the greyscale window (**Apply window** commits typed bounds; **Auto** resets from the image), choose a colour map (**Gray**, **Bone**, **Viridis**, **Magma**), or invert display contrast. Display settings change rendering on the GPU without altering stored float values.
+- **3D volume rendering:** tune **Opacity threshold**, **Density**, **Lighting**, and **X / Y / Z extent** clipping planes. Studio loads slices progressively up to 1,024 samples per edge and renders interactive 3D previews at up to 192³ voxels while keeping full-resolution floating-point arrays on disk for measurements and exports.
+- **Measurements:** saved distance and ROI measurements stay tied to their asset, slice index, and physical coordinate frame, and reappear whenever you return to that slice.
+
+### Compare results
+
+Open **Compare** and pick a **Left** and **Right** result in the inspector (or select two results in the project tree and choose **Compare selection**). Pick **Axial**, **Coronal**, or **Sagittal**, then switch between three modes:
 
 | Mode | Shows |
 | --- | --- |
-| **Side by side** | Both results at the same slice, zoom and pan |
-| **Split** | Left result before the divider, right result after it; drag the divider |
-| **Difference** | Left minus right, in a grey window symmetric about zero |
+| **Side by side** | Both results locked to the same slice, zoom, and pan |
+| **Split** | Left result on one side of a draggable curtain, right result on the other |
+| **Difference** | Left minus right on a greyscale window symmetric around zero |
 
-**Split** and **Difference** need both results on the same grid. **Swap**
-exchanges the sides. **Share display window** applies one window to both;
-otherwise each side uses its own automatic window.
+**Split** and **Difference** compare results on matching grids. Enable **Share display window** to lock both sides to one intensity range, or disable it to scale each side independently.
 
-## Save, reopen and export
+![Compare workspace in Split mode comparing nominal geometry FISTA-TV on the left against aligned FISTA-TV on the right on the same axial plane and shared display window, showing doubled features before alignment and sharp gear teeth and mainspring coils after.](../docs/images/studio-compare.png)
 
-A project directory contains:
+## Follow jobs and convergence
+
+**Jobs** displays running, queued, and completed work with nested task progress, active-time ETAs, and live checkpoint previews (orthogonal slices for iterative reconstruction and alignment, plus per-view pose tables for alignment). **Activity** in the top bar opens a compact drawer of active jobs from any workspace.
+
+Expand **Details** on any job to inspect its convergence plots (such as alignment objective and accepted pose step across pyramid levels), captured parameters, recorded warnings, and **Show worker trace** for internal worker stages. Pause, resume, and cancel controls act cooperatively at the worker's next checkpoint.
+
+![Jobs workspace with Details expanded on the watch-movement alignment job, showing multi-level Alignment objective and Accepted pose step convergence plots alongside the processing record.](../docs/images/studio-jobs.png)
+
+## Project layout, recovery, and export
+
+Each Studio project is a self-contained directory:
 
 ```text
-project.tomojax.json
-inputs/
-derived/
-cache/
+project.tomojax.json   # assets, recipes, job records, provenance, and workspace state
+inputs/                # managed source copies (when copying is enabled)
+derived/               # saved NXtomo reconstructions, alignments, and kept previews
+cache/                 # local viewer cache
 ```
 
-The manifest holds assets, recipes, job records, provenance and workspace state.
-Managed paths are relative to the project directory. External references retain
-their source paths. Rename a result with its edit button in the project tree.
-Removing a result takes it out of the project after you confirm; its files stay
-on disk. A result used by a queued or running job can't be removed. Derived handle results are saved through the official worker
-to NXtomo before their jobs are marked complete. **Keep result** copies registered
-array-only previews out of the worker's temporary session storage. Unkept
-previews are not project assets.
+- **Autosave and locking:** workspace state—active asset, slice indices, display window, 3D camera, clipping, comparison pair, measurements, and parameter drafts—saves atomically in the background. An OS file lock ensures only one Studio window writes to a project at a time. The manifest holds up to 32 MiB; if a write fails, the previous manifest stays intact and the status bar reports the error.
+- **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is cancelled.
+- **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly.
+- **Export:** export derived results from **Explore** as NXtomo (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
 
-Autosave writes a replacement manifest on a background thread. An OS file lock
-prevents two Studio instances from writing the same project. The status bar shows
-whether saving is pending or failed. Reopening restores the active asset, slice
-positions, window, camera, clipping, comparison selections, measurements and
-parameter drafts, including unfinished text edits.
+## Shortcuts, preferences, and environment variables
 
-The manifest is limited to 32 MiB, which a long metric history can reach. When
-a save fails, the status bar says so and the previous manifest is kept; changes
-since then exist only in memory until a save succeeds.
+Press **Ctrl+K** or click **Search commands** to run any action from the keyboard. Open **Shortcuts** and click **Record** to rebind keys (conflicts and reserved keys are flagged immediately). View undo/redo steps through display and navigation changes without affecting queued or completed jobs.
 
-Jobs left active by a lost session become **Interrupted**, and you retry them
-yourself. If an interrupted job's output destination already exists, check it
-before retrying.
-
-NXtomo export preserves the registered result and included scan. TIFF export
-supports float32 and explicitly chosen uint16 conversion through TomoJAX's public
-export operation. Outputs use new destinations. Array-only results export as an
-NPY bundle with an `arrays.json` registration description.
-
-Studio does not import NPZ files, because the NPZ loader accepts pickled
-metadata. Import NXtomo/HDF5 or a recognised acquisition format instead. The NPY
-reader accepts numeric arrays only.
-
-## Commands and preferences
-
-Use **Search commands** or Ctrl+K to find actions. To change a shortcut, open
-**Shortcuts**, choose **Record** and press the new key combination; Studio rejects
-conflicts and reserved keys. View undo/redo restores display context; it does not
-undo committed numerical results or rewrite submitted jobs.
-
-Application preferences store recent projects and shortcuts. Set
-`TOMOJAX_STUDIO_SETTINGS` to a different preferences file for isolated testing.
-`TOMOJAX_STUDIO_PYTHON` selects the worker interpreter when launching the binary
-directly; the Python launcher sets it automatically.
+| Environment variable | Purpose |
+| --- | --- |
+| `TOMOJAX_STUDIO_PYTHON` | Python interpreter for `tomojax serve` when launching the binary directly (`tomojax studio` sets this automatically) |
+| `TOMOJAX_STUDIO_SETTINGS` | Override the preferences file path (recent projects and custom shortcuts) for isolated runs |
+| `TOMOJAX_STUDIO_INPUT` | Project directory or acquisition path opened on startup |
 
 ## Verification
 
@@ -258,17 +154,13 @@ cargo test --release --locked --manifest-path studio/Cargo.toml
 TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml -- --ignored
 ```
 
-The ignored gate requires the installed worker and a working wgpu adapter. It
-exercises the real worker's preview supersession, validation, plans, live
-checkpoints and durable workflow. GPU tests check actual pixels and analytic opacity.
-Rune's headless renderer uses the same scientific compositor as a native window:
+The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves) and checks GPU rendering pixels and opacity against analytic expectations.
+
+Studio also supports headless offscreen rendering through the same scientific compositor:
 
 ```sh
-TOMOJAX_STUDIO_INPUT=/path/to/project studio/target/release/tomojax-studio --snap /tmp/studio.png --size 1440x900 --scale 1 --script /path/to/script.json --at 3
+TOMOJAX_STUDIO_INPUT=/path/to/project studio/target/release/tomojax-studio \
+  --snap /tmp/studio.png --size 1440x900 --scale 2 --at 1.0
 ```
 
-This uses the release executable produced by the **Build and run** steps above.
-Headless mode views saved project data without starting a worker.
-
-See [DESIGN.md](DESIGN.md) for the visual system and
-[ARCHITECTURE.md](ARCHITECTURE.md) for ownership and persistence boundaries.
+See [DESIGN.md](DESIGN.md) for the visual system and [ARCHITECTURE.md](ARCHITECTURE.md) for ownership and persistence boundaries.

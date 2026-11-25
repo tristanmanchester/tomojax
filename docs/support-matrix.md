@@ -6,8 +6,9 @@ This page lists supported workflows, acquisition formats, and numerical backends
 
 | Workflow | Entry point |
 | --- | --- |
-| Inspect, validate, and preview datasets | `tomojax inspect scan.nxs [--json] [--preview-dir previews]` |
+| Inspect, validate, and preview datasets (including slice previews and centre sweeps) | `tomojax inspect scan.nxs [--json] [--preview-dir DIR] [--slice AXIS=INDEX] [--centers SPEC]` |
 | Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax correct scan.npz -o scan.nxs` |
+| Preview corrections on a row band before writing | `tomojax correct raw.nxs --dry-run --preview band.png` or `tomojax.interactive.correction_preview` |
 | Load and correct HDF5 raw frames (NXtomo, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
 | Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
 | Load already-corrected TIFF line integrals | `tj.Scan(read_tiff_frames(path), geometry)` |
@@ -21,6 +22,10 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap and `tj.reconstruct_slabs` ([large scans](large-scans.md)) |
+| Plan, watch, or stream JSON progress for CLI and Python runs | `--dry-run`, `--watch-dir DIR`, `--progress auto\|bar\|json\|none`; `tomojax.progress.watch` |
+| Native desktop workspace (projects, live jobs, linked views, 3D volume rendering, comparison) | `tomojax studio [PROJECT_OR_INPUT] [--build] [--demo]` ([Studio](../studio/README.md)) |
+| AI agent integration over MCP stdio | `tomojax mcp` with `tomojax[mcp]` ([MCP guide](mcp.md)) |
+| Local JSON Lines worker for GUI and custom clients | `tomojax serve` ([worker protocol](protocol.md)) |
 | Multi-GPU reconstruction (single machine, Python only) | `devices=` on `tj.project`, `tj.backproject`, and `tj.reconstruct` (`fbp`, `cgls`, `fista`) ([several GPUs](large-scans.md#use-several-gpus)) |
 
 ## Metadata and calibration rules

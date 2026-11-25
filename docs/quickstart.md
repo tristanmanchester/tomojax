@@ -132,7 +132,7 @@ The default `--method auto` chooses a solver from the geometry:
 - Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK)
 - Multi-orbit `ConeSegments` -> `cgls`
 
-Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, or `--watch-dir DIR` to rewrite central-slice PNGs at each checkpoint of an iterative solve. `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
 
 ### Region and grid options
 
@@ -188,19 +188,14 @@ for z in range(recon.grid.nz):
 
 ### Checking trial rotation centres by eye
 
-Alongside `tomojax align --fit center`, you can sweep offsets in Python (`Detector.center` uses physical lengths, so pixels × `du`):
+Alongside `tomojax align --fit center`, sweep candidate detector centres on one slice and compare them on a single grey scale:
 
-```python
-from dataclasses import replace
-import tomojax as tj
-
-scan = tj.load("corrected.nxs", apply_poses=False)
-d = scan.detector
-for shift in (-4, -2, 0, 2, 4):
-    detector = replace(d, center=(shift * d.du, d.center[1]))
-    trial = replace(scan, geometry=replace(scan.geometry, detector=detector))
-    tj.save(f"cor{shift:+d}.nxs", tj.reconstruct(trial))
+```bash
+tomojax inspect corrected.nxs --preview-dir sweep --centers -20:20:2
+tomojax correct corrected.nxs -o centered.nxs --detector-center U V
 ```
+
+`sweep/center_sweep.png` shows every candidate side by side with the recorded centre outlined, and `inspect` prints the `U` value to pass to `--detector-center` for each candidate. In Python, `tomojax.interactive.centre_sweep(scan, "z", scan.grid.nz // 2, (-4, -2, 0, 2, 4))` returns the same stack of planes directly without writing intermediate volumes.
 
 ### Next steps
 

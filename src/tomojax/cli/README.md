@@ -9,6 +9,8 @@
 - `inspect INPUT [--json] [--preview-dir DIR [--slice AXIS=INDEX] [--centers SPEC]]`
   reports on a dataset without `-o`.
 - `simulate -o OUTPUT [options]` generates a synthetic scan without an input.
+- `serve`, `mcp`, and `studio [PROJECT_OR_INPUT] [--build] [--demo]` launch the
+  JSON Lines worker, the MCP stdio server, and the native desktop workspace.
 - An existing output is refused unless `--force` is given, and an output may never
   collide with an input or another output of the same run.
 - `tomojax <command> --help` lists the command's options. Expert settings are
@@ -79,6 +81,15 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
 - `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.
+- `serve`: run the local JSON Lines worker over stdin/stdout for GUI and automation clients.
+  See the [local worker protocol](../../../docs/protocol.md).
+- `mcp`: run the Model Context Protocol server over stdio so AI agents such as Claude Code or
+  Codex can inspect, process, view, and script scans directly. Requires `tomojax[mcp]`; see
+  [use TomoJAX from an AI agent](../../../docs/mcp.md).
+- `studio`: launch [TomoJAX Studio](../../../studio/README.md) with the active Python
+  environment. Pass an optional `PROJECT_OR_INPUT` path to open a saved project or queue an
+  acquisition for import, `--build` to compile the native binary from a source checkout, or
+  `--demo` to start a sample simulation workflow.
 
 ## A lab CT scan from start to finish
 
@@ -115,7 +126,8 @@ tomojax correct scan.h5 -o centered.nxs --detector-center U V   # U and V as lis
 
 ## Follow or cancel a command
 
-Every command but `serve` accepts `--progress auto|bar|json|none`. The default, `auto`, shows
+The six data commands (`inspect`, `correct`, `reconstruct`, `align`, `export`, and `simulate`)
+accept `--progress auto|bar|json|none`. The default, `auto`, shows
 live progress when stderr is a terminal: a row per running task with its count,
 time left and metrics, and a line left behind for each finished level or solver,
 such as `✓ binning 2  4/12 steps  objective 4.38 → 0.0833  13.5s`. `bar` off a

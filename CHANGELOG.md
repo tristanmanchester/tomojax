@@ -28,9 +28,10 @@ metadata. To convert one, load it with the previous TomoJAX release and save
 it again as NeXus, for example with `tj.save("scan.nxs", tj.load("scan.npz"))`.
 
 Loading, correction, reconstruction, and alignment report completed work through
-`tomojax.progress.watch`. A `progress.Cancel` token stops an operation at its
-next work boundary. The `correct`, `reconstruct`, and `align` commands support
-`--progress auto|bar|json|none` and cooperative interruption.
+`tomojax.progress.watch`. A `progress.Control` token pauses, resumes, or cancels an
+operation at its next work boundary. All six data commands (`inspect`, `correct`,
+`reconstruct`, `align`, `export`, and `simulate`) support `--progress auto|bar|json|none`
+and cooperative interruption.
 
 The watch replaces the FISTA and SPDHG `callback=` argument, the tqdm
 `progress` extra, and the `TOMOJAX_PROGRESS` and `TOMOJAX_PROGRESS_LEAVE`

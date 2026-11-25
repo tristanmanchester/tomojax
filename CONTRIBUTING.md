@@ -24,6 +24,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just test-cov` | The same tests with branch coverage |
 | `just docstrings` | Validate NumPy-style public API docstrings |
 | `just docs` | Build the Python reference HTML into `.artifacts/docs/` |
+| `just site` | Sync Markdown guides, generate API pages with `griffe`, and build `tomojax.dev` in `site/` |
 | `just typecheck` | Run `basedpyright` on the configured public API, IO, CLI, and tools |
 | `just imports` | Check dependency layers and public-import guardrails |
 | `just examples` | Run the public projection and reconstruction example |
@@ -65,7 +66,7 @@ TomoJAX should feel like one small, consistent tool. Check API changes against t
 - **Results carry their context.** Return objects that bundle their geometry and settings rather than bare arrays plus separate metadata.
 - **Fix the method, don't wrap it.** When a method gets a case wrong, fix its model or statistics instead of detecting the case and bypassing it. For example, an earlier aligner reported ~0.1 px of motion on already aligned scans. A "consistency guard" was added that split the data in two, compared resolutions, and discarded alignment below a threshold. That hid the bias, flipped discontinuously between aligned and unaligned, and still let bad results through on drifted data. The right fix lives in the estimator: noise-weighted residuals, regularisation scaled by data observability, and reported uncertainties.
 - **A helper earns its name** by having two or more callers, being tested on its own, or naming a concept its caller should not need to know. Keep single-use helpers inline.
-- **Fixed CLI shape.** Every command takes `tomojax <command> INPUT -o OUTPUT`, refuses to overwrite existing outputs without `--force`, and uses exit codes 0 (success), 1 (failure), and 2 (usage error). Keep `--help` short and put expert settings in `--config` TOML files.
+- **Fixed CLI shape.** File-producing commands take `tomojax <command> INPUT -o OUTPUT`, refuse to overwrite existing outputs without `--force`, and use exit codes 0 (success), 1 (failure), 2 (usage error), and 130 (interrupted). Keep `--help` short and put expert settings in `--config` TOML files. Interactive and server entry points (`inspect`, `simulate`, `serve`, `mcp`, `studio`) omit `-o` or `INPUT` where not applicable.
 
 `tests/test_architecture.py` enforces the mechanical checks:
 
@@ -87,7 +88,10 @@ The README watch figures come from [examples/reconstruct_watch.py](examples/reco
 
 | Location | Contents |
 | --- | --- |
-| `src/tomojax/` | Installable library and CLI |
+| `src/tomojax/` | Installable library, CLI, worker (`serve`), and MCP server (`mcp`) |
+| `studio/` | Native Rust/Rune desktop workspace (`tomojax studio`); see [studio/README.md](studio/README.md#verification) for `cargo` checks |
+| `plugins/` | Claude Code plugin wrapping `tomojax mcp` and workflow skills |
+| `site/` | Documentation website (`tomojax.dev`) generated from repository Markdown and docstrings |
 | `tests/` | Public behaviour, numerical, and GPU regression tests |
 | `examples/` | Small runnable public API examples |
 | `tools/` | Development and packaging checks |
