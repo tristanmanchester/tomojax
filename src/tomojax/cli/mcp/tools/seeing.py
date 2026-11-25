@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
 import numpy as np
 from PIL import Image
 
-from tomojax.cli import operations as op
+from tomojax.cli import _marks, operations as op
 from tomojax.cli._planes import plane_windows
 from tomojax.cli.images import Panel, label_number, limits, montage, pose_plot, thumbnail
 from tomojax.cli.mcp.tools.references import resolve
@@ -31,6 +32,10 @@ class View(op.Window, kw_only=True):
     Use handle members, session arrays, .npy files, file.h5::/dataset or saved TomoJAX volumes.
     Open acquisitions and select .projections, or use kind=frames and .counts for raw counts.
     Select a plane with axis and index. Specify the half-open ROI in array order.
+    Point at something with marks in array indices of the source (z, y, x or view, v, u);
+    the result gives each mark's pixel in the image and the value under it. Outline
+    feature handles on any source with the same grid. For sweeps or custom measures, use
+    python with the same handles.
     """
 
     source: str
@@ -49,6 +54,9 @@ class View(op.Window, kw_only=True):
     other: str | None = None
     percentiles: tuple[float, ...] = (1, 5, 50, 95, 99)
     bins: int = 32
+    marks: tuple[_marks.AnyMark, ...] = ()
+    features: tuple[str, ...] = ()
+    ticks: bool | None = None
 
 
 def image(data: bytes) -> ImageContent:
@@ -150,13 +158,42 @@ def plane(
     return Panel(title, pixels, (*labels, *sampling), array["unit"], aspect, array["domain"])
 
 
-def render(panels: list[Panel]) -> CallToolResult:
-    """Share intensity limits within each measured quantity and unit."""
+def render(
+    panels: list[Panel],
+    overlays: list[_marks.Overlay] | None = None,
+    marks: tuple[_marks.AnyMark, ...] = (),
+) -> CallToolResult:
+    """Share intensity limits within each measured quantity and unit.
+
+    With overlays, each plane gets its marks, feature outlines and ticks, and the
+    result reports where each mark was drawn and the value under it.
+    """
     from tomojax.cli.mcp.tools import result
 
     groups = {(p.domain, p.unit) for p in panels}
     ranges = {key: limits([p for p in panels if (p.domain, p.unit) == key]) for key in groups}
     scales = [ranges[p.domain, p.unit] for p in panels]
+    placed: list[list[Object]] = [[] for _ in marks]
+
+    def decorate(
+        picture: Image.Image, j: int, rect: tuple[float, float, float, float], first: int
+    ) -> None:
+        assert overlays is not None
+        cell = _marks.Cell(first // 3, *rect)
+        found = _marks.draw(picture, overlays[first + j], cell, panels[first + j].pixels)
+        for m, report in enumerate(found):
+            placed[m].append({"panel": first + j, **report})
+
+    images = [
+        image(
+            montage(
+                panels[i : i + 3],
+                scales[i : i + 3],
+                None if overlays is None else partial(decorate, first=i),
+            )
+        )
+        for i in range(0, len(panels), 3)
+    ]
     reply = result(
         {
             **({"intensity_limits": scales[0]} if len(groups) == 1 else {}),
@@ -164,10 +201,23 @@ def render(panels: list[Panel]) -> CallToolResult:
                 {"array": p.title, "labels": p.labels, "unit": p.unit, "intensity_limits": scale}
                 for p, scale in zip(panels, scales, strict=True)
             ],
+            **(
+                {
+                    "marks": [
+                        {
+                            "type": _marks.name(mark),
+                            **({"label": mark.label} if mark.label else {}),
+                            "panels": found,
+                        }
+                        for mark, found in zip(marks, placed, strict=True)
+                    ]
+                }
+                if marks
+                else {}
+            ),
         }
     )
-    for i in range(0, len(panels), 3):
-        reply.content.append(image(montage(panels[i : i + 3], scales[i : i + 3])))
+    reply.content.extend(images)
     return reply
 
 
@@ -210,6 +260,60 @@ def reference(tools: Tools, name: str, mode: str) -> Object:
     return src
 
 
+FEATURE_COLOURS: tuple[_marks.Colour, ...] = ("cyan", "magenta", "green", "orange", "red")
+
+
+def flat(item: Object) -> np.ndarray:
+    """The two-dimensional samples of a returned display plane."""
+    pixels = load(item["array"])
+    return pixels if item["dimension"] is None else np.take(pixels, 0, axis=item["dimension"])
+
+
+async def metadata(g: Generation, source: Object) -> Object:
+    """The registration of a whole source array, without reading pixels."""
+    return (await g.request({"type": "read", "source": source, "metadata_only": True}))["value"][
+        "array"
+    ]
+
+
+async def outlines(
+    tools: Tools,
+    g: Generation,
+    stack: AsyncExitStack,
+    reads: list[tuple[Object, int | None]],
+    shape: list[int],
+    names: tuple[str, ...],
+) -> list[list[tuple[np.ndarray, _marks.Colour]]]:
+    """Read each feature's mask on the same planes as the source, in palette order.
+
+    ``reads`` holds the source's requests: a read with a mode returns its planes, a
+    plain read one plane with the given fixed dimension.
+    """
+    if len(names) > len(FEATURE_COLOURS):
+        raise ValueError(f"outline at most {len(FEATURE_COLOURS)} features in one view")
+    found: list[list[tuple[np.ndarray, _marks.Colour]]] = []
+    for colour, name in zip(FEATURE_COLOURS, names, strict=False):
+        if tools.ledger.lookup(name.partition(".")[0])["kind"] != "feature":
+            raise ValueError(f"{name} is not a feature handle")
+        ref = resolve(name, base=tools.supervisor.base, ledger=tools.ledger)
+        assert isinstance(ref, dict)
+        grid = (await metadata(g, ref))["shape"]
+        if grid != shape:
+            raise ValueError(f"{name} covers a {grid} grid; the source is {shape}")
+        planes = []
+        for read, dim in reads:
+            value = await stack.enter_async_context(temporary(g, {**read, "source": ref}))
+            planes.extend(
+                value["planes"]
+                if read.get("mode")
+                else [{"array": value["array"], "dimension": dim}]
+            )
+        found.extend([] for _ in range(len(planes) - len(found)))
+        for k, item in enumerate(planes):
+            found[k].append((np.asarray(flat(item), dtype=bool), colour))
+    return found
+
+
 async def view(tools: Tools, args: View) -> CallToolResult:
     """Return a registered image or numerical summary of the requested source."""
     from tomojax.cli.mcp.tools import result
@@ -217,6 +321,9 @@ async def view(tools: Tools, args: View) -> CallToolResult:
     g = await tools.supervisor.worker()
     src = reference(tools, args.source, args.mode)
     command = {"type": "read", "source": src, "roi": args.roi, "stride": args.stride}
+    decorated = bool(args.marks or args.features or args.ticks)
+    if decorated and args.mode not in ("planes", "projection", "sinogram", "difference"):
+        raise ValueError("marks, features and ticks need a rendered plane mode")
     if args.mode == "statistics":
         value = await g.request(
             {**command, "type": "statistics", "bins": args.bins, "percentiles": args.percentiles}
@@ -225,9 +332,9 @@ async def view(tools: Tools, args: View) -> CallToolResult:
     if args.mode in ("profile", "pose_table", "pose_plot"):
         return await series(g, command, args.mode)
     if args.mode != "difference":
-        async with temporary(
-            g, {**command, "mode": args.mode, "axis": args.axis, "index": args.index}
-        ) as v:
+        request = {**command, "mode": args.mode, "axis": args.axis, "index": args.index}
+        async with AsyncExitStack() as stack:
+            v = await stack.enter_async_context(temporary(g, request))
             title = (
                 "Alignment working image " if args.source.endswith(".image") else ""
             ) + args.source
@@ -242,17 +349,25 @@ async def view(tools: Tools, args: View) -> CallToolResult:
                 )
                 for item in v["planes"]
             ]
-            return await asyncio.to_thread(render, panels)
-    meta = (await g.request({"type": "read", "source": src, "metadata_only": True}))["value"][
-        "array"
-    ]
+            if not decorated:
+                return await asyncio.to_thread(render, panels)
+            frames = [
+                _marks.frame_of(
+                    [a["name"] for a in item["array"]["axes"]], item["window"], item["dimension"]
+                )
+                for item in v["planes"]
+            ]
+            masks: list[list[tuple[np.ndarray, _marks.Colour]]] = [[] for _ in frames]
+            if args.features:
+                shape = (await metadata(g, src))["shape"]
+                masks = await outlines(tools, g, stack, [(request, None)], shape, args.features)
+            return await overlaid(args, panels, frames, masks)
+    meta = await metadata(g, src)
     axes = [a["name"] for a in meta["axes"]]
     if not args.other:
         raise ValueError("difference requires other")
     source_b = reference(tools, args.other, args.mode)
-    second = (await g.request({"type": "read", "source": source_b, "metadata_only": True}))[
-        "value"
-    ]["array"]
+    second = await metadata(g, source_b)
 
     def grid(m: Object) -> Object:
         return {
@@ -270,7 +385,34 @@ async def view(tools: Tools, args: View) -> CallToolResult:
             f"{args.other}: {grid(second)}"
         )
     other = (source_b, [axes.index(a["name"]) for a in second["axes"]])
-    return await plane_views(g, command, args, meta, other)
+    return await plane_views(tools, g, command, args, meta, other)
+
+
+async def overlaid(
+    args: View,
+    panels: list[Panel],
+    frames: list[_marks.Frame],
+    masks: list[list[tuple[np.ndarray, _marks.Colour]]],
+) -> CallToolResult:
+    """Render planes with the requested marks, feature outlines and ticks."""
+    _marks.check(args.marks, frames[0].axes)
+    ticks = args.ticks if args.ticks is not None else True
+    overlays = [
+        _marks.Overlay(frame, args.marks, tuple(found), ticks)
+        for frame, found in zip(frames, masks, strict=True)
+    ]
+    reply = await asyncio.to_thread(render, panels, overlays, args.marks)
+    if not args.features:
+        return reply
+    from tomojax.cli.mcp.tools import result
+
+    legend = [
+        {"handle": name, "colour": colour}
+        for name, colour in zip(args.features, FEATURE_COLOURS, strict=False)
+    ]
+    labelled = result({**(reply.structured_content or {}), "features": legend})
+    labelled.content.extend(reply.content[1:])
+    return labelled
 
 
 async def series(g: Generation, command: Object, mode: str) -> CallToolResult:
@@ -307,7 +449,12 @@ async def series(g: Generation, command: Object, mode: str) -> CallToolResult:
 
 
 async def plane_views(
-    g: Generation, command: Object, args: View, meta: Object, other: tuple[Object, list[int]]
+    tools: Tools,
+    g: Generation,
+    command: Object,
+    args: View,
+    meta: Object,
+    other: tuple[Object, list[int]],
 ) -> CallToolResult:
     """Choose display planes and read only their sampled hyperslabs."""
     axes = [a["name"] for a in meta["axes"]]
@@ -316,12 +463,17 @@ async def plane_views(
     if len(roi) != 3 or len(strides) != 3 or min(strides) < 1:
         raise ValueError("roi and stride need three dimensions and positive strides")
     panels = []
-    for d, index, selected, stride, sampling in plane_windows(
-        axes, meta["shape"], args.mode, args.axis, args.index, roi, strides
-    ):
-        read = {**command, "roi": selected, "stride": stride}
-        async with temporary(g, read) as v:
-            a = v["array"]
+    frames = []
+    reads: list[tuple[Object, int | None]] = []
+    async with AsyncExitStack() as stack:
+        for d, index, selected, stride, sampling in plane_windows(
+            axes, meta["shape"], args.mode, args.axis, args.index, roi, strides
+        ):
+            read = {**command, "roi": selected, "stride": stride}
+            reads.append((read, d))
+            window = [(lo, hi, step) for (lo, hi), step in zip(selected, stride, strict=True)]
+            frames.append(_marks.frame_of(axes, window, d))
+            a = (await stack.enter_async_context(temporary(g, read)))["array"]
             pixels = np.asarray(load(a))
             title = (
                 "Alignment working image " if args.source.endswith(".image") else ""
@@ -337,7 +489,12 @@ async def plane_views(
                 pixels = pixels.astype(float) - load(w["array"]).transpose(np.argsort(order))
                 title += " minus " + str(args.other)
             panels.append(plane(a, pixels, title, dim=d, source_index=index, sampling=sampling))
-    return await asyncio.to_thread(render, panels)
+        if not (args.marks or args.features or args.ticks):
+            return await asyncio.to_thread(render, panels)
+        masks: list[list[tuple[np.ndarray, _marks.Colour]]] = [[] for _ in frames]
+        if args.features:
+            masks = await outlines(tools, g, stack, reads, meta["shape"], args.features)
+        return await overlaid(args, panels, frames, masks)
 
 
 async def default_panels(

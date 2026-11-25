@@ -430,7 +430,7 @@
     },
     "DisplayPlane": {
       "title": "DisplayPlane",
-      "description": "A sampled plane and its position on the original axes.",
+      "description": "A sampled plane and its position on the original axes.\n\n    ``window`` holds the (start, stop, step) of source indices read along each axis.",
       "type": "object",
       "properties": {
         "array": {
@@ -454,13 +454,34 @@
           "items": {
             "type": "string"
           }
+        },
+        "window": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          }
         }
       },
       "required": [
         "array",
         "dimension",
         "index",
-        "sampling"
+        "sampling",
+        "window"
       ],
       "additionalProperties": false
     },

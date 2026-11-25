@@ -1873,9 +1873,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "translations"
+          "default": null
         },
         "grid": {
           "anyOf": [
@@ -2597,9 +2600,12 @@
               "items": {
                 "type": "string"
               }
+            },
+            {
+              "type": "null"
             }
           ],
-          "default": "translations"
+          "default": null
         },
         "grid": {
           "anyOf": [

@@ -70,12 +70,16 @@ class ArrayResult(Record, tag="array"):
 
 
 class DisplayPlane(Record):
-    """A sampled plane and its position on the original axes."""
+    """A sampled plane and its position on the original axes.
+
+    ``window`` holds the (start, stop, step) of source indices read along each axis.
+    """
 
     array: Array
     dimension: int | None
     index: int
     sampling: tuple[str, ...]
+    window: tuple[tuple[int, int, int], ...]
 
 
 class DisplayPlanes(Record, tag="display_planes"):

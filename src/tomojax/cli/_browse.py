@@ -191,7 +191,10 @@ def browse(
             for _, _, roi, stride, _ in windows
         ]
         for (dim, at, _, _, sampling), tile in zip(windows, tiles, strict=True):
-            planes.append(p.DisplayPlane(read_window(context, data, meta, tile), dim, at, sampling))
+            span = tuple((r.start, r.stop, r.step) for r in tile)
+            planes.append(
+                p.DisplayPlane(read_window(context, data, meta, tile), dim, at, sampling, span)
+            )
         return p.DisplayPlanes(tuple(planes))
 
 

@@ -5,9 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from textwrap import wrap
+from typing import TYPE_CHECKING
 
 import numpy as np
 from PIL import Image, ImageDraw
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 @dataclass(frozen=True)
@@ -59,9 +63,19 @@ def thumbnail(image: Image.Image) -> bytes:
     return png(image)
 
 
-def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
-    """Draw up to three planes side by side, mapping equal intensities to equal greys."""
-    if len(panels) == 1 and not panels[0].labels:
+def montage(
+    panels: list[Panel],
+    scales: list[tuple[float, float]],
+    decorate: Callable[[Image.Image, int, tuple[float, float, float, float]], None] | None = None,
+) -> bytes:
+    """Draw up to three planes side by side, mapping equal intensities to equal greys.
+
+    ``decorate`` draws over each placed plane, given the plane's index and its
+    rectangle in the image as (left, top, horizontal scale, vertical scale). A
+    decorated montage is in colour, with room for index ticks around each plane and
+    larger planes when there is only one.
+    """
+    if len(panels) == 1 and not panels[0].labels and decorate is None:
         return thumbnail(raster(panels[0], *scales[0]))
 
     labels = [
@@ -76,21 +90,31 @@ def montage(panels: list[Panel], scales: list[tuple[float, float]]) -> bytes:
         ]
         for p, (lo, hi) in zip(panels, scales, strict=True)
     ]
-    width, height = 328, 240
-    image = Image.new("L", (width * len(panels), height + 18 * max(map(len, labels)) + 10), 28)
+    width, height = (656, 480) if decorate and len(panels) == 1 else (328, 240)
+    # Margins (left, top, right, bottom) leave room for tick labels on decorated planes.
+    left, top, right, bottom = (40, 16, 14, 14) if decorate else (6, 0, 6, 0)
+    image = Image.new(
+        "RGB" if decorate else "L",
+        (width * len(panels), height + 18 * max(map(len, labels)) + 10),
+        (28, 28, 28) if decorate else 28,
+    )
     draw = ImageDraw.Draw(image)
     for i, (panel, lines) in enumerate(zip(panels, labels, strict=True)):
         h, w = panel.pixels.shape[:2]
-        scale = min((width - 12) / w, height / (h * panel.aspect))
+        room_w, room_h = width - left - right, height - top - bottom
+        scale = min(room_w / w, room_h / (h * panel.aspect))
         resized = raster(panel, *scales[i]).resize(
             (max(1, round(w * scale)), max(1, round(h * panel.aspect * scale))),
             Image.Resampling.NEAREST,
         )
-        image.paste(
-            resized, (i * width + (width - resized.width) // 2, (height - resized.height) // 2)
-        )
+        x = i * width + left + (room_w - resized.width) // 2
+        y = top + (room_h - resized.height) // 2
+        image.paste(resized, (x, y))
+        if decorate:
+            decorate(image, i, (x, y, resized.width / w, resized.height / h))
         for j, label in enumerate(lines):
-            draw.text((i * width + 6, height + 5 + j * 18), label, fill=248)
+            fill = (248, 248, 248) if decorate else 248
+            draw.text((i * width + 6, height + 5 + j * 18), label, fill=fill)
     return png(image)
 
 
