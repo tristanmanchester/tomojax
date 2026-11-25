@@ -61,7 +61,7 @@ def test_alignment_has_one_fit_argument_and_an_optional_grid():
         *("iterations", "image_iterations", "tolerance", "interpolation", "resolution"),
         "config",
     )
-    assert parameters["fit"].default == "translations"
+    assert parameters["fit"].default is None  # the method's own fit
     assert parameters["fit"].kind == inspect.Parameter.KEYWORD_ONLY
     assert parameters["grid"].default is None
 
@@ -79,7 +79,7 @@ def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypa
     correction = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}[name]
     calls = _fitter(monkeypatch, changes={name: correction})
     result = tj.align(scan, fit=name)
-    assert calls[0][4]["fit"] == name
+    assert calls[0][4]["fit"] == (name,)
     assert result.scan.projections is scan.projections
     assert set(result.info["calibration"]) == {name}
     assert result.scan.poses is None
@@ -111,7 +111,7 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
     grid = tj.Grid(20, 18, 16, 2, 2, 2)
     result = tj.align(scan, grid=grid)
     np.testing.assert_allclose(calls[0][1], stack_view_poses(scan.geometry, 60), atol=1e-7)
-    assert calls[0][4]["fit"] == "translations" and calls[0][4]["keep_grid"]
+    assert calls[0][4]["fit"] == ("translations",) and calls[0][4]["keep_grid"]
     assert result.scan.grid == grid and result.image.shape == (16, 18, 20)
     np.testing.assert_array_equal(result.poses[:, :3], scan.poses[:, :3])
     np.testing.assert_allclose(result.poses[:, 3:], previous[:, 3:] + correction[:, 3:], atol=1e-7)
@@ -163,7 +163,7 @@ def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, t
         )
         == 0
     )
-    assert calls[0][4]["fit"] == ("translations", "tilt", "roll")
+    assert calls[0][4]["fit"] == ("tilt", "roll", "translations")  # stable order
     saved = json.loads(manifest.read_text())["resolved_config"]
     assert saved["fit"] == ["translations", "tilt", "roll"]
     values = {name: entry["value"] for name, entry in saved["alignment"]["calibration"].items()}

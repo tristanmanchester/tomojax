@@ -62,7 +62,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)
-        assert fit == "translations" and frames is None and detector_roll == 0
+        assert fit == ("translations",) and frames is None and detector_roll == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
         report = {"isolated_views": [], "unusual_views": [], "advisories": []}
         return volume, g, table, {"fit": ["translations"], "calibration": {}, "report": report}

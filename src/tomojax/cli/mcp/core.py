@@ -152,10 +152,12 @@ class Core:
             try:
                 for name in previous:
                     del sys.modules[name]
-                    # `from package import module` reads the package attribute first.
+                    # `from package import module` reads the package attribute first. A
+                    # reloaded parent keeps its attributes: in-flight calls still use it.
                     parent, _, child = name.rpartition(".")
-                    if parent in sys.modules and child in vars(sys.modules[parent]):
-                        delattr(sys.modules[parent], child)
+                    owner = sys.modules.get(parent)
+                    if parent not in previous and owner is not None and child in vars(owner):
+                        delattr(owner, child)
                 importlib.invalidate_caches()
                 names = self.install()
             except Exception:

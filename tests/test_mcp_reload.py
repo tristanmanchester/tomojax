@@ -58,3 +58,19 @@ def test_failed_reload_restores_every_module_it_removed():
     assert vars(tomojax.cli)["images"] is before
     assert sys.modules["tomojax.cli.mcp.tools"] is tools
     assert not fake.bus.events
+
+
+def test_reload_rebinds_leaf_modules_and_leaves_running_tools_whole():
+    old_tools = importlib.import_module("tomojax.cli.mcp.tools")
+    old_marks = importlib.import_module("tomojax.cli._marks")
+
+    def install() -> list[str]:
+        importlib.import_module("tomojax.cli.mcp.tools")
+        return ["view"]
+
+    asyncio.run(Core.reload(_Core(install)))  # pyright: ignore[reportArgumentType]
+    from tomojax.cli import _marks  # check-public-imports: allow-private
+
+    assert _marks is sys.modules["tomojax.cli._marks"] is not old_marks
+    # A call still running on the previous generation keeps its imports.
+    assert vars(old_tools)["seeing"].view
