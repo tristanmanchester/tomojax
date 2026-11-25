@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.0rc4 (2026-11-25)
+
+Fixes the PEP 639 `License-File` metadata path in the `tomojax-studio` wheel
+(`License-File: LICENSE` instead of `licenses/LICENSE`) so PyPI accepts the
+prebuilt Linux `x86_64` `tomojax-studio` wheel alongside `tomojax` and completes
+the GitHub Release with the Studio wheel and standalone tarball.
+
 ## 1.0.0rc3 (2026-11-25)
 
 Publishes the first prebuilt Linux `x86_64` `tomojax-studio` wheel (with statically
