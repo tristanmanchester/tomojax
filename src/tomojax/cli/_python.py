@@ -81,14 +81,16 @@ _PRIMARY = {
 class Registrations:
     """The handles, arrays and images one Python call publishes when it succeeds."""
 
-    def __init__(self, context: ex.ExecutionContext, inputs: HandleInputs) -> None:
+    def __init__(
+        self, context: ex.ExecutionContext, inputs: HandleInputs, made: dict[str, object]
+    ) -> None:
         self.context = context
         self.inputs = inputs
         self.roots = []
         self.products = {}
         self.images = []
         # What this call registered, usable by name before the call publishes it.
-        self.made: dict[str, object] = {}
+        self.made = made
 
     def register(self, item: Root | jax.Array | np.ndarray) -> str:
         if isinstance(item, np.ndarray | jax.Array):
@@ -281,10 +283,14 @@ class HandleInputs(Mapping):
     """The session's handles and arrays by reference, read when indexed."""
 
     def __init__(
-        self, aliases: Mapping[str, Member | Npy], leases: Mapping[Member | Npy, ex.Lease]
+        self,
+        aliases: Mapping[str, Member | Npy],
+        leases: Mapping[Member | Npy, ex.Lease],
+        made: Mapping[str, object],
     ) -> None:
         self._aliases = aliases
         self._leases = leases
+        self._made = made  # registered earlier in this call, not yet published
 
     def reference(self, name: str) -> Member | Npy:
         """The pinned reference behind a handle or array ID."""
@@ -295,12 +301,15 @@ class HandleInputs(Mapping):
     def __getitem__(self, name: str) -> Any:
         """The object or array behind an ID, or one of its members with ``ID.member``."""
         base, _, member = name.partition(".")
-        ref = self.reference(base)
-        value = (
-            self._leases[ref].value
-            if isinstance(ref, Member)
-            else np.load(ref.path, mmap_mode="r", allow_pickle=False)
-        )
+        if base in self._made:
+            value = self._made[base]
+        else:
+            ref = self.reference(base)
+            value = (
+                self._leases[ref].value
+                if isinstance(ref, Member)
+                else np.load(ref.path, mmap_mode="r", allow_pickle=False)
+            )
         if not member:
             return value
         if not hasattr(value, member):
@@ -320,8 +329,9 @@ def execute_in_namespace(
     namespace = context.namespace
     if cmd.reset:
         namespace.clear()
-    inputs = HandleInputs(cmd.aliases, context.leases)
-    registrations = Registrations(context, inputs)
+    made: dict[str, object] = {}
+    inputs = HandleInputs(cmd.aliases, context.leases, made)
+    registrations = Registrations(context, inputs, made)
     namespace.update(
         tj=tj,
         np=np,

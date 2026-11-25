@@ -75,4 +75,4 @@ air_side = around & ~core_side
 
 ## 4. Tune and check
 
-Sweep candidates as in [tuning-without-truth.md](tuning-without-truth.md), scoring each against the core side (usually the harder contrast) on these masks, check the leaders with `evaluate`, and show the best two side by side with the shell outlined: `view` with `source` as a list, the same `limits` and `features=[shell_id]`. Recompute the threshold mask on the chosen reconstruction before you report its size or export it.
+Sweep candidates as in [tuning-without-truth.md](tuning-without-truth.md), scoring each against the core side (usually the harder contrast) on these masks, check the leaders with `evaluate`, and show the best two side by side with the shell outlined: `view` with `source` as a list, the same `limits` and `features=[shell_id]`. A mask cut from one reconstruction favours that reconstruction when you score others on it (in one test, the first look scored above a candidate that fitted the held-out projections twice as well), so let `evaluate` decide between close candidates, and recompute the threshold mask on the chosen reconstruction before you report its size or export it.

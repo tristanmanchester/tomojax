@@ -111,6 +111,7 @@ report = view({volume!r}, axis="y", index=14, features=[{box["handle"]!r}],
               marks=[{{"type": "point", "at": [10, 14, 16]}}])
 # A feature registered in this call can be shown before the call publishes it.
 same_call = view({other!r}, axis="y", index=14, features=[again])
+assert handles[again].inside.sum() == 480  # handles sees it before it is published
 [again, report]""",
     )
     again, report = out["value"]
