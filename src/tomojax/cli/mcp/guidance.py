@@ -22,15 +22,21 @@ WORKFLOWS = (
     "check-a-reconstruction",
 )
 PYTHON_TOPICS = ("python", "solvers", "geometry", "calibration")
+TOPICS = (
+    *WORKFLOWS,
+    *PYTHON_TOPICS,
+    "pointing-and-features",
+    "tuning-without-truth",
+    "large-scans",
+    "reporting-bugs",
+)
 
 
 def guide(topic: str) -> str:
-    """Read a workflow or worked Python examples from this installation."""
-    if topic not in (*WORKFLOWS, *PYTHON_TOPICS):
-        raise ResourceNotFoundError(
-            f"Choose a guide from {', '.join((*WORKFLOWS, *PYTHON_TOPICS))}"
-        )
-    directory = resources.files("tomojax.cli.mcp").joinpath("guides")
+    """Read a reference of the packaged Agent Skill, the single source of the guides."""
+    if topic not in TOPICS:
+        raise ResourceNotFoundError(f"Choose a guide from {', '.join(TOPICS)}")
+    directory = resources.files("tomojax").joinpath("skill", "tomojax", "references")
     topics = PYTHON_TOPICS if topic == "python" else (topic,)
     return "\n\n".join(directory.joinpath(name + ".md").read_text().strip() for name in topics)
 

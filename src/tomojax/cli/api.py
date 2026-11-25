@@ -23,6 +23,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("serve", "Serve a GUI session over JSON Lines."),
     CliCommand("mcp", "Serve tomography tools over MCP stdio."),
     CliCommand("studio", "Open the native tomography project workspace."),
+    CliCommand("skill", "Print or install the Agent Skill for AI agents."),
 )
 
 

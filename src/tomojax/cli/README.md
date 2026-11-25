@@ -11,6 +11,8 @@
 - `simulate -o OUTPUT [options]` generates a synthetic scan without an input.
 - `serve`, `mcp`, and `studio [PROJECT_OR_INPUT] [--build] [--demo]` launch the
   JSON Lines worker, the MCP stdio server, and the native desktop workspace.
+- `skill [-o SKILLS_DIR]` prints where the Agent Skill is, or copies it into
+  `SKILLS_DIR/tomojax`.
 - An existing output is refused unless `--force` is given, and an output may never
   collide with an input or another output of the same run.
 - `tomojax <command> --help` lists the command's options. Expert settings are
@@ -88,6 +90,9 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 - `mcp`: run the Model Context Protocol server over stdio so AI agents such as Claude Code or
   Codex can inspect, process, view, and script scans directly. Requires `tomojax[mcp]`; see
   [use TomoJAX from an AI agent](../../../docs/mcp.md).
+- `skill`: print where the TomoJAX Agent Skill is in this installation and the directories
+  common agents read skills from, or copy it there with `-o SKILLS_DIR` (`--force` replaces
+  an existing copy). See [use TomoJAX from an AI agent](../../../docs/mcp.md).
 - `studio`: launch [TomoJAX Studio](../../../studio/README.md) with the active Python
   environment. Pass an optional `PROJECT_OR_INPUT` path to open a saved project or queue an
   acquisition for import, `--build` to compile the native binary from a source checkout, or

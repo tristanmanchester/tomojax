@@ -40,7 +40,8 @@
     "simulate": 20,
     "serve": 1,
     "mcp": 1,
-    "studio": 3
+    "studio": 3,
+    "skill": 3
   },
   "long_files": {
     "src/tomojax/_loading.py": 821,
@@ -64,7 +65,7 @@
     "_data": 2231,
     "alignment": 5435,
     "backends": 269,
-    "cli": 12330,
+    "cli": 12406,
     "core": 10115,
     "corrections": 3232,
     "datasets": 1087,

@@ -69,6 +69,7 @@ def test_cli_lists_the_product_commands(capsys: pytest.CaptureFixture[str]) -> N
         "serve",
         "mcp",
         "studio",
+        "skill",
     )
     assert all(command.name in product_command_names() for command in PRODUCT_COMMANDS)
     assert main(["--help"]) == 0
@@ -101,7 +102,7 @@ def test_every_command_takes_input_and_a_guarded_output(
             assert "PROJECT_OR_INPUT" in usage
             assert "--demo" in usage
             continue
-        if command != "simulate":
+        if command not in ("simulate", "skill"):
             assert "INPUT" in usage
         if command != "inspect":
             assert "-o OUTPUT" in usage

@@ -58,7 +58,10 @@ Use ./@name for a literal path starting with @.
 The usual workflow is inspect, open, correct, align the centre, reconstruct, view slices
 and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector spacings
 share one physical length unit. Check slices before trusting a residual. Use dry_run
-before large jobs on tools that support it. See tools/list for installed workflows."""
+before large jobs on tools that support it. See tools/list for installed workflows.
+To show the user a structure, draw view marks in array indices and ask; make the agreed
+region a feature and outline it with view features. For sweeps, loops or custom measures,
+use one python call over the same handles."""
 
 
 class Adapter(Tool):

@@ -1,12 +1,25 @@
 # Python in the local worker
 
-The last expression is the result. Variables persist until reset or restart.
-Use the handle IDs from status as dictionary keys. For example,
-`scan = handles[scan_id]` reads a scan and `scan = handles[simulation_id].scan`
-reads a simulation's acquisition. These are the worker's own objects, so
-derive new arrays from them and leave theirs unchanged. Register a new object
-to use it in typed tools.
-Use `show(plane)` to return a PNG. The examples below assume a parallel scan.
+The `python` tool runs your code in the worker process that holds the session's data, so a sweep or a custom measure runs beside the scans and volumes without copying them. Use it for compound work: several reconstructions in one call, loops over slices, measures the typed tools do not have.
+
+## Namespace
+
+| Name | What it is |
+| --- | --- |
+| `tj`, `np` | `tomojax` and NumPy |
+| `handles` | Live IDs to their objects: `handles["@scan-…"]` is a `tj.Scan`, `handles["@recon-…"]` a `tj.Reconstruction`, `handles["@feature-…"]` a feature with a boolean `.mask`, `handles["@array-…"]` a NumPy array. `handles["@sim-….scan"]` selects a member, as the typed tools do. |
+| `register(obj)` | Publish a TomoJAX object or array as a new handle and return its ID |
+| `register_feature(mask, like=..., name=...)` | Publish a boolean mask as a feature on the grid of `like` (an ID or object) and return its ID |
+| `view(source, mode=, axis=, index=, roi=, stride=, other=, marks=, features=, ticks=)` | Render planes like the `view` tool, add the image to the reply and return where each mark landed |
+| `show(plane, marks=)` | Add an image of a 2D array to the reply; marks use the array's own `[row, col]` indices |
+
+These are the worker's own objects: derive new arrays from them and leave theirs unchanged.
+
+The last expression is the result. Arrays of up to 16 values come back as lists; larger ones as their shape, dtype, minimum, maximum and mean, so `register` an array you want to keep or view. Printed output is clipped to its first and last 10,000 characters; write long output to a file instead. An error reports the exception and the lines of your code it passed through; set `traceback=true` for the full trace into TomoJAX.
+
+Variables persist between calls. `reset=true` clears them; a worker restart (`control` with `action="restart"`) clears them and closes every handle. A long call runs as an MCP task when the client supports tasks: cancelling it stops at the next TomoJAX checkpoint, so a loop of `tj.reconstruct` calls stops within one iteration, but pure Python or NumPy work runs on until it returns.
+
+The examples below assume a parallel scan, `scan = handles[scan_id]`, or `scan = handles[simulation_id].scan` for a simulation's acquisition.
 
 ## Direct solver
 

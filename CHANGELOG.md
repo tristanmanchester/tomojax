@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The MCP server lets an agent point: `view` draws marks (points, arrows, boxes, circles,
+  polygons, text) given as array indices of the source, on every plane they reach, with
+  index ticks, and reports each mark's pixel and the value under it. A new `feature` tool
+  turns an agreed location into a named mask (box, sphere, cylinder, prism, a region grown
+  from seeds, or a band around another feature) that `view` outlines on any volume on the
+  same grid. The `python` tool adds `register_feature`, `view` and marks on `show`,
+  accepts `ID.member` in `handles`, summarises large arrays in its result and reports
+  errors by the lines of your code (`traceback=true` for the full trace).
+- The TomoJAX Agent Skill ships in the package: what TomoJAX is for, when to use the MCP
+  server, checking and tuning a result without ground truth, agreeing a feature with the
+  user, and reporting bugs, with the workflow guides as its references and a
+  `feature_scores.py` script. `tomojax skill` prints where it is; `tomojax skill -o DIR`
+  installs it for an agent.
 - `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
   `tomojax align --method opposite-views` and the worker's `align` operation fit the centre
   without `fit="center"`; joint alignment still defaults to `"translations"`.
