@@ -74,6 +74,7 @@
     "motion": 153,
     "nuisance": 232,
     "recon": 15539,
+    "skill": 59,
     "wire": 266
   },
   "cuda_kernels": 47,
