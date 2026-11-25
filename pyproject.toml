@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "tomojax"
-version = "1.0.0rc2"
+version = "1.0.0rc3"
 description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12"

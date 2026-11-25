@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0rc3 (2026-11-25)
+
+Publishes the first prebuilt Linux `x86_64` `tomojax-studio` wheel (with statically
+linked HDF5) on PyPI alongside `tomojax`, and attaches the wheel and standalone tarball
+to the GitHub Release. The `1.0.0rc2` release workflow built the Studio wheel cleanly
+but failed during PyPI upload when `dist-studio/` also contained the standalone tarball;
+PyPI uploads now stage only the `.whl`. Install both with
+`uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio` (or `cpu`).
+
 ## 1.0.0rc2 (2026-11-25)
 
 `tomojax mcp` runs a Model Context Protocol server over stdio, so an AI agent such
