@@ -42,7 +42,7 @@ if TYPE_CHECKING:
     from tomojax.alignment._config import Interpolation
     from tomojax.core.geometry.base import Detector, Grid
 
-    from ._stacks import Stack, StackSpec
+    from ._stacks import ArrayStack, StackSpec
 
 
 class AffineGeometry(NamedTuple):
@@ -56,8 +56,8 @@ type ViewBatch = tuple[
     jax.Array | AffineGeometry, jax.Array, jax.Array, jax.Array, jax.Array | None
 ]
 type IndexedViewBatch = tuple[jax.Array, *ViewBatch]
-type LinearBuffers = tuple[jax.Array, jax.Array, Stack, Stack, Stack]
-type _LinearCarry = tuple[jax.Array, jax.Array, tuple[Stack, Stack, Stack]]
+type LinearBuffers = tuple[jax.Array, jax.Array, ArrayStack, ArrayStack, ArrayStack]
+type _LinearCarry = tuple[jax.Array, jax.Array, tuple[ArrayStack, ArrayStack, ArrayStack]]
 type _BatchLinearization = tuple[
     jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, jax.Array
 ]
@@ -208,7 +208,8 @@ class Operators:
             self.n, ("translations", "rotations"), cone=frames is not None, lever=lever
         )
         self.detector_roll = float(detector_roll)
-        self.detector_pivot = detector.center if detector_pivot is None else tuple(detector_pivot)
+        pivot_u, pivot_v = detector.center if detector_pivot is None else detector_pivot
+        self.detector_pivot = (pivot_u, pivot_v)
         self.projection = Projection(
             grid,
             detector,
@@ -225,9 +226,8 @@ class Operators:
         self.nb = math.ceil(self.n / self.batch)
         self.padded_n = self.nb * self.batch
         self.image_shape = (self.padded_n, detector.nv, detector.nu)
-        self.lever, self.native = float(lever), tuple(map(float, native))
-        if TYPE_CHECKING:
-            assert len(self.native) == 2
+        du, dv = native
+        self.lever, self.native = float(lever), (float(du), float(dv))
         self.ratios = (self.native[0] / detector.du, self.native[1] / detector.dv)
         self.default_scales = jnp.asarray([1 / self.lever] * 3 + list(self.native), jnp.float32)
         if scales is None:
@@ -266,7 +266,7 @@ class Operators:
         self.common_images = owned(self._common_images, donate_argnums=(2,))
         self.shared_data = jax.jit(self._shared_data)
         self._weighted_forward = jax.jit(self._weighted_forward, donate_argnums=(5,))
-        self.view_summary = jax.jit(self.view_summary)
+        self.view_summary = jax.jit(self._view_summary)
         self._weighted_back = jax.jit(self._weighted_back)
         self._pose_back = jax.jit(self._pose_back)
 
@@ -284,14 +284,14 @@ class Operators:
             specs["precision"] = (self.image_shape, np.float32)
         return specs
 
-    def stack(self, array: np.ndarray | jax.Array) -> Stack:
+    def stack(self, array: np.ndarray | jax.Array) -> ArrayStack:
         """A padded per-view array as a resident :class:`Stack` (``_stacks``)."""
         from ._stacks import Stack
 
         array = jnp.asarray(array)
         return Stack(array, host=False, shape=array.shape, dtype=array.dtype, batch=self.batch)
 
-    def batch_of(self, stack: Stack | None, i: jax.Array) -> jax.Array | None:
+    def batch_of(self, stack: ArrayStack | None, i: int | jax.Array) -> jax.Array | None:
         """Batch ``i`` of a stack, or None for uniform precision."""
         return None if stack is None else stack.read(i)
 
@@ -359,8 +359,8 @@ class Operators:
         self,
         q: jax.Array | Coefficients,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
     ) -> jax.Array:
         """Huber initialization gradient, with fresh or frozen geometry."""
@@ -370,11 +370,11 @@ class Operators:
         self,
         q: jax.Array | Coefficients,
         x: jax.Array,
-        sw: Stack,
-        j: Stack,
-        precision: Stack | None,
-        r: Stack,
-    ) -> tuple[Stack, jax.Array]:
+        sw: ArrayStack,
+        j: ArrayStack,
+        precision: ArrayStack | None,
+        r: ArrayStack,
+    ) -> tuple[ArrayStack, jax.Array]:
         """Weighted, profiled image projections written into ``r``, and their pose-column scores.
 
         ``sw`` are the IRLS square-root weights of the linearization and
@@ -386,12 +386,12 @@ class Operators:
     def weighted_back(
         self,
         q: jax.Array | Coefficients,
-        r: Stack,
-        sw: Stack,
-        j: Stack,
+        r: ArrayStack,
+        sw: ArrayStack,
+        j: ArrayStack,
         p: jax.Array,
         active: tuple[jax.Array, ...] | None = None,
-        precision: Stack | None = None,
+        precision: ArrayStack | None = None,
     ) -> jax.Array:
         """Transpose of :meth:`weighted_forward` applied to residuals less the pose columns.
 
@@ -402,11 +402,11 @@ class Operators:
     def pose_back(
         self,
         q: jax.Array | Coefficients,
-        sw: Stack,
-        j: Stack,
+        sw: ArrayStack,
+        j: ArrayStack,
         p: jax.Array,
         active: tuple[jax.Array, ...] | None = None,
-        precision: Stack | None = None,
+        precision: ArrayStack | None = None,
     ) -> jax.Array:
         """Apply the image/pose cross block to pose increments (``active`` as weighted_back)."""
         return self._pose_back(self.prepare(q), sw, j, p, active, precision)
@@ -430,9 +430,6 @@ class Operators:
             rays = nominal.rays.at[:, 4].add(offsets[:, 0]).at[:, 8].add(offsets[:, 1])
             return Coefficients(rays, valid)
         scales = self.default_scales if scales is None else scales
-        if TYPE_CHECKING:
-            assert len(self.native) == 2
-            assert len(self.detector_pivot) == 2
         poses, frames = self.parameters.geometry(
             nominal,
             q,
@@ -523,8 +520,8 @@ class Operators:
         self,
         q: Coefficients,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
     ) -> jax.Array:
         def step(a: jax.Array, z: tuple[jax.Array, Coefficients]) -> tuple[jax.Array, None]:
@@ -546,21 +543,21 @@ class Operators:
         self,
         q: jax.Array,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
         out: LinearBuffers,
     ) -> tuple[
         jax.Array,
         jax.Array,
-        Stack,
-        Stack,
+        ArrayStack,
+        ArrayStack,
         jax.Array,
         jax.Array,
         jax.Array,
         jax.Array,
         jax.Array,
-        Stack,
+        ArrayStack,
         jax.Array,
     ]:
         """The linearisation, with ``out`` = (gradient, diagonal, sw, j, residual) donated.
@@ -583,7 +580,7 @@ class Operators:
             # The step stores the weights and columns in FP16; the score and
             # Gram matrix below use the same rounded values.
             res, sw, _ = robust_batch(r, raw[:, 1:], wb, delta, half=self._half)
-            sw = jax.lax.optimization_barrier(sw)  # stored and used: one value (Stack.read)
+            sw = jax.lax.optimization_barrier(sw)  # stored and used: one value (ArrayStack.read)
             # Only what a view's offset and ramp cannot explain informs the step.
             # The objective's projector (under the precision) applies to the
             # columns, then the robust factor: by the chain rule the score, Gram
@@ -600,7 +597,7 @@ class Operators:
             # Quantizing J after these reductions makes the Schur model inconsistent.
             score, gram = column_score(j, res), column_gram(j)
             # A stored value is also used here: one value behind a barrier, so its fusion with
-            # the FP64 sums cannot depend on where the stack is held (Stack.read; 1 ulp in the
+            # the FP64 sums cannot depend on where the stack is held (ArrayStack.read; 1 ulp in the
             # moments measured with the residual on the host).
             residual = jax.lax.optimization_barrier(jnp.where(wb > 0, raw[:, 0] - yb, 0))
             stacks = (sw_out.write(i, sw), j_out.write(i, j), residual_out.write(i, residual))
@@ -635,18 +632,20 @@ class Operators:
         )
 
     def _score_inputs(
-        self, sw: Stack, j: Stack, residual: Stack, precision: Stack | None, i: int | jax.Array
+        self,
+        sw: ArrayStack,
+        j: ArrayStack,
+        residual: ArrayStack,
+        precision: ArrayStack | None,
+        i: int | jax.Array,
     ) -> tuple[jax.Array, jax.Array]:
         """Gather and whiten one batch of translation-score operands where the stacks live."""
-        if TYPE_CHECKING:
-            # JIT traces the Python loop's integer argument as a scalar array.
-            assert isinstance(i, jax.Array)
         w = self.batch_precision(self.batch_of(precision, i), self.batches(self.valid)[i])
         res = sw.read(i).astype(jnp.float32) * profiled_residual(residual.read(i), w)
         return j.read(i)[:, self.parameters.translation_columns].astype(jnp.float32), res
 
     def translation_scores(
-        self, sw: Stack, j: Stack, residual: Stack, precision: Stack | None
+        self, sw: ArrayStack, j: ArrayStack, residual: ArrayStack, precision: ArrayStack | None
     ) -> jax.Array:
         """Per-view scores for the motion scale, including the unpadded final batch.
 
@@ -661,7 +660,9 @@ class Operators:
             scores.append(jnp.einsum("vkij,vij->vk", columns[:count], res[:count]))
         return jnp.concatenate(scores)
 
-    def _shared_data(self, y: Stack, precision: Stack | None) -> tuple[jax.Array, jax.Array]:
+    def _shared_data(
+        self, y: ArrayStack, precision: ArrayStack | None
+    ) -> tuple[jax.Array, jax.Array]:
         """G and the data's shared moments over the profiled views, accumulated batch by batch."""
 
         def step(
@@ -681,8 +682,8 @@ class Operators:
         self,
         q: jax.Array,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
     ) -> tuple[jax.Array, jax.Array]:
         """The profiled robust data term, and the residual's shared moments b (``_common``)."""
@@ -703,7 +704,7 @@ class Operators:
         return jax.lax.scan(step, start, batches)[0]
 
     def _common_images(
-        self, q: jax.Array, precision: Stack | None, _out: jax.Array | None = None
+        self, q: jax.Array, precision: ArrayStack | None, _out: jax.Array | None = None
     ) -> jax.Array:
         """B = [A^T w, A^T (w v)] summed over views: the shared image rows, into ``_out``."""
 
@@ -720,8 +721,8 @@ class Operators:
         batches = (jnp.arange(self.nb), *self.views(q))
         return jnp.stack(jax.lax.scan(step, (self._zeros(), self._zeros()), batches)[0])
 
-    def view_summary(
-        self, q: jax.Array, x: jax.Array, y: Stack, precision: Stack | None
+    def _view_summary(
+        self, q: jax.Array, x: jax.Array, y: ArrayStack, precision: ArrayStack | None
     ) -> tuple[jax.Array, jax.Array]:
         """Each view's offset and row ramp, and its mean squared profiled residual.
 
@@ -769,8 +770,14 @@ class Operators:
         return s0 * profile(rho * image, s0)
 
     def _weighted_forward(
-        self, q: Coefficients, x: jax.Array, sw: Stack, j: Stack, precision: Stack | None, r: Stack
-    ) -> tuple[Stack, jax.Array]:
+        self,
+        q: Coefficients,
+        x: jax.Array,
+        sw: ArrayStack,
+        j: ArrayStack,
+        precision: ArrayStack | None,
+        r: ArrayStack,
+    ) -> tuple[ArrayStack, jax.Array]:
         """Project one image through all batches, storing its weighted rays and pose scores.
 
         The CUDA plane kernels read adjacent detector rows along z. One conversion to
@@ -778,7 +785,7 @@ class Operators:
         """
         x = transpose_volume(x) if self.z_fast else x
 
-        def step(r: Stack, z: tuple[jax.Array, Coefficients]) -> tuple[Stack, jax.Array]:
+        def step(r: ArrayStack, z: tuple[jax.Array, Coefficients]) -> tuple[ArrayStack, jax.Array]:
             i, cf = z
             s, jb, wb = sw.read(i), j.read(i), self.batch_of(precision, i)
             s0, rho = self._split(s, wb, cf.valid)
@@ -792,12 +799,12 @@ class Operators:
     def _weighted_back(
         self,
         q: Coefficients,
-        r: Stack,
-        sw: Stack,
-        j: Stack,
+        r: ArrayStack,
+        sw: ArrayStack,
+        j: ArrayStack,
         p: jax.Array,
         active: tuple[jax.Array, ...] | None,
-        precision: Stack | None,
+        precision: ArrayStack | None,
     ) -> jax.Array:
         def step(
             a: jax.Array, z: tuple[jax.Array, Coefficients, jax.Array]
@@ -814,11 +821,11 @@ class Operators:
     def _pose_back(
         self,
         q: Coefficients,
-        sw: Stack,
-        j: Stack,
+        sw: ArrayStack,
+        j: ArrayStack,
         p: jax.Array,
         active: tuple[jax.Array, ...] | None,
-        precision: Stack | None,
+        precision: ArrayStack | None,
     ) -> jax.Array:
         def step(
             a: jax.Array, z: tuple[jax.Array, Coefficients, jax.Array]

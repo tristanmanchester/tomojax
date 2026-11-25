@@ -9,6 +9,7 @@ of the interval length.
 from __future__ import annotations
 
 import math
+from operator import index
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
@@ -54,6 +55,16 @@ def sampled(steps: np.ndarray, spacing: int) -> sparse.csr_array:
     return design
 
 
+def design_shape(design: sparse.csr_array | sparse.csr_matrix) -> tuple[int, int]:
+    """The views by modes shape of a SciPy sparse spline design."""
+    # SciPy sets the final shape in its sparse constructors, after base initialisation.
+    shape: object = getattr(design, "shape", None)
+    if not isinstance(shape, tuple) or len(shape) != 2:
+        raise ValueError("expected a two-dimensional sparse spline design")
+    rows, cols = shape
+    return index(rows), index(cols)
+
+
 class Modes(NamedTuple):
     drift: jax.Array | np.ndarray
     rough: jax.Array | np.ndarray
@@ -92,15 +103,14 @@ class Drift(NamedTuple):
         width = len(groups[0])
         views = np.full((leaves, width), n, np.int32)
         design = design.tocsr()
-        if TYPE_CHECKING:
-            assert design.shape is not None
+        shape = design_shape(design)
         coo = design.tocoo()
-        first, last = np.full(design.shape[1], n), np.full(design.shape[1], -1)
+        first, last = np.full(shape[1], n), np.full(shape[1], -1)
         np.minimum.at(first, coo.col, coo.row // k)
         np.maximum.at(last, coo.col, coo.row // k)
         tol = (
             np.finfo(float).eps
-            * max(design.shape)
+            * max(shape)
             * max(1, np.sqrt(np.asarray(design.power(2).sum(axis=0)).max(initial=0)))
         )
         # Each item carries an interval, its active knot IDs, their sampled

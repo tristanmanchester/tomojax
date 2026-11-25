@@ -38,7 +38,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import ExitStack
 import math
-from typing import TYPE_CHECKING, Literal, Protocol, TypedDict, overload, runtime_checkable
+from typing import TYPE_CHECKING, Literal, TypedDict, overload
 
 import jax
 import jax.numpy as jnp
@@ -51,9 +51,9 @@ from tomojax.core.host_volume import close_work_file, host_array
 from tomojax.errors import device_out_of_memory
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable
+    from collections.abc import Iterable
 
-    from jax.stages import Lowered
+    from jax.stages import Wrapped
     from numpy.typing import DTypeLike
 
     from ._operators import Operators
@@ -89,7 +89,7 @@ ORDER = ("sw", "r", "j", "y", "precision", "residual")
 
 
 @jax.tree_util.register_pytree_node_class
-class Stack:
+class Stack[Data: jax.Array | jax.ShapeDtypeStruct]:
     """One stack-sized array, views first: a device array, or the key of a registered host buffer.
 
     The placement, shape, dtype and batch size are static.
@@ -97,7 +97,7 @@ class Stack:
 
     def __init__(
         self,
-        data: jax.Array | jax.ShapeDtypeStruct,
+        data: Data,
         *,
         host: bool,
         shape: tuple[int, ...],
@@ -109,29 +109,27 @@ class Stack:
 
     def tree_flatten(
         self,
-    ) -> tuple[
-        tuple[jax.Array | jax.ShapeDtypeStruct], tuple[bool, tuple[int, ...], np.dtype, int]
-    ]:
+    ) -> tuple[tuple[Data], tuple[bool, tuple[int, ...], np.dtype, int]]:
         return (self.data,), (self.host, self.shape, self.dtype, self.batch)
 
     @classmethod
     def tree_unflatten(
         cls,
         aux: tuple[bool, tuple[int, ...], np.dtype, int],
-        children: tuple[jax.Array | jax.ShapeDtypeStruct],
-    ) -> Stack:
+        children: tuple[Data],
+    ) -> Stack[Data]:
         host, shape, dtype, batch = aux
         return cls(children[0], host=host, shape=shape, dtype=dtype, batch=batch)
 
-    @classmethod
-    def shaped(cls, spec: StackSpec, batch: int) -> Stack:
+    @staticmethod
+    def shaped(spec: StackSpec, batch: int) -> Stack[jax.ShapeDtypeStruct]:
         """A resident stack as a shape, for a compile before the stack exists."""
         shape, dtype = spec
-        return cls(
+        return Stack(
             jax.ShapeDtypeStruct(shape, dtype), host=False, shape=shape, dtype=dtype, batch=batch
         )
 
-    def read(self, i: jax.Array) -> jax.Array:
+    def read(self: Stack[jax.Array], i: int | jax.Array) -> jax.Array:
         """Batch ``i`` (``batch`` views) on the device.
 
         Behind an optimization barrier whatever the placement: a slice of a device
@@ -139,8 +137,6 @@ class Stack:
         the FP64 reductions downstream (scores, moments) would round differently by
         placement. With the barrier every consumer compiles the same, bit for bit.
         """
-        if TYPE_CHECKING:
-            assert isinstance(self.data, jax.Array)
         start = i * self.batch
         if self.host:
             block = read_block(self.data, start, (self.batch, *self.shape[1:]), self.dtype)
@@ -148,16 +144,22 @@ class Stack:
             block = jax.lax.dynamic_slice_in_dim(self.data, start, self.batch, 0)
         return jax.lax.optimization_barrier(block)
 
-    def write(self, i: jax.Array, value: jax.Array) -> Stack:
+    def write(self: Stack[jax.Array], i: jax.Array, value: jax.Array) -> Stack[jax.Array]:
         """The stack with batch ``i`` replaced by ``value``."""
-        if TYPE_CHECKING:
-            assert isinstance(self.data, jax.Array)
         value = value.astype(self.dtype)
         if self.host:
             write_block(self.data, i * self.batch, value)
             return self
         data = jax.lax.dynamic_update_slice_in_dim(self.data, value, i * self.batch, 0)
         return Stack(data, host=False, shape=self.shape, dtype=self.dtype, batch=self.batch)
+
+
+type ArrayStack = Stack[jax.Array]
+type _Replacement = (
+    tuple[_StackName, ArrayStack]
+    | tuple[VolumeName, jax.Array]
+    | tuple[Literal["factor"], PoseFactor]
+)
 
 
 def _device_stats() -> dict[str, int] | None:
@@ -220,7 +222,7 @@ class LevelStacks:
             )
         self.volumes: dict[str, jax.Array | PoseFactor] = {}
         self.volume_bytes: dict[str, int] = {}
-        self.stacks: dict[str, Stack] = {}
+        self.stacks: dict[str, ArrayStack] = {}
         self.placed: dict[str, Place] = {}
         self.raised: list[str] = []
         self._keys = ExitStack()
@@ -305,30 +307,26 @@ class LevelStacks:
         return array.block_until_ready()
 
     @overload
-    def __getitem__(self, name: _StackName) -> Stack: ...
+    def __getitem__(self, name: _StackName) -> ArrayStack: ...
     @overload
     def __getitem__(self, name: VolumeName) -> jax.Array: ...
     @overload
     def __getitem__(self, name: Literal["factor"]) -> PoseFactor: ...
     @overload
-    def __getitem__(self, name: str) -> Stack | jax.Array | PoseFactor: ...
-    def __getitem__(self, name: str) -> Stack | jax.Array | PoseFactor:
+    def __getitem__(self, name: str) -> ArrayStack | jax.Array | PoseFactor: ...
+    def __getitem__(self, name: str) -> ArrayStack | jax.Array | PoseFactor:
         return self.stacks[name] if name in self.stacks else self.volumes[name]
 
-    def get(self, name: str) -> Stack | None:
+    def get(self, name: str) -> ArrayStack | None:
         return self.stacks.get(name)
 
-    def update(self, arrays: Iterable[tuple[str, Stack | jax.Array | PoseFactor]]) -> None:
+    def update(self, arrays: Iterable[_Replacement]) -> None:
         """Hold the stacks or volumes a donating call returned in place of the ones it consumed."""
         for name, array in arrays:
-            if name in self.volumes:
-                if TYPE_CHECKING:
-                    assert not isinstance(array, Stack)
-                self.volumes[name] = array
-            else:
-                if TYPE_CHECKING:
-                    assert isinstance(array, Stack)
+            if isinstance(array, Stack):
                 self.stacks[name] = array
+            else:
+                self.volumes[name] = array
 
     @overload
     def take(self, name: VolumeName) -> jax.Array: ...
@@ -375,20 +373,11 @@ def transient_reserve(transients: Mapping[str, int]) -> dict[str, int]:
     return {"transient": transient, "chunk": min(transient, CHUNK)}
 
 
-if TYPE_CHECKING:
-
-    @runtime_checkable
-    class _Lowerable(Protocol):
-        def lower(self, *args: object) -> Lowered: ...
-
-
-def temporaries(compiled: Callable[..., object], *args: object) -> int:
+def temporaries(compiled: Wrapped, *args: object) -> int:
     """The temporary bytes of ``compiled`` (a jitted function) at ``args``, from its compile.
 
     The compile is the one its calls with arguments of the same shapes then reuse.
     """
-    if TYPE_CHECKING:
-        assert isinstance(compiled, _Lowerable)
     with progress.preparing("compile alignment workspace"):
         analysis = compiled.lower(*args).compile().memory_analysis()
     if analysis is None:

@@ -29,6 +29,14 @@ type _SegmentValue = _CalibrationValue | list[_SegmentValue]
 type _PublishedValues = dict[str, _SegmentValue]
 
 
+def _single_geometry(geometry: ScanGeometry) -> _SingleGeometry:
+    if not isinstance(
+        geometry, ConeGeometry | ParallelGeometry | LaminographyGeometry | RotationAxisGeometry
+    ):
+        raise TypeError(f"expected a built-in scan geometry, got {type(geometry).__name__}")
+    return geometry
+
+
 def _calibrated_geometry(
     geometry: ScanGeometry,
     corrections: Mapping[str, _CalibrationValue],
@@ -41,10 +49,7 @@ def _calibrated_geometry(
                 _calibrated_geometry(part, corrections, native) for part in geometry.segments
             ),
         )
-    if TYPE_CHECKING:
-        assert isinstance(
-            geometry, ConeGeometry | ParallelGeometry | LaminographyGeometry | RotationAxisGeometry
-        )
+    geometry = _single_geometry(geometry)
     cone = isinstance(geometry, ConeGeometry)
     center = np.atleast_1d(corrections.get("center", (0.0, 0.0) if cone else 0.0))
     shift = (float(center[0]) * native[0], float(center[1]) * native[1] if cone else 0.0)
@@ -56,22 +61,15 @@ def _calibrated_geometry(
         ),
     )
     geometry = replace(geometry, detector=detector)
-    roll = corrections.get("roll", 0.0)
-    if TYPE_CHECKING:
-        assert isinstance(roll, float)
+    roll, tilt = corrections.get("roll", 0.0), corrections.get("tilt", 0.0)
+    if isinstance(roll, tuple) or isinstance(tilt, tuple):
+        raise TypeError("expected scalar roll and tilt corrections in degrees")
     roll = float(roll)
-    if cone:
-        if TYPE_CHECKING:
-            assert isinstance(geometry, ConeGeometry)
+    if isinstance(geometry, ConeGeometry):
         beam = geometry.beam
         geometry = replace(geometry, beam=replace(beam, detector_roll=beam.detector_roll + roll))
     else:
-        if TYPE_CHECKING:
-            assert not isinstance(geometry, ConeGeometry)
         geometry = replace(geometry, detector_roll=geometry.detector_roll + roll)
-    tilt = corrections.get("tilt", 0.0)
-    if TYPE_CHECKING:
-        assert isinstance(tilt, float)
     tilt = float(tilt)
     if tilt:
         # A lab tilt of an arbitrary axis changes its minimum-alignment frame
@@ -80,9 +78,8 @@ def _calibrated_geometry(
         zero = replace(geometry, angles=[0.0])
         before = np.asarray(zero.pose_matrix(0), np.float64)[:3, :3]
         tilted = Rotation.from_rotvec([-np.deg2rad(tilt), 0, 0]).as_matrix() @ before
-        axis = tuple(float(v) for v in tilted[:, 2])
-        if TYPE_CHECKING:
-            assert len(axis) == 3
+        x, y, z = tilted[:, 2]
+        axis = (float(x), float(y), float(z))
         updated = _about_axis(geometry, axis)
         zero = replace(updated, angles=[0.0])
         after = np.asarray(zero.pose_matrix(0), np.float64)[:3, :3]
@@ -116,21 +113,17 @@ def _calibration_values(geometry: ScanGeometry, names: tuple[str, ...]) -> _Publ
             else [v[name] for v in parts]
             for name in names
         }
-    if TYPE_CHECKING:
-        assert isinstance(
-            geometry, ConeGeometry | ParallelGeometry | LaminographyGeometry | RotationAxisGeometry
-        )
-    cone = isinstance(geometry, ConeGeometry)
+    geometry = _single_geometry(geometry)
     axis = np.asarray(geometry.pose_matrix(0), np.float64)[:3, 2]
-    center = (
-        tuple(map(float, geometry.detector.center)) if cone else float(geometry.detector.center[0])
-    )
-    if TYPE_CHECKING and isinstance(center, tuple):
-        assert len(center) == 2
+    u, v = geometry.detector.center
+    if isinstance(geometry, ConeGeometry):
+        center, roll = (float(u), float(v)), geometry.beam.detector_roll
+    else:
+        center, roll = float(u), geometry.detector_roll
     values: _PublishedValues = {
         "center": center,
         "tilt": float(np.rad2deg(np.arctan2(axis[1], axis[2]))),
-        "roll": float(geometry.beam.detector_roll if cone else geometry.detector_roll),
+        "roll": float(roll),
     }
     return {name: values[name] for name in names}
 

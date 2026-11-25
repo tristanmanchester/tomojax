@@ -168,13 +168,12 @@ def resolve_alignment(
             "axis; pass geometry=... to tomojax.load"
         )
     frames = cone_frames(scan.geometry)
-    declared = (
-        np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
-        if frames is not None
-        else None
-    )
+    cone = None
+    if frames is not None:
+        declared = np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
+        cone = (declared, frames)
     schedule = fit_schedule(
-        scan.grid, scan.detector, declared, frames, keep_grid=grid is not None, config=config
+        scan.grid, scan.detector, cone, keep_grid=grid is not None, config=config
     )
     return JointSelection(grid, config, cylinder, info, schedule, frames)
 

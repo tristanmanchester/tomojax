@@ -197,16 +197,15 @@ class ViewOrder:
         starts = np.r_[0, np.flatnonzero(~self.linked) + 1]
         self.segments = list(zip(starts, np.r_[starts[1:], self.n], strict=True))
 
-    def spline_design(self, spacing: int) -> sparse.csr_array | sparse.csr_matrix:
+    def spline_design(self, spacing: int) -> sparse.csr_array:
         """Block-diagonal drift design: one spline per acquisition segment."""
         blocks = []
         for start, stop in self.segments:
             steps = np.r_[0.0, np.cumsum(self.steps[start : stop - 1])]
             blocks.append(_spline.sampled(steps, spacing))
-        design = blocks[0] if len(blocks) == 1 else sparse.block_diag(blocks, format="csr")
-        if TYPE_CHECKING:
-            assert isinstance(design, sparse.csr_array | sparse.csr_matrix)
-        return design
+        if len(blocks) == 1:
+            return blocks[0]
+        return sparse.csr_array(sparse.block_diag(blocks, format="csr"))
 
     def drift(
         self, spacing: Sequence[int], translated: Sequence[bool] | np.ndarray
@@ -219,11 +218,7 @@ class ViewOrder:
             s: self.spline_design(s) for s in {s for i, s in enumerate(spacing) if translated[i]}
         }
         axes = [(i, designs[s]) for i, s in enumerate(spacing) if translated[i]]
-        widths = []
-        for _, b in axes:
-            if TYPE_CHECKING:
-                assert b.shape is not None
-            widths.append(b.shape[1])
+        widths = [_spline.design_shape(b)[1] for _, b in axes]
         empty = np.empty((views * nlocal, 0))
         if not axes:
             return empty, None
@@ -241,9 +236,7 @@ class ViewOrder:
                 u = _orthonormal_columns(sampled)
             return u, None
         columns = [sparse.kron(b, np.eye(nlocal)[:, [i]], format="csr") for i, b in axes]
-        design = sparse.hstack(columns, format="csr")
-        if TYPE_CHECKING:
-            assert isinstance(design, sparse.csr_array | sparse.csr_matrix)
+        design = sparse.csr_array(sparse.hstack(columns, format="csr"))
         return empty, _spline.Drift.build(design, views, nlocal)
 
     @property
@@ -385,8 +378,7 @@ class MotionPrior:
             radians = np.deg2rad(rotation_sigma_deg)
             rotation_precision = (float(noise_sigma) * scales / radians) ** 2 * (1 - translated)
         self.rotation_sigma_deg = float(rotation_sigma_deg)
-        # Passed to the compiled functions as an argument, never captured: a captured array is
-        # a constant of each executable, once per function.
+        # Pass matrices as arguments to avoid copying them into each executable.
         self.matrices = PriorMatrices(
             chain=jax.tree.map(jnp.asarray, chain),
             U=jnp.asarray(u),
@@ -396,13 +388,14 @@ class MotionPrior:
             rotation_precision=jnp.asarray(rotation_precision.reshape(-1), jnp.float64),
         )
         self._compiled = {
-            name: jax.jit(getattr(self, f"_{name}"))
-            for name in ("value", "weights", "apply", "innovation_solve", "project_gauge")
+            "value": jax.jit(self._value),
+            "weights": jax.jit(self._weights),
+            "apply": jax.jit(self._apply),
+            "innovation_solve": jax.jit(self._innovation_solve),
+            "project_gauge": jax.jit(self._project_gauge),
+            "factor": jax.jit(self._factor, donate_argnums=(3,), keep_unused=True),
         }
-        # A level writes the factor into buffers it owns (``_stacks``), donated and unread.
-        self._compiled["factor"] = jax.jit(self._factor, donate_argnums=(3,), keep_unused=True)
-        # The solve takes everything it needs from the factor, so it can run inside the Schur
-        # solve's compiled program without bringing a matrix into it as a constant.
+        # The Schur solve needs only the factor, whose output buffer is donated.
         self.solve = jax.jit(self._solve)
 
     def _factor_arguments(self) -> tuple[jax.ShapeDtypeStruct, jax.ShapeDtypeStruct, FactorShape]:
@@ -571,9 +564,7 @@ class MotionPrior:
     def _local_solve(self, factor: _LocalFactor, rhs: jax.Array) -> jax.Array:
         base, hg, chol, g = factor
         result = base.solve(rhs)
-        if g.shape[1]:
-            if TYPE_CHECKING:
-                assert chol is not None
+        if chol is not None:
             return result - hg @ cho_solve((chol, True), g.T @ result)
         return result
 
@@ -583,28 +574,16 @@ class MotionPrior:
         """The factor, written into ``_out`` (donated, unread) when given."""
         local = self._local_factor(m, blocks, w) if self.nlocal else None
         border = blocks[:, : self.nlocal, self.nlocal :].reshape(self.local_size, self.nglobal)
-        if self.nlocal and self.nglobal:
-            if TYPE_CHECKING:
-                assert local is not None
-            solved = self._local_solve(local, border)
-        else:
-            solved = border
+        solved = self._local_solve(local, border) if local is not None and self.nglobal else border
         schur = jnp.sum(blocks[:, self.nlocal :, self.nlocal :], axis=0) - border.T @ solved
         chol = jnp.linalg.cholesky((schur + schur.T) * 0.5) if self.nglobal else None
         return local, border, solved, chol
 
     def _solve(self, factor: PoseFactor, rhs: jax.Array) -> jax.Array:
         local, border, solved, chol = factor
-        if self.nlocal:
-            if TYPE_CHECKING:
-                assert local is not None
-            direct = self._local_solve(local, rhs[: self.local_size])
-        else:
-            direct = rhs[:0]
-        if not self.nglobal:
+        direct = self._local_solve(local, rhs[: self.local_size]) if local is not None else rhs[:0]
+        if chol is None:
             return direct
-        if TYPE_CHECKING:
-            assert chol is not None
         shared = cho_solve((chol, True), rhs[self.local_size :] - border.T @ direct)
         return jnp.concatenate([direct - solved @ shared, shared])
 

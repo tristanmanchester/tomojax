@@ -120,16 +120,13 @@ def _resized(grid: Grid, shape_xyz: tuple[int, ...]) -> Grid:
     )
 
 
-def _magnification(poses: np.ndarray | None, frames: np.ndarray | None) -> float:
-    """Least detector over object distance along the detector normal; 1 for parallel rays.
+def _magnification(poses: np.ndarray, frames: np.ndarray) -> float:
+    """Least detector over object distance along the cone detector normal.
 
     The least magnification gives the widest pixel footprint at the object, so
     a working pixel bounded by it is bounded in every view and segment.
     """
-    if frames is None:
-        return 1.0
-    if TYPE_CHECKING:
-        assert poses is not None
+    frames = np.broadcast_to(frames, (len(poses), 4, 3))
     normal = np.cross(frames[:, 1], frames[:, 2])
     distance = np.einsum("ni,ni->n", frames[:, 0] - frames[:, 3], normal)
     depth = np.einsum("ni,ni->n", poses[:, :3, 3] - frames[:, 3], normal)
@@ -369,22 +366,17 @@ class FitSchedule:
 def fit_schedule(
     grid: Grid,
     detector: Detector,
-    poses: np.ndarray | None,
-    frames: np.ndarray | None,
+    cone: tuple[np.ndarray, np.ndarray] | None,
     *,
     keep_grid: bool,
     config: AlignConfig,
 ) -> FitSchedule:
-    """Plan from declared poses, independent of the current fitted corrections."""
-    if frames is not None:
-        if TYPE_CHECKING:
-            assert poses is not None
-        frames = np.broadcast_to(frames, (len(poses), 4, 3))
+    """Plan independently of fitted corrections, from declared (poses, frames) for cone."""
     base, dbin, bins = working_scale(
         grid,
         detector,
         keep_grid=keep_grid,
-        magnification=_magnification(poses, frames),
+        magnification=1.0 if cone is None else _magnification(*cone),
         config=config,
     )
     padded, margin = _padded(base, bins, config.margin)
@@ -479,14 +471,9 @@ def fit_poses(
         parameters = Parameters(len(y0), fit, cone=frames is not None, lever=lever)
         pose_scales, frames = _physical_frame(poses, grid, native, lever, frames)
         if schedule is None:
-            schedule = fit_schedule(
-                grid,
-                detector,
-                poses if declared_poses is None else declared_poses,
-                frames,
-                keep_grid=keep_grid,
-                config=config,
-            )
+            declared = poses if declared_poses is None else declared_poses
+            cone = None if frames is None else (declared, frames)
+            schedule = fit_schedule(grid, detector, cone, keep_grid=keep_grid, config=config)
         base, dbin, margin = schedule.base, schedule.detector_binning, schedule.margin
         bins = [level.binning for level in schedule.levels]
         multiple = math.lcm(*bins)
@@ -500,7 +487,7 @@ def fit_poses(
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         config = resolve_align_config(config, parameters.fit, cone=frames is not None)
-        x = p = None
+        state: tuple[jax.Array, jax.Array] | None = None
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []
@@ -554,13 +541,14 @@ def fit_poses(
                     cal["eps"],
                     ops=ops,
                     budget=level.budget,
-                    x0=x,
-                    p0=p,
+                    x0=None if state is None else state[0],
+                    p0=None if state is None else state[1],
                     pose_sigma=cal["sigma"],
                     delta=cal["delta"],
                     scales=cal["scales"],
                     placement=placement,
                 )
+                state = x, p
                 levels.append(
                     {
                         "binning": level.binning,
@@ -568,10 +556,10 @@ def fit_poses(
                         **record,
                     }
                 )
-        assert x is not None  # every schedule has at least one level
-        assert prior is not None
-        if TYPE_CHECKING:
-            assert p is not None
+        if state is None or prior is None:
+            raise ValueError("expected a fit schedule with at least one level")
+        x, p = state
+        del state
         stage: _RefineStage = {
             "ops": ops,
             "sigma": cal["sigma"],

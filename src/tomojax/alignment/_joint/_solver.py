@@ -17,7 +17,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass
 from functools import partial
 import time
-from typing import TYPE_CHECKING, NamedTuple, TypedDict
+from typing import TYPE_CHECKING, Concatenate, NamedTuple, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from ._krylov import KrylovResult
     from ._operators import Coefficients, Operators
     from ._pose import FactorShape, MotionPrior, PoseFactor, PoseWeight
-    from ._stacks import LevelStacks, Place, StackSpec, StorageRecord, VolumeName
+    from ._stacks import ArrayStack, LevelStacks, Place, StackSpec, StorageRecord, VolumeName
 
 type _StepMetric = float | int | str | None
 
@@ -72,20 +72,32 @@ class LevelRecord(_DescentRecord):
 
 
 type _Linearization = tuple[
-    jax.Array, jax.Array, Stack, Stack, jax.Array, jax.Array, Stack, _common.Common
+    jax.Array, jax.Array, ArrayStack, ArrayStack, jax.Array, jax.Array, ArrayStack, _common.Common
 ]
 type _Trial = tuple[float, jax.Array, jax.Array]
-type _AcceptedStep = tuple[
-    float, float, _Trial, float, float, float, int, float, dict[str, float | int | str]
-]
+
+
+class _AcceptedStep(NamedTuple):
+    line_step: float
+    pose_fraction: float
+    trial: _Trial
+    predicted: float
+    pose_step_rms: float
+    lm: float
+    cg_steps: int
+    cg_residual: float
+    proposed_rms: float
+    linear_record: dict[str, float | int | str]
+
+
 type _FistaState = tuple[jax.Array, jax.Array, jax.Array]
 type _StartOperands = tuple[
-    Coefficients, Stack, Stack | None, float | jax.Array, jax.Array, jax.Array, jax.Array
+    Coefficients, ArrayStack, ArrayStack | None, float | jax.Array, jax.Array, jax.Array, jax.Array
 ]
 type _SchurOperands = tuple[
     Coefficients,
-    Stack,
-    Stack,
+    ArrayStack,
+    ArrayStack,
     PoseFactor,
     jax.Array,
     jax.Array | None,
@@ -93,15 +105,15 @@ type _SchurOperands = tuple[
     float,
     jax.Array,
     jax.Array,
-    Stack | None,
+    ArrayStack | None,
     _common.Common,
     _common.PoseSolve,
 ]
 type _Shape = jax.ShapeDtypeStruct
 type _SchurShapes = tuple[
     tuple[_Shape, _Shape],
-    Stack,
-    Stack,
+    Stack[_Shape],
+    Stack[_Shape],
     FactorShape,
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct | None,
@@ -109,10 +121,10 @@ type _SchurShapes = tuple[
     float,
     jax.ShapeDtypeStruct,
     jax.ShapeDtypeStruct,
-    Stack | None,
+    Stack[_Shape] | None,
     tuple[_Shape, _Shape, _Shape, _Shape, _Shape],
     tuple[_Shape, _Shape],
-    Stack,
+    Stack[_Shape],
 ]
 
 
@@ -177,7 +189,7 @@ class _Volumes:
     """Elementwise updates of a level's volumes, each compiled into the volume passed first."""
 
     @staticmethod
-    @_into
+    @partial(jax.jit, donate_argnums=(0,), keep_unused=True)
     def start(x: jax.Array, x0: float | jax.Array | np.ndarray) -> jax.Array:
         """Zero, or ``x0`` clipped at zero: a coarser level's volume, upsampled first."""
         x0 = jnp.asarray(x0, jnp.float32)
@@ -277,10 +289,10 @@ class _StepContext(NamedTuple):
 
     q: Coefficients
     dd: jax.Array
-    sw: Stack
-    j: Stack
+    sw: ArrayStack
+    j: ArrayStack
     gram: jax.Array
-    residual: Stack
+    residual: ArrayStack
     common: _common.Common
     damping_floor: jax.Array
     d: jax.Array | None
@@ -296,7 +308,7 @@ class _Proposal(NamedTuple):
 
     dx: jax.Array
     dc: jax.Array
-    r: Stack
+    r: ArrayStack
     jadx: jax.Array
     bdx: jax.Array
     linear_step: KrylovResult
@@ -332,9 +344,7 @@ class _Level:
             _out: jax.Array, d: jax.Array | None, dd: jax.Array, floor: jax.Array, lm: float
         ) -> jax.Array:
             value = dd + jnp.float32(lm) * jnp.maximum(dd, floor)
-            if lam:
-                if TYPE_CHECKING:
-                    assert d is not None
+            if d is not None:
                 value = value + jnp.float32(lam) * tv.diagonal(d, scales)
             return 1 / jnp.maximum(value, jnp.float32(1e-8))
 
@@ -345,10 +355,10 @@ class _Level:
         # where unobserved) gives the profiled term exactly, without projecting;
         # the shared moments move by a times the step's B dx.
         def held(
-            residual: Stack,
-            step: Stack,
-            sw: Stack,
-            w: Stack | None,
+            residual: ArrayStack,
+            step: ArrayStack,
+            sw: ArrayStack,
+            w: ArrayStack | None,
             a: jax.Array,
             moments: jax.Array,
         ) -> jax.Array:
@@ -370,12 +380,12 @@ class _Level:
         def rhs(
             _out: jax.Array,
             q: Coefficients,
-            sw: Stack,
-            j: Stack,
+            sw: ArrayStack,
+            j: ArrayStack,
             sp: jax.Array,
             gx: jax.Array,
             free: jax.Array,
-            precision: Stack | None,
+            precision: ArrayStack | None,
             common: _common.Common,
         ) -> jax.Array:
             # Fixed voxels are discarded, so the gather may skip them.
@@ -396,8 +406,8 @@ class _Level:
         @partial(jax.jit, donate_argnums=(8, 13))
         def schur(
             q: Coefficients,
-            sw: Stack,
-            j: Stack,
+            sw: ArrayStack,
+            j: ArrayStack,
             factor: PoseFactor,
             free: jax.Array,
             d: jax.Array | None,
@@ -405,24 +415,22 @@ class _Level:
             lm: float,
             rhs: jax.Array,
             invdiag: jax.Array,
-            precision: Stack | None,
+            precision: ArrayStack | None,
             common: _common.Common,
             poses: _common.PoseSolve,
-            r: Stack,
-        ) -> tuple[KrylovResult, Stack]:
+            r: ArrayStack,
+        ) -> tuple[KrylovResult, ArrayStack]:
             # Fixed voxels' transpose is discarded: the gather may skip them.
             active = ops.projection.active(free)
 
-            def matvec(v: jax.Array, r: Stack) -> tuple[jax.Array, Stack]:
+            def matvec(v: jax.Array, r: ArrayStack) -> tuple[jax.Array, ArrayStack]:
                 v = v * free
                 r, jr = ops.weighted_forward(q, v, sw, j, precision, r)
                 bv = common.of_image(v)
                 p = poses(prior.solve, factor, common, jr + common.poses.T @ (common.inverse @ bv))
                 out = ops.weighted_back(q, r, sw, j, p, active, precision)
                 out = out + common.image(common.inverse @ (bv - common.poses @ p))
-                if lam:
-                    if TYPE_CHECKING:
-                        assert d is not None
+                if d is not None:
                     out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
                 diagonal, floor = damping
                 out = out + (jnp.float32(lm) * jnp.maximum(diagonal, floor)) * v
@@ -453,12 +461,11 @@ class _Level:
         specs = ops.stack_specs(precision)
         shapes = self._schur_shapes(specs, precision is not None)
         self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
-        start: tuple[
-            Callable[..., object], jax.ShapeDtypeStruct, *tuple[jax.Array | np.ndarray, ...]
-        ] = (_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
-        if x0 is not None:  # a coarser level's volume, brought to this level's shape
-            start = (_Volumes.start, jax.ShapeDtypeStruct(ops.shape, jnp.float32), x0)
-        self.transients["start"] = temporaries(start[0], *start[1:])
+        if x0 is None:
+            start = temporaries(_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
+        else:
+            start = temporaries(_Volumes.start, jax.ShapeDtypeStruct(ops.shape, jnp.float32), x0)
+        self.transients["start"] = start
         reserve = transient_reserve(self.transients)
         volumes = level_volumes(ops, prior, self.lam)
         self.stacks = level_stacks(
@@ -477,7 +484,7 @@ class _Level:
         f64 = partial(jax.ShapeDtypeStruct, dtype=jnp.float64)
         volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
 
-        def stack(name: str) -> Stack:
+        def stack(name: str) -> Stack[_Shape]:
             return Stack.shaped(specs[name], ops.batch)
 
         q = jax.eval_shape(lambda c: ops.prepare(ops.pad_poses(c)), f64((prior.size,)))
@@ -493,11 +500,16 @@ class _Level:
         head = (q, stack("sw"), stack("j"), factor, free, d, damping, 1.0, volume, volume)
         return (*head, precision, common, poses, stack("r"))
 
-    def _write[*Args](
-        self, name: VolumeName, fun: Callable[[jax.Array, *Args], jax.Array], *args: *Args
+    def _write[**P](
+        self,
+        name: VolumeName,
+        fun: Callable[Concatenate[jax.Array, P], jax.Array],
+        /,
+        *args: P.args,
+        **kwargs: P.kwargs,
     ) -> jax.Array:
         """``fun`` run into the level's volume ``name``, its donated first argument; held."""
-        out = fun(self.stacks[name], *args)
+        out = fun(self.stacks[name], *args, **kwargs)
         self.stacks.update([(name, out)])
         return out
 
@@ -532,8 +544,8 @@ class _Level:
             state: _FistaState,
             count: int | jax.Array,
             q: Coefficients,
-            y: Stack,
-            precision: Stack | None,
+            y: ArrayStack,
+            precision: ArrayStack | None,
             lipschitz: float | jax.Array,
             images: jax.Array,
             inverse: jax.Array,
@@ -610,13 +622,13 @@ class _Level:
     ) -> tuple[
         jax.Array,
         jax.Array,
-        Stack,
-        Stack,
+        ArrayStack,
+        ArrayStack,
         jax.Array,
         jax.Array,
         jax.Array,
         jax.Array,
-        Stack,
+        ArrayStack,
         _common.Common,
     ]:
         """The robust linearization at compact poses ``c`` and volume ``x``, with the shared term.
@@ -632,7 +644,16 @@ class _Level:
             q, x, self.y, self.precision, self.delta, tuple(stacks[n] for n in names)
         )
         images = self.ops.common_images(q, self.precision, stacks["images"])
-        stacks.update(zip((*names, "images"), (gx0, dd, sw, j, residual, images), strict=True))
+        stacks.update(
+            (
+                ("gx0", gx0),
+                ("dd", dd),
+                ("sw", sw),
+                ("j", j),
+                ("residual", residual),
+                ("images", images),
+            )
+        )
         common = _common.Common(self.gram, self.inverse_gram, images, moved, moments)
         gx0 = self._write("gx0", _Volumes.plus_image, images, common.inverse @ common.moments)
         dd = self._write("dd", _Volumes.plus_diagonal, images, common.inverse)
@@ -646,7 +667,7 @@ class _Level:
         dx: jax.Array,
         dc: jax.Array,
         pose_weight: PoseWeight,
-        held: tuple[Stack, Stack, Stack, jax.Array, jax.Array],
+        held: tuple[ArrayStack, ArrayStack, ArrayStack, jax.Array, jax.Array],
         a: float,
         beta: float,
     ) -> _Trial:
@@ -681,7 +702,7 @@ class _Level:
         ops, prior = self.ops, self.prior
         gx0, dd, sw, j, gr, gram, residual, common = linear
         d = self._write("d", self.conduct, x) if self.lam else None
-        gx = self._write("gx", self.gradient, gx0, x, d) if self.lam else gx0
+        gx = self._write("gx", self.gradient, gx0, x, d) if d is not None else gx0
         wpose = prior.weights(c, pose_weight)
         pd = jnp.diagonal(gram, axis1=1, axis2=2)
         return _StepContext(
@@ -811,7 +832,7 @@ class _Level:
             a, beta, new = accepted
             dp = prior.expand(dc)
             curvature = float(self.energy(r))
-            if self.lam:
+            if k.d is not None:
                 curvature += self.lam * float(self.norm(dx, self.diffuse(dx, k.d)))
             curvature += beta * 2 * float(jnp.vdot(dc, jadx))
             pose = jnp.einsum("ni,nij,nj->", dp, k.gram, dp) + jnp.vdot(
@@ -823,17 +844,15 @@ class _Level:
             predicted = -a * (gx_dx + beta * gp_dc) - 0.5 * a * a * curvature
             change = float(jnp.sqrt(jnp.mean(jnp.sum((a * beta * dp) ** 2, axis=1))))
             explicit = bool(linear_step.residual_is_explicit)
+            proposed_rms = float(jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1))))
             linear_record = {
-                Metric.proposed_pose_step_rms.name: float(
-                    jnp.sqrt(jnp.mean(jnp.sum(dp**2, axis=1)))
-                ),
                 Metric.cg_residual_kind.name: "explicit" if explicit else "recursive",
                 Metric.cg_status.name: "converged"
                 if explicit and float(cg_residual) <= self.image_tolerance
                 else "budget_exhausted",
                 Metric.cg_matvecs.name: int(linear_step.matvecs),
             }
-            return (
+            return _AcceptedStep(
                 a,
                 beta,
                 new,
@@ -842,6 +861,7 @@ class _Level:
                 lm,
                 int(cg_steps),
                 float(cg_residual),
+                proposed_rms,
                 linear_record,
             )
         return None
@@ -849,7 +869,7 @@ class _Level:
 
 def _undamped_proposal(
     level: _Level,
-    step: Mapping[str, float | int | str | None],
+    step: _AcceptedStep,
     x: jax.Array,
     c: jax.Array,
     linear: _Linearization,
@@ -866,13 +886,10 @@ def _undamped_proposal(
     damping itself does not: clipping the image step at x >= 0 can keep it high
     long after the poses have settled.
     """
-    if TYPE_CHECKING:
-        assert isinstance(step["proposed_pose_step_rms"], float)
-        assert isinstance(step["lm"], float)
-    if step["proposed_pose_step_rms"] >= budget.tolerance:
+    if step.proposed_rms >= budget.tolerance:
         return None
-    if step["lm"] <= budget.lm_initial:
-        return step["proposed_pose_step_rms"]
+    if step.lm <= budget.lm_initial:
+        return step.proposed_rms
     return level.proposal(x, c, linear, budget.lm_initial, pose_weight)
 
 
@@ -982,7 +999,8 @@ def _descend(
     x = level.start(c, x0, budget.initial_image_iterations)
     history: list[dict[str, _StepMetric]]
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
-    f, pose_weight = 0.0, None
+    f = 0.0
+    previous_weight: PoseWeight | None = None
     level_task = progress.for_unit("steps")
     # A zero-step level still measures its initial objective and motion prior.
     for it in range(max(1, budget.iterations)):
@@ -993,49 +1011,46 @@ def _descend(
         ):
             gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
             linear = (gx0, dd, sw, j, gr, gram, residual, common)
-            held = pose_weight
             pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
-            if it:
-                if TYPE_CHECKING:
-                    assert held is not None
-                f += float(prior.value(c, pose_weight)) - float(prior.value(c, held))
+            if previous_weight is not None:
+                f += float(prior.value(c, pose_weight)) - float(prior.value(c, previous_weight))
             else:
                 f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
                 initial_objective = f
                 if not budget.iterations:
                     break
+            previous_weight = pose_weight
             result = level.step(x, c, linear, lm, pose_weight, f)
             if result is None:
                 status = "line_search_stalled"
                 break
             x0, c0 = x, c
-            a, beta, (fn, x, c), predicted, change, lm, cg_steps, cg_residual, linear_record = (
-                result
-            )
+            fn, x, c = result.trial
             level.accept(x, x0)
-            rho = _gain_ratio(f - fn, predicted)
+            rho = _gain_ratio(f - fn, result.predicted)
             valid, down = map(float, np.asarray(obstats))
             history.append(
                 {
                     Metric.objective.name: fn,
-                    Metric.pose_step_rms.name: change,
-                    Metric.line_step.name: a,
-                    Metric.pose_fraction.name: beta,
-                    Metric.lm.name: lm,
+                    Metric.pose_step_rms.name: result.pose_step_rms,
+                    Metric.line_step.name: result.line_step,
+                    Metric.pose_fraction.name: result.pose_fraction,
+                    Metric.lm.name: result.lm,
                     Metric.gain_ratio.name: rho,
-                    Metric.predicted_reduction.name: predicted,
-                    Metric.cg_iterations.name: cg_steps,
-                    Metric.cg_relative_residual.name: cg_residual,
-                    **linear_record,
+                    Metric.predicted_reduction.name: result.predicted,
+                    Metric.cg_iterations.name: result.cg_steps,
+                    Metric.cg_relative_residual.name: result.cg_residual,
+                    Metric.proposed_pose_step_rms.name: result.proposed_rms,
+                    **result.linear_record,
                     Metric.fraction_downweighted.name: down / max(valid, 1),
                 }
             )
-            f = fn
-            if rho > 0.75 and a == 1:
+            f, lm = fn, result.lm
+            if rho > 0.75 and result.line_step == 1:
                 lm = max(_LM_MIN, lm / 2)
-            elif rho < 0.25 or a < 0.5:
+            elif rho < 0.25 or result.line_step < 0.5:
                 lm = min(lm * 3, 1e6)
-            undamped = _undamped_proposal(level, history[-1], x0, c0, linear, budget, pose_weight)
+            undamped = _undamped_proposal(level, result, x0, c0, linear, budget, pose_weight)
             history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
             # Two sets of linearized view stacks would exceed the placement budget.
             del gx0, dd, sw, j, gr, gram, residual, common, linear
@@ -1049,8 +1064,6 @@ def _descend(
             break
     if history:
         progress.preview(lambda: level.ops.preview(x, c), final=True)
-    if TYPE_CHECKING:
-        assert pose_weight is not None
     final_prior = float(prior.value(c, pose_weight))
     final_image_prior = level.image_penalty(x)
     record: _DescentRecord = {

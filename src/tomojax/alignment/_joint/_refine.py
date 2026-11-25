@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from ._operators import AffineGeometry, IndexedViewBatch, Operators
     from ._pose import MotionPrior
     from ._solver import LevelRecord
-    from ._stacks import Place, StorageRecord
+    from ._stacks import ArrayStack, Place, StorageRecord
 
 type _EdgeInputs = tuple[
     jax.Array | AffineGeometry,
@@ -162,7 +162,7 @@ class _EdgeObjective:
     def _batches(self, q: jax.Array) -> IndexedViewBatch:
         return (jnp.arange(self.ops.nb), *self.ops.views(q))
 
-    def _z(self, z: IndexedViewBatch, y: Stack, precision: Stack | None) -> _EdgeInputs:
+    def _z(self, z: IndexedViewBatch, y: ArrayStack, precision: ArrayStack | None) -> _EdgeInputs:
         """One batch's geometry, data and precision, read from the level's stacks."""
         i = z[0]
         return (*z[1:], y.read(i), self.ops.batch_of(precision, i))
@@ -179,8 +179,8 @@ class _EdgeObjective:
         self,
         q: jax.Array,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
     ) -> _Stats:
         o, h = self.ops, self.filter
@@ -205,8 +205,8 @@ class _EdgeObjective:
         self,
         q: jax.Array,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         delta: float | jax.Array,
     ) -> jax.Array:
         def step(total: jax.Array, z: IndexedViewBatch) -> tuple[jax.Array, None]:
@@ -217,7 +217,7 @@ class _EdgeObjective:
         return jax.lax.scan(step, jnp.asarray(0.0, jnp.float64), self._batches(q))[0]
 
     def _consistency(
-        self, q: jax.Array, x: jax.Array, y: Stack, precision: Stack | None
+        self, q: jax.Array, x: jax.Array, y: ArrayStack, precision: ArrayStack | None
     ) -> jax.Array:
         """Per-view mean energy of the smooth residual left after the best pose step."""
         o, h = self.ops, self.filter
@@ -239,7 +239,9 @@ class _EdgeObjective:
 
         return jax.lax.map(step, self._batches(q)).reshape(-1)[: o.n]
 
-    def _scale(self, q: jax.Array, x: jax.Array, y: Stack, precision: Stack | None) -> jax.Array:
+    def _scale(
+        self, q: jax.Array, x: jax.Array, y: ArrayStack, precision: ArrayStack | None
+    ) -> jax.Array:
         """Median over views of each view's MAD of the filtered residual."""
 
         def step(z: IndexedViewBatch) -> jax.Array:
@@ -258,8 +260,8 @@ class _Refinement:
     def __init__(
         self,
         x: jax.Array,
-        y: Stack,
-        precision: Stack | None,
+        y: ArrayStack,
+        precision: ArrayStack | None,
         prior: MotionPrior,
         objective: _EdgeObjective,
         ops: Operators,
@@ -439,8 +441,8 @@ def _transients(
 def _refine(
     x: jax.Array,
     p: jax.Array | np.ndarray,
-    y: Stack,
-    precision: Stack | None,
+    y: ArrayStack,
+    precision: ArrayStack | None,
     prior: MotionPrior,
     objective: _EdgeObjective,
     *,
