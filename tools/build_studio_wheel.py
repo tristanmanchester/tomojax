@@ -87,7 +87,7 @@ def _metadata(version: str) -> str:
         "Home-page: https://tomojax.dev/studio/",
         "Author-email: Tristan Manchester <tmanchester96@gmail.com>",
         "License-Expression: GPL-3.0-only",
-        "License-File: licenses/LICENSE",
+        "License-File: LICENSE",
         "Project-URL: Documentation, https://tomojax.dev/studio/",
         "Project-URL: Repository, https://github.com/tristanmanchester/tomojax",
         "Project-URL: Issues, https://github.com/tristanmanchester/tomojax/issues",
