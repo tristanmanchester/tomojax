@@ -20,7 +20,6 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_projection_stack,
     validate_volume,
 )
@@ -458,7 +457,6 @@ def run_mlem(
     announce(array=projections)
     cfg = config
     iterations, subsets = cfg.iterations, cfg.subsets
-    validate_grid(grid, "mlem grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="mlem")
     validate_detector_grid(det_grid, detector, context="mlem")
     check_subset_count("mlem", subsets, n)

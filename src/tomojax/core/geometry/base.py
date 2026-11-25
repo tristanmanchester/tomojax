@@ -66,9 +66,12 @@ def _coerce_fixed_tuple(name: str, value: Iterable[float], expected_len: int) ->
     if len(items) != expected_len:
         raise ValueError(f"{name} must have length {expected_len}, got {len(items)}")
     try:
-        return tuple(float(v) for v in items)
+        values = tuple(float(v) for v in items)
     except (TypeError, ValueError) as e:
         raise TypeError(f"{name} elements must be real numbers") from e
+    if not all(math.isfinite(v) for v in values):
+        raise InvalidParameter(name, f"{name} must be finite")
+    return values
 
 
 def _plain_numbers(obj: object, counts: tuple[str, ...], pitches: tuple[str, ...]) -> None:
@@ -112,7 +115,8 @@ class Grid:
     TypeError
         If counts are not integers or placement coordinates are not real numbers.
     ValueError
-        If a placement vector does not have three components.
+        If a count or pitch is not positive, or a placement vector is not three
+        finite numbers.
     """
 
     nx: int = field(metadata={"unit": "voxel"})
@@ -142,6 +146,12 @@ class Grid:
                 "vol_center",
                 _coerce_fixed_tuple("vol_center", self.vol_center, 3),
             )
+
+    def __reduce__(self) -> tuple[Callable[..., Grid], tuple[object, ...]]:
+        # Unpickling rebuilds through the constructor, so a stored grid is checked too.
+        return _grid_from_fields, (
+            self.nx, self.ny, self.nz, self.vx, self.vy, self.vz, self.vol_origin, self.vol_center,
+        )  # fmt: skip
 
     @property
     def shape(self) -> tuple[int, int, int]:
@@ -256,6 +266,19 @@ class Grid:
         )
 
 
+def _grid_from_fields(
+    nx: int,
+    ny: int,
+    nz: int,
+    vx: float,
+    vy: float,
+    vz: float,
+    vol_origin: Vec3 | None,
+    vol_center: Vec3 | None,
+) -> Grid:
+    return Grid(nx, ny, nz, vx, vy, vz, vol_origin=vol_origin, vol_center=vol_center)
+
+
 def grid_volume_origin(grid: Grid) -> Vec3:
     """Return the physical centre of voxel (0, 0, 0) for a grid.
 
@@ -306,7 +329,7 @@ class Detector:
     TypeError
         If counts are not integers or centre coordinates are not real numbers.
     ValueError
-        If center does not have two components.
+        If a count or pitch is not positive, or center is not two finite numbers.
     """
 
     nu: int = field(metadata={"unit": "pixel"})
@@ -318,6 +341,10 @@ class Detector:
     def __post_init__(self) -> None:
         _plain_numbers(self, ("nu", "nv"), ("du", "dv"))
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
+
+    def __reduce__(self) -> tuple[type[Detector], tuple[object, ...]]:
+        # Unpickling rebuilds through the constructor, so a stored detector is checked too.
+        return Detector, (self.nu, self.nv, self.du, self.dv, self.center)
 
     def to_dict(self) -> DetectorDict:
         """Return JSON-compatible detector metadata.

@@ -16,7 +16,6 @@ from tomojax.core.devices import ViewSplit, announce, as_devices, view_split
 from tomojax.core.geometry.base import Detector, Geometry, Grid
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
-    validate_grid,
     validate_optional_broadcastable_shape,
     validate_pose_stack,
     validate_projection_stack,
@@ -299,7 +298,6 @@ def _prepare_fista_runtime(
         context="fista config",
     )
     constraints = _FistaConstraints(lower_bound, upper_bound)
-    validate_grid(grid, "fista_tv grid")
     n_views, _, _ = validate_projection_stack(
         projections,
         detector,

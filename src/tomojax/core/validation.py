@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from tomojax.errors import InvalidParameter
-
-from .geometry.base import grid_volume_origin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -98,25 +95,6 @@ def _raise_value_error(
     )
 
 
-def _is_positive_int(value: object) -> bool:
-    try:
-        ivalue = int(value)  # type: ignore[arg-type]
-    except Exception:
-        return False
-    try:
-        return ivalue > 0 and float(value) == float(ivalue)  # type: ignore[arg-type]
-    except Exception:
-        return False
-
-
-def _is_positive_finite(value: object) -> bool:
-    try:
-        fvalue = float(value)  # type: ignore[arg-type]
-    except Exception:
-        return False
-    return math.isfinite(fvalue) and fvalue > 0.0
-
-
 def _geometry_view_count(geometry: Geometry | None) -> int | None:
     if geometry is None:
         return None
@@ -129,74 +107,11 @@ def _geometry_view_count(geometry: Geometry | None) -> int | None:
         return None
 
 
-def validate_grid(grid: Grid, context: str) -> tuple[int, int, int]:
-    """Validate reconstruction grid metadata and return ``(nx, ny, nz)``."""
-    dims = (getattr(grid, "nx", None), getattr(grid, "ny", None), getattr(grid, "nz", None))
-    if not all(_is_positive_int(v) for v in dims):
-        _raise_shape_error(
-            context,
-            "reconstruction grid",
-            expected="positive integer (nx, ny, nz)",
-            actual=dims,
-            fix="pass --grid NX NY NZ with all values > 0 or fix grid metadata.",
-            kind="invalid",
-        )
-
-    spacing = (getattr(grid, "vx", None), getattr(grid, "vy", None), getattr(grid, "vz", None))
-    if not all(_is_positive_finite(v) for v in spacing):
-        _raise_value_error(
-            context,
-            "voxel spacing",
-            expected="positive finite (vx, vy, vz)",
-            actual=spacing,
-            fix="fix grid voxel-size metadata so vx, vy, and vz are finite and > 0.",
-        )
-    return int(grid.nx), int(grid.ny), int(grid.nz)
-
-
-def validate_detector(detector: Detector, context: str) -> tuple[int, int]:
-    """Validate detector metadata and return detector image shape ``(nv, nu)``."""
-    shape = (getattr(detector, "nv", None), getattr(detector, "nu", None))
-    if not all(_is_positive_int(v) for v in shape):
-        _raise_shape_error(
-            context,
-            "detector",
-            expected="positive integer (nv, nu)",
-            actual=shape,
-            fix="fix detector metadata so nv and nu are both positive integers.",
-            kind="invalid",
-        )
-
-    spacing = (getattr(detector, "dv", None), getattr(detector, "du", None))
-    if not all(_is_positive_finite(v) for v in spacing):
-        _raise_value_error(
-            context,
-            "detector spacing",
-            expected="positive finite (dv, du)",
-            actual=spacing,
-            fix="fix detector metadata so dv and du are finite and > 0.",
-        )
-    return int(detector.nv), int(detector.nu)
-
-
-def validate_placement(grid: Grid, detector: Detector, context: str) -> None:
-    """Require finite physical coordinates before computing projection or gather bounds."""
-    if not np.isfinite(grid_volume_origin(grid)).all():
-        raise InvalidParameter("grid", f"{context}: grid origin must be finite")
-    if not np.isfinite(detector.center).all():
-        raise InvalidParameter("source", f"{context}: detector centre must be finite")
-
-
-def validate_acquisition(
-    geometry: Geometry, grid: Grid, detector: Detector, context: str
-) -> tuple[int, int, int]:
-    """Check volume placement and measured angles before reading any projections."""
-    nx, ny, nz = validate_grid(grid, context)
-    validate_placement(grid, detector, context)
+def validate_angles(geometry: Geometry, context: str) -> None:
+    """Check measured angles before reading any projections."""
     angles = getattr(geometry, "angles", None)
     if angles is not None and not np.isfinite(angles).all():
         raise InvalidParameter("source", f"{context}: angles must be finite")
-    return nz, ny, nx
 
 
 def validate_physical_poses(poses: Any, context: str, *, rigid: bool) -> None:
@@ -224,7 +139,7 @@ def validate_projection_shape(
     context: str,
 ) -> tuple[int, int, int]:
     """Validate a projection-stack shape tuple without requiring an array."""
-    nv, nu = validate_detector(detector, context)
+    nv, nu = detector.nv, detector.nu
     shape = tuple(int(s) for s in projections_shape)
     if len(shape) != 3:
         _raise_shape_error(
@@ -297,8 +212,7 @@ def validate_volume(
     name: str = "volume",
 ) -> tuple[int, int, int]:
     """Validate a reconstruction volume against grid dimensions."""
-    dimensions = validate_grid(grid, context)
-    expected_shape = dimensions[::-1]
+    expected_shape = grid.shape
     actual_shape = _shape_of(volume)
     if actual_shape != expected_shape:
         _raise_shape_error(
@@ -308,7 +222,7 @@ def validate_volume(
             actual=actual_shape,
             fix="use a volume/init_x/support array generated for the same reconstruction grid.",
         )
-    return dimensions
+    return grid.nx, grid.ny, grid.nz
 
 
 def validate_detector_image(
@@ -319,7 +233,7 @@ def validate_detector_image(
     name: str = "image",
 ) -> tuple[int, int]:
     """Validate one detector image against detector dimensions."""
-    expected_shape = validate_detector(detector, context)
+    expected_shape = (detector.nv, detector.nu)
     actual_shape = _shape_of(image)
     if actual_shape != expected_shape:
         _raise_shape_error(
@@ -429,8 +343,7 @@ def validate_detector_grid(
     """Validate optional flattened detector-coordinate vectors."""
     if det_grid is None:
         return
-    nv, nu = validate_detector(detector, context)
-    expected_shape = (nv * nu,)
+    expected_shape = (detector.nv * detector.nu,)
     try:
         Xr, Zr = det_grid
     except Exception as exc:

@@ -19,7 +19,6 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_projection_stack,
     validate_volume,
 )
@@ -520,7 +519,6 @@ class SIRTCall:
         """Solve this invocation, retaining normalizers across its axial slabs."""
         announce(array=projections)
         cfg = SIRTConfig() if config is None else config
-        validate_grid(grid, "sirt grid")
         n, _, _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="sirt"
         )

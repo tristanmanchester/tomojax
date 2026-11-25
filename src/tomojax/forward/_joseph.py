@@ -6,10 +6,8 @@ from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from tomojax.core.backend_policy import cuda_backend
-from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.joseph import (
     forward_project_planes,
     plane_coefficients,
@@ -17,18 +15,15 @@ from tomojax.core.joseph import (
     plane_l2_value_and_grad,
     validate_interpolation,
 )
-from tomojax.core.validation import validate_detector, validate_pose_stack, validate_volume
+from tomojax.core.validation import validate_pose_stack, validate_volume
 
 if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid
 
 
-def _inputs(volume, poses, grid, detector, backend):
+def _inputs(volume, poses, grid, backend):
     context = "Joseph projection"
     validate_volume(volume, grid, context=context)
-    validate_detector(detector, context)
-    if not np.isfinite((*grid_volume_origin(grid), *detector.center)).all():
-        raise ValueError(f"{context}: grid origin and detector centre must be finite")
     if jnp.iscomplexobj(volume) or jnp.iscomplexobj(poses):
         raise ValueError(f"{context}: volume and poses must be real")
     # A dtype keeps jnp.asarray from staging a second device copy of a host array.
@@ -95,7 +90,7 @@ def project_joseph(
     coordinate derivatives within a fixed dominant-axis branch.
     """
     validate_interpolation(interpolation)
-    volume, poses = _inputs(volume, poses, grid, detector, backend)
+    volume, poses = _inputs(volume, poses, grid, backend)
     return forward_project_planes(
         plane_coefficients(poses, grid, detector),
         volume,
@@ -153,7 +148,7 @@ def joseph_l2_value_and_grad(
         If shapes, interpolation or backend are unsupported, including CUDA without a GPU.
     """
     validate_interpolation(interpolation)
-    volume, poses = _inputs(volume, poses, grid, detector, backend)
+    volume, poses = _inputs(volume, poses, grid, backend)
     target = jnp.asarray(target)
     expected = (poses.shape[0], detector.nv, detector.nu)
     if target.shape != expected or jnp.iscomplexobj(target):
@@ -222,7 +217,7 @@ def joseph_pose_normal_equations(
         If shapes, interpolation or backend are unsupported, including CUDA without a GPU.
     """
     validate_interpolation(interpolation)
-    volume, poses = _inputs(volume, poses, grid, detector, backend)
+    volume, poses = _inputs(volume, poses, grid, backend)
     target = jnp.asarray(target)
     expected = (poses.shape[0], detector.nv, detector.nu)
     if target.shape != expected or jnp.iscomplexobj(target):

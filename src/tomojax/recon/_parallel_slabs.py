@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from tomojax.core.joseph import validate_plane_geometry
 from tomojax.core.joseph_cuda import coefficients, slab_adjoint_into, slab_forward
+from tomojax.core.validation import validate_physical_poses
 
 from ._cone_slabs import ConeProblem, SlabPlan, Sweep, slab_depth
 from ._slab_engines import CudaEngine
@@ -72,7 +72,7 @@ def parallel_problem(
 ) -> ConeProblem:
     """Plan a CUDA Joseph sweep without rounding a new origin for each slab."""
     del geometry
-    validate_plane_geometry(poses, grid, detector)
+    validate_physical_poses(poses, "cgls", rigid=True)
     engine = ParallelEngine(grid, detector)
     count, batch = len(poses), min(batch, len(poses))
 

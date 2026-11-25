@@ -10,7 +10,6 @@ import jax
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.validation import validate_detector, validate_grid
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import (
@@ -98,13 +97,9 @@ def fourier_slabs[T](
     """
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
-    validate_grid(grid, "reconstruct_slabs grid")
-    validate_detector(detector, "reconstruct_slabs detector")
     backend = resolve_fourier_backend(config.backend)
     depth = fourier_slab_depth(grid, detector, config.slices_per_batch, backend)
     origin = grid_volume_origin(grid)
-    if not np.isfinite([*origin, *detector.center]).all():
-        raise ValueError("Fourier grid and detector placement must be finite")
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1

@@ -14,7 +14,6 @@ from tomojax.core.devices import ViewSplit, announce, view_split
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
     validate_detector_grid,
-    validate_grid,
     validate_pose_stack,
     validate_projection_stack,
     validate_volume,
@@ -675,7 +674,6 @@ def cgls(
         geometry, cfg.backend,
         detector=detector, det_grid=det_grid, context="cgls",
     )  # fmt: skip
-    _ = validate_grid(grid, "cgls grid")
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
@@ -694,9 +692,9 @@ def cgls(
     model = resident_model(model, backend)
     initial = None if init_x is None else _as_float32(init_x)
     if is_joseph(model):
-        from tomojax.core.joseph import validate_plane_geometry
+        from tomojax.core.validation import validate_physical_poses
 
-        validate_plane_geometry(poses, grid, detector)
+        validate_physical_poses(poses, "cgls", rigid=True)
     solve = partial(
         _run_cgls,
         grid=grid,

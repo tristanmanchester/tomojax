@@ -22,15 +22,14 @@ import time
 from typing import cast
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
 from tomojax.alignment._config import AlignConfig, resolve_align_config
 from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
-from tomojax.core.joseph import validate_plane_geometry
 from tomojax.core.registration import scaled_images
+from tomojax.core.validation import validate_physical_poses
 from tomojax.recon.fista_tv import resolve_tv_metric
 
 from ._noise import MAX_SAMPLES, Windows, estimate_noise
@@ -322,10 +321,10 @@ def fit_schedule(grid, detector, poses, frames, *, keep_grid, config):
     return FitSchedule(base, dbin, margin, levels)
 
 
-def _physical_frame(poses, grid, detector, native, lever, frames):
+def _physical_frame(poses, grid, native, lever, frames):
     """The pose scales, and the per-view lab frame for cone-beam scans."""
     if frames is None:
-        validate_plane_geometry(jnp.asarray(poses), grid, detector)
+        validate_physical_poses(poses, "tj.align", rigid=True)
         return np.asarray([1 / lever] * 3 + list(native)), None
     frames = np.broadcast_to(np.asarray(frames, np.float64), (len(poses), 4, 3)).copy()
     if not np.isfinite(frames).all():
@@ -393,7 +392,7 @@ def fit_poses(
         # parameter moves its edge by about one pixel.
         lever = 0.5 * max(grid.nx * grid.vx, grid.ny * grid.vy) / native[0]
         parameters = Parameters(len(y0), fit, cone=frames is not None, lever=lever)
-        pose_scales, frames = _physical_frame(poses, grid, detector, native, lever, frames)
+        pose_scales, frames = _physical_frame(poses, grid, native, lever, frames)
         if schedule is None:
             schedule = fit_schedule(
                 grid,

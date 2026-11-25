@@ -19,7 +19,6 @@ from tomojax.core.volume_layout import swap_private_axes
 
 from ._plane_interpolation import cubic_weights_and_derivatives, validate_interpolation
 from .compilation_cache import enable_persistent_compilation_cache
-from .validation import validate_physical_poses, validate_placement
 
 if TYPE_CHECKING:
     from .geometry.base import Detector, Grid
@@ -47,12 +46,6 @@ def affine_grid(det_grid: tuple[jax.Array, jax.Array], detector: Detector) -> bo
     lattice = points[:, :1] + step_u[:, None] * u.ravel() + step_v[:, None] * v.ravel()
     scale = np.abs(points).max() + detector.du + detector.dv
     return bool(np.abs(lattice - points).max() <= 64 * np.finfo(np.float32).eps * scale)
-
-
-def validate_plane_geometry(poses: jax.Array, grid: Grid, detector: Detector) -> None:
-    """Reject geometry that would make the plane map or gather bounds undefined."""
-    validate_placement(grid, detector, "cgls")
-    validate_physical_poses(poses, "cgls", rigid=True)
 
 
 def select_axis(

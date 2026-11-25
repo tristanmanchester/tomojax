@@ -221,12 +221,12 @@ def validate_reconstruction(
     """
     from tomojax.core.geometry.cone import is_cone_beam
     from tomojax.core.validation import (
-        validate_acquisition,
+        validate_angles,
         validate_optional_broadcastable_shape,
         validate_optional_same_shape,
     )
 
-    validate_acquisition(geometry, grid, geometry.detector, method)
+    validate_angles(geometry, method)
     _check_solver_inputs(method, geometry, config, projections, check_samples=check_samples)
     views = len(geometry.angles)
     if subsets := getattr(config, "subsets", None):

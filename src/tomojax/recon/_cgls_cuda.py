@@ -17,9 +17,7 @@ from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.joseph_cuda import JosephCUDA
 from tomojax.core.registration import planes
 from tomojax.core.validation import (
-    validate_grid,
     validate_physical_poses,
-    validate_placement,
     validate_pose_stack,
     validate_projection_stack,
 )
@@ -97,11 +95,10 @@ def solve(geometry, grid, detector, projections, initial, cfg: CGLSConfig):
             return None
         if progress.tracking_placement():
             progress.placed((f"gpu:{cp.cuda.runtime.getDevice()}",))
-        shape = validate_grid(grid, "cgls grid")[::-1]
+        shape = grid.shape
         n, _, _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="cgls"
         )
-        validate_placement(grid, detector, "cgls")
         poses = host_view_poses(geometry, n)
         assert poses is not None
         validate_pose_stack(poses, n, context="cgls")

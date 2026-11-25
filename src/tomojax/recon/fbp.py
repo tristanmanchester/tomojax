@@ -20,7 +20,7 @@ from tomojax.core.geometry.cone import is_cone_beam
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.validation import (
-    validate_acquisition,
+    validate_angles,
     validate_detector_grid,
     validate_pose_stack,
     validate_projection_stack,
@@ -897,7 +897,7 @@ def parallel_fbp(
 ) -> jnp.ndarray:
     """Filter and backproject original view batches on the grid or one aligned axial row."""
     with progress.task("reconstruct", "fbp", None, "batches"):
-        validate_acquisition(geometry, grid, detector, "fbp")
+        validate_angles(geometry, "fbp")
         n_views, _, _ = validate_projection_stack(
             projections,
             detector,
