@@ -10,11 +10,11 @@ TomoJAX Studio targets Linux `x86_64` with a working Vulkan driver, matching the
 
 ### Install a prebuilt wheel
 
-Install `tomojax-studio` into the same environment as `tomojax` (use `cuda12` on an NVIDIA GPU, or `cpu` for CPU execution):
+Install `tomojax-studio` into the same environment as `tomojax` (use `cuda12` on an NVIDIA GPU, or `cpu` for CPU execution; `--prerelease=allow`, or `--pre` with `pip`, is needed while `1.0.0` is in release candidate):
 
 ```sh
 uv venv --python 3.12
-uv pip install --python .venv/bin/python "tomojax[cuda12]" tomojax-studio
+uv pip install --python .venv/bin/python --prerelease=allow "tomojax[cuda12]" tomojax-studio
 .venv/bin/tomojax studio
 ```
 

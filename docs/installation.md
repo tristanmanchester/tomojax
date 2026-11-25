@@ -12,7 +12,7 @@ uv pip install --python .venv/bin/python "tomojax[cpu]"
 .venv/bin/tomojax --help
 ```
 
-With standard `venv` and `pip`, run `python -m venv .venv` followed by `.venv/bin/python -m pip install "tomojax[cpu]"`.
+With standard `venv` and `pip`, run `python -m venv .venv` followed by `.venv/bin/python -m pip install "tomojax[cpu]"`. While `1.0.0` is in release candidate (`1.0.0rc2`, which adds `tomojax mcp`, `tomojax-studio`, and the updated CLI), pass `--prerelease=allow` to `uv pip install` (or `--pre` to `pip`).
 
 ## Use CUDA 12
 
@@ -38,7 +38,7 @@ Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
 | `mcp` | Model Context Protocol server (`tomojax mcp`); see [use TomoJAX from an AI agent](mcp.md) |
 | `spectra` | `xraylib` for physical X-ray tube spectra (`corrections.tube_spectrum`) and beam-hardening curves |
 
-To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)) on Linux `x86_64`, install the `tomojax-studio` wheel alongside `tomojax` (`uv pip install "tomojax[cuda12]" tomojax-studio`), or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`).
+To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)) on Linux `x86_64`, install the `tomojax-studio` wheel alongside `tomojax` (`uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio` while `1.0.0` is in release candidate), or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`).
 
 ## Build and install an unreleased wheel
 

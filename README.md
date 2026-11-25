@@ -41,10 +41,10 @@ Numerical commands that write data take `-o OUTPUT` and refuse to overwrite exis
 
 ![TomoJAX Studio showing the aligned FISTA-TV watch movement in 3D volume view with linked axial, coronal, sagittal, projection, and sinogram thumbnails.](https://github.com/tristanmanchester/tomojax/raw/main/docs/images/studio-explore-volume.png)
 
-Install the prebuilt Linux `x86_64` wheel alongside TomoJAX:
+Install the prebuilt Linux `x86_64` wheel alongside TomoJAX (while `1.0.0` is in release candidate, include `--prerelease=allow`, or `--pre` with `pip`):
 
 ```bash
-uv pip install "tomojax[cuda12]" tomojax-studio
+uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio
 tomojax studio
 ```
 
