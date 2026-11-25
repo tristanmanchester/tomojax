@@ -29,7 +29,7 @@ from tomojax.io.api import (
     save_nxtomo,
 )
 
-from ._helpers import make_projection_dataset, write_projection_dataset
+from ._helpers import make_projection_dataset, write_projection_dataset, write_raw_nxtomo
 
 pytestmark = pytest.mark.surface
 
@@ -575,3 +575,20 @@ def test_a_grid_override_needs_only_the_saved_pitches() -> None:
         grid_override=(7, 6, 5),
     )
     assert (grid.nx, grid.ny, grid.nz, grid.vx, grid.vy, grid.vz) == (7, 6, 5, 0.5, 0.25, 2.0)
+
+
+@pytest.mark.parametrize("link", ["soft", "external"])
+def test_raw_frames_refuse_a_dangling_frame_label_link(tmp_path: Path, link: str) -> None:
+    # Reading the dangling link as absent would make the flat and dark sample views.
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    with h5py.File(path, "a") as file:
+        detector = file["/entry/instrument/detector"]
+        del detector["image_key"]
+        detector["image_key"] = (
+            h5py.SoftLink("/entry/absent")
+            if link == "soft"
+            else h5py.ExternalLink("absent.h5", "/image_key")
+        )
+    with pytest.raises(ValueError, match="image_key"):
+        tj.load_frames(path)
