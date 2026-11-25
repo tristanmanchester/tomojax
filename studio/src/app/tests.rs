@@ -1700,3 +1700,21 @@ fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
     assert_eq!(window_text(1.0, 1.00002), ["1", "1.00002"]);
     assert_eq!(window_text(2e-5, 9e-5), ["2.000e-5", "9.000e-5"]);
 }
+
+#[test]
+fn a_new_project_lives_in_the_folder_the_save_dialog_names() {
+    let directory = tempfile::tempdir().unwrap();
+    // A folder named like the manifest is still the new project's own folder.
+    let named = directory.path().join(project::MANIFEST);
+    let mut state = AppState::init();
+    state.open_project(&named, true).unwrap();
+    assert_eq!(
+        state.project.as_ref().unwrap().root,
+        std::fs::canonicalize(&named).unwrap()
+    );
+    assert!(named.join(project::MANIFEST).is_file());
+    assert!(
+        !directory.path().join(".tomojax.lock").exists(),
+        "the parent is untouched"
+    );
+}
