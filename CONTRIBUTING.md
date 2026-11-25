@@ -42,7 +42,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 1. Update the version in `pyproject.toml` and add a `## <version> (<date>)` heading to `CHANGELOG.md`.
 2. Run `just ci` and `just test-cuda` on that commit, then push to `main`.
 3. Optionally run `gh workflow run Release` to publish `main` to TestPyPI after the same checks.
-4. Tag and push: `git tag v<version> && git push origin v<version>`. The release workflow runs the CPU gate and installed-package matrix, builds the wheel and sdist, waits for maintainer approval on the `pypi` environment, publishes to PyPI, and creates the GitHub release from the changelog section. Versions containing `a`, `b`, `rc`, or `dev` are marked as pre-releases.
+4. Tag and push: `git tag v<version> && git push origin v<version>`. The release workflow runs the CPU gate and installed-package matrix, builds the `tomojax` wheel/sdist and the `manylinux_2_28_x86_64` `tomojax-studio` wheel/tarball (with HDF5 statically linked), waits for maintainer approval on the `pypi` environment, publishes to PyPI, and creates the GitHub release with both sets of artifacts from the changelog section. Versions containing `a`, `b`, `rc`, or `dev` are marked as pre-releases.
 
 PyPI accepts each version once; fix a failed release with a new version number.
 

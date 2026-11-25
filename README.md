@@ -41,14 +41,14 @@ Numerical commands that write data take `-o OUTPUT` and refuse to overwrite exis
 
 ![TomoJAX Studio showing the aligned FISTA-TV watch movement in 3D volume view with linked axial, coronal, sagittal, projection, and sinogram thumbnails.](https://github.com/tristanmanchester/tomojax/raw/main/docs/images/studio-explore-volume.png)
 
-Build and launch Studio from a source checkout with Rust **1.99.1** and the [native build dependencies](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#build-and-run):
+Install the prebuilt Linux `x86_64` wheel alongside TomoJAX:
 
 ```bash
-uv sync --locked --extra cuda12 --dev
-uv run --no-sync tomojax studio --build
+uv pip install "tomojax[cuda12]" tomojax-studio
+tomojax studio
 ```
 
-Use `--extra cpu` on CPU-only machines. Choose **Create a project**, add scans or run a simulation (`tomojax studio --demo`), and reopen saved workspaces later with `uv run --no-sync tomojax studio /path/to/project`.
+Use `cpu` on CPU-only machines, or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`; see [install and run](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md#install-and-run)). Choose **Create a project**, add scans or run `tomojax studio --demo`, and reopen saved workspaces later with `tomojax studio /path/to/project`.
 
 See the [Studio guide](https://github.com/tristanmanchester/tomojax/blob/main/studio/README.md) for calibration, live previews, measurements, comparison modes, exports, and verification, and [studio/ARCHITECTURE.md](https://github.com/tristanmanchester/tomojax/blob/main/studio/ARCHITECTURE.md) for its persistence and rendering architecture.
 

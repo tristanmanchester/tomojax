@@ -42,34 +42,25 @@ def main() -> int:
             raise ValueError(
                 "Install the Rust toolchain to build Studio, then run tomojax studio --build"
             )
-        result = subprocess.run(
-            [
-                cargo,
-                "build",
-                "--locked",
-                "--release",
-                "--manifest-path",
-                str(manifest),
-                "--target-dir",
-                str(native / "target"),
-            ],
-            cwd=native,
-            check=False,
-        )
-        if result.returncode:
+        cmd = [cargo, "build", "--locked", "--release", "--manifest-path", str(manifest)]
+        cmd += ["--target-dir", str(native / "target")]
+        if subprocess.run(cmd, cwd=native, check=False).returncode:
             return 1
-    binary = str(built) if built.is_file() else shutil.which(executable)
+    candidates = (built, Path(sys.executable).parent / executable)
+    binary = next((str(p) for p in candidates if p.is_file()), shutil.which(executable))
     if binary is None:
         raise ValueError(
-            "Studio is not built. Run tomojax studio --build from a source checkout, "
-            "or install tomojax-studio on PATH."
+            "Studio is not installed. Install tomojax-studio, or run tomojax studio --build "
+            "from a source checkout."
         )
-    environment = os.environ.copy()
-    environment["TOMOJAX_STUDIO_PYTHON"] = sys.executable
-    for key in ("TOMOJAX_STUDIO_INPUT", "TOMOJAX_STUDIO_DEMO"):
-        environment.pop(key, None)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if k not in {"TOMOJAX_STUDIO_INPUT", "TOMOJAX_STUDIO_DEMO"}
+    }
+    env["TOMOJAX_STUDIO_PYTHON"] = sys.executable
     if source is not None:
-        environment["TOMOJAX_STUDIO_INPUT"] = str(source)
+        env["TOMOJAX_STUDIO_INPUT"] = str(source)
     if args.demo:
-        environment["TOMOJAX_STUDIO_DEMO"] = "1"
-    return int(subprocess.run([binary], env=environment, check=False).returncode != 0)
+        env["TOMOJAX_STUDIO_DEMO"] = "1"
+    return int(subprocess.run([binary], env=env, check=False).returncode != 0)

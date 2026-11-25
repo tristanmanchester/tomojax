@@ -38,7 +38,7 @@ Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
 | `mcp` | Model Context Protocol server (`tomojax mcp`); see [use TomoJAX from an AI agent](mcp.md) |
 | `spectra` | `xraylib` for physical X-ray tube spectra (`corrections.tube_spectrum`) and beam-hardening curves |
 
-To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)), build it from a source checkout with Rust **1.99.1** and the native HDF5/graphics libraries, then run `uv run --no-sync tomojax studio --build`.
+To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)) on Linux `x86_64`, install the `tomojax-studio` wheel alongside `tomojax` (`uv pip install "tomojax[cuda12]" tomojax-studio`), or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`).
 
 ## Build and install an unreleased wheel
 

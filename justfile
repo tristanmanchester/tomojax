@@ -48,6 +48,12 @@ package:
     uv run --no-sync twine check --strict dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
 
+studio-wheel:
+    rm -rf dist-studio
+    cargo build --locked --release --manifest-path studio/Cargo.toml --features static-hdf5
+    uv run --no-sync python tools/build_studio_wheel.py --out-dir dist-studio --check-static
+    uv run --no-sync twine check --strict dist-studio/*.whl
+
 # Rewrites the ratchet and API-surface records; tests/test_architecture.py is what checks them.
 guardrails:
     JAX_PLATFORMS=cpu uv run --no-sync python tools/guardrails.py --write

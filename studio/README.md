@@ -4,27 +4,38 @@ TomoJAX Studio is a native desktop workspace for tomography projects. Keep raw a
 
 ![TomoJAX Studio showing the aligned FISTA-TV reconstruction of a 29 mm mechanical watch movement as a 3D GPU volume render, with linked axial, coronal, sagittal, projection, and sinogram thumbnails below, the project tree and saved recipes on the left, and volume appearance and clipping controls on the right.](../docs/images/studio-explore-volume.png)
 
-## Build and run
+## Install and run
 
-Studio is built from a TomoJAX source checkout with Rust **1.99.1**, a C compiler, and the HDF5 and graphics development libraries:
+TomoJAX Studio targets Linux `x86_64` with a working Vulkan driver, matching the rest of TomoJAX.
 
-- **Debian / Ubuntu:** install `libhdf5-dev`, `libfontconfig1-dev`, `libxkbcommon-dev`, `pkg-config`, and a working Vulkan driver.
-- **macOS:** install HDF5 via your package manager. If HDF5 sits outside the compiler's search path, set `HDF5_DIR` to its installation prefix.
+### Install a prebuilt wheel
 
-From the repository root, sync the Python environment (use `--extra cuda12` on Linux with an NVIDIA GPU, or `--extra cpu` for CPU execution), then build and launch Studio:
+Install `tomojax-studio` into the same environment as `tomojax` (use `cuda12` on an NVIDIA GPU, or `cpu` for CPU execution):
+
+```sh
+uv venv --python 3.12
+uv pip install --python .venv/bin/python "tomojax[cuda12]" tomojax-studio
+.venv/bin/tomojax studio
+```
+
+The `tomojax-studio` wheel bundles HDF5 statically (`manylinux_2_28_x86_64`), so it requires no Rust toolchain or system `libhdf5` package. Prebuilt wheels and standalone tarballs are also attached to each GitHub Release.
+
+### Build from source
+
+To build Studio from a source checkout, install Rust **1.99.1**, a C compiler, and the native build packages (`libhdf5-dev`, `libfontconfig1-dev`, `libxkbcommon-dev`, `pkg-config` on Debian/Ubuntu; or omit `libhdf5-dev` and build with `--features static-hdf5` when `cmake` is available):
 
 ```sh
 uv sync --locked --extra cuda12 --dev
 uv run --no-sync tomojax studio --build
 ```
 
-The launcher forwards the active Python interpreter to Studio. Subsequent launches reuse the compiled binary:
+The launcher forwards the active Python interpreter to Studio and checks source builds, the active environment's `bin/`, and `PATH`. Subsequent launches reuse the compiled or installed binary:
 
 ```sh
-uv run --no-sync tomojax studio                        # open the start screen
-uv run --no-sync tomojax studio /path/to/project       # reopen a saved project
-uv run --no-sync tomojax studio /path/to/scan.nxs      # launch with an acquisition ready to import
-uv run --no-sync tomojax studio --demo                 # start a sample simulation project
+tomojax studio                        # open the start screen
+tomojax studio /path/to/project       # reopen a saved project
+tomojax studio /path/to/scan.nxs      # launch with an acquisition ready to import
+tomojax studio --demo                 # start a sample simulation project
 ```
 
 ## Workspaces at a glance

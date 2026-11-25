@@ -10,6 +10,7 @@ publish = false
 default = ["native-dialogs", "accessibility"]
 accessibility = ["rune/accessibility"]
 native-dialogs = ["rune/native-file-dialog"]
+static-hdf5 = ["hdf5/static", "hdf5/zlib"]
 
 [dependencies]
 rune = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16", default-features = false, features = ["embedded-fonts", "tooling", "metal-backend"] }

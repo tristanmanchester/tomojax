@@ -80,7 +80,30 @@ def test_missing_native_application_explains_the_build_step(native, monkeypatch,
     (native.parent / "tomojax-studio").unlink()
     monkeypatch.setenv("PATH", str(native.parent))
     assert main(["studio"]) == 1
-    assert "tomojax studio --build" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "tomojax-studio" in err and "tomojax studio --build" in err
+
+
+def test_installed_binary_beside_python_launches_without_path(native, tmp_path, monkeypatch):
+    (native.parent / "tomojax-studio").unlink()
+    venv_bin = tmp_path / "venv/bin"
+    venv_bin.mkdir(parents=True)
+    fake_python = venv_bin / "python"
+    fake_python.write_text("")
+    installed = venv_bin / "tomojax-studio"
+    installed.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os\n"
+        "from pathlib import Path\n"
+        "Path(os.environ['STUDIO_LAUNCH_RECORD']).write_text(json.dumps({\n"
+        "    'python': os.environ.get('TOMOJAX_STUDIO_PYTHON')\n"
+        "}))\n"
+    )
+    installed.chmod(0o755)
+    monkeypatch.setattr(sys, "executable", str(fake_python))
+    monkeypatch.setenv("PATH", "")
+    assert main(["studio"]) == 0
+    assert json.loads(native.read_text()) == {"python": str(fake_python)}
 
 
 def test_build_failure_stops_before_launch_and_uses_the_locked_manifest(native, monkeypatch):
