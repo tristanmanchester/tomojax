@@ -65,8 +65,8 @@ def test_step_records_the_raw_pose_proposal_before_line_search_scaling(monkeypat
     )
     result = level.step(image, state, linear, 0.001, 0.0, 100.0)
     assert result is not None
-    assert result[4] == pytest.approx(a * beta * 5.0)
-    assert result[-1]["proposed_pose_step_rms"] == pytest.approx(5.0)
+    assert result.pose_step_rms == pytest.approx(a * beta * 5.0)
+    assert result.proposed_rms == pytest.approx(5.0)
 
 
 @pytest.mark.parametrize(
@@ -128,16 +128,17 @@ def test_stopping_requires_two_small_proposals_at_the_initial_damping(
         def step(self, image, state, _linear, lm, _weight, objective):
             # Image improvement stays large, while the line search holds all poses.
             # Neither quantity determines whether the geometry has converged.
-            return (
-                1.0,
-                0.0,
-                (objective / 2, image, state),
-                objective / 2,
-                0.0,
-                lm if forced_damping is None else forced_damping,
-                1,
-                0.0,
-                {"proposed_pose_step_rms": next(remaining)},
+            return _solver._AcceptedStep(
+                line_step=1.0,
+                pose_fraction=0.0,
+                trial=(objective / 2, image, state),
+                predicted=objective / 2,
+                pose_step_rms=0.0,
+                lm=lm if forced_damping is None else forced_damping,
+                cg_steps=1,
+                cg_residual=0.0,
+                proposed_rms=next(remaining),
+                linear_record={},
             )
 
     ops = SimpleNamespace(
