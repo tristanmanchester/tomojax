@@ -1625,46 +1625,79 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
 }
 
 #[test]
-fn activity_closes_after_the_work_it_opened_for_succeeds_and_stays_on_a_failure() {
+fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state
         .open_project(&directory.path().join("project"), true)
         .unwrap();
-    let finish = |state: &mut AppState, status: JobStatus| {
+    // Queues a job, opens Activity for it, then ends the job with `status`.
+    let run = |state: &mut AppState, status: JobStatus, close_early: bool| {
         let job = project::Job::new("simulate", serde_json::json!({}), vec![]);
         let id = job.id.clone();
         state.project.as_mut().unwrap().document.jobs.push(job);
-        state.ui.jobs_open = false;
         state.open_activity(vec![id.clone()]);
         state.refresh_model();
         assert!(
             state.ui.jobs_open,
             "Activity stays open while its job is queued"
         );
-        let project = state.project.as_mut().unwrap();
-        project
+        if close_early {
+            state.ui.close_activity();
+        }
+        let job = state
+            .project
+            .as_mut()
+            .unwrap()
             .document
             .jobs
             .iter_mut()
             .find(|job| job.id == id)
-            .unwrap()
-            .status = status;
+            .unwrap();
+        job.status = status;
+        if status == JobStatus::Failed {
+            job.error = Some("Reconstruction ran out of GPU memory.".into());
+        }
         state.refresh_model();
-        state.ui.jobs_open
+        id
     };
+    let rendered = |state: AppState| {
+        let mut runtime = rune::Runtime::new(
+            state,
+            crate::ui::view,
+            (1440., 900.),
+            rune::Env::new(false, 1.),
+        );
+        runtime.frame(0.);
+        runtime.frame(1. / 60.);
+        runtime.elements()
+    };
+
+    run(&mut state, JobStatus::Completed, false);
+    assert!(!state.ui.jobs_open, "closes once its job succeeds");
+
+    let failed = run(&mut state, JobStatus::Failed, false);
+    assert!(state.ui.jobs_open, "a failure keeps Activity open");
+    let elements = rendered(state);
     assert!(
-        !finish(&mut state, JobStatus::Completed),
-        "closes once its job succeeds"
+        elements
+            .iter()
+            .any(|element| element.key.as_deref() == Some(&format!("job-{failed}"))),
+        "the failed job is listed"
     );
     assert!(
-        finish(&mut state, JobStatus::Failed),
-        "a failure stays visible"
+        elements.iter().any(|element| element.text.as_deref()
+            == Some("Reconstruction ran out of GPU memory.")),
+        "its error is shown"
     );
-    assert!(
-        state.ui.activity_for.is_empty(),
-        "the user now controls Activity"
-    );
+
+    // Closing Activity hands it to the user: a later failure leaves it closed.
+    let mut state = AppState::init();
+    state
+        .open_project(&directory.path().join("project"), false)
+        .unwrap();
+    run(&mut state, JobStatus::Failed, true);
+    assert!(!state.ui.jobs_open, "stays closed after the user closed it");
 
     // Activity the user opened is theirs: new work never closes it.
     state.ui.jobs_open = true;
@@ -1702,6 +1735,27 @@ fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
 }
 
 #[test]
+fn applying_the_window_the_fields_show_keeps_it_exact() {
+    let exact = [-0.020069934_f32, 0.9726638];
+    let mut state = AppState::init();
+    state.applied_window = Some(exact);
+    state.prefill_window();
+    assert_eq!(state.ui.display.window_low.text, "-0.0201");
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::ui::view,
+        (1440., 900.),
+        rune::Env::new(false, 1.),
+    );
+    runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
+    assert_eq!(runtime.state.applied_window, Some(exact));
+    // An edited field applies what was typed.
+    runtime.state.ui.display.window_high.replace_text("0.5");
+    runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
+    assert_eq!(runtime.state.applied_window, Some([-0.0201, 0.5]));
+}
+
+#[test]
 fn a_new_project_lives_in_the_folder_the_save_dialog_names() {
     let directory = tempfile::tempdir().unwrap();
     // A folder named like the manifest is still the new project's own folder.
@@ -1717,4 +1771,17 @@ fn a_new_project_lives_in_the_folder_the_save_dialog_names() {
         !directory.path().join(".tomojax.lock").exists(),
         "the parent is untouched"
     );
+
+    drop(state);
+    // It reopens as itself, and so does its manifest file.
+    for path in [named.clone(), named.join(project::MANIFEST)] {
+        let mut state = AppState::init();
+        state.open_project(&path, false).unwrap();
+        assert_eq!(
+            state.project.as_ref().unwrap().root,
+            std::fs::canonicalize(&named).unwrap(),
+            "{}",
+            path.display()
+        );
+    }
 }

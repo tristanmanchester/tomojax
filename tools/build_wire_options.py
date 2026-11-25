@@ -196,8 +196,9 @@ def inherit_align_config(definitions: dict[str, Any]) -> None:
             for key in ("description", "x-unit", "x-choices"):
                 if key in field:
                     align[name][key] = field[key]
-            # A null setting takes the configuration's value; publish it for form placeholders.
-            if align[name].get("default") is None and field.get("default") is not None:
+            # A null setting takes the configuration's value, so a form can show it and
+            # follow a `config` that changes it. Null marks a configuration default of None.
+            if align[name].get("default") is None and "default" in field:
                 align[name]["x-default"] = field["default"]
 
 

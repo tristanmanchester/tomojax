@@ -49,8 +49,7 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         if state.ui.jobs_open {
-            state.ui.jobs_open = false;
-            state.ui.activity_for.clear();
+            state.ui.close_activity();
             return true;
         }
         return false;

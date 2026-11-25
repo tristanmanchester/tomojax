@@ -115,8 +115,9 @@ pub struct UiState {
     pub tree_open: bool,
     pub inspector_open: bool,
     pub jobs_open: bool,
-    /// The jobs Activity opened itself for: it closes when they end unless one failed.
-    /// Empty while the user controls Activity.
+    /// The jobs Activity opened itself for. It closes when they all succeed; a failed one
+    /// stays listed with its error until the user closes Activity. Empty while the user
+    /// controls Activity.
     pub activity_for: Vec<String>,
     pub palette_open: bool,
     pub shortcuts_open: bool,
@@ -502,7 +503,8 @@ pub struct ParameterView {
     pub choices: Vec<Choice>,
     /// Shown in an empty field: what the worker uses when the field is left blank.
     pub placeholder: String,
-    /// The configuration value a blank field takes, when the schema states it (`x-default`).
+    /// The configuration value a blank field takes, when the schema states it (`x-default`;
+    /// null when the configuration's own default is None).
     /// The form's own `config` overrides it; see [`crate::forms::default_label`].
     pub inherited: Option<serde_json::Value>,
 }
@@ -521,6 +523,14 @@ pub struct Choice {
     pub value: String,
     pub label: String,
 }
+impl UiState {
+    /// Close Activity as the user's choice: work Activity opened for no longer reopens it.
+    pub fn close_activity(&mut self) {
+        self.jobs_open = false;
+        self.activity_for.clear();
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CommandView {
     pub id: String,

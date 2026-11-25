@@ -182,26 +182,38 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         beams = [getattr(segment, "beam", None) for segment in base.segments]
         if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
             return "cgls", "CGLS fits the cone-beam segments jointly.", None
-    elif type(scan.geometry) is ParallelGeometry:
-        angles = np.unique(np.mod(np.asarray(scan.angles, np.float64), 180.0))
-        gaps = np.diff(np.r_[angles, angles[0] + 180])
-        if len(angles) >= 16 and np.max(gaps) <= max(22.5, 2 * float(np.median(gaps))):
-            return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
-        return (
-            "fbp",
-            "FBP, because the views leave gaps in the half turn that Fourier inversion needs.",
-            "Expect streaks along the unmeasured directions; method='fista' fills them from "
-            "nonnegativity and regularization.",
-        )
     elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
         return (
             "fbp",
             "FBP follows the tilted rotation axis.",
-            "Use method='fista' to estimate missing frequencies from nonnegativity and "
-            "regularization.",
+            "Use method='fista' with nonnegative=True to estimate the frequencies no view "
+            "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        reason = "FBP uses the scan's per-view geometry."
+        # Parallel rays, as declared or with per-view poses.
+        angles = np.unique(np.mod(scan.angles, 180.0))
+        gaps = np.diff(np.r_[angles, angles[0] + 180])
+        recommendation = None
+        if np.max(gaps) > max(22.5, 2 * float(np.median(gaps))):
+            recommendation = (
+                "The views leave gaps in the half turn: expect streaks along the unmeasured "
+                "directions. method='fista' with nonnegative=True fills them from "
+                "nonnegativity and regularization."
+            )
+        elif len(angles) < 16:
+            recommendation = (
+                "Fewer than 16 views: expect streaks. method='fista' with nonnegative=True "
+                "reduces them through nonnegativity and regularization."
+            )
+        if type(scan.geometry) is not ParallelGeometry:
+            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+        if recommendation is None:
+            return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
+        return (
+            "fbp",
+            "FBP, because Fourier inversion needs at least 16 views spread over the half turn.",
+            recommendation,
+        )
     return "fbp", reason, None
 
 

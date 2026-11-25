@@ -238,7 +238,7 @@ def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
 def test_automatic_reconstruction_of_a_posed_parallel_scan_is_ordinary(tmp_path, capsys):
     from tomojax.cli.main import main
 
-    sim = tj.simulate("sphere", size=8, n_views=8, translation_sigma=0.5)
+    sim = tj.simulate("sphere", size=8, n_views=16, translation_sigma=0.5)
     scan = sim.scan.with_poses(sim.true_poses)
     expected = tj.reconstruct(scan, "fbp")
     path, out = tmp_path / "posed.nxs", tmp_path / "recon.nxs"
@@ -252,10 +252,16 @@ def test_automatic_reconstruction_of_a_posed_parallel_scan_is_ordinary(tmp_path,
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-6, atol=1e-6)
 
 
-def test_automatic_reconstruction_flags_views_that_leave_the_half_turn_incomplete():
-    # A third of a half turn is missing: FBP is chosen and the scan is reported as limited.
-    sim = tj.simulate("sphere", size=8, n_views=16, rotation=120.0)
-    actual = tj.reconstruct(sim.scan)
+@pytest.mark.parametrize("posed", [False, True])
+@pytest.mark.parametrize(("n_views", "rotation"), [(16, 120.0), (8, 180.0)])
+def test_automatic_reconstruction_flags_incomplete_or_sparse_views(posed, n_views, rotation):
+    # A third of the half turn missing, or 8 views over it: FBP, reported as limited.
+    sim = tj.simulate("sphere", size=8, n_views=n_views, rotation=rotation)
+    scan = sim.scan.with_poses(np.zeros((n_views, 6))) if posed else sim.scan
+    actual = tj.reconstruct(scan)
     assert actual.method == "fbp"
     assert actual.info["automatic"]["status"] == "limited"
-    assert any("method='fista'" in reason for reason in actual.info["automatic"]["reasons"])
+    assert any(
+        "method='fista' with nonnegative=True" in reason
+        for reason in actual.info["automatic"]["reasons"]
+    )

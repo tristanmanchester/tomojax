@@ -207,10 +207,9 @@ impl AppState {
         state.set_operation("reconstruct", None);
         state.model.error = preference_error;
         if let Some(path) = state.startup_input.clone()
-            && (path.join(project::MANIFEST).is_file()
-                || path
-                    .file_name()
-                    .is_some_and(|name| name == project::MANIFEST))
+            && project::folder(&path, false)
+                .join(project::MANIFEST)
+                .is_file()
         {
             // A project is opened, never imported, even when it can't be opened
             // (another window holds it).
@@ -639,15 +638,13 @@ impl AppState {
         {
             return Err("Finish or cancel active work before switching projects".into());
         }
-        if let Some(current) = &self.project {
-            let candidate = if !create && path.file_name().is_some_and(|n| n == project::MANIFEST) {
-                path.parent().unwrap_or(path)
-            } else {
-                path
-            };
-            if std::fs::canonicalize(candidate).ok().as_ref() == Some(&current.root) {
-                return Ok(());
-            }
+        if let Some(current) = &self.project
+            && std::fs::canonicalize(project::folder(path, create))
+                .ok()
+                .as_ref()
+                == Some(&current.root)
+        {
+            return Ok(());
         }
         // Save the current project, including its latest workspace, before leaving
         // it; a project that cannot be saved stays open.

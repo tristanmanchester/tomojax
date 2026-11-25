@@ -187,8 +187,11 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         bar = bar
             .child(
                 quiet_button("toggle-jobs", &title, state.ui.jobs_open, |s, _| {
-                    s.ui.activity_for.clear();
-                    s.ui.jobs_open = !s.ui.jobs_open
+                    if s.ui.jobs_open {
+                        s.ui.close_activity();
+                    } else {
+                        s.ui.jobs_open = true;
+                    }
                 })
                 .label("Activity"),
             )

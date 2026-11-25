@@ -1394,7 +1394,8 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        if !self.ui.activity_for.is_empty()
+        if self.ui.jobs_open
+            && !self.ui.activity_for.is_empty()
             && let Some(project) = &self.project
         {
             let opened_for = || {
@@ -1404,11 +1405,11 @@ impl AppState {
                     .iter()
                     .filter(|job| self.ui.activity_for.contains(&job.id))
             };
-            if opened_for().all(|job| !job.status.active()) {
-                // A failure stays on screen until the user has read it and closes Activity.
-                let failed = opened_for().any(|job| job.status == project::JobStatus::Failed);
-                self.ui.activity_for.clear();
-                self.ui.jobs_open = failed;
+            // A failure stays listed, with its error, until the user closes Activity.
+            if opened_for().all(|job| !job.status.active())
+                && !opened_for().any(|job| job.status == project::JobStatus::Failed)
+            {
+                self.ui.close_activity();
             }
         }
         self.model.commands = crate::preferences::COMMANDS

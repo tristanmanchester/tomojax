@@ -28,6 +28,19 @@ pub fn manifest_name(root: &Path) -> Option<String> {
 }
 
 pub const MANIFEST: &str = "project.tomojax.json";
+
+/// The project folder `path` names. Opening accepts the manifest file as well as its
+/// folder; a new project's path is always its folder, whatever it is called.
+pub fn folder(path: &Path, create: bool) -> &Path {
+    match path.parent() {
+        Some(parent)
+            if !create && path.is_file() && path.file_name().is_some_and(|n| n == MANIFEST) =>
+        {
+            parent
+        }
+        _ => path,
+    }
+}
 const LOCK: &str = ".tomojax.lock";
 const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
 
@@ -513,12 +526,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 impl Project {
     pub fn open(path: &Path, create: bool) -> Result<Self, String> {
-        // Opening accepts the manifest itself; a new project's path is always its folder.
-        let path = if !create && path.file_name().is_some_and(|name| name == MANIFEST) {
-            path.parent().unwrap_or(path)
-        } else {
-            path
-        };
+        let path = folder(path, create);
         if create {
             fs::create_dir_all(path).map_err(|e| e.to_string())?;
         }

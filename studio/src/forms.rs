@@ -244,7 +244,7 @@ pub fn initialise(
         let structured =
             !matches!(data_type, "integer" | "number" | "string" | "boolean") && choices.is_empty();
         // The configuration value a null setting takes, when the schema states it.
-        let effective_default = p.schema.get("x-default").filter(|v| !v.is_null()).cloned();
+        let effective_default = p.schema.get("x-default").cloned();
         views.push(ParameterView {
             name: p.name.clone(),
             label: label(&p.name),
@@ -613,9 +613,9 @@ mod tests {
         // The form's own configuration wins over the schema's stated default.
         ui.parameter_edits.insert(
             "config".into(),
-            TextEdit::new(r#"{"iterations": 21, "motion": "smooth"}"#),
+            TextEdit::new(r#"{"iterations": 21, "motion": "smooth", "interpolation": "cubic"}"#),
         );
-        assert_eq!(shown(&ui), ["21", "Default (Smooth)", "Default"]);
+        assert_eq!(shown(&ui), ["21", "Default (Smooth)", "Default (Cubic)"]);
         ui.parameter_edits
             .insert("config".into(), TextEdit::new(r#"{"iterations":"#));
         assert_eq!(shown(&ui), ["Default", "Default", "Default"]);
