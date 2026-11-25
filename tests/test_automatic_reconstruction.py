@@ -35,7 +35,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     actual = tj.reconstruct(scan)
     np.testing.assert_array_equal(actual.volume, expected.volume)
     assert actual.scan is scan and actual.method == expected.method
-    limited = bool(raw) or not complete
+    limited = bool(raw)
     assert actual.info["automatic"]["status"] == ("limited" if limited else "ok")
     assert bool(actual.info["automatic"]["reasons"]) == limited
     if raw:
@@ -109,8 +109,8 @@ def test_automatic_segmented_cone_preserves_calibration():
     actual = tj.reconstruct(scan)
     np.testing.assert_allclose(actual.volume, expected.volume, rtol=2e-6, atol=1e-7)
     assert actual.scan is scan and actual.method == "cgls"
-    assert actual.info["automatic"]["status"] == "limited"
-    assert "Segmented cone" in actual.info["automatic"]["reasons"][0]
+    assert actual.info["automatic"]["status"] == "ok"
+    assert actual.info["automatic"]["reasons"] == []
 
 
 def _phantom(n=16):
@@ -233,3 +233,20 @@ def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
     )
     blank = tj.Scan(np.zeros((len(_ANGLES), 24, 24), np.float32), two)
     assert tj.reconstruct(blank).method == "cgls"
+
+
+def test_automatic_reconstruction_of_a_posed_parallel_scan_is_ordinary(tmp_path, capsys):
+    from tomojax.cli.main import main
+
+    sim = tj.simulate("sphere", size=8, n_views=8, translation_sigma=0.5)
+    scan = sim.scan.with_poses(sim.true_poses)
+    expected = tj.reconstruct(scan, "fbp")
+    path, out = tmp_path / "posed.nxs", tmp_path / "recon.nxs"
+    tj.save(path, scan)
+    assert main(["reconstruct", str(path), "-o", str(out), "--dry-run"]) == 0
+    assert "FBP uses the scan's per-view geometry." in capsys.readouterr().out
+    assert main(["reconstruct", str(path), "-o", str(out), "--progress", "none"]) == 0
+    assert "Automatic workflow is limited" not in capsys.readouterr().err
+    actual = tj.load_reconstruction(out)
+    assert actual.info["automatic"]["status"] == "ok"
+    np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-6, atol=1e-6)

@@ -177,6 +177,12 @@ def load_geometry_metadata(
     )
     if meta_dict is None:
         return
+    if (poses := child_dataset(geom, "simulation_true_poses")) is not None:
+        info = meta_dict.get("simulation_info")
+        simulation = info.get("simulation") if isinstance(info, dict) else None
+        if not isinstance(simulation, dict):
+            raise ValueError(f"{path}: simulation poses require simulation metadata")
+        simulation["true_poses"] = np.asarray(poses).tolist()
     out["geometry_meta"] = meta_dict
     for key, val in meta_dict.items():
         out.setdefault(key, val)

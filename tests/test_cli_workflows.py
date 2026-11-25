@@ -527,6 +527,7 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
     out_path = tmp_path / "synthetic.nxs"
     captured: dict[str, object] = {}
 
+    import tomojax as tj
     from tomojax import datasets
 
     simulate = datasets.simulate
@@ -560,6 +561,8 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
                 "8",
                 "--phantom",
                 "sphere",
+                "--translation-sigma",
+                "0.25",
             ]
         )
         == 0
@@ -570,6 +573,9 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
     loaded = load_dataset(out_path)
     assert loaded.projections.shape == (8, 2, 2)
     assert loaded.volume is not None
+    sim = tj.load_simulation(out_path)
+    assert sim.scan.poses is None
+    assert sim.true_poses is not None and np.any(sim.true_poses)
 
 
 @pytest.mark.parametrize("layout", ["nxtomo", "exchange", "gda"])
@@ -920,9 +926,46 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
         )
         == 0
     )
+    assert "Shared corrections  center" in capsys.readouterr().out
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "opposite-views"
     assert "explicit_cli_keys" in resolved and "effective_options" in resolved
+
+
+def test_align_cli_prints_fitted_motion_and_stop_reason(tmp_path, capsys):
+    import tomojax as tj
+
+    path, out = tmp_path / "motion.nxs", tmp_path / "aligned.nxs"
+    sim = tj.simulate("shepp", size=12, n_views=20, translation_sigma=0.3)
+    tj.save(path, sim)
+    assert (
+        main(
+            [
+                "align",
+                str(path),
+                "-o",
+                str(out),
+                "--fit",
+                "translations",
+                "rotations",
+                "--iterations",
+                "1",
+                "--progress",
+                "none",
+            ]
+        )
+        == 0
+    )
+    summary, warning = capsys.readouterr()
+    assert "weakly determined" in warning
+    assert "relying on them. Review" in warning
+    assert "https://tomojax.dev/align-a-scan/#check-the-result" in warning
+    report = tj.load_alignment(out).info["report"]
+    dx = report["poses"]["x"]
+    assert "Per-view shifts (RMS/max, native px)" in summary
+    assert f"x {dx['rms']:.3g}/{dx['max']:.3g}" in summary
+    assert "Per-view rotations (RMS/max, deg)" in summary
+    assert "Stopped  level 1" in summary and "step limit reached (1 step)" in summary
 
 
 def test_export_cli_validates_flags_cleans_stale_tiffs_and_fails_without_volume(

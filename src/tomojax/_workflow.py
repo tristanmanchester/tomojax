@@ -165,7 +165,7 @@ def load_simulation(path: str | PathLike[str]) -> Simulation:
     Returns
     -------
     Simulation
-        The simulated scan and its ground-truth phantom, ``(nz, ny, nx)``.
+        The simulated scan, ground-truth phantom ``(nz, ny, nx)``, and any true poses.
 
     Raises
     ------
@@ -479,7 +479,7 @@ def reconstruct(
     ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
     scans, matched CGLS for segmented cone geometry, and FBP/FDK otherwise,
     laminography and tilted-axis scans included: for those, ``fista`` gives a
-    better image at the cost of its iterations (docs/measurements.md). It
+    better image at the cost of its iterations (https://tomojax.dev/measurements/). It
     reconstructs with the geometry and poses the scan carries, on its grid or
     the ``grid`` given; it fits no poses (use :func:`align`).
     It estimates nothing: a centre comes from the file or from :func:`align`.

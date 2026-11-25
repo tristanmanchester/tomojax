@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Synthetic scans support random per-view translations with saved ground-truth poses.
+The alignment CLI reports fitted correction sizes and stopping reasons. Automatic
+reconstruction uses FBP for posed parallel scans without a warning.
+
 ## 1.0.0rc4 (2026-11-25)
 
 Fixes the PEP 639 `License-File` metadata path in the `tomojax-studio` wheel

@@ -6,6 +6,7 @@ from dataclasses import MISSING, fields
 import inspect
 import json
 from pathlib import Path
+import re
 from types import NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
@@ -204,12 +205,20 @@ def describe_models(definitions: dict[str, Any]) -> None:
     """Describe the fields from their numerical constructor and unit metadata."""
     for cls in option_types():
         document = definitions[cls.__name__]
-        document["description"] = " ".join(NumpyDocString(inspect.getdoc(cls))["Summary"])
+        document["description"] = plain_text(
+            " ".join(NumpyDocString(inspect.getdoc(cls))["Summary"])
+        )
         metadata = {f.name: f.metadata for f in fields(cls) if f.init}
         for name, field in parameters(cls).items():
             document["properties"][name].update(field)
             if "unit" in metadata[name]:
                 document["properties"][name]["x-unit"] = metadata[name]["unit"]
+
+
+def plain_text(text: str) -> str:
+    """Remove inline reStructuredText markup from form help."""
+    text = re.sub(r":[\w:-]+:`(?:([^<`]+?)\s*<[^>`]+>|~?([^`]+))`", r"\1\2", text)
+    return text.replace("``", "")
 
 
 def parameters(owner: Callable[..., Any]) -> dict[str, dict[str, Any]]:
@@ -227,7 +236,7 @@ def parameters(owner: Callable[..., Any]) -> dict[str, dict[str, Any]]:
         if name in ("self", "cls"):
             continue
         annotation = hints[name]
-        field: dict[str, Any] = {"description": help_text[name]}
+        field: dict[str, Any] = {"description": plain_text(help_text[name])}
         if get_origin(annotation) is Annotated:
             annotation, unit = get_args(annotation)
             field["x-unit"] = unit

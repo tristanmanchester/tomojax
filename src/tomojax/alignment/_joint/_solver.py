@@ -616,7 +616,7 @@ class _Level:
         """Hold an accepted step's volume as the level's, and the previous one beside it."""
         self.stacks.update([("x", x), ("other", previous)])
 
-    @progress.task("linearize", "linearize", None, "")
+    @progress.task("linearize", "Measure image and pose changes", None, "")
     def linearize(
         self, c: jax.Array, x: jax.Array
     ) -> tuple[
@@ -763,7 +763,7 @@ class _Level:
         dc = -poses(prior.solve, factor, common, k.gp + jadx)
         return _Proposal(dx, dc, r, jadx, bdx, linear_step)
 
-    @progress.task("solve", "undamped diagnostic", None, "")
+    @progress.task("solve", "Check convergence", None, "")
     def proposal(
         self, x: jax.Array, c: jax.Array, linear: _Linearization, lm: float, pose_weight: PoseWeight
     ) -> float | None:
@@ -793,7 +793,7 @@ class _Level:
             # A refused proposal's step and trials end with the attempt, before the next
             # Schur solve: kept, they were the level's peak (13 volumes on K11 54013).
             with (
-                progress.task("retry", f"damping retry {attempt}", None, "")
+                progress.task("retry", f"Retry update {attempt}", None, "")
                 if attempt
                 else nullcontext()
             ):
@@ -814,7 +814,7 @@ class _Level:
     ) -> _AcceptedStep | None:
         """One proposal at damping lm and its line search: the accepted step's record, or None."""
         prior, common = self.prior, k.common
-        with progress.task("solve", "schur solve", None, ""):
+        with progress.task("solve", "Solve image and pose update", None, ""):
             proposed = self._propose(x, k, lm)
         if proposed is None:
             return None
@@ -826,7 +826,7 @@ class _Level:
         if gx_dx + gp_dc < 0:
             held = (k.residual, r, k.sw, common.moments, bdx)
             trial = partial(self.trial, x, c, dx, dc, pose_weight, held)
-            with progress.task("line_search", "line search", None, ""):
+            with progress.task("line_search", "Test update size", None, ""):
                 accepted = _line_search(trial, f, gx_dx, gp_dc)
         if accepted:
             a, beta, new = accepted
@@ -1005,7 +1005,7 @@ def _descend(
     # A zero-step level still measures its initial objective and motion prior.
     for it in range(max(1, budget.iterations)):
         with (
-            progress.task("step", f"step {it + 1}", None, "")
+            progress.task("step", f"Gauss-Newton step {it + 1}", None, "")
             if budget.iterations
             else nullcontext()
         ):

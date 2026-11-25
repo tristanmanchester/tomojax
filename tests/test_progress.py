@@ -583,11 +583,12 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
     for task, level in zip(roots[:2], result.info["levels"], strict=True):
         steps = [e for e in started if e.name == "step" and e.parent == task.task]
         assert len(steps) >= len(level["steps"])
-        for step in steps:
+        for i, step in enumerate(steps, start=1):
+            assert step.label == f"Gauss-Newton step {i}"
             children = [e.name for e in started if e.parent == step.task]
             assert children[0] == "linearize" and "solve" in children
         updates = [e for e in events if isinstance(e, progress.Advanced) and e.task == task.task]
-        assert task.label == f"binning {level['binning']}"
+        assert task.label == f"resolution 1/{level['binning']}"
         assert updates
         assert [e.done for e in updates] == list(range(1, len(level["steps"]) + 1))
         assert all("undamped_proposed_pose_step_rms" in e.metrics for e in updates)

@@ -311,6 +311,51 @@ def _dry_run_plan(
     return document
 
 
+_STOP_LABELS = {
+    "step_budget_reached": "step limit reached",
+    "line_search_stalled": "no acceptable update",
+    "pose_steps_below_tolerance": "pose updates below tolerance",
+    "stationary": "stationary poses",
+}
+
+
+def _fit_summary(result: Alignment) -> list[str]:
+    """Format fitted corrections and stopping reasons for terminal output."""
+    report = result.info.get("report")
+    report = report if isinstance(report, dict) else {}
+    poses = report.get("poses", {})
+    lines = []
+    for unit, title in (("native px", "Per-view shifts"), ("deg", "Per-view rotations")):
+        stats = [
+            f"{axis} {values['rms']:.3g}/{values['max']:.3g}"
+            for axis, values in poses.items()
+            if values["unit"] == unit
+        ]
+        if stats:
+            lines.append(f"{title} (RMS/max, {unit})  {', '.join(stats)}")
+    calibration = result.info.get("calibration", {})
+    if isinstance(calibration, dict) and calibration:
+        changes = []
+        for axis, change in calibration.items():
+            values = np.atleast_1d(change["change"])
+            size = ", ".join(f"{value:.3g}" for value in values)
+            unit = "native px" if axis == "center" else "deg"
+            changes.append(f"{axis} {size} {unit}")
+        lines.append(f"Shared corrections  {', '.join(changes)}")
+    levels = report.get("levels", [])
+    stages = []
+    for i, level in enumerate(levels, start=1):
+        n = level["iterations"]
+        count = "1 step" if n == 1 else f"{n} steps"
+        stages.append(f"level {i} {_STOP_LABELS[level['ended']]} ({count})")
+    refinement = report.get("refinement")
+    if refinement in _STOP_LABELS:
+        stages.append(f"refinement {_STOP_LABELS[refinement]}")
+    if stages:
+        lines.append(f"Stopped  {', '.join(stages)}")
+    return lines
+
+
 def main() -> int:
     """Run ``tomojax align``."""
     parser = build_parser()
@@ -369,7 +414,9 @@ def _run(
 
         outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
         return saved_result(args.out, result, method=args.method, outputs=outputs)
-    print(f"wrote {args.out}: {', '.join(fit)} fit, {len(scan.angles)} views")
+    print(f"wrote {args.out} with fitted {', '.join(fit)} for {len(scan.angles)} views")
+    for line in _fit_summary(result):
+        print(line)
     return None
 
 

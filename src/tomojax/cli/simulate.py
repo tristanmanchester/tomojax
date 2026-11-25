@@ -34,6 +34,7 @@ _PUBLIC = (
     "--source-to-axis",
     "--source-to-detector",
     "--poisson-scale",
+    "--translation-sigma",
     "--seed",
 )
 
@@ -114,6 +115,13 @@ def _build_parser() -> ProgressParser:
         help="Add Poisson noise, drawing counts of value x SCALE (higher is quieter)",
     )
     _ = parser.add_argument(
+        "--translation-sigma",
+        type=float,
+        default=0.0,
+        metavar="DIST",
+        help="Standard deviation per axis of random object shifts (voxel pitches)",
+    )
+    _ = parser.add_argument(
         "--grid",
         type=int,
         nargs=3,
@@ -130,7 +138,7 @@ def _build_parser() -> ProgressParser:
         help="Unit-spaced centred detector shape (pixel pitch 1; default from --size)",
     )
     _ = parser.add_argument(
-        "--seed", type=int, default=0, metavar="N", help="Random seed (phantom and noise)"
+        "--seed", type=int, default=0, metavar="N", help="Random seed (phantom, motion and noise)"
     )
     _ = parser.add_argument(
         "--transfer-guard",
@@ -238,6 +246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_to_axis=cast("float | None", args.source_to_axis),
                 source_to_detector=cast("float | None", args.source_to_detector),
                 poisson_scale=cast("float", args.poisson_scale),
+                translation_sigma=args.translation_sigma,
                 artefacts=artefacts,
                 grid=grid,
                 detector=detector,

@@ -17,7 +17,7 @@ The subpackages (``tomojax.recon``, ``tomojax.alignment``, ``tomojax.geometry``,
 ``tomojax.io``) hold the building blocks these use. Names load on first use,
 so ``import tomojax`` does not import JAX. Importing sets growing GPU allocation
 defaults for future JAX backends; explicit allocator environment settings are
-preserved. See ``docs/large-scans.md`` for process-wide memory configuration.
+preserved. See https://tomojax.dev/large-scans/ for process-wide memory configuration.
 """
 
 from __future__ import annotations

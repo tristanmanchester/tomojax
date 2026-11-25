@@ -161,6 +161,7 @@ class tomojax.Scan(
     .to_astra(self) -> 'tuple[np.ndarray, dict[str, Any], dict[str, Any]]'
     .with_poses(self, poses: 'np.ndarray | None') -> 'Scan'
 class tomojax.Simulation(scan: ForwardRef('Scan'), phantom: ForwardRef('np.ndarray'))
+    .true_poses
 tomojax.__version__: str
 def tomojax.align(
         scan: 'Scan',
@@ -281,6 +282,7 @@ def tomojax.simulate(
         source_to_axis: "Annotated[float | None, 'geometry_length']" = None,
         source_to_detector: "Annotated[float | None, 'geometry_length']" = None,
         poisson_scale: "Annotated[float, 'counts_per_line_integral']" = 0.0,
+        translation_sigma: "Annotated[float, 'geometry_length']" = 0.0,
         artefacts: 'datasets.SimulationArtefacts | None' = None,
         grid: 'Grid | None' = None,
         detector: 'Detector | None' = None,
@@ -1036,6 +1038,7 @@ class tomojax.datasets.SimConfig(
         artefacts: 'SimulationArtefacts | None' = None,
         seed: 'int' = 0,
         lamino_thickness_ratio: 'float' = 0.2,
+        translation_sigma: 'float' = 0.0,
     ) -> None
 class tomojax.datasets.SimulatedData
 class tomojax.datasets.SimulationArtefacts(
