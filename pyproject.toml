@@ -189,8 +189,6 @@ ban-relative-imports = "parents"
 "{tools,bench}/**" = ["T20"]
 "src/tomojax/cli/**" = ["T20"]
 "src/tomojax/**/_*.py" = [
-    "ANN001",
-    "ANN202",
     "D100",
     "D101",
     "D102",
