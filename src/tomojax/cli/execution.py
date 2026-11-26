@@ -63,6 +63,64 @@ class RegisteredArray:
     metadata: Array
 
 
+@dataclass(frozen=True)
+class Feature:
+    """A named boolean mask on the grid of the array it was made on.
+
+    Only the mask's bounding box is stored: ``inside`` holds the mask over ``box``,
+    one slice per axis of ``registration.shape``, and every voxel outside ``box`` is
+    outside the feature. ``registration`` holds the grid's axes and unit, so the
+    mask applies unchanged to any other array on the same grid. Index it like an
+    array to read a window; ``mask`` builds the whole array (one byte per voxel).
+    """
+
+    name: str
+    inside: np.ndarray
+    box: tuple[slice, ...]
+    registration: Array
+    recipe: dict[str, Any]
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """The grid's shape."""
+        return tuple(self.registration.shape)
+
+    @property
+    def ndim(self) -> int:
+        """The grid's number of axes."""
+        return len(self.shape)
+
+    @property
+    def dtype(self) -> np.dtype:
+        """Masks are boolean."""
+        return np.dtype(bool)
+
+    @property
+    def mask(self) -> np.ndarray:
+        """The whole mask on the grid."""
+        whole = np.zeros(self.shape, dtype=bool)
+        whole[self.box] = self.inside
+        return whole
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """The whole mask, for NumPy functions."""
+        return self.mask if dtype is None else self.mask.astype(dtype)
+
+    def __getitem__(self, key: int | slice | tuple[int | slice, ...]) -> np.ndarray:
+        """Read a window of the mask, building only that window."""
+        key = key if isinstance(key, tuple) else (key,)
+        key += (slice(None),) * (self.ndim - len(key))
+        picked = [np.atleast_1d(np.arange(n)[k]) for n, k in zip(self.shape, key, strict=True)]
+        out = np.zeros([len(i) for i in picked], dtype=bool)
+        within = [(i >= b.start) & (i < b.stop) for i, b in zip(picked, self.box, strict=True)]
+        if all(w.any() for w in within):
+            source = [i[w] - b.start for i, w, b in zip(picked, within, self.box, strict=True)]
+            out[np.ix_(*within)] = self.inside[np.ix_(*source)]
+        return out.reshape(
+            [len(i) for i, k in zip(picked, key, strict=True) if isinstance(k, slice)]
+        )
+
+
 type HandleValue = (
     tj.Scan
     | tj.Frames
@@ -70,6 +128,7 @@ type HandleValue = (
     | tj.Alignment
     | tj.Simulation
     | tj.RegionEstimate
+    | Feature
     | RegisteredArray
 )
 

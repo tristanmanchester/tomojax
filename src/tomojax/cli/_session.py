@@ -183,7 +183,9 @@ class Session:
                     artifact.resource.pin(pins)
                     metadata = artifact.metadata
                     leases[ref] = ex.Lease(ref, artifact.manifest, metadata)
-                if metadata and isinstance(cmd, op.Read):
+                # A read labels its planes, and a feature copies its grid's coordinates.
+                feature = isinstance(cmd, op.Run) and isinstance(cmd.operation, op.Feature)
+                if metadata and (isinstance(cmd, op.Read) or feature):
                     pending.extend(
                         ax.coordinates.values
                         for ax in metadata.axes

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import itertools
 import os
 from pathlib import Path
 import signal
@@ -33,7 +34,13 @@ if TYPE_CHECKING:
 PACKAGE = "tomojax.cli.mcp.tools"
 # Presentation modules the tools import. Reload re-imports them with the tool
 # package; wire and worker modules change only with a worker restart.
-RELOADED = (PACKAGE, "tomojax.cli.images", "tomojax.cli._previews", "tomojax.cli.mcp.guidance")
+RELOADED = (
+    PACKAGE,
+    "tomojax.cli.images",
+    "tomojax.cli._marks",
+    "tomojax.cli._previews",
+    "tomojax.cli.mcp.guidance",
+)
 
 
 def _reloaded(name: str) -> bool:
@@ -58,7 +65,10 @@ Use ./@name for a literal path starting with @.
 The usual workflow is inspect, open, correct, align the centre, reconstruct, view slices
 and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector spacings
 share one physical length unit. Check slices before trusting a residual. Use dry_run
-before large jobs on tools that support it. See tools/list for installed workflows."""
+before large jobs on tools that support it. See tools/list for installed workflows.
+To show the user a structure, draw view marks in array indices and ask; make the agreed
+region a feature and outline it with view features. For sweeps, loops or custom measures,
+use one python call over the same handles."""
 
 
 class Adapter(Tool):
@@ -89,7 +99,12 @@ class Server(MCPServer):
                 record["handler"],
                 name=record["name"],
                 description=record["description"],
-                annotations=ToolAnnotations(read_only_hint=record["read_only"]),
+                annotations=ToolAnnotations(
+                    read_only_hint=record["read_only"],
+                    # The spec's default is destructive; most tools only add handles.
+                    destructive_hint=None if record["read_only"] else record["destructive"],
+                    open_world_hint=False,  # local files and the local worker only
+                ),
             )
             tool.parameters = record["schema"]
             tool.fn_metadata.output_schema = record["output_schema"]
@@ -107,6 +122,9 @@ class Core:
         self.bus = InMemorySubscriptionBus()
         self.parts = Parts()
         self.tasks = Tasks(self.parts)
+        # Where each returned view image's planes sit, by render ID, for pixel marks.
+        self.renders: dict[str, Any] = {}
+        self.render_count = itertools.count(1)
         self.server = Server(
             "tomojax",
             version=__version__,
@@ -138,6 +156,12 @@ class Core:
             try:
                 for name in previous:
                     del sys.modules[name]
+                    # `from package import module` reads the package attribute first. A
+                    # reloaded parent keeps its attributes: in-flight calls still use it.
+                    parent, _, child = name.rpartition(".")
+                    owner = sys.modules.get(parent)
+                    if parent not in previous and owner is not None and child in vars(owner):
+                        delattr(owner, child)
                 importlib.invalidate_caches()
                 names = self.install()
             except Exception:

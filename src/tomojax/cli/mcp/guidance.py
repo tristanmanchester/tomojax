@@ -22,15 +22,22 @@ WORKFLOWS = (
     "check-a-reconstruction",
 )
 PYTHON_TOPICS = ("python", "solvers", "geometry", "calibration")
+TOPICS = (
+    *WORKFLOWS,
+    *PYTHON_TOPICS,
+    "pointing-and-features",
+    "tuning-without-truth",
+    "thin-shell",
+    "large-scans",
+    "reporting-bugs",
+)
 
 
 def guide(topic: str) -> str:
-    """Read a workflow or worked Python examples from this installation."""
-    if topic not in (*WORKFLOWS, *PYTHON_TOPICS):
-        raise ResourceNotFoundError(
-            f"Choose a guide from {', '.join((*WORKFLOWS, *PYTHON_TOPICS))}"
-        )
-    directory = resources.files("tomojax.cli.mcp").joinpath("guides")
+    """Read a reference of the packaged Agent Skill, the single source of the guides."""
+    if topic not in TOPICS:
+        raise ResourceNotFoundError(f"Choose a guide from {', '.join(TOPICS)}")
+    directory = resources.files("tomojax").joinpath("skill", "tomojax", "references")
     topics = PYTHON_TOPICS if topic == "python" else (topic,)
     return "\n\n".join(directory.joinpath(name + ".md").read_text().strip() for name in topics)
 
@@ -70,8 +77,33 @@ async def operation_parameters(
     return {
         "operation": operation,
         "method": method,
-        "parameters": {k: v for k, v in entry["properties"].items() if k != "type"},
+        "parameters": {
+            k: inline(v, definitions) for k, v in entry["properties"].items() if k != "type"
+        },
     }
+
+
+def inline(schema: object, definitions: Object, seen: frozenset[str] = frozenset()) -> object:
+    """Replace each ``$ref`` with its definition so the reply stands on its own.
+
+    A definition already being expanded on the current path stays a named reference,
+    and so do solver configurations, which describe with a method lists in full.
+    """
+    if isinstance(schema, list):
+        return [inline(item, definitions, seen) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    ref = schema.get("$ref")
+    if isinstance(ref, str) and ref.startswith("#/$defs/"):
+        name = ref.removeprefix("#/$defs/")
+        if name in seen or name not in definitions:
+            return {"title": name}
+        if name.endswith("Config"):
+            return {"title": name, "description": "Expert settings: describe with method"}
+        expanded = inline(definitions[name], definitions, seen | {name})
+        assert isinstance(expanded, dict)
+        return {**expanded, **{k: v for k, v in schema.items() if k != "$ref"}}
+    return {k: inline(v, definitions, seen) for k, v in schema.items()}
 
 
 def install_guidance(server: MCPServer, supervisor: Supervisor) -> None:

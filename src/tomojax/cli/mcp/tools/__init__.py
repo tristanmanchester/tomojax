@@ -81,15 +81,23 @@ class Open(Record):
 
 
 class Python(Record):
-    """Run Python in the worker for custom geometry, analysis or solvers.
+    """Run Python in the worker, next to the loaded data: the path for compound work.
 
-    Read objects from handles, publish snapshots with register and display images with show.
-    Variables persist between calls. Handles last until close, worker restart or server exit.
+    Use it for sweeps, loops, custom measures, geometry or solvers over live handles,
+    instead of many typed calls. In scope: tj, np, handles (ID to object; a feature's
+    .mask), register(obj or array) -> ID, register_feature(mask, like=ID or object,
+    name=...) -> ID, view(source, mode=, axis=, index=, roi=, stride=, other=, marks=,
+    features=, ticks=) with the view tool's arguments, and show(plane, marks=). The last
+    expression is the result; arrays over 16 values come back summarised, so register
+    big ones. Errors give the exception and your lines; set traceback for the full
+    trace. Variables persist between calls; reset or a worker restart clears them and
+    restart also drops handles. Long runs are cancellable at TomoJAX's checkpoints.
     See tomojax://guide/python.
     """
 
     code: str = ""
     reset: bool = False
+    traceback: bool = False
 
 
 class Describe(Record):
@@ -535,6 +543,12 @@ class Tools:
             "termination",
             "converged",
             "placement",
+            "name",
+            "voxels",
+            "bounds",
+            "mean",
+            "std",
+            "recipe",
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))
@@ -599,6 +613,7 @@ class Tools:
             "type": "python",
             "code": args.code,
             "reset": args.reset,
+            "traceback": args.traceback,
             "aliases": aliases,
         }
 
@@ -680,7 +695,7 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
         "cancelled": "Resubmit when ready.",
         "superseded": "Use the newer job.",
-        "input": "Read the traceback, correct the Python code and retry."
+        "input": "Read the error, correct the Python code and retry."
         if name == "python"
         else "Inspect the input path and metadata.",
         "internal": "Check status for worker and device information.",
@@ -737,6 +752,61 @@ def workflow_output() -> Object:
     }
 
 
+ANY = {"type": "object"}
+TEXT = {"type": "string"}
+LIST = {"type": "array"}
+PLANES = {
+    "panels": {"type": "array", "items": ANY},
+    "images": {"type": "array", "items": ANY},
+    "image_limits": ANY,
+    "intensity_limits": LIST,
+    "marks": {"type": "array", "items": ANY},
+    "features": {"type": "array", "items": ANY},
+}
+# Concise result schemas: the fields a client can rely on, none of them required, so a
+# result clipped to its paging link or an error still conforms.
+OUTPUTS: dict[str, Object] = {
+    "status": {
+        "versions": ANY,
+        "devices": LIST,
+        "allocators": LIST,
+        "jobs": ANY,
+        "handles": ANY,
+        "python_namespace_bytes": {"type": "integer"},
+    },
+    "inspect": {
+        "valid": {"type": "boolean"},
+        "issues": LIST,
+        "projection": ANY,
+        "volume": ANY,
+        "geometry": ANY,
+        "directory": TEXT,
+        "datasets": ANY,
+    },
+    "describe": {"operation": TEXT, "parameters": ANY},
+    "control": {"action": TEXT, "tools": LIST},
+    "python": {"stdout": TEXT, "stderr": TEXT, "value": {}, "handles": ANY},
+    "view": {
+        **PLANES,
+        "count": {"type": "integer"},
+        "mean": {"type": ["number", "null"]},
+        "histogram": LIST,
+        "profile": LIST,
+        "columns": LIST,
+        "table": LIST,
+    },
+    "preview": {**PLANES, "handle": TEXT, "bounds": LIST},
+}
+
+
+def output_schema(name: str) -> Object:
+    """The declared structured result of one tool."""
+    if name in {*MODELS, "edit_scan", "open"}:
+        return workflow_output()
+    common = {"continuation": TEXT, "message": TEXT, "next": TEXT, "notes": LIST}
+    return {"type": "object", "properties": {**OUTPUTS.get(name, {}), **common}}
+
+
 def binding(
     cls: type[Record],
     handler: Callable[..., Awaitable[CallToolResult]],
@@ -779,10 +849,10 @@ def binding(
         ),
         "long": name in {*MODELS, "open", "edit_scan", "preview", "python"},
         "read_only": name in {"status", "inspect", "describe", "view", "preview"},
+        # Writes or replaces files, discards handles, or runs arbitrary code.
+        "destructive": name in {"save", "export", "reconstruct_slabs", "control", "python"},
         "schema": spec,
-        "output_schema": workflow_output()
-        if name in {*MODELS, "edit_scan", "open"}
-        else {"type": "object"},
+        "output_schema": output_schema(name),
         "handler": invoke,
     }
 

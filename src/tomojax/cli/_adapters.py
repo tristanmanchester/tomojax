@@ -211,6 +211,12 @@ class Admission:
         raise ValueError(f"operation unavailable: {operation.__struct_config__.tag}")
 
     @prepare.register
+    def feature(self, operation: op.Feature) -> Work:
+        from tomojax.cli._features import feature_work
+
+        return feature_work(operation, self.context)
+
+    @prepare.register
     def browse(self, operation: op.Read | op.Statistics) -> Work:
         from tomojax.cli._browse import browse
 
@@ -249,6 +255,11 @@ class Admission:
                     raise InvalidParameter(
                         field.name, f"{field.name} applies only when opening a scan or frames"
                     )
+            if operation.kind == "feature":
+                from tomojax.cli._features import load_feature
+
+                self.details.update(path=operation.path, kind="feature")
+                return partial(load_feature, operation.path, self.context)
             load = {
                 "reconstruction": tj.load_reconstruction,
                 "alignment": tj.load_alignment,
@@ -616,7 +627,9 @@ class Admission:
         from tomojax._files import validate_export_options
 
         kinds = (tj.Reconstruction, tj.Alignment, tj.Simulation)
-        value = source(
+        held = self.context.leases[operation.source].value
+        feature = held if isinstance(held, ex.Feature) else None
+        value = feature or source(
             operation.source,
             self.context,
             kinds=(*kinds, tj.Scan) if isinstance(operation, op.Save) else kinds,
@@ -627,7 +640,13 @@ class Admission:
         sidecar = path.with_name(path.name + ".manifest.json")
         paths = [path, sidecar]
         raw = path.suffix.lower() == ".raw"
-        if isinstance(operation, op.Save):
+        if isinstance(operation, op.Save) and feature is not None:
+            from tomojax.cli._features import SAVED_SUFFIXES
+
+            if path.suffix.lower() not in SAVED_SUFFIXES:
+                raise InvalidParameter("path", f"save a feature as {', '.join(SAVED_SUFFIXES)}")
+        elif isinstance(operation, op.Save):
+            assert not isinstance(value, ex.Feature)
             validate_save(path, value, include_scan=operation.include_scan)
         else:
             validate_export_options(path, operation.dtype, operation.range, operation.prefix)
@@ -639,32 +658,52 @@ class Admission:
             paths=[str(p) for p in paths], destination_exists=path.exists() or path.is_symlink()
         )
         if isinstance(operation, op.Export):
-            self.details.update(export_summary(operation, value, path, self.details["paths"]))
+            count = value.shape[0] if isinstance(value, ex.Feature) else None
+            self.details.update(
+                export_summary(operation, value, path, self.details["paths"], count)
+            )
         check_destinations(set(ancestor_paths((self.manifest,))), paths, force=operation.force)
 
         def write() -> p.Files:
             staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}
-            if isinstance(operation, op.Save):
+            producer = self.context.leases[operation.source].provenance
+            origin = (
+                producer.parameters["path"]
+                if producer.operation == "open"
+                else {
+                    "member": msgspec.to_builtins(operation.source),
+                    "manifest": sidecar.name if raw else "../" + sidecar.name,
+                }
+            )
+            if isinstance(value, ex.Feature):
+                from tomojax.cli._features import export_feature, save_feature
+
+                if isinstance(operation, op.Save):
+                    save_feature(staged[path], value)
+                else:
+                    export_feature(
+                        staged[path],
+                        value,
+                        dtype=operation.dtype,
+                        value_range=operation.range,
+                        prefix=operation.prefix,
+                        source=origin if isinstance(origin, dict) else {"path": origin},
+                    )
+            elif isinstance(operation, op.Save):
                 tj.save(staged[path], value, include_scan=operation.include_scan)
             else:
                 from tomojax._files import export_volume
 
-                producer = self.context.leases[operation.source].provenance
                 export_volume(
                     staged[path],
                     value,
                     dtype=operation.dtype,
                     value_range=operation.range,
                     prefix=operation.prefix,
-                    source=producer.parameters["path"]
-                    if producer.operation == "open"
-                    else {
-                        "member": msgspec.to_builtins(operation.source),
-                        "manifest": sidecar.name if raw else "../" + sidecar.name,
-                    },
+                    source=origin,
                 )
-                if raw:
-                    staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
+            if raw:
+                staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
             staged[sidecar].write_bytes(msgspec.json.encode(self.manifest) + b"\n")
             return p.Files(tuple(self.details["paths"]))
 
@@ -673,20 +712,25 @@ class Admission:
 
 def export_summary(
     operation: op.Export,
-    value: tj.Reconstruction | tj.Alignment | tj.Simulation,
+    value: tj.Reconstruction | tj.Alignment | tj.Simulation | ex.Feature,
     path: Path,
     paths: list[str],
+    count: int | None = None,
 ) -> dict[str, Any]:
+    """Name the slice files an export writes; ``count`` overrides the grid's plane count."""
     from tomojax._stack_files import slice_name
 
-    grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
-    assert grid is not None
+    if count is None:
+        assert not isinstance(value, ex.Feature)
+        grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
+        assert grid is not None
+        count = grid.nz
     first = last = path
     if path.suffix.lower() != ".raw":
         first = path / slice_name(operation.prefix, 0)
-        last = path / slice_name(operation.prefix, grid.nz - 1)
+        last = path / slice_name(operation.prefix, count - 1)
         paths.append(str(path / f"{operation.prefix}.json"))
-    return {"slice_count": grid.nz, "first_file": str(first), "last_file": str(last)}
+    return {"slice_count": count, "first_file": str(first), "last_file": str(last)}
 
 
 def provenance(

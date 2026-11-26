@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING, Any
 from mcp_types import CallToolResult, ImageContent, TextContent
 import msgspec
 
+from tomojax.cli.images import MAX_EDGE
+
 if TYPE_CHECKING:
     from tomojax.cli.mcp.parts import Parts
 
 LIMIT = 20_000
-PNG_BYTES = 512 * 1024
+PNG_BYTES = 1536 * 1024
 
 
 def cost(reply: CallToolResult) -> int:
@@ -28,7 +30,7 @@ def cost(reply: CallToolResult) -> int:
             header = base64.b64decode(item.data[:32])
             width, height = struct.unpack(">II", header[16:24])
             encoded += len(item.data)
-            if max(width, height) > 1024 or encoded > 4 * ceil(PNG_BYTES / 3):
+            if max(width, height) > MAX_EDGE or encoded > 4 * ceil(PNG_BYTES / 3):
                 return LIMIT + 1
             pixels += ceil(width * height / 750)
             contents.append(item.model_dump(mode="json", by_alias=True, exclude={"data"}))

@@ -47,7 +47,7 @@ A project server needs approval once per checkout. Pre-approve it with `"enabled
 
 From a development checkout, run the server from source with `uv run --extra mcp --extra cuda12 tomojax mcp`.
 
-The repository also carries a Claude Code plugin in `plugins/tomojax/`, with this server and a skill that points the agent at the workflow guides.
+The repository also carries a Claude Code plugin in `plugins/tomojax/`, with this server and the Agent Skill described below.
 
 ### Codex and other clients
 
@@ -58,6 +58,17 @@ Any MCP client that starts stdio servers can run the same command. For Codex, ad
 command = "uvx"
 args = ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
 ```
+
+### Install the Agent Skill
+
+The TomoJAX Agent Skill teaches an agent how to use TomoJAX well: when to use the server and when its own Python, how to choose a method and check a result without ground truth, how to agree a feature with you by marking it, and how to report a bug. It follows the [Agent Skills](https://agentskills.io) format and ships inside the `tomojax` package. Copy it into the directory your agent reads skills from:
+
+```bash
+tomojax skill -o ~/.claude/skills    # Claude Code, every project
+tomojax skill -o ~/.codex/skills     # Codex
+```
+
+`tomojax skill` with no options prints where the Skill is and the usual locations. Pass `--force` to replace an earlier copy after upgrading TomoJAX.
 
 ## Tools
 
@@ -75,9 +86,10 @@ args = ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
 | `project`, `backproject` | Apply the forward projector or its exact transpose |
 | `edit_scan` | Select views, crop, bin, replace poses or combine scans |
 | `preview` | Single slices, centre sweeps (with optional `roi` zoom), before/after corrections and region estimates |
-| `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots |
+| `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots, with marks and feature outlines |
+| `feature` | Make a named mask from a box, sphere, cylinder or prism, a region grown from seed points, or a band around another feature |
 | `evaluate` | Score candidate settings on held-out views |
-| `save`, `export` | Write a dataset with its manifest, or TIFF slices and raw volumes |
+| `save`, `export` | Write a dataset or feature mask with its manifest, or TIFF slices and raw volumes |
 | `control` | Cancel, pause or resume a job; close a handle; reload tool definitions or restart the worker |
 | `python` | Run Python in the worker, with the live handles and `tj` in scope |
 
@@ -103,19 +115,29 @@ Long jobs send progress with the current stage, its metrics and an estimate of t
 
 The server runs one worker process with one queue, so GPU jobs run one after another. Running out of GPU memory returns an ordinary error with suggestions, and the existing handles stay. If the worker process itself dies, the server reports which handles were lost and starts a new worker.
 
+## Point at a feature
+
+An agent can show you exactly what it means instead of describing it. `view` takes `marks`: points, arrows, boxes, circles, polylines, polygons and text, each with an optional label and colour. A position is either array indices of the source, `[z, y, x]` for a volume or `[view, v, u]` for projections, or a pixel in an image an earlier `view` returned, `{"pixel": [x, y], "image": "render-12"}` with the origin at the top left, which the server converts to indices. Either way a mark lands on the same voxel in every plane, ROI and zoom; a circle is a sphere, and each plane shows its cross-section. Index ticks along the image edges, or a pixel grid with `grid`, help the agent aim. The result reports, for each mark, its positions in array indices and, for each plane, whether it was drawn, its pixel in the image, the value under it, and that value's percentile in the plane and place within the display limits, so a mark on background reads as a miss.
+
+`view` images stay within 1568 pixels on the long edge and 1.15 megapixels, so a model sees them unscaled and its pixel positions match the server's. Give `source` a list to show several candidates side by side on the same planes, with the same marks and outlines, and `limits` to fix the display range.
+
+Once you agree on a structure, the `feature` tool turns it into a named mask held by the server: a box, sphere, cylinder or extruded polygon from the mark, a region grown from a seed point through voxels of similar value, or a band of chosen width around another feature. `view` with `features` outlines up to five features on any volume on the same grid, which is how an agent shows what it will optimise for, and the Skill's `feature_scores.py` scores candidate reconstructions on a feature and its surroundings without ground truth.
+
 ## Files
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.
 
+The tools carry MCP annotations for clients that decide what to confirm: `status`, `inspect`, `describe`, `view` and `preview` are read-only; `save`, `export`, `reconstruct_slabs`, `control` (which can close handles and restart the worker) and `python` (which runs any code) are marked destructive; the others only add handles. None reaches beyond the local machine.
+
 ## Python
 
-`python` runs code in the worker with `tj`, `np` and `handles` in scope. `handles` maps live IDs to their TomoJAX objects. `register(obj)` publishes a new handle from a `Scan`, `Reconstruction`, array or other result, and `show(array)` adds an image to the reply. Variables persist between calls until `reset` or a worker restart.
+`python` runs code in the worker, beside the loaded data, with `tj`, `np` and `handles` in scope. `handles` maps live IDs to their TomoJAX objects, and `ID.member` selects a member as in the typed tools. `register(obj)` publishes a new handle from a `Scan`, `Reconstruction`, array or other result, and `register_feature(mask, like=ID)` a feature on that object's grid. `view(...)` renders planes with the same arguments as the `view` tool, marks and features included, and `show(array, marks=...)` adds an image of a 2D array to the reply. Variables persist between calls until `reset` or a worker restart.
 
-Use it for anything the typed tools do not cover: a custom geometry, a direct solver such as `tomojax.recon.cgls`, `tomojax.forward`, phase unwrapping or your own analysis. The `tomojax://guide/python` resource has worked examples.
+Use it for compound work and for anything the typed tools do not cover: a sweep of reconstruction settings in one call, a custom geometry, a direct solver such as `tomojax.recon.cgls`, `tomojax.forward`, phase unwrapping or your own analysis. The result is the last expression, with arrays of more than 16 values summarised by shape, dtype and range. Errors report the exception and the lines of your code it passed through; set `traceback` for the full trace. Long calls run as tasks and can be cancelled at TomoJAX's checkpoints. The `tomojax://guide/python` resource has worked examples.
 
 ## Guides and prompts
 
-The server publishes workflow guides as resources and as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry` and `calibration`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
+The server publishes the Agent Skill's references as resources, and its workflow guides also as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry`, `calibration`, `pointing-and-features`, `tuning-without-truth`, `thin-shell`, `large-scans` and `reporting-bugs`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
 
 ## Transport and session lifetime
 

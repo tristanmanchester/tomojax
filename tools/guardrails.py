@@ -71,6 +71,7 @@ CLI_COMMANDS = (
     "serve",
     "mcp",
     "studio",
+    "skill",
 )
 # Files and functions longer than these are recorded with their length, which
 # may only fall: debt inside an already long one counts too.

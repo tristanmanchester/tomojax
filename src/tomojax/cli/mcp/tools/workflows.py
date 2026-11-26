@@ -67,6 +67,12 @@ WORKFLOW_HELP = {
         "forward projector. Supply an opened scan's .projections, a session array, .npy file or "
         "file.h5::/dataset."
     ),
+    op.Feature: (
+        "Make a named feature: a mask on the grid of a volume or projection stack, from a box, "
+        "sphere, cylinder or prism in array indices (the coordinates view marks use), a region "
+        "grown from seed points, or a band around another feature. Outline it with view "
+        "features on any source with the same grid; in python it is handles[id].mask."
+    ),
     op.Save: (
         "Save a TomoJAX dataset with its provenance manifest so it can be reopened. Set "
         "include_scan to keep the source scan with a reconstruction."
@@ -86,6 +92,7 @@ REFERENCES = {
     "poses": str | None,
     "corrections": Steps,
     "config": dict[str, Any] | None,
+    "feature": Id,
 }
 
 
@@ -104,6 +111,9 @@ def form(model: type[Record], *, tagged: bool = False) -> type[Record]:
             if field.name == "reference":
                 entry = (field.name, recon)
                 default = msgspec.convert(msgspec.to_builtins(default), type=recon)
+        if model is op.Feature and field.name == "recipe":
+            shapes = op.Box | op.Sphere | op.Cylinder | op.Prism | op.Seeded
+            entry = (field.name, shapes | form(op.Band, tagged=True))
         fields.append(entry if field.required else (*entry, default))
     if model in (op.Slice, op.CentreSweep):
         interval = tuple[int, int]
