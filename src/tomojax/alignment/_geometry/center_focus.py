@@ -126,10 +126,13 @@ def _moment_scores(
     fixed = np.asarray(np.mean(edges, axis=0), np.float64)
     background = np.mean(fixed**2, dtype=np.float64).item() * float(u @ u)
     boundary = np.mean(abs(edges), dtype=np.float64).item() * width
+    # An error in the common air reference changes the mass of every column.
+    # Average its squared lever arm over the possible detector centers.
+    pedestal_bias = np.mean(fixed, dtype=np.float64).item() * width**2
     drift = np.column_stack((np.ones(len(time)), time))
     missing = mass - drift @ np.linalg.lstsq(drift, mass, rcond=None)[0]
     lost = max(0.0, np.mean(missing[1:] * missing[:-1], dtype=np.float64).item())
-    systematic = background + boundary**2 + lost * ((width - 1) / 2) ** 2
+    systematic = background + boundary**2 + pedestal_bias**2 / 12 + lost * ((width - 1) / 2) ** 2
     variance += np.sum(direction, dtype=np.float64).item() ** 2 * systematic
     variance += (norm * (centers.item(1) - centers.item(0))) ** 2 / 12
     return -np.log1p((norm * centers + offset) ** 2 / variance)
