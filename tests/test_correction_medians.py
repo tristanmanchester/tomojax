@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy.ndimage import median_filter
 
-from tomojax.corrections import Stripes, Zingers
+from tomojax.corrections import Rings, Stripes, Zingers
 
 
 def _zingers(values: np.ndarray, size: int) -> np.ndarray:
@@ -230,3 +230,6 @@ def test_wide_windows_remove_a_broad_offset_under_moving_features() -> None:
 
     assert left(9) > 0.5
     assert left(201) < 0.1
+    corrected = np.asarray(Rings().apply(jnp.asarray(measured)))[:, 0]
+    error = np.median(corrected - clean, axis=0)[640:840]
+    assert np.sqrt(np.mean((error - np.median(error)) ** 2)) < 0.1 * 0.05

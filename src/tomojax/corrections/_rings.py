@@ -28,6 +28,7 @@ from tomojax.geometry import (
 )
 
 from ._records import Correction
+from ._ring_offsets import offset_prior, shifted_columns
 from ._ring_parity import regularize
 from ._ring_reference_cuda import reference as cuda_reference
 from ._steps import Domain, Step, bitonic_median
@@ -49,17 +50,10 @@ def _quadratic_taps(window: int, guard: int) -> np.ndarray:
     return taps
 
 
-def _shifts(x: jax.Array, half: int) -> list[jax.Array]:
-    """The columns of ``x`` shifted by ``-half..half``, edge columns repeated."""
-    padded = jnp.pad(x, ((0, 0), (half, half)), mode="edge")
-    n = x.shape[1]
-    return [padded[:, half + j : half + j + n] for j in range(-half, half + 1)]
-
-
 def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
     """Apply a symmetric stencil, accumulating reflected samples together."""
     half = len(kernel) // 2
-    shifted = _shifts(x, half)
+    shifted = shifted_columns(x, half)
     out = float(kernel[half]) * x
     for j in range(1, half + 1):
         k = float((kernel[half - j] + kernel[half + j]) * 0.5)
@@ -78,7 +72,8 @@ def _weighted_quadratics(
     keeps the local variation's digits. The windows share their sums over common neighbors.
     """
     widest = max(windows)
-    values_shifted, weights_shifted = _shifts(values, widest), _shifts(weights, widest)
+    values_shifted = shifted_columns(values, widest)
+    weights_shifted = shifted_columns(weights, widest)
     s = [jnp.zeros_like(values) for _ in range(5)]
     t = [jnp.zeros_like(values) for _ in range(3)]
     fits = {}
@@ -144,7 +139,7 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     # the noise: local scatter about the narrowest fit (median of every 8th column within
     # +-local), carried through each pair of references with the columns' correlation
     r = ranked - refs[-1]
-    shifts = _shifts(jnp.abs(r), local)
+    shifts = shifted_columns(jnp.abs(r), local)
     scatter = bitonic_median([shifts[local + k] for k in range(-local, local + 1, 8)])
     scatter = MAD_TO_SD * scatter / np.sqrt(1 + (taps[-1] ** 2).sum())
     r = r - r.mean(1, keepdims=True)
@@ -263,6 +258,7 @@ def _response_posterior(
     scene: jax.Array,
     taps: np.ndarray,
     groups: tuple[int, ...],
+    offset: jax.Array | None = None,
 ) -> jax.Array:
     """Regularize a local response contrast by angular noise and spatial scene power.
 
@@ -292,7 +288,12 @@ def _response_posterior(
         object_power = jnp.maximum(scene_power[lo:hi].mean() - prior, 0)
         gains.append(prior * h / ((prior + object_power) * h * h + variance[lo:hi].mean() + 1e-20))
     gain = jnp.concatenate(gains).at[0].set(0)
-    return jnp.fft.irfft(spectrum * gain, n=profile.size).astype(profile.dtype)
+    estimate = spectrum * gain
+    if offset is not None:
+        # Update the prior mean with the observed local contrast. Where this
+        # stencil resolves the field, the observation supersedes the prior.
+        estimate += (1 - response * gain) * jnp.fft.rfft(offset).at[0].set(0)
+    return jnp.fft.irfft(estimate, n=profile.size).astype(profile.dtype)
 
 
 def _unsorted_response(
@@ -311,11 +312,12 @@ def _unsorted_response(
     """
     taps = _quadratic_taps(6, 0)
     responses = []
-    for _ in range(passes):
+    for k in range(passes):
         ref = _correlate(q, taps)
         instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
         level, beta, xm, il, ib, ml, mb = _fit_unsorted(q, ref, instrument)
-        level = _response_posterior(level, il, ml, taps, groups)
+        offset = offset_prior(q, groups) if k == 0 else None
+        level = _response_posterior(level, il, ml, taps, groups, offset)
         beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
         alpha, beta = _feasible_response(q, ref, level - beta * xm, beta, lowest)
         responses.append((alpha, beta))
@@ -597,6 +599,10 @@ class Rings(Step):
     an instrument for the response fit, avoiding correlation between reference
     noise and regression error. Angular covariance and the unfiltered scene's
     spatial power regularize the local response contrast before inversion.
+    Angular rank profiles estimate the column offsets at several spatial
+    scales. Persistent jumps between adjacent columns locate the boundaries
+    of wider defects. The variation between disjoint angular arcs sets the
+    weight of these measurements in the offset fit.
     Smooth object structure is retained rather than interpreted as calibration
     error. This is a statistical separation, not a no-change guarantee: fine
     stationary object structure and broad detector errors can be ambiguous.

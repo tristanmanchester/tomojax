@@ -257,7 +257,7 @@ class Stripes(Step):
             )
             return batch * parameters[None, :, 0] + parameters[None, :, 1]
         offsets = jax.lax.map(
-            lambda row: _stripe_offsets(row, self.width),
+            lambda row: ranked_offsets(jnp.sort(row, axis=0), self.width),
             jnp.swapaxes(batch, 0, 1),
             batch_size=group if group > 1 else None,
         )
@@ -747,7 +747,7 @@ class Paganin(Step):
         return filtered[:, pv[0] : pv[0] + rows, pu[0] : pu[0] + cols].astype(batch.dtype)
 
 
-def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
+def ranked_offsets(ranked: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``.
 
     Coarse to fine: at scale ``f`` the ranked row is averaged over blocks of
@@ -758,7 +758,6 @@ def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     every width up to ``width`` are taken at the scale where they are narrow,
     at a cost and memory that do not grow with ``width``.
     """
-    ranked = jnp.sort(row, axis=0)
     columns = ranked.shape[1]
     levels = 0
     while _STRIPE_WINDOW << levels < width:

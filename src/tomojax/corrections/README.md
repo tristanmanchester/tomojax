@@ -86,6 +86,10 @@ which axis was used, if any. The CLI binds `--rings` to the selected and cropped
 acquisition geometry and applies it before view rejection and detector binning.
 Otherwise it uses unsorted local quadratics, independent neighboring-view
 instruments and spectral regularization by angular covariance and object power.
+The offset prior compares ranked transmission profiles across neighboring columns
+in disjoint angular arcs. Persistent jumps in the unsorted data locate the
+boundaries of wider defects. Variation between arcs limits how much each
+measurement contributes.
 Built-in angular geometries supply the view ordering and angular interpolation
 weights within each trajectory; cone segments stay separate. Without such
 geometry, supply views in continuous acquisition order. At least two views per
