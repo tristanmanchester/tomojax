@@ -107,7 +107,7 @@ def _noisy_reconstruct(monkeypatch):
     from tomojax import progress
     from tomojax._workflow import operations as _workflow
 
-    def noisy(plan, *, out=None):
+    def noisy(plan, *, out=None, checkpoint=None):
         scan = plan.scan
         progress.warn("tomojax says check this", stacklevel=2)  # at the CLI's call
         logging.getLogger("tomojax.recon").info("tomojax info line")

@@ -145,7 +145,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--include-scan": ("save", "include_scan"),
         "--preview": "file output",
         "--manifest": "file output",
-        "--watch-dir": "file output: images of the solve's checkpoints (progress.previews)",
+        "--watch-dir": "file output: images of the solve as it progresses (progress.previews)",
         "--progress": "terminal display",
     },
     "align": {
@@ -162,7 +162,8 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--resolution": ("align", "resolution"),
         "--apply-poses": ("load", "apply_poses"),
         "--manifest": "file output",
-        "--watch-dir": "file output: images of the solve's checkpoints (progress.previews)",
+        "--checkpoint": ("align", "checkpoint"),
+        "--watch-dir": "file output: images of the solve as it progresses (progress.previews)",
         "--dry-run": "prints the selected parameters and grid without fitting",
     },
     "correct": {

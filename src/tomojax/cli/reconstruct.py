@@ -25,7 +25,14 @@ from tomojax._workflow.field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
 )
-from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
+from tomojax.cli._options import (
+    add_checkpoint,
+    add_config,
+    add_force,
+    check_paths,
+    checkpointed,
+    hide_expert,
+)
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
@@ -181,6 +188,7 @@ def build_parser() -> ProgressParser:
         default=None,
         help="Also write a JSON record of the run (inputs, settings, versions)",
     )
+    add_checkpoint(p)
     add_progress(p, watch_dir=True)
     hide_expert(p, _PUBLIC, settings=_SETTINGS)
     return p
@@ -240,6 +248,7 @@ class _Args(argparse.Namespace):
     include_scan: bool
     preview: str | None
     manifest: str | None
+    checkpoint: str | None
 
     force: bool
     dry_run: bool
@@ -344,7 +353,8 @@ def main() -> int:
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
     watch = watch_directory(args.watch_dir, working=False)
-    operation = partial(_run, parser, args, metadata, watch)
+    work = partial(_run, parser, args, metadata, watch)
+    operation = partial(checkpointed, None if args.dry_run else args.checkpoint, work)
     return run_command("reconstruct", args.progress, operation, watch=watch)
 
 
@@ -383,7 +393,7 @@ def _run(
     _ = announce("reconstruct", scan, work, used=used)
     assert args.out is not None
     with progress.previews() if watch is not None else nullcontext():
-        result = reconstruct_resolved(work)
+        result = reconstruct_resolved(work, checkpoint=args.checkpoint)
     report_automatic(result.info)
     source = scan.source
     if (

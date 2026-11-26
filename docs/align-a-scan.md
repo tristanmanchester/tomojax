@@ -251,6 +251,8 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 
 `region=` restricts the fitting region just as in `tj.reconstruct` (`"auto"`, `"bbox"`, `"cube"`, `"cyl"`, or a `RegionEstimate`). Each level's resolved budgets, step count, and status are recorded in `info["levels"][i]`.
 
+`checkpoint="align.ckpt"` (`--checkpoint DIR` on the CLI) keeps each finished level and the volume and poses within a level in that directory, so a fit killed by a scheduler resumes when run again with the same directory and returns the poses an uninterrupted fit returns. See [Resume a run after a kill](large-scans.md#resume-a-run-after-a-kill).
+
 ## How the figures were made
 
 Both phantoms are closed meshes simulated with gVXR at 120 keV and 10⁴ photons per pixel, reconstructed with FBP on a 384³ grid from 720 views of 384 × 384 pixels (0.135 mm pitch). The watch uses 35° laminography; the spark plug (steel, nickel, copper, alumina, conductive glass, talc, carbon, iridium, platinum) uses parallel beam. Center errors are injected into declared geometry; drift, slips, rotations, roll, and tilt are rendered into the projections. Differences and landmark RMS errors (in 0.135 mm pixels) are evaluated against a true-geometry reconstruction after removing one global rigid motion. Timings are on an RTX 4070 Laptop GPU.

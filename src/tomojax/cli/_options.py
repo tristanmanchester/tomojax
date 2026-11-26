@@ -45,6 +45,27 @@ def add_force(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def add_checkpoint(parser: argparse.ArgumentParser) -> None:
+    """Add ``--checkpoint DIR``, the Python ``checkpoint`` keyword."""
+    _ = parser.add_argument(
+        "--checkpoint",
+        metavar="DIR",
+        default=None,
+        help="Keep the run's state in DIR, to resume from after SIGTERM, a time limit or a "
+        "failed node by running the same command again; DIR is deleted when the run ends",
+    )
+
+
+def checkpointed[T](path: str | None, operation: Callable[[], T]) -> T:
+    """Run ``operation`` owning the checkpoint at ``path`` (None: none) until it has saved."""
+    if path is None:
+        return operation()
+    from tomojax.core.checkpoint import opened
+
+    with opened(path):
+        return operation()
+
+
 def options(parser: argparse.ArgumentParser) -> list[argparse.Action]:
     """The parser's arguments (argparse has no public way to list them)."""
     return parser._actions  # noqa: SLF001

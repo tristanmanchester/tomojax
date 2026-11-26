@@ -19,7 +19,14 @@ from tomojax._workflow.field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
 )
-from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
+from tomojax.cli._options import (
+    EXIT_STATUS,
+    add_checkpoint,
+    add_config,
+    add_force,
+    check_paths,
+    checkpointed,
+)
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
 from tomojax.cli.config import parse_args_with_config
@@ -54,6 +61,7 @@ class _Args(argparse.Namespace):
     grid: list[int] | None
     apply_poses: bool
     manifest: str | None
+    checkpoint: str | None
     dry_run: bool
     watch_dir: str | None
 
@@ -156,6 +164,7 @@ def build_parser() -> ProgressParser:
         help="Correct on top of saved poses (--no-apply-poses uses the nominal geometry)",
     )
     _ = parser.add_argument("--manifest", metavar="JSON", help="Also save a JSON record of the run")
+    add_checkpoint(parser)
     add_config(parser, settings=_config_settings)
     _ = parser.add_argument(
         "--dry-run",
@@ -369,7 +378,8 @@ def main() -> int:
     settings = metadata["settings"]
     config = _validate_align_args(parser, args, settings)
     watch = watch_directory(args.watch_dir, working=True)
-    operation = partial(_run, parser, args, metadata, config, watch)
+    work = partial(_run, parser, args, metadata, config, watch)
+    operation = partial(checkpointed, None if args.dry_run else args.checkpoint, work)
     return run_command("align", args.progress, operation, watch=watch)
 
 
@@ -407,7 +417,7 @@ def _run(
         used = tuple(f for f, v in (("--region", args.region), ("--grid", args.grid)) if v)
         _ = announce("align", scan, work, used=used)
         with progress.previews() if watch is not None else nullcontext():
-            result = align_resolved(scan, work)
+            result = align_resolved(scan, work, checkpoint=args.checkpoint)
     progress.check_canceled()
     assert args.out is not None
     tj.save(args.out, result)

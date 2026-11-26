@@ -51,11 +51,57 @@ See [memory measurements](measurements.md#memory) for peak VRAM across solvers o
 tomojax reconstruct scan.nxs --method cgls --dry-run
 ```
 
-A run prints the same plan in one line as it starts. If it then runs out of memory, the error says what the plan needed and which options would shrink it. `--watch-dir DIR` rewrites images of the solve's central planes in DIR at each checkpoint, so an image viewer open on DIR shows a long reconstruction or alignment converging:
+A run prints the same plan in one line as it starts. If it then runs out of memory, the error says what the plan needed and which options would shrink it. `--watch-dir DIR` rewrites images of the solve's central planes in DIR as the solve progresses, so an image viewer open on DIR shows a long reconstruction or alignment converging:
 
 ```bash
 tomojax reconstruct scan.nxs -o recon.nxs --method cgls --watch-dir watch
 ```
+
+## Resume a run after a kill
+
+Pass `checkpoint=` to `tj.reconstruct`, `tj.reconstruct_slabs` or `tj.align` (`--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`) to keep the run's state in a directory. If the run is killed by a scheduler's time limit, preemption or a failed node, run the same call again with the same directory: it continues where the saved state left off and returns the result an uninterrupted run returns.
+
+```python
+recon = tj.reconstruct(scan, "cgls", iterations=200, checkpoint="recon.ckpt")
+result = tj.align(scan, fit="translations", checkpoint="align.ckpt")
+```
+
+```bash
+tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 200 --checkpoint recon.ckpt
+```
+
+What each run keeps:
+
+| Run | Saved state |
+| --- | --- |
+| Iterative methods (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) | The solver's iterate and every other vector its next iteration reads, such as CGLS's residual and search direction, and its counters and stopping state: a resumed automatic FISTA uses the same TV weight and stops at the same update |
+| Host-slab volumes (FBP, FDK and Fourier slabs; SIRT and MLEM independent-plane slabs) | Each slab as it finishes, and the state of the slab in progress |
+| `tj.reconstruct_slabs` | Which slabs are finished, and for SIRT and MLEM the state of the slab in progress |
+| `tj.align` | Each finished resolution level, the volume and poses within a level, and the poses during refinement |
+
+Solver state is saved at the end of an iteration (or alignment step) once 10 minutes and 20 times the previous save's duration have passed since the previous save, so saving takes at most 5% of the run. A finished slab is saved when it finishes. On SIGTERM the run finishes its current iteration, slab or step, saves, and stops with `tomojax.errors.Canceled` (the command line exits with status 130). SIGTERM before the first checkpointed loop starts, while the scan loads for example, ends the process as it would without a checkpoint. A kill without warning loses at most the work since the last save; a save is written beside the previous one and replaces it in one step, so a kill during a save leaves the previous state.
+
+`tj.reconstruct_slabs` yields only the slabs after the last finished one when it resumes, so write each slab where it survives the kill, such as a memmap opened with `mode="r+"` when the file exists. A slab counts as finished once the body of your loop returns for it.
+
+The directory holds one copy of the solver's state: for CGLS the iterate, search direction and residual (two volumes and one projection-sized array, and a gradient volume more for CUDA CGLS), or three volumes for host-slab CGLS. Finished slabs of a volume held in memory or in a temporary file add one copy of the volume; slabs written into a memmap of a named file (`out=np.lib.format.open_memmap(...)`) are checked by a fingerprint instead of copied. The directory is deleted when the run returns its result. TomoJAX refuses a directory holding another run's checkpoint (a different scan, or different settings), and a directory holding other files.
+
+A resumed run computes what the uninterrupted run computes, from the same state. Its result is identical to the uninterrupted run's whenever repeated runs are identical: on a CPU, and in every case TomoJAX's numerical checks run on an NVIDIA GPU.
+
+### Checkpoint a Slurm job
+
+Ask Slurm to send SIGTERM some minutes before the time limit, run TomoJAX as a job step so that the signal reaches it, and requeue the job when the run stops:
+
+```bash
+#!/bin/bash
+#SBATCH --time=04:00:00
+#SBATCH --signal=TERM@300
+#SBATCH --requeue
+#SBATCH --open-mode=append
+srun tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 500 --checkpoint recon.ckpt
+if [ $? -eq 130 ]; then scontrol requeue "$SLURM_JOB_ID"; fi
+```
+
+Allow the warning time for one iteration and one save. Slurm also sends SIGTERM when a job is canceled with `scancel` or reaches its time limit, and kills it after the cluster's `KillWait` (often 30 seconds); a run that cannot finish its iteration and save in that time resumes from the save before. `--requeue` lets Slurm restart the job after preemption or a node failure.
 
 ## Reconstruct a volume larger than the GPU
 

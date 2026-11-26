@@ -29,7 +29,7 @@ def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp
     write_projection_dataset(path)
     automatic = {"status": "limited", "reasons": ["Rotation axis metadata is missing."]}
 
-    def automatic_result(plan, *, out=None):
+    def automatic_result(plan, *, out=None, checkpoint=None):
         assert plan.info["automatic"]["method"] == plan.method  # the policy chose it
         scan = plan.scan
         volume = np.zeros((scan.grid.nz, scan.grid.ny, scan.grid.nx), np.float32)
@@ -222,7 +222,7 @@ def _fake_reconstruct(
         calls.update(method=method, **keywords)
         return resolve(scan, method, **keywords)
 
-    def fake(plan, *, out=None):
+    def fake(plan, *, out=None, checkpoint=None):
         if error is not None:
             raise error
         volume = np.zeros(plan.scan.grid.shape, np.float32)

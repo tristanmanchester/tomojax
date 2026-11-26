@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Long runs resume after a kill: `checkpoint=` on `tj.reconstruct`, `tj.reconstruct_slabs`
+  and `tj.align` (`--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`) keeps
+  the solver state, finished slabs and finished alignment levels in a directory, saved at
+  most every 10 minutes and 5% of the run's time, and on SIGTERM after the current
+  iteration, slab or step. Running the same call again continues to the uninterrupted
+  result. See [Resume a run after a kill](docs/large-scans.md#resume-a-run-after-a-kill).
 - `tj.align(scan, fit="center")` (and `tomojax align --fit center`) now measures
   the rotation axis directly from the projections on unposed, unrolled, well-sampled
   axial parallel half-turns, without reconstructing a working volume (`result.image`

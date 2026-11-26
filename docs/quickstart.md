@@ -154,7 +154,7 @@ The default `--method auto` chooses a solver from the geometry:
 - Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK), or `cgls` for an arc shorter than 180° plus the fan angle
 - Multi-orbit `ConeSegments` -> `cgls`
 
-Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, or `--watch-dir DIR` to rewrite central-slice PNGs at each checkpoint of an iterative solve. `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, or `--watch-dir DIR` to rewrite central-slice PNGs as an iterative solve progresses. `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
 
 ### Region and grid options
 

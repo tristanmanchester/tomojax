@@ -78,9 +78,9 @@ def report_usage_error(prog: str, message: str, *, hint: str | None = None) -> N
     )
 
 
-def report_canceled(prog: str) -> None:
-    """Say on stderr that the command stopped at the user's request."""
-    console().print(Text(f"{prog}: canceled", style="dim"))
+def report_canceled(prog: str, reason: str = "") -> None:
+    """Say on stderr that the command stopped on request, and ``reason`` when given."""
+    console().print(Text(f"{prog}: {reason or 'canceled'}", style="dim"))
 
 
 def report_warning(message: str, *, level: str = "warning") -> None:

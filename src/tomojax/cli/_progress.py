@@ -113,7 +113,7 @@ def add_progress(parser: argparse.ArgumentParser, *, watch_dir: bool = False) ->
         _ = parser.add_argument(
             "--watch-dir",
             metavar="DIR",
-            help="Rewrite PNGs of the central planes in DIR at each checkpoint of the solve",
+            help="Rewrite PNGs of the central planes in DIR as the solve progresses",
         )
     _ = parser.add_argument(
         "--progress",
@@ -209,7 +209,7 @@ def _failed(error: Exception, mode: str, prog: str) -> int:
     if kind == "internal":
         raise error
     if kind == "canceled":
-        _console.report_canceled(prog)
+        _console.report_canceled(prog, str(error))
         return 130
     if kind == "out_of_memory":
         _console.report_error(prog, str(error), hint=memory_hint.get())

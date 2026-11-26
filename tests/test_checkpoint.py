@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from pathlib import Path
 import signal
@@ -504,3 +505,49 @@ def test_a_stopped_alignment_resumes_to_the_uninterrupted_fit(
         level["steps"] for level in plain.info["levels"]
     ]
     assert not path.exists()
+
+
+_COMMAND = textwrap.dedent(
+    """
+    import sys
+    from tomojax.core import checkpoint
+
+    checkpoint.INTERVAL = 0.0
+    from tomojax.cli.main import run
+
+    sys.argv = ["tomojax", *sys.argv[1:]]
+    raise SystemExit(run())
+    """
+)
+
+
+def test_the_command_line_stops_on_sigterm_and_resumes(tmp_path: Path) -> None:
+    scan = _scan()
+    tj.save(tmp_path / "scan.nxs", scan)
+    args = ["reconstruct", "scan.nxs", "--method", "sirt", "--iterations", "400"]
+    env = {**os.environ, "JAX_PLATFORMS": "cpu"}
+
+    def command(*more: str) -> subprocess.Popen[bytes]:
+        return subprocess.Popen(
+            [sys.executable, "-c", _COMMAND, *args, "--progress", "json", *more],
+            cwd=tmp_path, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )  # fmt: skip
+
+    assert command("-o", "whole.nxs").wait() == 0
+    stopped = command("-o", "part.nxs", "--checkpoint", "run")
+    assert stopped.stdout is not None
+    solve = None
+    for line in stopped.stdout:
+        event = json.loads(line)
+        if event.get("unit") == "iterations":
+            solve = event["task"]
+        elif event.get("event") == "advanced" and event["task"] == solve:
+            stopped.send_signal(signal.SIGTERM)  # inside the solve: it saves, then stops
+            break
+    assert stopped.wait() == 130
+    assert (tmp_path / "run" / "checkpoint.json").is_file()
+    assert command("-o", "part.nxs", "--checkpoint", "run").wait() == 0
+
+    whole = tj.load_reconstruction(tmp_path / "whole.nxs").volume
+    np.testing.assert_array_equal(tj.load_reconstruction(tmp_path / "part.nxs").volume, whole)
+    assert not (tmp_path / "run").exists()
