@@ -138,10 +138,10 @@ def cgls_multires(
     if any(it < 1 for it in budgets):
         raise ValueError("cgls_multires: every level requires a positive iteration budget")
     cfg = CGLSConfig() if config is None else config
-    validate_projection_stack(projections, detector, geometry=geometry, context="cgls_multires")
+    _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls_multires")
     validate_detector_grid(det_grid, detector, context="cgls_multires")
     if init_x is not None:
-        validate_volume(init_x, grid, context="cgls_multires", name="init_x")
+        _ = validate_volume(init_x, grid, context="cgls_multires", name="init_x")
     data = _projection_data(projections)
     volume = _initial_volume(init_x, factors[0])
     if det_grid is not None:

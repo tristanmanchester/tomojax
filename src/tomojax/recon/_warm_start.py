@@ -35,7 +35,7 @@ def fbp_start(
     Volumes given host storage ``out``, or too large for the device, are made
     in host slabs as public FBP makes them, into ``out`` or a new host array.
     """
-    validate_projection_stack(
+    _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="warm_start projections"
     )
     # Thin host slabs: XLA keeps the device memory FDK used, and host solvers

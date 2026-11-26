@@ -10,10 +10,8 @@ import pytest
 from tests.test_joseph_projector import matrix, problem
 
 # check-public-imports: allow-private
-from tomojax.core.cuda_projector._joseph_derivatives import l2_loss_and_grads
-
-# check-public-imports: allow-private
 from tomojax.core.joseph import forward_jax, forward_project_planes, plane_coefficients
+from tomojax.forward import joseph_l2_value_and_grad
 
 pytestmark = pytest.mark.gpu
 
@@ -95,9 +93,10 @@ def test_reverse_and_fused_loss_match_reference_with_tail_tiles(voxel, spacing, 
 
     @jax.jit
     def fused(t, v, target):
-        coeff, pull = jax.vjp(lambda t: plane_coefficients(t, g, d), t)
-        value, gc, gx = l2_loss_and_grads(coeff, v, target, g, d, interpolation=interpolation)
-        return value, (pull(gc)[0], gx)
+        value, (gx, gt) = joseph_l2_value_and_grad(
+            v, t, target, g, d, backend="cuda", interpolation=interpolation
+        )
+        return value, (gt, gx)
 
     result = fused(poses, x, y)
     assert_close_tree(result, expected)

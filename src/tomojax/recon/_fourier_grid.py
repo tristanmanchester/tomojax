@@ -92,7 +92,7 @@ def radial_coefficients(nu: int, nfft: int, du: float) -> tuple[np.ndarray, ...]
     table = np.i0(beta * np.sqrt(np.maximum(0, 1 - (2 * offset / width) ** 2))) / np.i0(beta)
     result = (phase, deapod, table)
     for array in result:
-        array.setflags(write=False)
+        _ = array.setflags(write=False)
     return result
 
 
@@ -135,12 +135,11 @@ def sample_projection_rows(
         upper = np.require(
             projections[order[None, :], (indices + 1)[:, None], :], np.float32, requirements=["W"]
         )
-        np.multiply(lower, (1 - fraction)[:, None, None], out=lower)
-        np.multiply(upper, fraction[:, None, None], out=upper)
-        np.add(lower, upper, out=lower)
+        lower = np.multiply(lower, (1 - fraction)[:, None, None], out=lower)
+        upper = np.multiply(upper, fraction[:, None, None], out=upper)
+        lower = np.add(lower, upper, out=lower)
         # Match the original zero-initialized accumulation's signed zeros.
-        np.add(lower, np.float32(0), out=lower)
-        return lower
+        return np.add(lower, np.float32(0), out=lower)
     shape = (len(positions), len(order), projections.shape[2])
     result = np.zeros(shape, dtype=np.float32)
     for shift, weight in ((0, 1 - fraction), (1, fraction)):
@@ -335,7 +334,7 @@ def _interpolate_inside(
                 # Shift at the query frequency, AFTER radial interpolation: a
                 # binwise phase would also translate its deapodization window.
                 row *= np.exp(2j * np.pi * radial[active] * shifts[source[active]] / nfft)
-            np.conjugate(row, out=row, where=conjugate[active][None, ...])
+            row = np.conjugate(row, out=row, where=conjugate[active][None, ...])
             result[:, active] += row * (angular / counts)[active]
     result *= phase
     return result
@@ -357,8 +356,8 @@ def _radial_values(
         reflected = np.where(k < 0, -k, np.where(k > nfft // 2, nfft - k, k))
         # Advanced indexing owns a copy, even for scalar coordinates.
         values = spectrum[:, source, reflected]
-        np.conjugate(values, out=values, where=((k < 0) | (k > nfft // 2))[None, ...])
-        np.multiply(values, period_phase, out=values, where=(k > nfft // 2)[None, ...])
+        values = np.conjugate(values, out=values, where=((k < 0) | (k > nfft // 2))[None, ...])
+        values = np.multiply(values, period_phase, out=values, where=(k > nfft // 2)[None, ...])
         distance = np.abs(radial - k)
         coordinate = np.minimum(distance * (16384 / 3), 16384)
         index = np.minimum(coordinate.astype(np.int64), 16383)

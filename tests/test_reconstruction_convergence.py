@@ -7,11 +7,9 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from tomojax.forward import project_joseph
 from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
 from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
-
-# check-public-imports: allow-private
-from tomojax.recon._projection import projection_operators
 
 
 @pytest.mark.numerical
@@ -31,7 +29,7 @@ def test_tv_solver_reduces_residual_and_recovers_phantom(tilted: bool, solver: s
         jnp.arange(5) - 2, jnp.arange(12) - 5.5, jnp.arange(12) - 5.5, indexing="ij"
     )
     truth = jnp.exp(-((x / 2.3) ** 2 + (y / 1.7) ** 2 + (z / 1.5) ** 2) / 2)
-    project = jax.jit(projection_operators(poses, grid, detector, None, "jax", 16, "joseph")[0])
+    project = jax.jit(lambda volume: project_joseph(volume, poses, grid, detector))
     # These data isolate optimizer convergence. Independent analytic projection
     # and reconstruction checks live in the benchmark and FBP accuracy tests.
     data = project(truth)
@@ -87,8 +85,11 @@ def test_tv_reconstruction_signal_scales_match_dense_solution(stream, regularize
     detector = Detector(4, 3, 0.7, 0.9, (0.17, -0.23))
     geometry = ParallelGeometry(grid, detector, [13.0, 71.0, 127.0])
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(3)], dtype=jnp.float32)
-    forward, _ = projection_operators(poses, grid, detector, None, "jax", 3, "joseph")
-    matrix = np.asarray(jax.jacfwd(lambda x: forward(x.reshape(shape)).ravel())(jnp.zeros(2)))
+
+    def flattened_projection(x):
+        return project_joseph(x.reshape(shape), poses, grid, detector).ravel()
+
+    matrix = np.asarray(jax.jacfwd(flattened_projection)(jnp.zeros(2)))
     matrix = matrix.astype(np.float64)
     data = matrix @ np.asarray([0.2, 1.0])
     lam, delta = 0.05, 0.2

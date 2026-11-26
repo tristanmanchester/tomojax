@@ -7,9 +7,6 @@ import pytest
 from scipy.spatial.transform import Rotation
 
 import tomojax as tj
-
-# check-public-imports: allow-private
-from tomojax._data.geometry_meta import AugmentedGeometry
 import tomojax.geometry
 
 pytestmark = pytest.mark.numerical
@@ -29,12 +26,9 @@ def _posed_cone_scan(n: int = 24, views: int = 30) -> tj.Scan:
     angles = np.linspace(0.0, 360.0, views, endpoint=False)
     geometry = tj.ConeGeometry(grid, detector, angles, beam, axis_unit=(0.02, -0.01, 1.0))
     rng = np.random.default_rng(4)
-    poses = np.concatenate(
-        [np.deg2rad(rng.normal(0, 0.4, (views, 3))), rng.normal(0, 0.3, (views, 3))], axis=1
-    )
+    poses = np.concatenate([rng.normal(0, 0.4, (views, 3)), rng.normal(0, 0.3, (views, 3))], axis=1)
     data = np.zeros((views, detector.nv, detector.nu), np.float32)
-    posed = AugmentedGeometry(geometry, poses.astype(np.float32), "detector")
-    return tj.Scan(data, posed)  # pyright: ignore[reportArgumentType]
+    return tj.Scan(data, geometry).with_poses(poses)
 
 
 def test_a_scan_converted_to_astra_and_back_projects_the_same():
@@ -252,11 +246,11 @@ def test_a_posed_multi_orbit_scan_converts_to_astra_and_back_projects_the_same()
     scan = _two_orbit_scan()
     poses = np.zeros((16, 6), np.float32)
     poses[:, 3:] = np.random.default_rng(5).normal(0, 0.3, (16, 3))
-    posed = AugmentedGeometry(scan.geometry, poses, "detector")
+    posed = scan.with_poses(poses).geometry
     volume = _volume(10)
     before = np.asarray(tj.project(posed, volume))
 
-    projections, proj_geom, vol_geom = tj.Scan(before, posed).to_astra()  # pyright: ignore[reportArgumentType]
+    projections, proj_geom, vol_geom = tj.Scan(before, posed).to_astra()
 
     again = tj.Scan.from_astra(projections, proj_geom, vol_geom)
     after = np.asarray(tj.project(again.geometry, volume))

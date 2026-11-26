@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Buffer, Callable
 import math
 from threading import RLock
-from typing import Any
 from weakref import ReferenceType, finalize, ref
 
 import numpy as np
@@ -15,9 +14,9 @@ import numpy as np
 class PinnedPool:
     """Recycle storage only after its last NumPy or buffer-protocol view dies."""
 
-    def __init__(self, allocate: Callable[[int], Any]) -> None:
+    def __init__(self, allocate: Callable[[int], Buffer]) -> None:
         self.allocate = allocate
-        self.free: dict[int, list[Any]] = defaultdict(list)
+        self.free: dict[int, list[Buffer]] = defaultdict(list)
         self.lock = RLock()
 
     def empty(self, shape: tuple[int, ...]) -> np.ndarray:
@@ -36,7 +35,7 @@ class PinnedPool:
         return root.reshape(shape)
 
     @staticmethod
-    def _release(pool_ref: ReferenceType[PinnedPool], size: int, storage: Any) -> None:
+    def _release(pool_ref: ReferenceType[PinnedPool], size: int, storage: Buffer) -> None:
         pool = pool_ref()
         # An escaped output owns its buffer, not the plan's other free buffers.
         if pool is not None:

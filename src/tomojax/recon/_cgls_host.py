@@ -28,7 +28,15 @@ from tomojax.core.host_volume import fill, host_volume, scratch_directory
 from tomojax.wire.metrics import Metric
 
 from ._cgls_stopping import precision_stalled, termination
-from ._cone_slabs import Batch, RowReader, cone_problem, host_projections, host_volumes
+from ._cone_slabs import (
+    Batch,
+    ConeProblem,
+    HostVolume,
+    RowReader,
+    cone_problem,
+    host_projections,
+    host_volumes,
+)
 from ._host_arrays import validate_host_arrays
 from ._quadratic import gradient_normal
 from ._view_statistics import ViewStatistics
@@ -37,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import jax
+    from numpy.typing import NDArray
 
     from tomojax.core.cuda_types import CuPyValue
     from tomojax.geometry import Detector, Geometry, Grid
@@ -57,15 +66,15 @@ def solve_on_host(
     grid: Grid,
     detector: Detector,
     projections: Any,
-    initial: Any,
+    initial: jax.Array | np.ndarray | None,
     cfg: CGLSConfig,
     *,
-    model: Any,
+    model: ConeModel | str,
     backend: str,
     poses: jax.Array,
     shared: bool,
     out: np.ndarray | None,
-    det_grid: tuple[Any, Any] | None = None,
+    det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve with host volumes when the device can't hold the solver or ``out`` is given.
 
@@ -128,7 +137,11 @@ class _HostCGLS:
     """One solve's host volumes and sweeps; :meth:`run` mirrors the resident loop."""
 
     def __init__(
-        self, problem: Any, cfg: CGLSConfig, initial: np.ndarray | None, out: np.ndarray | None
+        self,
+        problem: ConeProblem,
+        cfg: CGLSConfig,
+        initial: np.ndarray | None,
+        out: np.ndarray | None,
     ) -> None:
         self.problem, self.cfg = problem, cfg
         self.plan, self.sweep, self.xp = problem.plan, problem.sweep, problem.engine.xp
@@ -141,7 +154,7 @@ class _HostCGLS:
             fill(self.x, initial)
         work = [host_volume(shape, scratch_directory(self.x)) for _ in range(3)]
         self.X, self.G, self.D, self.W = (problem.volume(a) for a in (self.x, *work))
-        self.views = np.arange(problem.data.shape[0])
+        self.views: NDArray[np.intp] = np.arange(int(problem.data.shape[0]))
         self.damp2 = np.float32(cfg.damping) ** 2
         self.smooth2 = np.float32(cfg.gradient_damping) ** 2
         self.penalized = bool(self.damp2 or self.smooth2)
@@ -344,7 +357,7 @@ class _HostCGLS:
         """Plane ``z`` of the iterate on the device."""
         return self.X.view(z, z + 1)
 
-    def _prefetch(self, *volumes: Any) -> Callable[[int], None]:
+    def _prefetch(self, *volumes: HostVolume) -> Callable[[int], None]:
         """A callback starting to read slab ``k`` of each volume."""
 
         def start(k: int) -> None:

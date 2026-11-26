@@ -5,13 +5,11 @@ from pathlib import Path
 import numpy as np
 
 # check-public-imports: allow-private
-from tomojax._data import Hdf5Frames
-
-# check-public-imports: allow-private
 from tomojax.cli._browse import pixels
 
 # check-public-imports: allow-private
 from tomojax.corrections import _batches
+from tomojax.io.api import locate_frames
 
 from ._helpers import write_raw_nxtomo
 
@@ -32,7 +30,8 @@ class Delegating:
 def test_a_strided_worker_read_reaches_a_delegated_lazy_stack(tmp_path: Path) -> None:
     path = tmp_path / "raw.nxs"
     write_raw_nxtomo(path)
-    stack = Hdf5Frames.open(str(path), "/entry/instrument/detector/data")
+    located = locate_frames(str(path), data_path="/entry/instrument/detector/data")
+    stack = located.stack
     ranges = (range(0, 4, 2), range(0, 2, 1), range(0, 2, 1))
     expected = np.asarray(stack)[0:4:2]
     np.testing.assert_array_equal(pixels(Delegating(stack), ranges), expected)

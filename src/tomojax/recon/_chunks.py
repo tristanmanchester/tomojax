@@ -7,7 +7,7 @@ from contextlib import ExitStack
 from contextvars import ContextVar
 from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import jax
 
@@ -43,13 +43,13 @@ def run_chunks[S](
     end: int,
     advance: Callable[[S, int], S],
     completed: Callable[[S], tuple[int, bool, Metrics]],
-    sample: Callable[[S], dict],
+    sample: Callable[[S], dict[str, progress.Sample]],
     *,
     task: IterationProgress | None,
 ) -> S:
     if task is None:
         return advance(state, end)
-    jax.block_until_ready(state)
+    _ = jax.block_until_ready(state)
     done, stopped, metrics = completed(state)
     if done:
         task.advance(done, metrics)
@@ -61,7 +61,8 @@ def run_chunks[S](
         progress.check_canceled()
         start = monotonic()
         with progress.preparing("first update", int(compiled)):
-            state = jax.block_until_ready(advance(state, min(end, done + length)))
+            state = advance(state, min(end, done + length))
+            _ = jax.block_until_ready(state)
         elapsed = monotonic() - start
         previous = done
         done, stopped, metrics = completed(state)
@@ -80,17 +81,17 @@ class Chunked[R]:
 
     def __init__(self, program: Callable[..., R], *, static_argnames: tuple[str, ...]) -> None:
         self.program = program
-        self.unwatched = jax.jit(
+        self.unwatched: Callable[..., R] = jax.jit(
             partial(program, drive=partial(run_chunks, task=None)), static_argnames=static_argnames
         )
 
-    def __call__(self, *args: Any, **kwargs: Any) -> R:
+    def __call__(self, *args: object, **kwargs: object) -> R:
         task = progress.for_unit("iterations")
         if task is None:
             return self.unwatched(*args, **kwargs)
         progress.check_canceled()
         with ExitStack() as setup:
-            setup.enter_context(progress.preparing("initialize solver"))
+            _ = setup.enter_context(progress.preparing("initialize solver"))
 
             def drive[S](
                 state: S,

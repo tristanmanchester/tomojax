@@ -16,7 +16,7 @@ import math
 import os
 from pathlib import Path
 import tempfile
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 import numpy as np
 
@@ -45,9 +45,9 @@ def _libraries() -> tuple[C.CDLL, C.CDLL]:
         spec = None
     path = "libnvrtc.so.12"
     if spec is not None:
-        path = str(
-            Path(cast("list[str]", spec.submodule_search_locations)[0]) / "lib/libnvrtc.so.12"
-        )
+        locations = spec.submodule_search_locations
+        assert locations is not None
+        path = str(Path(locations[0]) / "lib/libnvrtc.so.12")
     try:
         nvrtc = C.CDLL(path)
     except OSError as exc:
@@ -124,7 +124,9 @@ def _current(stream: int) -> Iterator[int]:
     _check(driver.cuStreamGetCtx(int(stream), C.byref(context)))
     _check(driver.cuCtxPushCurrent_v2(context))
     try:
-        yield cast("int", context.value)
+        address = context.value
+        assert address is not None
+        yield address
     finally:
         popped = C.c_void_p()
         _check(driver.cuCtxPopCurrent_v2(C.byref(popped)))
@@ -169,9 +171,9 @@ def _compiled_binary(source: str, options: tuple[str, ...], architecture: str) -
             with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as tmp:
                 temporary = Path(tmp.name)
                 try:
-                    tmp.write(binary)
+                    _ = tmp.write(binary)
                     tmp.close()
-                    temporary.replace(path)
+                    _ = temporary.replace(path)
                 finally:
                     temporary.unlink(missing_ok=True)
         except OSError:
@@ -294,7 +296,7 @@ def launch_kernel(
 class Offset:
     """A float32 callback buffer's storage from element ``elements`` on, without a copy."""
 
-    def __init__(self, buffer: Any, elements: int) -> None:
+    def __init__(self, buffer: _Buffer, elements: int) -> None:
         address = buffer.__cuda_array_interface__["data"][0] + 4 * elements
         self.__cuda_array_interface__: dict[str, Any] = {"data": (address, False)}
 

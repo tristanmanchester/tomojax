@@ -166,10 +166,7 @@ def check_angular_coverage(geometry: Geometry, detector: Detector, n_views: int)
     """Check the arc of each calibrated fan before allocating weights or reading frames."""
     _, angles, full = ordered_arc(grouped_angles(geometry, n_views)[0])
     for _, beam, own in cone_parts(geometry, detector) or ():
-        if full:
-            full_turn_fan(beam, own)
-        else:
-            short_scan_fan(beam, own, angles)
+        _ = full_turn_fan(beam, own) if full else short_scan_fan(beam, own, angles)
 
 
 def full_turn_fan(beam: ConeBeam, detector: Detector) -> tuple[np.ndarray, float]:

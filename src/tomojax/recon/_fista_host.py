@@ -208,7 +208,7 @@ class HostFista:
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
                     power.put(z0, z1, power.view(z0, z1) / np.float32(math.sqrt(norm) or 1))
-                self.apply(power, normal)
+                _ = self.apply(power, normal)
                 norm = upper = 0.0
                 for k in range(self.plan.count):
                     z0, z1 = self.plan.planes(k)
@@ -478,7 +478,7 @@ def solve_on_host(
     )
     with ExitStack() as resources:
         if solver.initial is not initial:
-            resources.callback(close_work_file, solver.initial)
+            _ = resources.callback(close_work_file, solver.initial)
         resources.enter_context(problem.using(out, solver.X, solver.Z, solver.G))
         volume, info = solver.run()
     return problem.result(volume), info, solver.metric

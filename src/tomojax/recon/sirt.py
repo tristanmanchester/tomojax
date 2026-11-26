@@ -531,7 +531,7 @@ class SIRTCall:
         upper = np.inf if cfg.upper_bound is None else cfg.upper_bound
         for name, value in (("init_x", init_x), ("support", cfg.support)):
             if value is not None:
-                validate_volume(value, grid, context="sirt", name=name)
+                _ = validate_volume(value, grid, context="sirt", name=name)
         model, backend = resolve_geometry_projector(
             geometry,
             cfg.backend,
@@ -599,7 +599,7 @@ class SIRTCall:
                 normalizer_device=normalizer_device,
             )  # fmt: skip
             if stream:
-                volume.block_until_ready()  # callbacks must finish before unregistering the source
+                volume = volume.block_until_ready()  # Finish callbacks before unregistering.
         return restore_volume(volume, model), {
             "effective_iterations": iterations,
             "subset_updates": iterations * subsets,

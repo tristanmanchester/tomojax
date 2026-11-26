@@ -13,5 +13,7 @@ def check_calibration_layout(frames: Any) -> None:
         if (stack := getattr(frames, name)) is not None:
             check_stack(stack, frames.counts.shape[1:], name)
     if frames.white_level is not None:
-        positive_finite(frames.white_level, "white_level")
-    exposure_scales(frames.exposure_times, frames.flat_exposure_times, frames.views, frames.flats)
+        _ = positive_finite(frames.white_level, "white_level")
+    _ = exposure_scales(
+        frames.exposure_times, frames.flat_exposure_times, frames.views, frames.flats
+    )

@@ -7,7 +7,7 @@ only static geometry/options live in primitive parameters, never scan arrays.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.hijax import GradAccum, HiPrim, ShapedArray, Zero, instantiate_zeros
@@ -88,12 +88,13 @@ class FirstOrderProjector(HiPrim):
         """Bind a linear tangent operator without allocating inactive zero images."""
         coeff, volume, _ = residuals
         has_dcoeff, has_dvolume = not isinstance(dcoeff, Zero), not isinstance(dvolume, Zero)
+        assert volume is not None or not has_dcoeff
         # Dummy references allocate no zero images and are never read by a rule.
         args = (
             coeff,
-            cast("jax.Array", volume) if has_dcoeff else coeff,
-            cast("jax.Array", dcoeff) if has_dcoeff else coeff,
-            cast("jax.Array", dvolume) if has_dvolume else coeff,
+            volume if has_dcoeff else coeff,
+            coeff if isinstance(dcoeff, Zero) else dcoeff,
+            coeff if isinstance(dvolume, Zero) else dvolume,
         )
         return _ProjectorTangent(
             tuple(jax.typeof(arg) for arg in args),

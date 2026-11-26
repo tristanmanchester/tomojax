@@ -76,7 +76,7 @@ __all__ = [
 
 
 class _Facade(ModuleType):
-    def __setattr__(self, name: str, value: Any) -> None:
+    def __setattr__(self, name: str, value: object) -> None:
         # Importing the submodule ``tomojax.recon.fbp`` must not hide the public
         # ``fbp`` function that shares its name.
         if name in _SOURCES and isinstance(value, ModuleType):

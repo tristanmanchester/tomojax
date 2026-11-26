@@ -912,7 +912,7 @@ def parallel_fbp(
         proj = projections if on_host else jnp.asarray(projections, dtype=jnp.float32)
         # Precompute poses once
         T_all = stack_view_poses(geometry, n_views)
-        validate_pose_stack(T_all, n_views, context="fbp geometry")
+        _ = validate_pose_stack(T_all, n_views, context="fbp geometry")
         motion = None if det_grid is None else _lattice_motion(detector, det_grid)
         if motion is not None:
             # The same rays through the canonical lattice: one geometry-aware method.

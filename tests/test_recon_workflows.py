@@ -14,8 +14,6 @@ import tomojax as tj
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.io import ProjectionDataset, load_dataset, save_dataset
 from tomojax.recon import FDKConfig, FISTAConfig, api, fbp
-
-# check-public-imports: allow-private
 from tomojax.recon.api import clear_filter_caches, default_fbp_scale
 from tomojax.recon.fdk import fdk, view_weights
 from tomojax.recon.filters import get_fbp_filter_np

@@ -165,7 +165,7 @@ def upsample_volume[Array: jnp.ndarray | np.ndarray](
     vol: Array, factor: int, target_shape: tuple[int, int, int]
 ) -> Array:
     """Resize to zyx `target_shape`, retaining host/device storage for floating arrays."""
-    validate_scale_factor(factor)
+    _ = validate_scale_factor(factor)
     out_shape = tuple(int(s) for s in target_shape)
     if len(out_shape) != 3 or any(s < 1 for s in out_shape):
         raise ValueError(f"target_shape must contain positive dimensions, got {target_shape!r}")

@@ -573,6 +573,6 @@ def _run_slabs[T](
             yield _finish(item)
     finally:
         for _, packed, finite in pending:
-            np.asarray(packed)
-            np.asarray(finite)
+            _ = np.asarray(packed)
+            _ = np.asarray(finite)
         pending.clear()

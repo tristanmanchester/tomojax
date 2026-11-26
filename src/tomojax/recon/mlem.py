@@ -68,7 +68,7 @@ def _cache_sensitivities(
     # An asynchronous initializer can still retain its inputs and temporaries.
     # Finish it before measuring reusable memory for a large sensitivity cache.
     if initial is not None:
-        initial.block_until_ready()
+        _ = initial.block_until_ready()
     free = device_free_memory_bytes()
     # A cache is only part of the compiled solve's live memory. Its separate
     # allocation can use the remaining pool after reserving the working buffers;
@@ -339,14 +339,14 @@ def _run_device(
         )
         poses = stack_view_poses(geometry, n)
         device_indices, device_valid = jax.device_put((indices, valid))
-        norms = None
+        norms: jax.Array | None = None
         if cache and subsets * norm_bytes > _SENSITIVITY_CACHE_BYTES:
-            norms = _normalizer(
+            cached_norms: jax.Array = _normalizer(
                 poses, device_indices, device_valid, det_grid, grid=grid, detector=detector,
                 backend=backend, batch_size=batch, model=model, axial=axial,
             )  # fmt: skip
             # Release builder scratch before allocating the iteration workspace.
-            norms.block_until_ready()
+            norms = cached_norms.block_until_ready()
         volume, good = _solve(
             poses, data, initial, support,
             device_indices, device_valid, iterations, det_grid,
@@ -354,7 +354,7 @@ def _run_device(
             cache=cache, stream=stream, axial=axial, sensitivities=norms,
         )  # fmt: skip
         if stream:
-            volume.block_until_ready()  # Host registrations must outlive every callback.
+            _ = volume.block_until_ready()  # Host registrations must outlive every callback.
     if not bool(good):
         raise ValueError("mlem: projections and initial volume must be finite and nonnegative")
     return restore_volume(volume, model)
@@ -463,7 +463,7 @@ def run_mlem(
     validate_detector_grid(det_grid, detector, context="mlem")
     check_subset_count("mlem", subsets, n)
     if init_x is not None:
-        validate_volume(init_x, grid, context="mlem", name="init_x")
+        _ = validate_volume(init_x, grid, context="mlem", name="init_x")
     model, backend = resolve_geometry_projector(
         geometry, cfg.backend, detector=detector,
         det_grid=det_grid, context="mlem",

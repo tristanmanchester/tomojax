@@ -6,7 +6,7 @@ import functools
 import importlib.util
 import math
 import os
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import jax
 import jax.numpy as jnp
@@ -110,7 +110,8 @@ def validate_regularizer(
             raise InvalidParameter(
                 "huber_delta", f"{context}: huber_delta must be positive for huber_tv"
             )
-    return cast("Regularizer", reg)
+        return "huber_tv"
+    return "tv"
 
 
 def _gradient_norm_sq(

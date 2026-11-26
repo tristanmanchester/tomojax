@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 
@@ -588,7 +588,8 @@ def cone_parts(
             scan.center[0] + own.center[0] - reference.center[0],
             scan.center[1] + own.center[1] - reference.center[1],
         )
-        beam = cast("ConeBeam", beam_of(segment))
+        beam = beam_of(segment)
+        assert beam is not None
         parts.append((len(segment.angles), beam, replace(scan, center=center)))
     return tuple(parts)
 
@@ -630,7 +631,7 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
     parts = cone_parts(geometry)
     if parts is None:
         raise ValueError("view_frames needs cone-beam views")
-    n_views = len(cast("Any", geometry).angles)
+    n_views = len(geometry.angles)
     poses = host_view_poses(geometry, n_views)
     if poses is None:
         poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], np.float32)

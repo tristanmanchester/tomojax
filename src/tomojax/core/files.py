@@ -134,14 +134,14 @@ def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator
     handle, name = tempfile.mkstemp(prefix=f".{target.name}.partial-", dir=target.parent)
     os.close(handle)
     mask = os.umask(0)
-    os.umask(mask)
+    _ = os.umask(mask)
     temporary = Path(name)
     temporary.chmod(0o666 & ~mask)  # the mode an ordinary new file gets, not mkstemp's 0600
     try:
         yield temporary
         with temporary.open("rb+") as stream:
             os.fsync(stream.fileno())
-        temporary.replace(target)  # one step: the old file or the new, never neither
+        _ = temporary.replace(target)  # one step: the old file or the new, never neither
     except BaseException as err:
         written = temporary.stat().st_size if temporary.exists() else 0
         temporary.unlink(missing_ok=True)

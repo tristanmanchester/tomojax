@@ -174,7 +174,7 @@ class SPDHGConfig:
         _ = validate_regularizer(self.regularizer, self.huber_delta, context="spdhg_tv config")
 
 
-jax.tree_util.register_dataclass(
+_ = jax.tree_util.register_dataclass(
     SPDHGConfig,
     data_fields=["support"],
     meta_fields=[field.name for field in fields(SPDHGConfig) if field.name != "support"],
@@ -450,7 +450,7 @@ def _prepare_spdhg_runtime(
         context="spdhg_tv projections",
     )
     expected_proj_shape = (n_views, nv, nu)
-    validate_optional_same_shape(
+    _ = validate_optional_same_shape(
         weights,
         expected_proj_shape,
         context="spdhg_tv weights",
@@ -458,7 +458,7 @@ def _prepare_spdhg_runtime(
         fix="use weights with the same shape as projections.",
     )
     validate_spdhg_weights(weights)
-    validate_optional_broadcastable_shape(
+    _ = validate_optional_broadcastable_shape(
         cfg.support,
         (grid.nz, grid.ny, grid.nx),
         context="spdhg_tv support",
@@ -466,11 +466,11 @@ def _prepare_spdhg_runtime(
         fix="use a support mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if init_x is not None:
-        validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
+        _ = validate_volume(init_x, grid, context="spdhg_tv init_x", name="init_x")
 
     announce(array=projections)
     poses = stack_view_poses(geometry, n_views)
-    validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
+    _ = validate_pose_stack(poses, n_views, context="spdhg_tv geometry")
     projector = _batched_projector(cfg, det_grid, geometry, detector)
     model, _ = projector
     stream = _stream_data(projections, weights, cfg, volume_shape(model, grid))
@@ -711,7 +711,7 @@ def _advance_spdhg(
 
     def store(state: _SPDHGScanState, start: jnp.ndarray, duals: jnp.ndarray) -> jnp.ndarray:
         if keys is not None:
-            write_block(keys[1], start, duals)
+            _ = write_block(keys[1], start, duals)
             return state.y_data
         return jax.lax.dynamic_update_slice_in_dim(state.y_data, duals, start, axis=0)
 
@@ -907,10 +907,10 @@ def spdhg(
             shape = volume_shape(runtime.projector[0], grid)
             with progress.preparing("compile spdhg updates"):
                 state = _initial_spdhg_state.eval_shape(runtime, shape)
-                _advance_spdhg.lower(grid, detector, runtime, state, 0, 1).compile()
+                _ = _advance_spdhg.lower(grid, detector, runtime, state, 0, 1).compile()
         x, losses = _run_spdhg_scan(grid, detector, runtime)[:2]
         if runtime.y_meas is None:
-            x.block_until_ready()
+            _ = x.block_until_ready()
     result = _SPDHGResult(
         volume=restore_volume(x, runtime.projector[0]),
         losses=losses,

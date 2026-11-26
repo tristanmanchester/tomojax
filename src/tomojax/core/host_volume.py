@@ -208,7 +208,7 @@ def host_volume(
         array = np.memmap(handle.name, dtype, "w+", shape=shape, order="C")
         descriptor = os.open(handle.name, os.O_RDWR)
     _DESCRIPTORS[id(array)] = descriptor
-    weakref.finalize(array, _close_descriptor, id(array))
+    _ = weakref.finalize(array, _close_descriptor, id(array))
     return array
 
 

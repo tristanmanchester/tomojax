@@ -11,6 +11,8 @@ from tomojax.errors import InvalidParameter
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
+    from numpy.typing import ArrayLike
+
     from .geometry.base import Detector, Geometry, Grid
 
 
@@ -108,7 +110,7 @@ def validate_angles(geometry: Geometry, context: str) -> None:
         raise InvalidParameter("source", f"{context}: angles must be finite")
 
 
-def validate_physical_poses(poses: Any, context: str, *, rigid: bool) -> None:
+def validate_physical_poses(poses: ArrayLike, context: str, *, rigid: bool) -> None:
     """Check finite transforms and, for Joseph plane sampling, proper rigid motion."""
     host = np.asarray(poses)
     if not np.isfinite(host).all():
@@ -183,7 +185,7 @@ def validate_projection_shape(
 
 
 def validate_projection_stack(
-    projections: Any,
+    projections: object,
     detector: Detector,
     *,
     geometry: Geometry | None = None,
@@ -199,7 +201,7 @@ def validate_projection_stack(
 
 
 def validate_volume(
-    volume: Any,
+    volume: object,
     grid: Grid,
     *,
     context: str,
@@ -220,7 +222,7 @@ def validate_volume(
 
 
 def validate_detector_image(
-    image: Any,
+    image: object,
     detector: Detector,
     *,
     context: str,
@@ -240,7 +242,7 @@ def validate_detector_image(
     return expected_shape
 
 
-def validate_pose_matrix(T: Any, *, context: str, name: str = "pose") -> tuple[int, int]:
+def validate_pose_matrix(T: object, *, context: str, name: str = "pose") -> tuple[int, int]:
     """Validate one homogeneous 4x4 pose matrix."""
     actual_shape = _shape_of(T)
     expected_shape = (4, 4)
@@ -256,7 +258,7 @@ def validate_pose_matrix(T: Any, *, context: str, name: str = "pose") -> tuple[i
 
 
 def validate_pose_stack(
-    T_all: Any,
+    T_all: object,
     n_views: int,
     *,
     context: str,
@@ -277,7 +279,7 @@ def validate_pose_stack(
 
 
 def validate_optional_same_shape(
-    value: Any | None,
+    value: object,
     expected_shape: Iterable[int],
     *,
     context: str,
@@ -301,7 +303,7 @@ def validate_optional_same_shape(
 
 
 def validate_optional_broadcastable_shape(
-    value: Any | None,
+    value: object,
     expected_shape: Iterable[int],
     *,
     context: str,
@@ -329,7 +331,7 @@ def validate_optional_broadcastable_shape(
 
 
 def validate_detector_grid(
-    det_grid: tuple[Any, Any] | None,
+    det_grid: tuple[object, object] | None,
     detector: Detector,
     *,
     context: str,
@@ -340,20 +342,20 @@ def validate_detector_grid(
     expected_shape = (detector.nv * detector.nu,)
     try:
         Xr, Zr = det_grid
-    except Exception as exc:
+    except (TypeError, ValueError) as exc:
         raise ValueError(
             f"{context}: det_grid has invalid values; expected a pair of detector-grid "
             f"vectors, actual {type(det_grid).__name__}. Likely fix: call "
             "get_detector_grid_device(detector) with matching detector metadata."
         ) from exc
-    validate_optional_same_shape(
+    _ = validate_optional_same_shape(
         Xr,
         expected_shape,
         context=context,
         name="det_grid[0]",
         fix="call get_detector_grid_device(detector) with matching detector metadata.",
     )
-    validate_optional_same_shape(
+    _ = validate_optional_same_shape(
         Zr,
         expected_shape,
         context=context,

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from functools import lru_cache
-from typing import ClassVar, Literal, cast
+from typing import ClassVar, Literal
 
 import jax
 import jax.numpy as jnp
@@ -712,7 +712,9 @@ class Paganin(Step):
             if n == 1:  # constant under edge extension
                 return 0, 0
             guard = max(min(n // 2, 128), int(np.ceil(decay)))
-            extra = cast(int, next_fast_len(n + 2 * guard, real=True)) - n
+            padded = next_fast_len(n + 2 * guard, real=True)
+            assert padded is not None
+            extra = padded - n
             return extra // 2, extra - extra // 2
 
         return axis(rows), axis(cols)

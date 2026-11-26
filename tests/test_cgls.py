@@ -10,11 +10,14 @@ import numpy as np
 import pytest
 
 from tomojax import progress
-
-# check-public-imports: allow-private
-from tomojax.core.geometry.views import stack_view_poses
 from tomojax.forward import project_joseph
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    stack_view_poses,
+)
 from tomojax.recon import CGLSConfig, cgls
 
 # check-public-imports: allow-private
