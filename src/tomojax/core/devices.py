@@ -164,7 +164,7 @@ def sum_batches(
 
     with ExitStack() as jobs:
         for accumulator in active:
-            jobs.callback(accumulator.close)
+            _ = jobs.callback(accumulator.close)
         pool = jobs.enter_context(ThreadPoolExecutor(len(shares))) if split is not None else None
         for first, end in progress.chunks(max(counts)) if task is not None else [(0, max(counts))]:
             indices = [index for index, count in enumerate(counts) if count > first]
@@ -322,7 +322,7 @@ def block_available(size: int) -> bool:
         return True
     try:
         block = jnp.zeros((-(-size // 4),), jnp.float32)
-        block.block_until_ready()
+        _ = block.block_until_ready()
     except Exception as exc:
         if device_out_of_memory(exc):
             return False

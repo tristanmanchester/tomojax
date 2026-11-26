@@ -18,9 +18,6 @@ from tomojax.geometry import (
     Grid,
     RotationAxisGeometry,
 )
-
-# check-public-imports: allow-private
-from tomojax.geometry._axis_geometry import _align_ez_to_axis
 from tomojax.geometry.api import axis_pose_stack
 
 
@@ -40,7 +37,7 @@ def test_align_ez_to_axis_preserves_near_minus_z_tilt(tilt: float) -> None:
     tilt_rad = np.deg2rad(tilt)
     axis = np.asarray([np.sin(tilt_rad), 0.0, -np.cos(tilt_rad)], dtype=np.float32)
 
-    rotation = np.asarray(_align_ez_to_axis(axis))
+    rotation = np.asarray(axis_pose_stack([0.0], axis))[0, :3, :3]
 
     np.testing.assert_allclose(rotation @ np.asarray([0.0, 0.0, 1.0]), axis, atol=1e-4)
     np.testing.assert_allclose(rotation.T @ rotation, np.eye(3), atol=1e-5)

@@ -33,6 +33,8 @@ from ._validation import positive_finite
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator, Sequence
 
+    from tomojax._data import FrameStack
+
 
 @dataclass(frozen=True)
 class _RadialWindow(RadialDistortion):
@@ -170,7 +172,8 @@ class _RowReader:
             if block != self.first:
                 if block != self.next_first:
                     if self.future is not None and not self.future.cancel():
-                        self.future.result()
+                        _ = self.future.result()
+                        del _
                     self.future = self.pool.submit(self._read, block)
                 assert self.future is not None
                 self.current = self.future.result()
@@ -365,7 +368,7 @@ def corrected_row_source(
 
 
 def _correct_host_rows(
-    counts: Any,
+    counts: np.ndarray | FrameStack,
     fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     flat_record: Correction,
@@ -373,7 +376,7 @@ def _correct_host_rows(
     stop: int,
     steps: tuple[Step, ...],
     epsilon: float,
-    limit: np.floating,
+    limit: np.float32,
     edge: float | None,
 ) -> Corrected:
     """Correct a host band with bounded raw reads and device workspaces."""

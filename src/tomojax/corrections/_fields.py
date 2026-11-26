@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax._data import FrameStack
+
+type CalibrationFrames = np.ndarray | jax.Array | FrameStack
 
 LOG = logging.getLogger(__name__)
 
@@ -41,9 +43,9 @@ class Fields:
 
 
 def flat_fields(
-    flats: Any,
+    flats: CalibrationFrames | None,
     positions: np.ndarray | None,
-    darks: Any,
+    darks: CalibrationFrames | None,
     white_level: float | None,
     shape: tuple[int, int],
     epsilon: float,
@@ -75,7 +77,7 @@ def flat_fields(
         level = positive_finite(white_level, "white_level")
         sets = np.zeros(1)
         moments = ((level, zero, 1.0),)
-        settings: dict[str, Any] = {"white_level": level, "darks": dark_frames}
+        settings: dict[str, Json] = {"white_level": level, "darks": dark_frames}
     else:
         check_stack(flats, shape, "flats")
         where = np.zeros(len(flats)) if positions is None else np.asarray(positions, np.float64)
@@ -112,7 +114,7 @@ def flat_fields(
     return fields, (Correction("flat_dark", settings, found),)
 
 
-def check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
+def check_stack(frames: CalibrationFrames, shape: tuple[int, int], name: str) -> None:
     if len(frames.shape) != 3 or tuple(frames.shape[1:]) != shape or not len(frames):
         raise ValueError(
             f"{name} are {tuple(frames.shape)}; a nonempty stack of frames of {shape} is needed"
@@ -120,7 +122,7 @@ def check_stack(frames: Any, shape: tuple[int, int], name: str) -> None:
 
 
 def _moments(
-    frames: Any,
+    frames: CalibrationFrames,
     shape: tuple[int, int],
     name: str,
     indices: np.ndarray | None = None,
@@ -159,7 +161,7 @@ def batch_fields(
 
 
 def set_moments(
-    flats: np.ndarray | FrameStack,
+    flats: CalibrationFrames,
     shape: tuple[int, int],
     where: np.ndarray,
     sets: np.ndarray,

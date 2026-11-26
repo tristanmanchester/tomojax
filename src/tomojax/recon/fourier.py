@@ -274,9 +274,10 @@ def check_fourier_inputs(
         progress.check_canceled()
         depth = min(8, grid.nz - z)
         for first in range(0, len(sampling.order), 32):
-            sampling.sample(
+            _ = sampling.sample(
                 projections, slice(z, z + depth), slice(first, first + 32), depth, "numpy"
             )
+            del _
 
 
 def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector) -> _Sampling:
@@ -416,4 +417,4 @@ def _run_host_pipeline(
             # Drain GPU work even if an output write fails. Buffer owners stay
             # alive through their completion event; executors join host workers.
             for _, job in pending:
-                job.wait()
+                _ = job.wait()

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, overload
 
 import jax
 import jax.numpy as jnp
@@ -46,9 +46,20 @@ def volume_shape(model: Model, grid: Grid) -> tuple[int, int, int]:
     return (grid.nz, grid.ny, grid.nx)
 
 
-def pack_volume[T: jax.Array | None](volume: T, model: Model) -> T:
+@overload
+def pack_volume(volume: jax.Array, model: Model) -> jax.Array: ...
+
+
+@overload
+def pack_volume(volume: jax.Array | None, model: Model) -> jax.Array | None: ...
+
+
+def pack_volume(volume: jax.Array | None, model: Model) -> jax.Array | None:
     """Make an owned private initial or support inside the compiled solve."""
-    return cast("T", transpose_volume(volume)) if volume is not None and _private(model) else volume
+    if volume is None or not _private(model):
+        return volume
+    packed: jax.Array = transpose_volume(volume)
+    return packed
 
 
 def preview_planes(
@@ -60,7 +71,11 @@ def preview_planes(
 
 def restore_volume(volume: jax.Array, model: Model) -> jax.Array:
     """Return public zyx after the compiled recurrence has completed."""
-    return transpose_volume(jax.block_until_ready(volume)) if _private(model) else volume
+    if not _private(model):
+        return volume
+    volume = volume.block_until_ready()
+    restored: jax.Array = transpose_volume(volume)
+    return restored
 
 
 def voxel_spacing(model: Model, grid: Grid) -> tuple[float, float, float]:

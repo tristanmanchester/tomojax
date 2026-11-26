@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from functools import cache, partial
 import importlib.util
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -31,7 +31,7 @@ from tomojax.core.backend_policy import cuda_backend
 
 if TYPE_CHECKING:
     from tomojax.core.cuda import Offset
-    from tomojax.core.cuda_types import CallbackBuffer
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext, CuPyValue
     from tomojax.core.geometry.base import Detector, Grid
 
 # Keep tiny grids on the allocator-free path. Kernel loading and callback setup
@@ -77,7 +77,7 @@ class _XlaStream:
 
 
 @contextmanager
-def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
+def xla_stream(context: CallbackContext, buffer: CallbackBuffer) -> Iterator[CuPyValue]:
     """Make ``buffer``'s GPU current and XLA's stream for ``context`` CuPy's stream.
 
     A ``buffer_callback`` context names its stream but not its device; on several
@@ -86,8 +86,8 @@ def xla_stream(context: Any, buffer: Any) -> Iterator[Any]:
     """
     import cupy as cp
 
-    with cp.cuda.Device(int(buffer.__dlpack_device__()[1])):
-        stream = cp.cuda.Stream.from_external(_XlaStream(int(context.stream)))
+    with cp.cuda.Device(buffer.__dlpack_device__()[1]):
+        stream = cp.cuda.Stream.from_external(_XlaStream(context.stream))
         with stream:
             yield stream
 
@@ -148,7 +148,14 @@ def gather_transpose_cuda(
     del detector  # Detector sizes come from the image batch.
     views, nu, nv = images_uv.shape
 
-    def launch(context: Any, out: Any, coeff: Any, images: Any, initial: Any, *listed: Any) -> None:
+    def launch(
+        context: CallbackContext,
+        out: CallbackBuffer,
+        coeff: CallbackBuffer,
+        images: CallbackBuffer,
+        initial: CallbackBuffer,
+        *listed: CallbackBuffer,
+    ) -> None:
         initialize_buffer(out, stream=context.stream, source=initial)
         _launch_gather(
             kernel, context.stream, coeff, images, out, listed, shape, (nu, nv), views, 0
@@ -200,7 +207,12 @@ def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch:
     depth, size = min(nz, 32), min(batch, views)
     gather = gather_source(z_fast=True)
 
-    def launch(context: Any, outputs: Any, c: Any, y: Any) -> None:
+    def launch(
+        context: CallbackContext,
+        outputs: tuple[CallbackBuffer, CallbackBuffer, CallbackBuffer],
+        c: CallbackBuffer,
+        y: CallbackBuffer,
+    ) -> None:
         out, band, swapped = outputs
         stream = context.stream
         for z0 in range(0, nz, depth):
@@ -236,7 +248,14 @@ def gather_bands_cuda(coeff: jax.Array, images: jax.Array, grid: Grid, *, batch:
     return volume
 
 
-def _launch_uniform(context: Any, out: Any, coeff: Any, *, grid: Grid, detector: Detector) -> None:
+def _launch_uniform(
+    context: CallbackContext,
+    out: CallbackBuffer,
+    coeff: CallbackBuffer,
+    *,
+    grid: Grid,
+    detector: Detector,
+) -> None:
     import cupy as cp
 
     shape = (grid.nx, grid.ny, grid.nz)

@@ -16,7 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.host_volume import fill, release_planes
 
-from ._cone_slabs import Batch, algebraic_sweep, cone_problem, host_projections
+from ._cone_slabs import Batch, ConeProblem, algebraic_sweep, cone_problem, host_projections
 
 if TYPE_CHECKING:
     import jax
@@ -31,7 +31,7 @@ def solve(
     geometry: Geometry,
     grid: Grid,
     detector: Detector,
-    projections: Any,
+    projections: np.ndarray | jax.Array,
     initial: np.ndarray | None,
     cfg: SIRTConfig,
     *,
@@ -42,10 +42,10 @@ def solve(
     out: np.ndarray | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Run validated SIRT settings with a host volume, in ``out`` or a C-ordered volume."""
-    projections = host_projections(projections, "sirt")
+    data: np.ndarray = host_projections(projections, "sirt")
     problem = cone_problem(
-        geometry, grid, detector, projections, model=model, backend=backend, poses=poses,
-        **algebraic_sweep(cfg, projections.shape[0], host_output=out is not None),
+        geometry, grid, detector, data, model=model, backend=backend, poses=poses,
+        **algebraic_sweep(cfg, data.shape[0], host_output=out is not None),
     )  # fmt: skip
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
     with problem.using(out, solver.volume, solver.point):
@@ -53,7 +53,7 @@ def solve(
             progress.check_canceled()
             solver.momentum = momentum
             for subset in range(cfg.subsets):
-                solver.update(np.arange(subset, projections.shape[0], cfg.subsets))
+                solver.update(np.arange(subset, data.shape[0], cfg.subsets))
             if (task := progress.for_unit("iterations")) is not None:
                 problem.completed(task.advance, step, {})
     return problem.result(solver.x), {
@@ -70,7 +70,8 @@ def solve(
 
 def _momenta(cfg: SIRTConfig) -> list[np.float32]:
     """Each iteration's FISTA momentum (zero without acceleration), as the resident solver's."""
-    momenta, time = [], np.float32(1)
+    momenta: list[np.float32] = []
+    time = np.float32(1)
     for _ in range(cfg.iterations):
         following = (1 + np.sqrt(1 + 4 * time * time, dtype=np.float32)) / 2
         momenta.append((time - 1) / following if cfg.acceleration else np.float32(0))
@@ -88,7 +89,7 @@ class _HostSIRT:
 
     def __init__(
         self,
-        problem: Any,
+        problem: ConeProblem,
         cfg: SIRTConfig,
         bounds: tuple[float, float],
         initial: np.ndarray | None,
@@ -99,7 +100,7 @@ class _HostSIRT:
         shape = (grid.nz, grid.ny, grid.nx)
         self.lower, self.upper = (np.float32(b) for b in bounds)
         # A zero start is neither stored nor projected: the first sweep writes every voxel.
-        self.zero = initial is None and self.lower <= 0 <= self.upper
+        self.zero = bool(initial is None and self.lower <= 0 <= self.upper)
         copies = 2 if cfg.acceleration else 1  # the iterate, and its momentum point
         self.x = problem.iterate(initial, out, "sirt", written=self.zero, copies=copies)
         self.support = (
@@ -113,7 +114,7 @@ class _HostSIRT:
             z0, z1 = self.plan.planes(k)
             planes = self.x[z0:z1, :, :]
             if bounded:
-                xp.clip(planes, self.lower, self.upper, out=planes)
+                _ = xp.clip(planes, self.lower, self.upper, out=planes)
             if self.support is not None:
                 planes[~xp.asarray(self.support[z0:z1, :, :])] = 0
             release_planes(self.x, z0, z1)

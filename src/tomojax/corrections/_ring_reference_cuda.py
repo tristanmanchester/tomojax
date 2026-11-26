@@ -1,8 +1,10 @@
 """Tiled float32 CUDA implementation of the adaptive spatial ring reference."""
 
+from __future__ import annotations
+
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -11,6 +13,9 @@ import numpy as np
 from tomojax.core.cuda import launch_kernel
 
 from ._steps import median_network
+
+if TYPE_CHECKING:
+    from tomojax.core.cuda_types import CallbackBuffer, CallbackContext
 
 _REDUCTION_THREADS = 512
 _TILE = 128
@@ -83,7 +88,9 @@ def reference(
     rows, columns = values.shape
     source = _source(rows, columns, gamma, local, taps)
 
-    def launch(ctx: Any, outputs: tuple[Any, ...], values: Any) -> None:
+    def launch(
+        ctx: CallbackContext, outputs: tuple[CallbackBuffer, ...], values: CallbackBuffer
+    ) -> None:
         result, residual, sigma, floor, fits, narrow_residual, correlations = outputs
         launches = (
             ("residual_mad", (rows,), _REDUCTION_THREADS, (values, residual, sigma)),

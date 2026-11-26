@@ -273,7 +273,7 @@ class FISTAConfig:
         self.devices = as_devices(self.devices)
 
 
-jax.tree_util.register_dataclass(
+_ = jax.tree_util.register_dataclass(
     FISTAConfig,
     data_fields=["support"],
     meta_fields=[field.name for field in fields(FISTAConfig) if field.name != "support"],
@@ -307,7 +307,7 @@ def _prepare_fista_runtime(
         geometry=geometry,
         context="fista_tv projections",
     )
-    validate_optional_broadcastable_shape(
+    _ = validate_optional_broadcastable_shape(
         volume_mask,
         (grid.nz, grid.ny, grid.nx),
         context="fista_tv support",
@@ -315,7 +315,7 @@ def _prepare_fista_runtime(
         fix="use a support mask broadcastable to shape (grid.nz, grid.ny, grid.nx).",
     )
     if init_x is not None:
-        validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
+        _ = validate_volume(init_x, grid, context="fista_tv init_x", name="init_x")
 
     x0 = (
         None
@@ -323,7 +323,7 @@ def _prepare_fista_runtime(
         else (np if isinstance(init_x, np.ndarray) else jnp).asarray(init_x, dtype=np.float32)
     )
     poses = stack_view_poses(geometry, n_views)
-    validate_pose_stack(poses, n_views, context="fista_tv geometry")
+    _ = validate_pose_stack(poses, n_views, context="fista_tv geometry")
     projector = _batched_projector(cfg, n_views, det_grid, geometry, detector)
     split = view_split(cfg.devices, n_views)
     announce(None if split is None else split.mesh.devices.flat, array=projections)
@@ -722,7 +722,7 @@ def fista(
         if runtime.stream:
             with host_source(np.asarray(projections)) as key:
                 final, lipschitz, metric = _run_fista_scan(grid, detector, key, runtime)
-                final.x.block_until_ready()
+                _ = final.x.block_until_ready()
         elif runtime.split is not None:
             data = runtime.split.place(projections)
             final, lipschitz, metric = _run_fista_scan(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
-from typing import TYPE_CHECKING, Any, Protocol, TypeGuard
+from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 import numpy as np
 
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from tomojax._data import FrameStack
 
+    from ._fields import CalibrationFrames
     from ._steps import Step
 
 
@@ -59,7 +60,7 @@ class HostCopies(AbstractContextManager["HostCopies"]):
         for batch in self.pending.values():
             # A failed device operation must not mask a handler's exception.
             with suppress(Exception) if error is not None else nullcontext():
-                np.asarray(batch)
+                _ = np.asarray(batch)
         self.pending.clear()
 
 
@@ -72,7 +73,9 @@ def correction_group(parts: Sequence[str | Step], batches: range, unit: str) -> 
         yield
 
 
-def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, int, np.ndarray]]:
+def view_batches(
+    counts: CalibrationFrames, views: int, batch: int
+) -> Generator[tuple[int, int, np.ndarray]]:
     """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
     starts = list(range(0, views, batch))
 

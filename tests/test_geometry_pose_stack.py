@@ -7,9 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-# check-public-imports: allow-private
-from tomojax.core.geometry.views import stack_view_poses
-from tomojax.geometry import Detector, Grid, LaminographyGeometry, ParallelGeometry
+from tomojax.geometry import (
+    Detector,
+    Grid,
+    LaminographyGeometry,
+    ParallelGeometry,
+    stack_view_poses,
+)
 
 
 @pytest.mark.parametrize("tilt", [0.0, -20.0, 30.0, 180.0])

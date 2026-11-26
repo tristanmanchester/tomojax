@@ -167,9 +167,7 @@ def test_a_thin_volume_stages_only_its_planes_with_the_same_bits(monkeypatch, nz
         pytest.skip("needs the CUDA kernels")
     # check-public-imports: allow-private
     from tomojax.core import joseph
-
-    # check-public-imports: allow-private
-    from tomojax.core.geometry.views import stack_view_poses
+    from tomojax.geometry import stack_view_poses
 
     monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     grid = tj.Grid(48, 40, nz, 1.0, 1.0, 1.0)

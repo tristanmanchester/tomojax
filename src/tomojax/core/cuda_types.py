@@ -16,6 +16,10 @@ class CallbackBuffer(Protocol):
 
     __cuda_array_interface__: dict[str, object]
 
+    def __dlpack_device__(self) -> tuple[int, int]:
+        """DLPack device kind and ordinal for this buffer."""
+        ...
+
 
 class CallbackContext(Protocol):
     """The execution context JAX passes to a CUDA callback."""

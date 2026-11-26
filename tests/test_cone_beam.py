@@ -700,13 +700,11 @@ def test_nikon_images_resized_from_the_listed_panel_are_rejected(tmp_path: Path)
 
 
 def test_a_saved_cone_beam_round_trips_and_an_old_rolled_one_is_refused():
-    # check-public-imports: allow-private
-    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
     from tomojax.geometry import ConeBeam
 
     beam = ConeBeam(40.0, 60.0, detector_roll=1.5, detector_pitch=-0.5)
     assert ConeBeam.from_dict(beam.to_dict()) == beam
-    old = {k: v for k, v in beam.to_dict().items() if k != ROLL_CONVENTION_KEY}
+    old = {k: v for k, v in beam.to_dict().items() if k != "detector_roll_turns_u_towards_v"}
     with pytest.raises(ValueError, match=r"TomoJAX 0\.3 or earlier.*detector_roll=-1\.5"):
         ConeBeam.from_dict(old)
     # Without a roll the two conventions agree, so an old file loads as it was.
@@ -718,9 +716,6 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
     import h5py
 
     import tomojax as tj
-
-    # check-public-imports: allow-private
-    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
 
     path = tmp_path / "rolled.nxs"
     grid, detector = tj.Grid(3, 3, 2, 0.8, 1.1, 0.9), tj.Detector(3, 2, 0.9, 1.0)
@@ -735,11 +730,11 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
     # The same file as TomoJAX 0.3 wrote it: no convention marker.
     def strip(name, obj):
         for key, value in list(obj.attrs.items()):
-            if isinstance(value, str | bytes) and ROLL_CONVENTION_KEY in str(value):
+            if isinstance(value, str | bytes) and "detector_roll_turns_u_towards_v" in str(value):
                 obj.attrs[key] = _without_marker(value)
         if isinstance(obj, h5py.Dataset) and obj.dtype.kind in "OS":
             text = obj[()]
-            if ROLL_CONVENTION_KEY in str(text):
+            if "detector_roll_turns_u_towards_v" in str(text):
                 del handle[name]
                 handle[name] = _without_marker(text)
 
@@ -750,14 +745,11 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
 
 
 def _without_marker(text):
-    # check-public-imports: allow-private
-    from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
-
     text = text.decode() if isinstance(text, bytes) else str(text)
 
     def drop(value):
         if isinstance(value, dict):
-            return {k: drop(v) for k, v in value.items() if k != ROLL_CONVENTION_KEY}
+            return {k: drop(v) for k, v in value.items() if k != "detector_roll_turns_u_towards_v"}
         if isinstance(value, list):
             return [drop(v) for v in value]
         return value

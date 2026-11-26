@@ -16,7 +16,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import closing, nullcontext
 from functools import partial
 import logging
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, NotRequired, TypedDict, Unpack
 
 import jax
 import jax.numpy as jnp
@@ -28,13 +28,15 @@ from tomojax.core.host_volume import discard_failed_outputs, release_planes
 from tomojax.core.registration import correction_images
 
 from ._batches import HostCopies, copy_projections, correction_group, view_batches
-from ._fields import Fields, batch_fields, flat_fields
+from ._fields import CalibrationFrames, Fields, batch_fields, flat_fields
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 from ._validation import check_scan_steps, positive_finite, validated_views_per_batch
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+    from tomojax._data import FrameStack
 
 LOG = logging.getLogger(__name__)
 
@@ -184,7 +186,6 @@ def correct_frames(
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
     limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
-    settings = {"epsilon": float(epsilon), "factor": binning, "limit": limit}
     with discard_failed_outputs() as outputs:
         slab = _row_slab(counts, ordered, views_per_batch, binning)
         if slab is not None:
@@ -196,12 +197,13 @@ def correct_frames(
                 slab=slab,
                 allocate=outputs.allocate,
                 transmission_steps=transmission_steps,
-                **settings,
+                epsilon=float(epsilon),
+                factor=binning,
+                limit=limit,
             )
             kept, tail_records, head = np.arange(views), (), line
         else:
-            # Binned on the device while the batches come back, unless the tail needs full frames.
-            factor = 1 if tail or transmission_tail else binning
+            factor = 1 if tail or transmission_tail else binning  # Tails need full frames.
             out = outputs.allocate((views, rows // factor, cols // factor))
             batch = views_per_batch or frame_batch_size(
                 views, rows, cols, (*counts_steps, *transmission_steps, *head)
@@ -347,7 +349,10 @@ def ordered_steps(steps: Sequence[Step]) -> list[tuple[str, Step]]:
 
 
 def exposure_scales(
-    sample: np.ndarray | float | None, flat: np.ndarray | float | None, views: int, flats: Any
+    sample: np.ndarray | float | None,
+    flat: np.ndarray | float | None,
+    views: int,
+    flats: CalibrationFrames | None,
 ) -> tuple[np.ndarray, np.ndarray | None]:
     """Convert measured durations to count-rate factors; white levels stay in counts."""
     if flats is None or (sample is None and flat is None):
@@ -414,7 +419,7 @@ def first_pass(
     factor: int = 1,
     fill_gaps: bool = True,
     take_log: bool = True,
-    limit: jax.Array | float = jnp.inf,
+    limit: jax.Array | np.float32 | float = jnp.inf,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     x = raw.astype(jnp.float32)
     # Recorded counts above the camera's stated linear range: counted, never changed.
@@ -482,13 +487,23 @@ def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.A
     return jnp.where(interior[None], filled, transmission)
 
 
+class _ViewPassSettings(TypedDict):
+    epsilon: float
+    take_log: bool
+    counts_steps: NotRequired[tuple[Step, ...]]
+    transmission_steps: NotRequired[tuple[Step, ...]]
+    line_steps: NotRequired[tuple[Step, ...]]
+    factor: NotRequired[int]
+    limit: NotRequired[np.float32]
+
+
 def correct_view_batches(
-    counts: Any,
+    counts: CalibrationFrames,
     out: np.ndarray,
     fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     batch: int,
-    **settings: Any,
+    **settings: Unpack[_ViewPassSettings],
 ) -> np.ndarray:
     """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
@@ -542,7 +557,7 @@ def correct_view_batches(
     return tally
 
 
-def counts_size(counts: Any) -> int:
+def counts_size(counts: CalibrationFrames) -> int:
     """How many recorded counts a stack holds."""
     return int(np.prod(counts.shape))
 
@@ -618,7 +633,10 @@ def reject_nonfinite(count: int, start: int, stop: int) -> None:
 
 
 def _row_slab(
-    counts: Any, ordered: Sequence[tuple[str, Step]], views_per_batch: int | None, factor: int
+    counts: CalibrationFrames,
+    ordered: Sequence[tuple[str, Step]],
+    views_per_batch: int | None,
+    factor: int,
 ) -> int | None:
     """Rows per slab to fuse raw-count correction with whole-row steps.
 
@@ -647,18 +665,20 @@ def _row_slab(
 
 
 def _correct_row_slabs(
-    counts: Any,
+    counts: np.ndarray | FrameStack,
     fields: Fields,
     interpolation: tuple[np.ndarray, ...],
     steps: tuple[Step, ...],
     *,
     slab: int,
     allocate: Callable[[tuple[int, ...]], np.ndarray],
-    **settings: Any,
+    transmission_steps: tuple[Step, ...],
+    epsilon: float,
+    factor: int,
+    limit: np.float32,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
-    factor = settings["factor"]
     out = allocate((views, rows // factor, cols // factor))
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
     flats = fields.flats
@@ -691,7 +711,8 @@ def _correct_row_slabs(
                 jnp.asarray(raw), lo, hi, t, exposure_scale,
                 flats[:, start:stop], dark[start:stop],
                 usable[start:stop], line_steps=steps,
-                fill_gaps=not bool(fields.usable[start:stop].all()), **settings,
+                fill_gaps=not bool(fields.usable[start:stop].all()),
+                transmission_steps=transmission_steps, epsilon=epsilon, factor=factor, limit=limit,
             )  # fmt: skip
             copies.start(done[0])
             if cpu:
@@ -708,7 +729,7 @@ def _correct_row_slabs(
     starts = range(0, rows - rows % factor, slab)
     parts = (
         "flat_dark",
-        *settings["transmission_steps"],
+        *transmission_steps,
         "log",
         *steps,
         *(("binned",) if factor > 1 else ()),

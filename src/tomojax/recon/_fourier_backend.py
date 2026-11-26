@@ -41,7 +41,7 @@ def _cupy_device() -> int:
 def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
     """Resolve auto once, without falling back after reconstruction has started."""
     if backend == "cupy":
-        _cupy_device()
+        _ = _cupy_device()
         return "cupy"
     if backend == "numpy":
         return "numpy"
@@ -443,7 +443,7 @@ class FourierPlan:
             mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du
             raw *= self.deapod
         spectrum = xp.fft.rfft(raw, n=self.nfft, axis=-1)
-        xp.multiply(spectrum, self.projection_phase, out=spectrum)
+        _ = xp.multiply(spectrum, self.projection_phase, out=spectrum)
         if self.cuda:
             self._interpolate_cuda(spectrum)
         else:

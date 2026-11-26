@@ -101,21 +101,23 @@ def test_cone_pitch_and_yaw_move_the_detector_edges_as_documented(angle, voxel, 
     assert odd < -0.5 if angle == "pitch" else odd > 0.5
 
 
-def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_beam():
+def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_beam(tmp_path):
     import tomojax as tj
-
-    # check-public-imports: allow-private
-    from tomojax._scan import record_of, scan_from_record
+    from tomojax.io import load_dataset, save_dataset
 
     grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
     rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=20, detector_roll=1.5)
-    record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), rolled))
-    loaded = scan_from_record(record, apply_poses=False).geometry
+    path = tmp_path / "scan.npz"
+    frames = np.ones((2, 3, 5), np.float32)
+    tj.save(path, tj.Scan(frames, rolled))
+    loaded = tj.load(path, apply_poses=False).geometry
     assert type(loaded) is LaminographyGeometry
     assert (loaded.tilt, loaded.detector_roll) == (20, 1.5)
 
     cone = ConeGeometry(grid, detector, [0.0, 90.0], ConeBeam(40, 60))
-    record = record_of(tj.Scan(np.ones((2, 3, 5), np.float32), cone))
+    tj.save(path, tj.Scan(frames, cone))
+    record = load_dataset(path)
     record.geometry_metadata["detector_roll"] = 1.5
+    save_dataset(path, record)
     with pytest.raises(ValueError, match="belongs in cone_beam"):
-        scan_from_record(record, apply_poses=False)
+        tj.load(path, apply_poses=False)

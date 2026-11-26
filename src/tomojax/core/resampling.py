@@ -8,7 +8,7 @@ runs use SciPy. The result is a host float32 array on both paths.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
@@ -18,12 +18,17 @@ from scipy import ndimage
 
 from ._cuda_joseph import cuda_gather_available, xla_stream
 
+if TYPE_CHECKING:
+    from .cuda_types import CallbackBuffer, CallbackContext
+
 # Below this size a one-off callback/kernel compilation costs more than the
 # CPU interpolation. This is a dispatch threshold, not a change in resolution.
 _MIN_CUDA_VOXELS = 2**22
 
 
-def _launch(context: Any, out: Any, volume: Any, words: Any) -> None:
+def _launch(
+    context: CallbackContext, out: CallbackBuffer, volume: CallbackBuffer, words: CallbackBuffer
+) -> None:
     import cupy as cp
     from cupyx.scipy.ndimage import affine_transform
 

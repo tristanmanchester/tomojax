@@ -122,7 +122,7 @@ def solve(
         )
         poses = host_view_poses(geometry, n)
         assert poses is not None
-        validate_pose_stack(poses, n, context="cgls")
+        _ = validate_pose_stack(poses, n, context="cgls")
         validate_physical_poses(poses, "cgls", rigid=True)
         if not np.isfinite(projections).all() or (
             initial is not None and not np.isfinite(initial).all()

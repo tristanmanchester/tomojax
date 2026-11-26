@@ -258,7 +258,7 @@ def validate_reconstruction(
             if config.method == "sirt"
             else validate_optional_broadcastable_shape
         )
-        check_support(
+        _ = check_support(
             getattr(config, "support", None),
             grid.shape,
             context=method,
@@ -271,7 +271,7 @@ def validate_reconstruction(
         from tomojax.recon.fdk import check_angular_coverage
 
         if config.method == "fbp":
-            fdk_config(config)
+            _ = fdk_config(config)
         try:
             check_angular_coverage(geometry, geometry.detector, views)
         except ValueError as err:
@@ -316,7 +316,7 @@ def _check_solver_inputs(
         try:
             host = host_view_poses(geometry, views)
             poses = stack_view_poses(geometry, views) if host is None else host
-            validate_pose_stack(poses, views, context=method)
+            _ = validate_pose_stack(poses, views, context=method)
         except ValueError as err:
             raise InvalidParameter("source", str(err)) from err
         validate_physical_poses(poses, method, rigid=method != "fbp" and not is_cone_beam(geometry))
@@ -330,7 +330,7 @@ def _check_solver_inputs(
         from tomojax.recon._backend import reconstruction_backend
 
         cone = is_cone_beam(geometry)
-        reconstruction_backend(
+        _ = reconstruction_backend(
             config.backend,
             cone=cone,
             context=solver_name(method, geometry),
@@ -345,7 +345,7 @@ def _check_solver_inputs(
     if config.backend == "cupy":
         from tomojax.recon._fourier_backend import resolve_fourier_backend
 
-        resolve_fourier_backend(config.backend)
+        _ = resolve_fourier_backend(config.backend)
 
 
 def validate_slab_grid(
@@ -608,7 +608,7 @@ def _iterative_result(
                 if algebraic.method == "sirt":
                     from tomojax.core.validation import validate_volume
 
-                    validate_volume(support, grid, context="sirt", name="support")
+                    _ = validate_volume(support, grid, context="sirt", name="support")
                 # A host broadcast view: each slab uploads only its own rows.
                 support = np.broadcast_to(np.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from tomojax.core.cone import ConeModel
     from tomojax.geometry import Detector, Geometry, Grid
 
-    from ._cone_slabs import Batch
+    from ._cone_slabs import Batch, ConeProblem
     from .mlem import MLEMConfig
 
 
@@ -59,7 +59,7 @@ def solve(
 
         # Before planning the sweeps: XLA keeps the device memory FDK has used.
         x = validate_host_arrays(data, out, (grid.nz, grid.ny, grid.nx), "mlem")
-        fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
+        _ = fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
         **algebraic_sweep(cfg, data.shape[0], host_output=out is not None, warm_start=warm_start),
@@ -107,7 +107,7 @@ def _constrain(x: Any, support: Any, depth: int, *, nonnegative: bool, xp: Any) 
 class _HostEM:
     """One host EM volume's subset sweeps, recording which voxels any subset sees."""
 
-    def __init__(self, problem: Any, x: np.ndarray, *, updating: bool) -> None:
+    def __init__(self, problem: ConeProblem, x: np.ndarray, *, updating: bool) -> None:
         self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
         self.volume, self.updating = problem.volume(x), updating
         grid = self.plan.grid

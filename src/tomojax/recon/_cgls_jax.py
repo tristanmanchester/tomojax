@@ -679,11 +679,11 @@ def cgls(
     n, _, _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
     validate_detector_grid(det_grid, detector, context="cgls")
     if init_x is not None:
-        validate_volume(init_x, grid, context="cgls", name="init_x")
+        _ = validate_volume(init_x, grid, context="cgls", name="init_x")
     split, stream = _placement(cfg, projections, n, det_grid, grid=grid)
     announce(None if split is None else split.mesh.devices.flat, array=projections)
     poses = stack_view_poses(geometry, n)
-    validate_pose_stack(poses, n, context="cgls")
+    _ = validate_pose_stack(poses, n, context="cgls")
     hosted = solve_on_host(
         geometry, grid, detector, projections, init_x, cfg,
         model=model, backend=backend, poses=poses, shared=split is not None, out=out,

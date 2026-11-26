@@ -149,7 +149,7 @@ class RowReader:
             ahead, self._ahead = self._ahead, None
             if ahead is None or ahead[0] != k:
                 if ahead is not None:
-                    ahead[1].cancel()
+                    _ = ahead[1].cancel()
                 ahead = (k, worker.submit(self._read, k))
             self._band = (k, ahead[1].result())
             self._first = k if self._first is None else self._first
@@ -160,7 +160,7 @@ class RowReader:
     def close(self) -> None:
         """Drop the held bands and stop the worker, after any read in progress."""
         if self._ahead is not None:
-            self._ahead[1].cancel()
+            _ = self._ahead[1].cancel()
         if self._worker is not None:
             self._worker.shutdown()
         self._band = self._ahead = self._worker = None
@@ -724,12 +724,12 @@ class ConeProblem:
         try:
             with ExitStack() as resources:
                 if isinstance(self.data, RowReader):
-                    resources.callback(self.data.close)
-                resources.callback(iterate.close)
+                    _ = resources.callback(self.data.close)
+                _ = resources.callback(iterate.close)
                 for volume in work:
                     if volume is not iterate:
-                        resources.callback(close_work_file, volume.array)
-                        resources.callback(volume.close)
+                        _ = resources.callback(close_work_file, volume.array)
+                        _ = resources.callback(volume.close)
                 yield
         except BaseException:
             if out is None:
