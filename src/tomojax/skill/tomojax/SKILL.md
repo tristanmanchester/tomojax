@@ -52,15 +52,14 @@ Simulated data has ground truth; real scans do not. Do not propose optimising ag
 
 ## Agree a feature by pointing at it
 
-When the user names a structure ("the bright thin shell", "that crack"), do not describe it back in words. Measure, then mark, then ask:
+When the user names a structure ("the bright thin shell", "that crack"), do not describe it back in words. Mark it, check the report, then ask:
 
-1. **Measure.** Find the structure in the data before you point at it. Take a `view` with `mode="profile"` along a line ROI across it (for example `roi=[[64, 65], [64, 65], [0, 128]]` for a row of a volume), or read several rows and columns in one `python` call, and locate the values that match the description. For a thin target, zoom in with an `roi` around it.
-2. **Mark.** `view` the slice with `marks`. Point at a pixel of the image you are looking at, `{"type": "point", "at": {"pixel": [x, y], "image": "render-…"}, "label": "shell?"}`, or give array indices from your measurement, `"at": [z, y, x]`.
-3. **Check.** Each mark's report gives the value under it, its `percentile` in the plane and its place between the display limits (`display`). If the value contradicts the description, for example a "bright" structure under a mark at the 3rd percentile, you missed: re-measure and re-mark. Never ask the user to confirm a mark whose value contradicts what they described.
-4. **Ask.** Show the image and ask whether that is the feature. Mark alternatives in different colours if unsure.
-5. Once confirmed, make it a feature handle with the `feature` tool and outline it with `view` and `features`, on any volume on the same grid and side by side across candidates (`source` as a list).
+1. **Mark.** `view` the slice with `marks`. Point at a pixel of the image you are looking at, `{"type": "point", "at": {"pixel": [x, y], "image": "render-…"}, "label": "shell?", "snap": "peak"}`, or give array indices, `"at": [z, y, x]`. `snap` (`peak`, `trough` or `edge`) locks the point onto the brightest or darkest sample or the steepest edge within `within` index units (default 5). For a small or thin target, zoom in with an `roi` around it first.
+2. **Check.** A point or arrow on flat ground, with no peak, trough or edge within 2 samples, comes back with a `warning` and `nearest`: the array indices, distance, value and percentile of the closest structure on that plane. Mark `nearest.at` with `snap` and view again. On structure, compare the `value` and its `percentile` with the description: a "bright" structure under a mark at the 3rd percentile is the wrong structure. Never ask the user about a mark that has a warning or whose value contradicts what they described.
+3. **Ask.** Show the image and ask whether that is the feature. Mark alternatives in different colours if unsure.
+4. Once confirmed, make it a feature handle with the `feature` tool and outline it with `view` and `features`, on any volume on the same grid and side by side across candidates (`source` as a list).
 
-[references/pointing-and-features.md](references/pointing-and-features.md) has the mark types and feature recipes, and [references/thin-shell.md](references/thin-shell.md) works through a thin bright shell from measurement to scores.
+[references/pointing-and-features.md](references/pointing-and-features.md) has the mark types and feature recipes, and [references/thin-shell.md](references/thin-shell.md) works through a thin bright shell from a mark to scores.
 
 ## Stay within the task
 

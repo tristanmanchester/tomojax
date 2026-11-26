@@ -10,6 +10,11 @@
   same grid. The `python` tool adds `register_feature`, `view` and marks on `show`,
   accepts `ID.member` in `handles`, summarises large arrays in its result and reports
   errors by the lines of your code (`traceback=true` for the full trace).
+- A `view` point or arrow that lands on flat ground, with no peak, trough or edge within 2
+  samples, is reported with a `warning` and the `nearest` structure's array indices,
+  distance, value and percentile, so a mark beside a thin shell says where the shell is.
+  `tools/eval_mcp_imaging.py` runs the MCP imaging workflow on thin-shell, shifted-centre
+  and drifted-pose phantoms and scores Dice, centre and pose error against the truth.
 - The TomoJAX Agent Skill ships in the package: what TomoJAX is for, when to use the MCP
   server, checking and tuning a result without ground truth, agreeing a feature with the
   user, and reporting bugs, with the workflow guides as its references and a
