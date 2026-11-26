@@ -120,10 +120,11 @@ def estimate_projection_noise(
 def detector_error_scale(projections: jax.Array | np.ndarray) -> jax.Array | np.float64:
     """Combine measurement noise and unresolved subpixel curvature on the detector.
 
-    After removing its cell mean, the quadratic interpolation remainder of a
-    uniform subpixel coordinate has variance (second difference)**2 / 720.
-    Each three-point stencil contributes 6 sigma**2 from measurement noise.
-    Independent subpixel coordinates give additive variances across axes.
+    For a uniform subpixel phase the quadratic interpolation remainder has
+    mean D²/12 and variance (D²)**2/720, where D² is a second difference.
+    The means along both axes add before squaring. Each squared stencil has
+    noise bias 6 sigma**2. Orthogonal stencils share their center pixel, so
+    their covariance contributes another 8 sigma**2 to the squared sum.
     """
     sigma = estimate_projection_noise(projections)
     n, nv, nu = projections.shape
@@ -144,5 +145,6 @@ def detector_error_scale(projections: jax.Array | np.ndarray) -> jax.Array | np.
     dv = difference(v, 0)
     du = difference(0, u)
     curvature = xp.mean(dv * dv + du * du) - 6 * (v + u) * sigma**2
-    variance = sigma**2 + xp.maximum(curvature, 0) / 720
-    return jax.lax.stop_gradient(jnp.sqrt(variance)) if xp is jnp else np.float64(np.sqrt(variance))
+    laplacian = xp.mean((du + dv) ** 2) - (6 * (v + u) + 8 * v * u) * sigma**2
+    mse = sigma**2 + xp.maximum(curvature, 0) / 720 + xp.maximum(laplacian, 0) / 144
+    return jax.lax.stop_gradient(jnp.sqrt(mse)) if xp is jnp else np.float64(np.sqrt(mse))

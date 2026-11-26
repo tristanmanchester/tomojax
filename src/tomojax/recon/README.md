@@ -42,8 +42,9 @@ operator's Lipschitz scale. Huber smoothing does not add a large global curvatur
 penalty to that outer step.
 
 FISTA estimates a detector error scale from Haar-MAD measurement noise and the
-curvature of the measured detector image. A centered Gaussian backprojection
-propagates that scale into the data gradient. The automatic weight compares the
+RMS linear interpolation error implied by detector curvature. This includes both
+the mean error in a detector cell and the variation within the cell. A centered
+Gaussian backprojection propagates that scale into the data gradient. The automatic weight compares the
 estimated largest voxel score with the TV cost of a unit impulse in the flat
 interior. Coverage variation, detector correlations, and model bias limit this
 approximation. SPDHG retains its Haar-MAD calibration and empirical minimum of

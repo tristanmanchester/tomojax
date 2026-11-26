@@ -91,11 +91,15 @@ def test_noise_drops_a_partially_masked_cell_whole():
 
 def test_subpixel_scale_matches_interpolation_of_quadratic_signal():
     # Linear interpolation on [0, 1] of x**2 returns x. The sampling
-    # uncertainty is the SD of the actual interpolation residual in a cell.
+    # interpolation error includes both its cell mean and its variance.
     x = (np.arange(10000) + 0.5) / 10000
-    expected = np.std(x - x**2)
+    residual = x - x**2
+    expected = np.sqrt(np.mean(residual**2))
     quadratic = np.broadcast_to(np.arange(16, dtype=np.float32) ** 2, (8, 6, 16))
     for data in (quadratic, jnp.asarray(quadratic)):
         assert float(detector_error_scale(data)) == pytest.approx(expected, rel=1e-6)
+    # Opposite curvatures cancel in the cell mean, while their variances add.
+    saddle = quadratic - np.arange(6, dtype=np.float32)[None, :, None] ** 2
+    assert detector_error_scale(saddle) == pytest.approx(np.sqrt(2) * np.std(residual), rel=1e-6)
     ramp = np.broadcast_to(np.arange(16, dtype=np.float32), quadratic.shape)
     assert detector_error_scale(ramp) == 0
