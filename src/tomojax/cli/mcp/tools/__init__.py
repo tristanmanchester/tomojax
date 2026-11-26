@@ -681,15 +681,66 @@ class Tools:
         return result({"action": args.action, "target": args.target})
 
 
-def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolResult:
-    """Preserve worker categories, nested paths and enumerated parameter choices."""
+def outline(node: Object, defs: Object, depth: int = 0) -> str:
+    """A compact rendering of a JSON schema, for an error that says what to send."""
+    node = defs[node["$ref"].rsplit("/", 1)[1]] if "$ref" in node else node
+    if "enum" in node:
+        return " | ".join(json.dumps(v) for v in node["enum"])
+    if "anyOf" in node:
+        options = [o for o in node["anyOf"] if o.get("type") != "null"]
+        return " | ".join(outline(o, defs, depth) for o in options)
+    kind = node.get("type")
+    if kind == "object" and "properties" in node:
+        if depth > 1:
+            return "{...}"
+        required = node.get("required", [])
+        fields = [
+            f"{k}{'' if k in required else '?'}: {outline(v, defs, depth + 1)}"
+            for k, v in node["properties"].items()
+        ]
+        return "{" + ", ".join(fields) + "}"
+    if kind == "array":
+        if "prefixItems" in node:
+            return "[" + ", ".join(outline(i, defs, depth) for i in node["prefixItems"]) + "]"
+        return "[" + outline(node.get("items", {}), defs, depth) + ", ...]"
+    return str(kind or "any")
+
+
+def expected(spec: Object, field: str, given: object) -> str | None:
+    """The shape of one top-level argument.
+
+    A discriminated union narrows to the variant the caller named, if any.
+    """
+    node = spec["properties"].get(field)
+    if node is None:
+        return None
+    defs = spec.get("$defs", {})
+    tag = node.get("discriminator", {})
+    if tag and isinstance(given, dict):
+        ref = tag["mapping"].get(given.get(tag["propertyName"]))
+        node = {"$ref": ref} if ref else node
+    return f"{field} as {outline(node, defs)}"
+
+
+def tool_error(
+    name: str, err: ValueError | OSError, spec: Object, arguments: Object | None = None
+) -> CallToolResult:
+    """Preserve worker categories, nested paths and enumerated parameter choices.
+
+    A request that fails validation also gets the expected shape of the argument at fault.
+    """
     kind = err.kind if isinstance(err, WorkerError) else "invalid_parameter"
     path = err.path if isinstance(err, WorkerError) else None
     message = str(err)
+    hint = None
     if isinstance(err, msgspec.ValidationError):
-        match = re.search(r" - at `\$\.(.+?)`$", message)
+        match = re.search(r" - at `\$\.(.+?)`$", message) or re.search(
+            r"missing required field `(\w+)`$", message
+        )
         if match:
             path = match[1]
+            field = re.split(r"[.\[]", path, maxsplit=1)[0]
+            hint = expected(spec, field, (arguments or {}).get(field))
     choices = spec["properties"].get(path, {}).get("enum")
     hints = {
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
@@ -703,6 +754,8 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
     next_step = hints.get(kind, f"Check the {name} tool parameters and retry.")
     if choices:
         next_step = "Choose one of " + ", ".join(map(str, choices)) + "."
+    elif hint:
+        next_step = f"Give {hint}."
     data = {"kind": kind, "path": path, "message": message, "next": next_step}
     return result(data, text=f"{kind}: {message}. {next_step}", error=True)
 
@@ -823,7 +876,7 @@ def binding(
         try:
             reply = await handler(msgspec.convert(arguments, type=cls))
         except (ValueError, OSError) as err:
-            reply = tool_error(name, err, spec)
+            reply = tool_error(name, err, spec, arguments)
         job = activity.get()
         if job and job.notes and reply.structured_content is not None:
             reply.structured_content.setdefault("notes", job.notes)

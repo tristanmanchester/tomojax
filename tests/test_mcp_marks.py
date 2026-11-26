@@ -189,6 +189,44 @@ def test_a_mark_on_background_reads_as_a_miss(session):
     assert found["value"] == 0 and found["percentile"] == 0 and found["display"] == 0
 
 
+@pytest.mark.parametrize("stride", [1, 2])
+def test_a_rough_point_snaps_onto_the_plane_it_is_drawn_on(session, stride):
+    c, (volume, _, _) = session
+    z, y, x = VOXEL
+    reply = c.call(
+        "view",
+        source=volume,
+        axis="z",
+        index=z,
+        stride=[stride] * 3,
+        marks=[
+            # One index unit off the plane and about three in it, from the bright voxel.
+            {"type": "point", "at": [z + 1, y + 2, x - 2], "snap": "peak"},
+            {"type": "point", "at": [z, y, x], "snap": "trough", "within": 3},
+            {"type": "point", "at": [z, y + 2, x - 2], "snap": "peak", "within": 1},
+        ],
+    )
+    assert not reply["isError"], reply
+    peak, trough, short = (m["panels"][0] for m in reply["structuredContent"]["marks"])
+    assert peak["snapped"] == [z, y, x] and peak["value"] == 5
+    assert peak["moved"] == pytest.approx(np.hypot(2, 2), abs=0.01)
+    assert trough["value"] == 0 and 0 < trough["moved"] <= 3
+    assert short["moved"] <= 1 and short["value"] == 0
+    # The middle of the block's z = 6 cross-section, 3 and 4 from its faces.
+    on_block = c.call(
+        "view",
+        source=volume,
+        axis="z",
+        index=6,
+        marks=[{"type": "point", "at": [6, 23, 10], "snap": "edge"}],
+    )["structuredContent"]["marks"][0]["panels"][0]
+    _, sy, sx = on_block["snapped"]
+    # Smoothed by one sample, the steepest samples sit either side of a face.
+    near_face = min(abs(sy - 19.5), abs(sy - 25.5)) <= 1 or min(abs(sx - 5.5), abs(sx - 13.5)) <= 1
+    inside = 19 <= sy <= 26 and 5 <= sx <= 14
+    assert near_face and inside and 0 < on_block["moved"] <= 5
+
+
 def test_images_fit_the_model_budget_and_take_limits_sources_and_a_grid(session):
     c, (volume, _, _) = session
     twice = f"r = handles[{volume!r}]\nregister(tj.Reconstruction(r.volume * 2, r.geometry, 'fbp', {{}}))"

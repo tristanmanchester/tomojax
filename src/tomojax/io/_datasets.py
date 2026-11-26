@@ -474,7 +474,8 @@ def dataset_output_format(path: Path) -> Literal["npz", "hdf5"]:
         return "hdf5"
     if suffix == ".npz":
         return "npz"
-    raise InvalidParameter("path", f"unsupported dataset output format for {path}")
+    known = ", ".join(sorted(_HDF5_SUFFIXES | {".npz"}))
+    raise InvalidParameter("path", f"cannot save to {path.name}: give a path ending in {known}")
 
 
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
