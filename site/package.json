@@ -7,7 +7,7 @@
     "dev": "next dev",
     "start": "serve out",
     "types:check": "next typegen && tsc --noEmit",
-    "test": "node --test lib/search-spelling.test.ts",
+    "test": "node --test lib/search-spelling.test.ts lib/agent-readiness.test.ts",
     "lint": "biome check",
     "format": "biome format --write"
   },

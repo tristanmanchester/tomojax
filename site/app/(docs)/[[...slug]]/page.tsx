@@ -13,6 +13,7 @@ import {
   CopyMarkdownButton,
   GitHubSourceLink,
 } from "@/components/page-actions";
+import { getPageMarkdownTwinPath } from "@/lib/markdown";
 import {
   appName,
   getPageMarkdownUrl,
@@ -28,6 +29,7 @@ export default async function Page(props: PageProps<"/[[...slug]]">) {
 
   const MDX = page.data.body;
   const markdownUrl = getPageMarkdownUrl(page).url;
+  const markdownTwinUrl = `${siteUrl}${getPageMarkdownTwinPath(page.slugs)}`;
   // API pages list every method; their table of contents keeps to the exported names.
   const toc =
     page.slugs[0] === "api"
@@ -36,6 +38,12 @@ export default async function Page(props: PageProps<"/[[...slug]]">) {
 
   return (
     <DocsPage toc={toc} full={page.data.full}>
+      <div className="sr-only">
+        For AI agents: see the complete TomoJAX documentation index at{" "}
+        <a href={`${siteUrl}/llms.txt`}>llms.txt</a>. This page is also
+        available as Markdown at <a href={markdownTwinUrl}>{markdownTwinUrl}</a>{" "}
+        or by sending <code>Accept: text/markdown</code>.
+      </div>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">
         {page.data.description}
@@ -72,9 +80,16 @@ export async function generateMetadata(
   const page = source.getPage(params.slug);
   if (!page) notFound();
 
+  const markdownTwinUrl = `${siteUrl}${getPageMarkdownTwinPath(page.slugs)}`;
+
   return {
     title: page.slugs.length === 0 ? { absolute: appName } : page.data.title,
     description: page.data.description,
-    alternates: { canonical: page.url },
+    alternates: {
+      canonical: page.url,
+      types: {
+        "text/markdown": markdownTwinUrl,
+      },
+    },
   };
 }
