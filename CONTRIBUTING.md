@@ -4,13 +4,19 @@ In every change, state the input and geometry, the expected result, what changed
 
 ## Set up development
 
-With Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/):
+With Python 3.12 and [uv](https://docs.astral.sh/uv/getting-started/installation/), run this from the worktree root.
 
 ```bash
-uv sync --locked --extra cpu --dev
+./tools/worktree_setup.sh
 ```
 
-On Linux with CUDA, pass `--extra cuda12` instead. Add `--group examples` when generating figures, or `--group benchmark` for optional comparison libraries (see [bench/README.md](bench/README.md)).
+The script installs the locked development dependencies with `cuda12` when `nvidia-smi` succeeds on Linux and with `cpu` otherwise. Use `--cpu` or `--cuda` to select an extra explicitly, and `--dry-run` to preview the setup.
+
+In T3 Code, add a project script with `./tools/worktree_setup.sh` as its command and enable `runOnWorktreeCreate` to run it when T3 creates a worktree.
+
+The script uses `$HOME/.cache/tomojax-tmp` as `TMPDIR` for the sync unless you supply a non-empty `TMPDIR`. On Linux it also creates `$HOME/.cache/tomojax-studio-target`. Set `CARGO_TARGET_DIR` to that path in your shell or Studio build command to share Cargo build outputs across worktrees.
+
+To install optional groups, run `uv sync --locked --extra cpu --dev --group examples` for figures or use `--group benchmark` for comparison libraries. Use `--extra cuda12` for a CUDA environment. See [bench/README.md](bench/README.md).
 
 The [just](https://github.com/casey/just) recipes below run with `uv run --no-sync` so they keep your chosen CPU or CUDA extra. Note that `uv sync` removes manually installed packages such as a locally built TIGRE; keep comparison builds in a separate environment or reinstall them afterwards. You can also run the underlying commands directly from [justfile](justfile).
 
