@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, MutableMapping
+from collections.abc import Callable, ItemsView, Iterator, MutableMapping, ValuesView
 from pathlib import Path
 from typing import Any, Literal, Protocol, overload
 
@@ -33,6 +33,7 @@ class Dataset:
     file: File
     name: str | None
     id: _DatasetID
+    is_virtual: bool
     compression: str | None
     fillvalue: object
     attrs: AttributeManager
@@ -63,8 +64,10 @@ class ExternalLink:
     def __init__(self, filename: str | Path, path: str) -> None: ...
 
 class Group:
+    id: object
     file: File
     name: str | None
+    def visit_links(self, func: Callable[[str], None]) -> None: ...
     def visititems(self, func: Callable[[str, Dataset | Group], None]) -> None: ...
     attrs: AttributeManager
     @overload
@@ -85,6 +88,8 @@ class Group:
     def __delitem__(self, name: str) -> None: ...
     def __len__(self) -> int: ...
     def keys(self) -> Iterator[str]: ...
+    def items(self) -> ItemsView[str, Dataset | Group | None]: ...
+    def values(self) -> ValuesView[Dataset | Group | None]: ...
 
 class File(Group):
     mode: str

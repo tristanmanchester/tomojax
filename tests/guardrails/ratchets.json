@@ -61,17 +61,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 6251,
+    "reportAny": 5853,
     "reportMissingImports": 59,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 935,
-    "reportUnknownMemberType": 1659,
-    "reportUnknownVariableType": 1024,
-    "reportUnusedCallResult": 217
+    "reportUnknownArgumentType": 934,
+    "reportUnknownMemberType": 1653,
+    "reportUnknownVariableType": 1019,
+    "reportUnusedCallResult": 216
   },
-  "explicit_any": 630,
-  "type_casts": 235,
-  "broad_except": 40,
+  "explicit_any": 536,
+  "type_casts": 106,
+  "broad_except": 32,
   "studio_allows": 1,
   "studio_long_files": {
     "studio/src/app/actions.rs": 809,

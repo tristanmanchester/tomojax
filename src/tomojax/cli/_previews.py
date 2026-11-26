@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 import math
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal
 
 import h5py
 import numpy as np
@@ -49,7 +49,7 @@ def parse_slice(text: str) -> tuple[Axis, int]:
     axis, sep, index = text.partition("=")
     if not sep or axis not in ("z", "y", "x") or not index.isdigit():
         raise ValueError(f"--slice takes AXIS=INDEX with AXIS z, y or x, not {text!r}")
-    return cast("Axis", axis), int(index)
+    return axis, int(index)
 
 
 def parse_centers(text: str) -> tuple[float, ...]:
@@ -111,7 +111,9 @@ def projection_image(path: Path) -> np.ndarray | None:
 
 def _saved_shape(path: Path) -> tuple[str, tuple[int, ...]]:
     with h5py.File(path, "r") as file:
-        volume = cast("h5py.Dataset", file[_VOLUME_PATH])
+        volume = file[_VOLUME_PATH]
+        if not isinstance(volume, h5py.Dataset):
+            raise ValueError(f"{path}:{_VOLUME_PATH} must be a dataset")
         attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
         order = saved_volume_axes(None if attribute is None else str(attribute), path).lower()
         return order, tuple(int(n) for n in volume.shape)
@@ -121,7 +123,9 @@ def saved_plane(path: Path, axis: Axis, index: int) -> np.ndarray:
     """Plane ``index`` across ``axis`` of a saved volume, shown as (z, y, x) minus ``axis``."""
     order, _ = _saved_shape(path)
     with h5py.File(path, "r") as file:
-        volume = cast("h5py.Dataset", file[_VOLUME_PATH])
+        volume = file[_VOLUME_PATH]
+        if not isinstance(volume, h5py.Dataset):
+            raise ValueError(f"{path}:{_VOLUME_PATH} must be a dataset")
         key: list[int | slice] = [slice(None)] * 3
         key[order.index(axis)] = index
         plane = np.asarray(volume[tuple(key)], np.float32)
@@ -266,8 +270,7 @@ def write_sweep(
         bounds.append(_images.limits(image))
     shared = (min(low for low, _ in bounds), max(high for _, high in bounds))
     panels = []
-    for thumb, entry in zip(thumbs, out.sweep, strict=True):
-        center = cast("float", entry["center_px"])
+    for thumb, center in zip(thumbs, centers, strict=True):
         panel = _images.labeled(_images.to_uint8(thumb, shared), f"{center:+.2f} px")
         panels.append(
             _images.outlined(panel) if math.isclose(center, recorded, abs_tol=1e-6) else panel

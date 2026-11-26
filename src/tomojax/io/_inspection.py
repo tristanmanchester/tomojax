@@ -14,6 +14,7 @@ from numpy.typing import NDArray
 
 from tomojax._data import (
     ROTATION_ANGLE_PATHS,
+    FrameStack,
     LocatedFrames,
     locate_frames,
     saved_without_frames,
@@ -87,12 +88,12 @@ def _attr_to_str(value: object, default: str | None = None) -> str | None:
                 return _attr_to_str(cast("object", array.item()), default)
             if array.size >= 1:
                 return _attr_to_str(cast("object", array.flat[0]), default)
-        return str(cast("object", value))
+        return str(value)
     except (TypeError, UnicodeDecodeError, ValueError):
         return default
 
 
-def _json_attr_to_mapping(value: object) -> dict[str, Any] | None:
+def _json_attr_to_mapping(value: object) -> dict[str, object] | None:
     text = _attr_to_str(value)
     if not text:
         return None
@@ -333,7 +334,7 @@ def _volume_report(file: h5py.File | None) -> VolumeReport:
         if isinstance(geom, h5py.Group)
         else None
     )
-    method = cast("object", meta.get("reconstruction_method")) if meta is not None else None
+    method = meta.get("reconstruction_method") if meta is not None else None
     return {
         "found": True,
         "shape": [int(v) for v in volume.shape],
@@ -415,7 +416,9 @@ def recorded_corrections(saved: object) -> list[str]:
 
     entries = cast("list[object]", saved)
     return [
-        str(Correction.from_dict(cast("dict[str, Any]", c))) for c in entries if isinstance(c, dict)
+        str(Correction.from_dict(object_mapping(cast("object", c))))
+        for c in entries
+        if isinstance(c, dict)
     ]
 
 
@@ -665,8 +668,12 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     if raw is None:
         return inspect_nxtomo(Path(path))
     flats = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
-    darks = 0 if raw.darks is None else len(raw.darks)
-    counts = cast("_ProjectionStack", raw.counts)
+    darks = (
+        len(raw.darks)
+        if isinstance(raw.darks, FrameStack | np.ndarray)
+        else int(raw.darks is not None)
+    )
+    counts = raw.counts
     return _record_report(path, raw.record, counts, flat_count=flats, dark_count=darks)
 
 

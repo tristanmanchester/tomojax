@@ -11,13 +11,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from tomojax import progress
 from tomojax.cli._inputs import (
     PUBLIC as INPUTS,
+    InputArgs,
     add_inputs,
     input_paths,
     load_keywords,
@@ -30,9 +31,30 @@ from tomojax.cli.config import parse_args_with_config
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from tomojax import Frames, Scan
     from tomojax._loading_geometry import DeclaredGeometry
     from tomojax.corrections import Step
     from tomojax.wire.progress import Result
+
+
+class _Args(InputArgs):
+    data: str
+    out: str | None
+    force: bool
+    dry_run: bool
+    progress: str
+    views: str | None
+    crop: str | None
+    binning: int
+    preview_rows: str | None
+    preview: str | None
+    paganin: tuple[float, ...] | None
+    zingers: float | None
+    reject_views: float | None
+    stripes: int | None
+    rings: bool
+    epsilon: float
+
 
 _PUBLIC = (
     *(option for option in INPUTS if option != "--apply-poses"),
@@ -262,23 +284,29 @@ def _resolve_paganin(
         if len(paganin_fields) != 4:
             missing = [k for k in _PAGANIN_KEYS if k not in paganin_fields]
             raise ValueError(f"paganin config requires all four keys; missing {', '.join(missing)}")
-        values = tuple(float(cast("Any", paganin_fields[k])) for k in _PAGANIN_KEYS)
-        return cast("tuple[float, float, float, float]", values)
+        values: list[float] = []
+        for key in _PAGANIN_KEYS:
+            value = paganin_fields[key]
+            if not isinstance(value, int | float | str):
+                raise ValueError(f"{key} must be a number")
+            values.append(float(value))
+        cli_paganin = tuple(values)
     if cli_paganin is None:
         return None
     if len(cli_paganin) != 4:
         raise ValueError("--paganin takes DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL")
-    return cast("tuple[float, float, float, float]", cli_paganin)
+    delta_beta, distance, energy, pixel = cli_paganin
+    return delta_beta, distance, energy, pixel
 
 
-def _steps(args: argparse.Namespace, settings: Mapping[str, object]) -> list[Step]:
+def _steps(args: _Args, settings: Mapping[str, object]) -> list[Step]:
     """The correction steps the options and TOML settings ask for, in run order."""
     from tomojax.corrections import Paganin, RejectViews, Stripes, Zingers
 
-    zingers = cast("float | None", args.zingers)
-    paganin = _resolve_paganin(cast("tuple[float, ...] | None", args.paganin), settings)
-    outliers = cast("float | None", args.reject_views)
-    stripes = cast("int | None", args.stripes)
+    zingers = args.zingers
+    paganin = _resolve_paganin(args.paganin, settings)
+    outliers = args.reject_views
+    stripes = args.stripes
     zingers_size = settings.get("zingers_size", 3)
     if isinstance(zingers_size, bool) or not isinstance(zingers_size, int):
         raise ValueError("zingers_size must be an odd integer >= 3")
@@ -306,17 +334,17 @@ def _band(text: str) -> tuple[int, int]:
 
 
 def _checked(
-    parser: ProgressParser, args: argparse.Namespace, settings: Mapping[str, object]
+    parser: ProgressParser, args: _Args, settings: Mapping[str, object]
 ) -> tuple[tuple[slice, slice] | None, list[Step], tuple[int, int] | None]:
     """The crop, the steps and the preview band, or a usage error before anything loads."""
     try:
-        if cast("int", args.binning) < 1:
+        if args.binning < 1:
             raise ValueError("--binning must be at least 1")
         if args.views is not None:
-            _ = _parse_view_tokens(cast("str", args.views))
-        crop = None if args.crop is None else detector_block(cast("str", args.crop))
+            _ = _parse_view_tokens(args.views)
+        crop = None if args.crop is None else detector_block(args.crop)
         steps = _steps(args, settings)
-        rows = None if args.preview_rows is None else _band(cast("str", args.preview_rows))
+        rows = None if args.preview_rows is None else _band(args.preview_rows)
     except ValueError as exc:
         parser.error(str(exc))
     if rows is not None and args.preview is None:
@@ -327,16 +355,16 @@ def _checked(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax correct``."""
     parser = build_parser()
-    args, metadata = parse_args_with_config(parser, argv)
-    settings = cast("dict[str, object]", metadata["settings"])
+    args, metadata = parse_args_with_config(parser, argv, namespace=_Args())
+    settings = metadata["settings"]
     declared = validate_inputs(parser, args)
-    dry = cast("bool", args.dry_run)
-    output = cast("str | None", args.out)
+    dry = args.dry_run
+    output = args.out
     if output is None and not dry:
         parser.error("the following arguments are required: -o/--output")
-    preview = cast("str | None", args.preview)
+    preview = args.preview
     crop_slices, steps, rows = _checked(parser, args, settings)
-    source = cast("str", args.data)
+    source = args.data
 
     def run() -> Result | None:
         for path in [source, *input_paths(args)]:
@@ -346,11 +374,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser,
             inputs=[source, *input_paths(args)],
             outputs=[None if dry else output, preview],
-            force=cast("bool", args.force),
+            force=args.force,
         )
         progress.check_canceled()
         prepared = _prepared(source, args, declared, steps, crop_slices)
-        band = _preview_band(parser, prepared, rows, cast("int", args.binning))
+        band = _preview_band(parser, prepared, rows, args.binning)
         if dry:
             return _dry_run(args, prepared, band, preview)
         assert output is not None
@@ -377,28 +405,34 @@ def main(argv: Sequence[str] | None = None) -> int:
 class _Prepared:
     """The input after view selection and crop, and the steps to run on it."""
 
-    item: Any  # Frames for raw input, Scan for line integrals
-    raw: bool
+    item: Frames | Scan
     steps: tuple[Step, ...]
     selection: np.ndarray  # source view index of each selected view
     total: int  # views in the source
 
+    @property
+    def raw(self) -> bool:
+        from tomojax import Frames
+
+        return isinstance(self.item, Frames)
+
 
 def _prepared(
     source: str,
-    args: argparse.Namespace,
+    args: _Args,
     declared: DeclaredGeometry | None,
     steps: list[Step],
     crop: tuple[slice, slice] | None,
 ) -> _Prepared:
     """Load raw frames or a scan, select views and crop; Rings runs first when asked."""
+    from tomojax import Frames
     from tomojax._loading import (
         is_raw_input,
         load_raw_frames_with_declaration,
         load_scan_with_declaration,
     )
 
-    select = cast("str | None", args.views)
+    select = args.views
     keywords = load_keywords(args)
     progress.check_canceled()
     raw = is_raw_input(
@@ -416,13 +450,13 @@ def _prepared(
             f"{step} acts on transmission, before the log; {source} holds line integrals. "
             "Run tomojax correct on the raw acquisition to apply it."
         )
-    item: Any = (
+    item = (
         load_raw_frames_with_declaration(source, declared=declared, **keywords)
         if raw
         else load_scan_with_declaration(source, declared=declared, **keywords)
     )
     progress.check_canceled()
-    total = int(item.views) if raw else len(item.angles)
+    total = int(item.views) if isinstance(item, Frames) else len(item.angles)
     selection = np.arange(total)
     if select is not None:
         selection = view_ranges(select, total)
@@ -434,23 +468,27 @@ def _prepared(
         from tomojax.corrections import Rings
 
         ordered.insert(0, Rings())
-    return _Prepared(item, raw, tuple(ordered), selection, total)
+    return _Prepared(item, tuple(ordered), selection, total)
 
 
-def _applied(prepared: _Prepared, args: argparse.Namespace) -> Any:
+def _applied(prepared: _Prepared, args: _Args) -> Scan:
     """Every step on the prepared input, then binning (raw frames bin as they correct)."""
-    binning = cast("int", args.binning)
-    if prepared.raw:
-        return prepared.item.corrected(
-            *prepared.steps, epsilon=cast("float", args.epsilon), binning=binning
-        )
-    scan = prepared.item.corrected(*prepared.steps) if prepared.steps else prepared.item
+    from tomojax import Frames
+
+    binning = args.binning
+    item = prepared.item
+    if isinstance(item, Frames):
+        return item.corrected(*prepared.steps, epsilon=args.epsilon, binning=binning)
+    scan = item.corrected(*prepared.steps) if prepared.steps else item
     progress.check_canceled()
     return scan.binned(binning)
 
 
 def _detector_shape(prepared: _Prepared) -> tuple[int, int]:
-    shape = prepared.item.counts.shape if prepared.raw else np.shape(prepared.item.projections)
+    from tomojax import Frames
+
+    item = prepared.item
+    shape = item.counts.shape if isinstance(item, Frames) else np.shape(item.projections)
     return int(shape[1]), int(shape[2])
 
 
@@ -487,14 +525,14 @@ def _step_names(prepared: _Prepared) -> list[str]:
 
 
 def _dry_run(
-    args: argparse.Namespace, prepared: _Prepared, band: tuple[int, int], preview: str | None
+    args: _Args, prepared: _Prepared, band: tuple[int, int], preview: str | None
 ) -> Result | None:
     """What a run would write, and the preview when asked; no scan is written."""
     from tomojax.cli._plan_view import size as readable
     from tomojax.corrections import RejectViews
     from tomojax.corrections.api import preview_window
 
-    binning = cast("int", args.binning)
+    binning = args.binning
     height, width = _detector_shape(prepared)
     shape = (len(prepared.selection), height // binning, width // binning)
     size = 4 * shape[0] * shape[1] * shape[2]
@@ -526,9 +564,7 @@ def _dry_run(
     return None
 
 
-def write_band_preview(
-    path: Path, prepared: _Prepared, band: tuple[int, int], args: argparse.Namespace
-) -> None:
+def write_band_preview(path: Path, prepared: _Prepared, band: tuple[int, int], args: _Args) -> None:
     """Sinograms of the band's middle row: without the steps, with them, and the difference.
 
     Rows are the selected views in acquisition order; a strip on the left marks the
@@ -540,12 +576,12 @@ def write_band_preview(
     from tomojax.cli import _images
     from tomojax.wire.arrays import Axis, Uniform
 
-    binning, epsilon = cast("int", args.binning), cast("float", args.epsilon)
-    options: dict[str, Any] = {"binning": binning}
-    if prepared.raw:
-        options["epsilon"] = epsilon
-    after = interactive.correction_preview(prepared.item, band, *prepared.steps, **options)
-    before = interactive.correction_preview(prepared.item, band, **options)
+    after = interactive.correction_preview(
+        prepared.item, band, *prepared.steps, binning=args.binning, epsilon=args.epsilon
+    )
+    before = interactive.correction_preview(
+        prepared.item, band, binning=args.binning, epsilon=args.epsilon
+    )
     middle = (band[1] - band[0]) // 2
     views = len(prepared.selection)
     rows: dict[str, np.ndarray] = {}

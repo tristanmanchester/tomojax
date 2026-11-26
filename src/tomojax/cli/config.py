@@ -6,8 +6,9 @@ import argparse
 from pathlib import Path
 import sys
 import tomllib
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TypedDict, cast, overload
 
+from tomojax._typed_arrays import object_list
 from tomojax.cli import _console
 from tomojax.cli._options import config_settings, options
 from tomojax.cli._progress import ProgressParser
@@ -19,12 +20,43 @@ if TYPE_CHECKING:
 ConfigValue = object
 
 
+class ConfigMetadata(TypedDict):
+    """Config precedence and effective arguments for a command invocation."""
+
+    config_path: str | None
+    config_file_values: dict[str, ConfigValue]
+    explicit_cli_keys: list[str]
+    effective_options: dict[str, ConfigValue]
+    settings: dict[str, ConfigValue]
+
+
+@overload
 def parse_args_with_config(
     parser: ProgressParser,
     argv: Sequence[str] | None = None,
     *,
     required: Sequence[str] = (),
-) -> tuple[argparse.Namespace, dict[str, ConfigValue]]:
+    namespace: None = None,
+) -> tuple[argparse.Namespace, ConfigMetadata]: ...
+
+
+@overload
+def parse_args_with_config[N: argparse.Namespace](
+    parser: ProgressParser,
+    argv: Sequence[str] | None = None,
+    *,
+    required: Sequence[str] = (),
+    namespace: N,
+) -> tuple[N, ConfigMetadata]: ...
+
+
+def parse_args_with_config(
+    parser: ProgressParser,
+    argv: Sequence[str] | None = None,
+    *,
+    required: Sequence[str] = (),
+    namespace: argparse.Namespace | None = None,
+) -> tuple[argparse.Namespace, ConfigMetadata]:
     """Parse CLI args with optional TOML defaults.
 
     Precedence is:
@@ -53,15 +85,15 @@ def parse_args_with_config(
         }
         parser.set_defaults(**defaults)
 
-    args = parser.parse_args(raw_argv)
+    args = parser.parse_args(raw_argv, namespace=namespace or argparse.Namespace())
     _validate_required(parser, args, required)
 
-    effective_options = cast("dict[str, ConfigValue]", dict(vars(args)))
-    metadata: dict[str, ConfigValue] = {
+    effective_options: dict[str, object] = vars(args)
+    metadata: ConfigMetadata = {
         "config_path": str(config_path) if config_path is not None else None,
         "config_file_values": config_defaults,
         "explicit_cli_keys": sorted(explicit_dests),
-        "effective_options": effective_options,
+        "effective_options": effective_options.copy(),
         "settings": settings,
     }
     return args, metadata
@@ -74,11 +106,12 @@ def _discover_config_path(
     config_parser = ProgressParser(add_help=False, prog=parser.prog, allow_abbrev=False)
     config_parser.set_invocation(list(argv))
     _ = config_parser.add_argument("--config", default=None)
-    namespace, _ = config_parser.parse_known_args(list(argv))
-    config_value = cast("str | None", getattr(namespace, "config", None))
-    if config_value is None:
-        return None
-    return Path(config_value)
+
+    class ConfigArgs(argparse.Namespace):
+        config: str | None
+
+    args, _ = config_parser.parse_known_args(argv, namespace=ConfigArgs())
+    return None if args.config is None else Path(args.config)
 
 
 def _load_config_file(
@@ -101,7 +134,7 @@ def _load_config_file(
     except OSError as exc:
         parser.error(f"could not read config file {path}: {exc}")
 
-    return cast("dict[str, ConfigValue]", dict(payload))
+    return payload
 
 
 # Config keys that were renamed, and their new names. An old key fails with
@@ -198,15 +231,16 @@ def _explicit_cli_dests(
 
 
 def _coerce_action_value(action: argparse.Action, value: ConfigValue) -> ConfigValue:
-    action_const = cast("object", action.const)
+    action_const: object = action.const
     flag = action.nargs == 0 and isinstance(action_const, bool)
     if flag or isinstance(action, argparse.BooleanOptionalAction):
         if not isinstance(value, bool):
             raise TypeError("expected a boolean")
         return bool(value)
 
+    list_value = object_list(value)
     if action.__class__.__name__ == "_AppendAction":
-        values = cast("list[ConfigValue]", value) if isinstance(value, list) else [value]
+        values = list_value if isinstance(value, list) else [value]
         return [_coerce_scalar(action, item) for item in values]
 
     nargs = action.nargs
@@ -217,7 +251,6 @@ def _coerce_action_value(action: argparse.Action, value: ConfigValue) -> ConfigV
 
     if not isinstance(value, list):
         raise TypeError("expected a list value")
-    list_value = cast("list[ConfigValue]", value)
     if isinstance(nargs, int) and len(list_value) != nargs:
         raise ValueError(f"expected {nargs} values, got {len(list_value)}")
     if nargs == "+" and len(list_value) == 0:
@@ -251,7 +284,8 @@ def _validate_choices(
         return
 
     choices = cast("Iterable[ConfigValue]", action.choices)
-    values = cast("list[ConfigValue]", value) if isinstance(value, list) else [value]
+    list_value = object_list(value)
+    values = list_value if isinstance(value, list) else [value]
     invalid: list[ConfigValue] = [item for item in values if item not in choices]
     if invalid:
         choices_text = ", ".join(str(choice) for choice in choices)

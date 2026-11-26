@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
@@ -21,6 +21,16 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from tomojax.wire.progress import Result
+
+
+class _Args(argparse.Namespace):
+    data: str
+    out: str
+    dtype: str
+    range: list[float] | None
+    prefix: str | None
+    force: bool
+    progress: str
 
 
 def _build_parser() -> ProgressParser:
@@ -75,14 +85,14 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _build_parser()
     parser.set_invocation(list(sys.argv[1:] if argv is None else argv))
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=_Args())
 
     def run() -> Result | None:
-        data, out = Path(cast("str", args.data)), Path(cast("str", args.out))
+        data, out = Path(args.data), Path(args.out)
         raw = out.suffix.lower() == ".raw"
-        dtype = cast("str", args.dtype)
-        value_range = cast("list[float] | None", args.range)
-        explicit_prefix = cast("str | None", args.prefix)
+        dtype = args.dtype
+        value_range = args.range
+        explicit_prefix = args.prefix
         if raw and explicit_prefix is not None:
             parser.error("--prefix applies only to TIFF directory exports, not .raw files")
         try:
@@ -92,7 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prefix = "slice" if explicit_prefix is None else explicit_prefix
         # A raw volume writes a JSON sidecar beside it; refuse to replace either.
         outputs = [out, out.with_suffix(".json")] if raw else [out]
-        check_paths(parser, inputs=[data], outputs=outputs, force=cast("bool", args.force))
+        check_paths(parser, inputs=[data], outputs=outputs, force=args.force)
         registered = {}
         with h5py.File(data, "r") as handle:
             dataset = handle.get(VOLUME_DATASET)

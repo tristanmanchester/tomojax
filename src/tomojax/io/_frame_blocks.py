@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
 
 import numpy as np
 
@@ -12,11 +12,11 @@ from tomojax._data import FrameStack
 
 @dataclass(frozen=True)
 class FrameBlocks(FrameStack):
-    blocks: tuple[Any, ...]
+    blocks: tuple[FrameStack, ...]
     indices: np.ndarray
 
     @classmethod
-    def join(cls, blocks: list[Any]) -> FrameBlocks:
+    def join(cls, blocks: Sequence[FrameStack]) -> FrameBlocks:
         if not blocks or len({b.shape[1:] for b in blocks}) != 1:
             raise ValueError("acquisition blocks must have one detector image size")
         indices = np.concatenate(

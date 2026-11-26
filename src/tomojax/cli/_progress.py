@@ -24,6 +24,8 @@ from tomojax.wire.progress import Error, Result
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from contextlib import AbstractContextManager
+    from typing import TextIO
 
     from tomojax.cli._watch import WatchDirectory
 
@@ -73,7 +75,7 @@ class ProgressParser(argparse.ArgumentParser):
         if self.json_output and any(flag in argv for flag in ("--help", "-h", "--config-keys")):
             self.error("help and configuration listings cannot be combined with --progress json")
 
-    def _check_value(self, action: argparse.Action, value: Any) -> None:
+    def _check_value(self, action: argparse.Action, value: object) -> None:
         choices = action.choices
         if choices is not None and value not in choices:
             close = _console.suggest(str(value), [str(choice) for choice in choices])
@@ -113,7 +115,7 @@ def add_progress(parser: argparse.ArgumentParser, *, watch_dir: bool = False) ->
             metavar="DIR",
             help="Rewrite PNGs of the central planes in DIR at each checkpoint of the solve",
         )
-    parser.add_argument(
+    _ = parser.add_argument(
         "--progress",
         choices=("auto", "bar", "json", "none"),
         default="auto",
@@ -121,7 +123,9 @@ def add_progress(parser: argparse.ArgumentParser, *, watch_dir: bool = False) ->
     )
 
 
-def _handler(mode: str, token: progress.Control) -> tuple[Callable[[progress.Event], None], Any]:
+def _handler(
+    mode: str, token: progress.Control
+) -> tuple[Callable[[progress.Event], None], AbstractContextManager[object]]:
     """The watch handler for ``mode``, and the context that runs its display."""
     if mode == "json":
 
@@ -171,7 +175,7 @@ def _owned_messages(mode: str) -> Iterator[None]:
         category: type[Warning],
         filename: str,
         lineno: int,
-        file: Any = None,
+        file: TextIO | None = None,
         line: str | None = None,
     ) -> None:
         if Path(filename).resolve().is_relative_to(_PACKAGE):

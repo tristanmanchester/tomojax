@@ -435,7 +435,7 @@ def finish(
         ids.append(f"render-{next(tools.core.render_count)}")
         renders[ids[-1]] = layout
         while len(renders) > RENDERS:
-            renders.pop(next(iter(renders)))
+            _ = renders.pop(next(iter(renders)))
     for report in reports:
         for found in report["panels"]:  # pyright: ignore[reportGeneralTypeIssues]
             if "image" in found:

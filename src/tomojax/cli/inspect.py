@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from tomojax.cli import _previews as pv
 from tomojax.cli._options import add_force, check_destinations, check_paths, options
@@ -17,6 +18,16 @@ if TYPE_CHECKING:
 
     from tomojax.io.api import Inspection
     from tomojax.wire.progress import Result
+
+
+class _Args(argparse.Namespace):
+    data: str
+    preview_dir: str | None
+    slice: list[str] | None
+    centers: str | None
+    force: bool
+    json: bool
+    progress: str
 
 
 def _build_parser() -> ProgressParser:
@@ -195,13 +206,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     given = _joined(sys.argv[1:] if argv is None else argv)
     parser.set_invocation(given)
-    args = parser.parse_args(given)
+    args = parser.parse_args(given, namespace=_Args())
     if args.json and args.progress == "json":
         parser.error("--json cannot print an inspection document with --progress json")
-    preview_dir = cast("str | None", args.preview_dir)
+    preview_dir = args.preview_dir
     try:
         slices = None if args.slice is None else [pv.parse_slice(s) for s in args.slice]
-        centers = None if args.centers is None else pv.parse_centers(cast("str", args.centers))
+        centers = None if args.centers is None else pv.parse_centers(args.centers)
     except ValueError as exc:
         parser.fail(str(exc), hint="for example --slice z=200 or --centers -10:10:1")
     if (slices or centers) and preview_dir is None:
@@ -210,7 +221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     def run() -> Result | int:
-        path = Path(cast("str", args.data))
+        path = Path(args.data)
         check_paths(parser, inputs=[path])
         report = tj.inspect(path)
         issues = report["issues"]
@@ -224,7 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     Path(preview_dir),
                     slices=slices,
                     centers=centers,
-                    force=cast("bool", args.force),
+                    force=args.force,
                     listing=args.progress == "json",
                 )
             except (OSError, ValueError, KeyError) as exc:
@@ -232,7 +243,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if args.progress == "json":
             return _json_result(path, report, previews, preview_error, preview_dir)
-        _display(report, previews, preview_error, as_json=cast("bool", args.json))
+        _display(report, previews, preview_error, as_json=args.json)
         return int(bool(issues or preview_error))
 
     return run_command("inspect", args.progress, run)

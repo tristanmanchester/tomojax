@@ -9,6 +9,7 @@ from tomojax._data._io_acquisition import (
     calibration_issues,
 )
 from tomojax._data._io_frames import Hdf5Frames, LocatedFrames, locate_frames
+from tomojax._data._io_helpers import child_dataset
 from tomojax._data._io_npz import load_npz, npz_layout, save_npz
 from tomojax._data._io_nxtomo import (
     load_nxtomo,
@@ -33,6 +34,7 @@ __all__ = [
     "angle_scale_degrees",
     "build_geometry_from_meta",
     "calibration_issues",
+    "child_dataset",
     "load_npz",
     "load_nxtomo",
     "locate_frames",

@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 
@@ -46,7 +46,7 @@ def _json_object(data: Mapping[str, DatasetValue], key: str) -> JsonObject | Non
 def _source_record(value: DatasetValue | None) -> SourceInfo | None:
     if not isinstance(value, dict):
         return None
-    fields = cast("dict[str, object]", value)
+    fields: Mapping[str, object] = value
 
     def text(key: str) -> str | None:
         item = fields.get(key)
@@ -69,15 +69,15 @@ def _copy_array_metadata(value: object) -> np.ndarray | None:
 
 
 # Geometry metadata keys copied into geometry inputs, with their conversions.
-_GEOMETRY_PASSTHROUGH: dict[str, Callable[[Any], Any]] = {
-    "tilt": float,
-    "tilt_about": str,
-    "cone_beam": lambda value: value,
-    "cone_segments": lambda value: value,
-    "trajectory_lengths": lambda value: value,
-    "axis_unit_lab": lambda value: value,
-    "detector_roll": float,
-}
+_GEOMETRY_PASSTHROUGH = (
+    "tilt",
+    "tilt_about",
+    "cone_beam",
+    "cone_segments",
+    "trajectory_lengths",
+    "axis_unit_lab",
+    "detector_roll",
+)
 
 
 @dataclass(slots=True)
@@ -361,19 +361,30 @@ class LoadedNXTomo:
         grid = self.metadata.grid
         if grid is not None:
             payload["grid"] = grid.to_dict() if isinstance(grid, Grid) else grid
-        if self.metadata.angle_offset is not None:
-            payload["angle_offset"] = np.asarray(self.metadata.angle_offset)
-        if self.metadata.misalign_spec is not None:
-            payload["misalign_spec"] = self.metadata.misalign_spec
-        if self.metadata.align_params is not None:
-            payload["align_params"] = np.asarray(self.metadata.align_params)
-        if self.metadata.align_gauge is not None:
-            payload["align_gauge"] = self.metadata.align_gauge
+        arrays = {
+            "angle_offset": self.metadata.angle_offset,
+            "align_params": self.metadata.align_params,
+        }
+        records = {
+            "misalign_spec": self.metadata.misalign_spec,
+            "align_gauge": self.metadata.align_gauge,
+        }
+        payload.update(
+            {name: np.asarray(array) for name, array in arrays.items() if array is not None}
+        )
+        payload.update({name: record for name, record in records.items() if record is not None})
         geom_meta = self.metadata.geometry_meta or {}
-        for key, convert in _GEOMETRY_PASSTHROUGH.items():
+        for key in _GEOMETRY_PASSTHROUGH:
             value = geom_meta.get(key)
-            if value is not None:
-                payload[key] = convert(value)
+            if value is None:
+                continue
+            if key in ("tilt", "detector_roll"):
+                if not isinstance(value, str | int | float):
+                    raise TypeError(f"saved {key} must be a number")
+                value = float(value)
+            elif key == "tilt_about":
+                value = str(value)
+            payload[key] = value
         return payload
 
 

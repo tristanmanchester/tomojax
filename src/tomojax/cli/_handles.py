@@ -26,7 +26,7 @@ from tomojax.wire.arrays import (
 type Root = tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction
 
 
-def stage_array(context: ex.ExecutionContext, data: Any) -> Npy:
+def stage_array(context: ex.ExecutionContext, data: object) -> Npy:
     """Write only to this request's private reservation."""
     stage = context.staging.array()
     with stage.path.open("wb") as f:
