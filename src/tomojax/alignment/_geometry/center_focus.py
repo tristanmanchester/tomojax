@@ -1,4 +1,4 @@
-"""Global axial calibration from the edge sparsity of band-limited Fourier slices."""
+"""Axial center calibration from half-turn projection moments and Fourier slices."""
 
 from __future__ import annotations
 
@@ -82,9 +82,57 @@ class AngularFocus:
         # One angular degree of freedom per resolved radial cell. A Fourier slice
         # interpolates neighboring rays, so treating n*n pixels as independent
         # would swamp the native opposing-ray measurements.
-        fine, parity = parity_scores(np.concatenate(means), self.angles, sampled.astype(np.float64))
+        native = np.concatenate(means)
+        parity_centers, parity = parity_scores(native, self.angles, t)
+        fine = np.arange(-16 * (nu - 1), 16 * (nu - 1) + 1, dtype=np.float64) / 32
         sharpness = np.interp(fine, centers, -2 * n * np.log(costs))
-        return fine, parity + sharpness
+        return fine, sharpness + np.interp(fine, parity_centers, parity) + _moment_scores(
+            native, self.angles, t, fine
+        )
+
+
+def _moment_scores(
+    profiles: FloatImage,
+    angles: NDArray[np.float64],
+    time: NDArray[np.float64],
+    centers: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Fit the first Radon moment, propagating detector background and missing flux."""
+    width = profiles.shape[1]
+    u = np.arange(width, dtype=np.float64) - (width - 1) / 2
+    edges = np.asarray(profiles[:, [0, -1]], np.float64)
+    # A uniform view pedestal carries no position information. Use the two
+    # boundary rays as its reference; their signal also sets the uncertainty.
+    pedestal = np.asarray(np.mean(edges, axis=1, keepdims=True), np.float64)
+    mass = np.sum(profiles - pedestal, axis=1, dtype=np.float64)
+    # At the axis, the first moment follows a sinusoid. Allow a detector drift
+    # linear in acquisition time in addition to that specimen trajectory.
+    design = np.column_stack((np.cos(angles), np.sin(angles), time))
+    moments = np.column_stack((mass, profiles @ u))
+    detrended = np.asarray(
+        moments - design @ np.linalg.lstsq(design, moments, rcond=None)[0], np.float64
+    )
+    flux, first = detrended[:, 0], detrended[:, 1]
+    norm = float(np.linalg.norm(flux))
+    if not norm:
+        return np.zeros_like(centers)
+    direction = flux / norm
+    offset = float(direction @ first)
+    residual = first - offset * direction
+    variance = np.mean(residual**2, dtype=np.float64).item()
+    # A stationary column error biases all the views together. Estimate its
+    # scale at the detector edges. Correlated changes in total mass can also
+    # come from clipping; that missing mass has at least the detector's radius.
+    fixed = np.asarray(np.mean(edges, axis=0), np.float64)
+    background = np.mean(fixed**2, dtype=np.float64).item() * float(u @ u)
+    boundary = np.mean(abs(edges), dtype=np.float64).item() * width
+    drift = np.column_stack((np.ones(len(time)), time))
+    missing = mass - drift @ np.linalg.lstsq(drift, mass, rcond=None)[0]
+    lost = max(0.0, np.mean(missing[1:] * missing[:-1], dtype=np.float64).item())
+    systematic = background + boundary**2 + lost * ((width - 1) / 2) ** 2
+    variance += np.sum(direction, dtype=np.float64).item() ** 2 * systematic
+    variance += (norm * (centers.item(1) - centers.item(0))) ** 2 / 12
+    return -np.log1p((norm * centers + offset) ** 2 / variance)
 
 
 def _polar_grid(

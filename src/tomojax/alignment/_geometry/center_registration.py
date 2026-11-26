@@ -104,12 +104,24 @@ def _template_score(
     a: Profile, b: Profile, x: Profile, y: Profile, sigma: float, lags: NDArray[np.float64]
 ) -> NDArray[np.float64]:
     """Marginalize native and detector-corrected matches on their illuminated support."""
-    # The participation ratio counts illuminated columns. Divide by the
-    # integral of the squared autocorrelation of a Gaussian derivative.
+    # The participation ratio counts illuminated columns. Smooth specimen
+    # edges can correlate more of those columns than the gradient filter alone.
     energy = np.asarray(np.sum(x**2 + y**2, axis=0, dtype=np.float64), np.float64)
     squared = float(energy @ energy)
-    support = np.sum(energy, dtype=np.float64).item() ** 2 / squared if squared else 0.0
-    independent = support / (0.75 * math.sqrt(2 * math.pi) * sigma)
+    if not squared:
+        return np.zeros_like(lags)
+    support = np.sum(energy, dtype=np.float64).item() ** 2 / squared
+    size = 2 * x.shape[1]
+    density = np.asarray(
+        np.sum(abs(np.fft.rfft(x, n=size)) ** 2 + abs(np.fft.rfft(y, n=size)) ** 2, axis=0),
+        dtype=np.float64,
+    )
+    autocorrelation = np.fft.irfft(density, n=size)
+    normalized = autocorrelation / autocorrelation.item(0)
+    # Integral of the squared normalized autocorrelation, with the Gaussian
+    # derivative's own correlation width as the noise floor.
+    correlation_width = max(0.75 * math.sqrt(2 * math.pi) * sigma, float(normalized @ normalized))
+    independent = support / correlation_width
     corrected = _match(x, -y[:, ::-1], 1, lags)
     # Compare both hypotheses in the same gradient-variance units.
     # A temporal median can contain stationary parts of the specimen.
