@@ -118,29 +118,32 @@ class AlignConfig:
     refine_neighbors: int = field(default=5, metadata={"unit": "view"})
 
     def __post_init__(self) -> None:
-        for name in (
-            "iterations",
-            "coarse_iterations",
-            "image_iterations",
-            "min_iterations",
-            "initial_image_iterations",
-            "refine_iterations",
-            "refine_neighbors",
+        for name, value in (
+            ("iterations", self.iterations),
+            ("coarse_iterations", self.coarse_iterations),
+            ("image_iterations", self.image_iterations),
+            ("min_iterations", self.min_iterations),
+            ("initial_image_iterations", self.initial_image_iterations),
+            ("refine_iterations", self.refine_iterations),
+            ("refine_neighbors", self.refine_neighbors),
         ):
-            if operator.index(getattr(self, name)) < 0:
+            if operator.index(value) < 0:
                 raise InvalidParameter(name, f"{name} must be nonnegative")
-        for name in ("resolution", "knot_spacing", "max_voxels"):
-            if operator.index(getattr(self, name)) < 1:
-                raise InvalidParameter(name, f"{name} must be positive")
-        for name in (
-            "margin",
-            "image_tolerance",
-            "tolerance",
-            "image_tv_weight",
-            "loss_contrast_floor",
-            "refine_smoothing",
+        for name, value in (
+            ("resolution", self.resolution),
+            ("knot_spacing", self.knot_spacing),
+            ("max_voxels", self.max_voxels),
         ):
-            value = getattr(self, name)
+            if operator.index(value) < 1:
+                raise InvalidParameter(name, f"{name} must be positive")
+        for name, value in (
+            ("margin", self.margin),
+            ("image_tolerance", self.image_tolerance),
+            ("tolerance", self.tolerance),
+            ("image_tv_weight", self.image_tv_weight),
+            ("loss_contrast_floor", self.loss_contrast_floor),
+            ("refine_smoothing", self.refine_smoothing),
+        ):
             if not math.isfinite(value) or value < 0:
                 raise InvalidParameter(name, f"{name} must be finite and nonnegative")
         if self.motion not in ("independent", "smooth"):

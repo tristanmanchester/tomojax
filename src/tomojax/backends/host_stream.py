@@ -12,7 +12,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from functools import partial
 import itertools
-from typing import TYPE_CHECKING, cast
+import math
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental import io_callback
@@ -37,7 +38,7 @@ def host_source(array: np.ndarray) -> Iterator[jax.Array]:
     try:
         yield jnp.int32(key)
     finally:
-        _SOURCES.pop(key, None)
+        del _SOURCES[key]
 
 
 def _read(
@@ -72,12 +73,16 @@ def read_views(
     ``indices`` selects exactly this batch's original view indices instead of
     the contiguous range at ``start``; no whole subset is copied on the host.
     """
-    out = jax.ShapeDtypeStruct(shape, jnp.float32)
+    out = jax.ShapeDtypeStruct(shape, np.float32)
     return jax.pure_callback(partial(_read, size=shape[0]), out, key, start, weights_key, indices)
 
 
 def should_stream(
-    projections: object, *, fraction: float = 0.4, reserve_bytes: int = 0, copies: int = 1
+    projections: ArrayLike | jax.Array,
+    *,
+    fraction: float = 0.4,
+    reserve_bytes: int = 0,
+    copies: int = 1,
 ) -> bool:
     """Stream host data that exceeds the remaining device budget.
 
@@ -93,7 +98,7 @@ def should_stream(
 
     free = device_free_memory_bytes()
     return stream_view_bytes(
-        int(np.prod(np.shape(cast("ArrayLike", projections)))) * 4 * copies,
+        math.prod(np.shape(projections)) * 4 * copies,
         free,
         fraction=fraction,
         reserve_bytes=reserve_bytes,
@@ -127,7 +132,7 @@ def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.in
 
 
 def read_block(
-    key: jax.Array, start: int | jax.Array, shape: tuple[int, ...], dtype: DTypeLike = jnp.float32
+    key: jax.Array, start: int | jax.Array, shape: tuple[int, ...], dtype: DTypeLike = np.float32
 ) -> jax.Array:
     """Read rows of a registered buffer, ordered after earlier writes.
 
@@ -140,5 +145,5 @@ def read_block(
 
 def write_block(key: jax.Array, start: jax.Array, block: jax.Array) -> jax.Array:
     """Write rows of a registered buffer, ordered before later reads."""
-    out = jax.ShapeDtypeStruct((), jnp.int32)
+    out = jax.ShapeDtypeStruct((), np.int32)
     return io_callback(_write_block, out, key, start, block, ordered=True)

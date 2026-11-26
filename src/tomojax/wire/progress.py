@@ -20,6 +20,7 @@ INFO_BYTES = 65536
 class Info(Record):
     """Bounded JSON summary, with bulk members referenced separately by JSON Pointer."""
 
+    # msgspec uses Any for an unconstrained JSON value in both decoding and schema generation.
     summary: dict[str, Any]
     arrays: dict[str, Array]
 

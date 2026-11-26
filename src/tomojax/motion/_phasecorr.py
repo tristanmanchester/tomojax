@@ -11,8 +11,7 @@ def _wrap_shift(idx: jnp.ndarray | int, n: int) -> jnp.ndarray:
     index is preserved and the interval becomes ``[-floor(n/2), ceil(n/2))``.
     """
     threshold = (int(n) + 1) // 2
-    idx_arr = jnp.asarray(idx)  # pyright: ignore[reportUnknownMemberType]
-    return jnp.where(idx_arr < threshold, idx_arr, idx_arr - int(n))
+    return jnp.where(idx < threshold, idx, idx - int(n))
 
 
 def phase_corr_shift(ref: jnp.ndarray, tgt: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:

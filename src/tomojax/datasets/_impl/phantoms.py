@@ -109,7 +109,8 @@ def rotated_centered_cube(
     cx, cy, cz = (nx - 1) / 2.0, (ny - 1) / 2.0, (nz - 1) / 2.0
     if angles is None:
         rng = np.random.default_rng(seed)
-        angles = tuple(rng.uniform(-np.pi, np.pi, size=3).tolist())  # type: ignore
+        samples: np.ndarray[tuple[int], np.dtype[np.float64]] = rng.uniform(-np.pi, np.pi, size=3)
+        angles = (float(samples[0]), float(samples[1]), float(samples[2]))
     _add_rotated_cube_soft(
         vol, (cx, cy, cz), float(side), float(value), angles, edge_softness=edge_softness
     )

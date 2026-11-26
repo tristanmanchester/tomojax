@@ -171,6 +171,7 @@ def build(
     units = np.array([1.0, 1.0, 1.0, native[0], native[1], native[0]])
     scale = np.where(np.arange(6) < 3, 180 / np.pi, 1 / units)
     per_view = {}
+    isolated = []
     if local:
         values = np.asarray(table, np.float64)[:, list(local)] * scale[list(local)]
         smooth, rough = _split(values, spacing, order)
@@ -182,8 +183,9 @@ def build(
                 "smooth_rms": float(np.sqrt(np.mean(smooth[:, k] ** 2))),
                 "view_to_view_rms": float(np.sqrt(np.mean(rough[:, k] ** 2))),
             }
-    detector = [k for k, column in enumerate(local) if column in (3, 4)]
-    isolated = isolated_views(values[:, detector] / binning, order) if local and detector else []
+        detector = [k for k, column in enumerate(local) if column in (3, 4)]
+        if detector:
+            isolated = isolated_views(values[:, detector] / binning, order)
     offsets = np.asarray(offsets, np.float64)
     return {
         "levels": [{"iterations": len(lv["steps"]), "ended": lv["status"]} for lv in levels],

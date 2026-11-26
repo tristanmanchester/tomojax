@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Literal, get_args
 
 from tomojax._json import JsonValue, drop_none, normalize_json
 
@@ -21,34 +21,22 @@ CalibrationFrame = Literal[
     "metadata",
 ]
 
-_VALID_STATUSES: frozenset[VariableStatus] = frozenset(
-    {"estimated", "supplied", "frozen", "derived"}
-)
-_VALID_FRAMES: frozenset[CalibrationFrame] = frozenset(
-    {
-        "detector",
-        "scan",
-        "object",
-        "world",
-        "detector_plane",
-        "angle",
-        "metadata",
-    }
-)
+_VALID_STATUSES: dict[str, VariableStatus] = {status: status for status in get_args(VariableStatus)}
+_VALID_FRAMES: dict[str, CalibrationFrame] = {frame: frame for frame in get_args(CalibrationFrame)}
 
 
 def _parse_variable_status(value: object) -> VariableStatus:
     status = str(value)
     if status not in _VALID_STATUSES:
         raise ValueError(f"Unknown calibration variable status {status!r}")
-    return cast("VariableStatus", status)
+    return _VALID_STATUSES[status]
 
 
 def _parse_calibration_frame(value: object) -> CalibrationFrame:
     frame = str(value)
     if frame not in _VALID_FRAMES:
         raise ValueError(f"Unknown calibration variable frame {frame!r}")
-    return cast("CalibrationFrame", frame)
+    return _VALID_FRAMES[frame]
 
 
 @dataclass(frozen=True)
@@ -258,7 +246,7 @@ class CalibrationState:
         TypeError
             If a section is not a list of variables.
         """
-        sections = {}
+        sections: dict[str, tuple[CalibrationVariable, ...]] = {}
         for field_name in _SECTION_NAMES:
             values = payload.get(field_name, [])
             if not isinstance(values, list):

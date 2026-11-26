@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import logging
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, SupportsIndex, SupportsInt
 
 from tomojax import progress
 from tomojax.core.host_volume import host_available_memory_bytes
@@ -25,23 +25,24 @@ def is_oom_error(exc: BaseException) -> bool:
 def _free_bytes_from_memory_info(info: object) -> int | None:
     """Extract free bytes from JAX/XLA memory-info shapes."""
     if isinstance(info, Mapping):
-        mapping = cast("Mapping[str, object]", info)
         for key in ("free", "free_bytes", "bytes_free", "available", "bytes_available"):
-            if key in mapping:
-                return _byte_count(mapping[key])
-        if "bytes_limit" in mapping and "bytes_in_use" in mapping:
-            limit, used = _byte_count(mapping["bytes_limit"]), _byte_count(mapping["bytes_in_use"])
+            if key in info:
+                return _byte_count(info[key])
+        if "bytes_limit" in info and "bytes_in_use" in info:
+            limit, used = _byte_count(info["bytes_limit"]), _byte_count(info["bytes_in_use"])
             return None if limit is None or used is None else max(0, limit - used)
         return None
     if isinstance(info, tuple | list) and len(info) >= 1:
-        return _byte_count(cast("object", info[0]))
+        return _byte_count(info[0])
     return None
 
 
 def _byte_count(value: object) -> int | None:
+    if not isinstance(value, str | bytes | bytearray | SupportsInt | SupportsIndex):
+        return None
     try:
-        return int(cast("int", value))
-    except (TypeError, ValueError):
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -55,7 +56,7 @@ def _cuda_free_memory_bytes(device: Device) -> int | None:
         with cupy.cuda.Device(ordinal):
             free, _total = cupy.cuda.runtime.memGetInfo()
         return int(free)
-    except Exception as exc:
+    except (ImportError, OSError, RuntimeError) as exc:
         LOG.debug("CUDA device memory probe unavailable: %s", exc)
         return None
 
@@ -78,7 +79,7 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
     - Return None for an accelerator whose memory cannot be queried.
     """
     try:  # JAX GPU/TPU or CPU
-        import jax  # type: ignore
+        import jax
 
         if device is None:
             device = jax.config.jax_default_device
@@ -96,7 +97,7 @@ def device_free_memory_bytes(*, device: Device | None = None) -> int | None:
             free = _free_bytes_from_memory_info(memory_stats())
             if free is not None:
                 return free
-    except Exception as exc:
+    except (ImportError, OSError, RuntimeError) as exc:
         LOG.debug("Device memory probe failed: %s", exc)
     # Host RAM is not a capacity estimate for a known accelerator.
     if device is not None and not isinstance(device, str) and device.platform != "cpu":

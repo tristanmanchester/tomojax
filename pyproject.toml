@@ -224,6 +224,73 @@ reportAny = "warning"
 reportPrivateUsage = "error"
 reportUnusedCallResult = "warning"
 
+# Execution environments accept individual rules, but not typeCheckingMode.
+# These are the standard-mode additions to basic in the locked basedpyright.
+# The project-wide warning overrides above still apply.
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/alignment"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/backends"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/datasets"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/forward"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/geometry"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/motion"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/nuisance"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
+[[tool.basedpyright.executionEnvironments]]
+root = "src/tomojax/wire"
+reportFunctionMemberAccess = "error"
+reportIncompatibleMethodOverride = "error"
+reportIncompatibleVariableOverride = "error"
+reportOverlappingOverload = "error"
+reportPossiblyUnboundVariable = "error"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = [

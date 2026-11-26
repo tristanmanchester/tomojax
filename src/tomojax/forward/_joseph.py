@@ -27,20 +27,20 @@ def _inputs(
     volume: jax.Array | np.ndarray, poses: jax.Array | np.ndarray, grid: Grid, backend: str
 ) -> tuple[jax.Array, jax.Array]:
     context = "Joseph projection"
-    validate_volume(volume, grid, context=context)
+    _ = validate_volume(volume, grid, context=context)
     if jnp.iscomplexobj(volume) or jnp.iscomplexobj(poses):
         raise ValueError(f"{context}: volume and poses must be real")
     # A dtype keeps jnp.asarray from staging a second device copy of a host array.
-    volume = jnp.asarray(volume, dtype=jnp.float32)
-    poses = jnp.asarray(poses, dtype=jnp.float32)
+    volume = jnp.asarray(volume, dtype="float32")
+    poses = jnp.asarray(poses, dtype="float32")
     if poses.ndim != 3 or poses.shape[0] < 1:
         raise ValueError(f"{context}: poses must have nonempty shape (views, 4, 4)")
-    validate_pose_stack(poses, poses.shape[0], context=context)
+    _ = validate_pose_stack(poses, poses.shape[0], context=context)
     if backend not in {"jax", "cuda"}:
         raise ValueError(f"{context}: backend must be 'jax' or 'cuda'")
     if backend == "cuda" and not cuda_backend(jax.default_backend()):
         raise ValueError(f"{context}: backend='cuda' requires an NVIDIA CUDA device")
-    return volume.astype(jnp.float32), poses.astype(jnp.float32)
+    return volume.astype("float32"), poses.astype("float32")
 
 
 def project_joseph(
@@ -157,7 +157,7 @@ def joseph_l2_value_and_grad(
     expected = (poses.shape[0], detector.nv, detector.nu)
     if target.shape != expected or jnp.iscomplexobj(target):
         raise ValueError(f"Joseph loss: target must be real with shape {expected}")
-    target = target.astype(jnp.float32)
+    target = target.astype("float32")
     coeff, pullback = jax.vjp(lambda t: plane_coefficients(t, grid, detector), poses)
     loss, coefficient_grad, volume_grad = plane_l2_value_and_grad(
         coeff, volume, target, grid, detector, backend=backend, interpolation=interpolation
@@ -238,13 +238,11 @@ def joseph_pose_normal_equations(
             "with 1 <= P <= 16"
         )
     coeff, linear = jax.linearize(lambda t: plane_coefficients(t, grid, detector), poses)
-    coefficient_directions = jax.vmap(linear, in_axes=-1, out_axes=-1)(
-        directions.astype(jnp.float32)
-    )
+    coefficient_directions = jax.vmap(linear, in_axes=-1, out_axes=-1)(directions.astype("float32"))
     return plane_l2_normal_equations(
         coeff,
         volume,
-        target.astype(jnp.float32),
+        target.astype("float32"),
         coefficient_directions,
         grid,
         detector,

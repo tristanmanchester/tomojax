@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, TypedDict, cast
+from typing import TYPE_CHECKING, TypedDict
 
 from tomojax._json import JsonValue, normalize_json
+from tomojax._typed_arrays import object_list
 from tomojax.core.geometry.base import DetectorDict
 from tomojax.core.geometry.cone import ROLL_CONVENTION_KEY
 from tomojax.geometry._calibration.state import CalibrationState
@@ -88,15 +89,22 @@ def build_calibrated_geometry_metadata_patch(
     )
     detector_patch["det_center"] = [det_center[0] + shift[0], det_center[1] + shift[1]]
     # A segmented geometry's own detectors move with it, keeping their offsets.
-    for entry in cast("list[dict[str, Any]]", geometry_meta_patch.get("cone_segments") or []):
-        if isinstance(entry.get("detector"), dict):
-            u, v = _detector_center(entry["detector"])
-            entry["detector"] = {**entry["detector"], "det_center": [u + shift[0], v + shift[1]]}
+    raw_segments = geometry_meta_patch.get("cone_segments") or []
+    if not isinstance(raw_segments, list):
+        raise TypeError("cone_segments must be a list")
+    segments: list[JsonObject] = []
+    for entry in raw_segments:
+        if not isinstance(entry, dict):
+            raise TypeError("cone_segments must contain metadata objects")
+        segments.append(entry)
+        segment_detector = entry.get("detector")
+        if isinstance(segment_detector, dict):
+            u, v = _detector_center(segment_detector)
+            entry["detector"] = {**segment_detector, "det_center": [u + shift[0], v + shift[1]]}
 
     roll = variables.get("detector_roll")
     if roll is not None:
         value = _real(roll.value, field="detector_roll")
-        segments = cast("list[dict[str, Any]]", geometry_meta_patch.get("cone_segments") or [])
         beams = [geometry_meta_patch.get("cone_beam")] + [e.get("cone_beam") for e in segments]
         beams = [beam for beam in beams if isinstance(beam, dict)]
         if beams:
@@ -139,10 +147,7 @@ def _detector_metadata_patch(detector: Mapping[str, object]) -> DetectorDict:
 
 def _detector_center(detector_patch: Mapping[str, object]) -> list[float]:
     det_center_raw = detector_patch.get("det_center", [0.0, 0.0])
-    if isinstance(det_center_raw, list):
-        det_center = cast("list[object]", det_center_raw.copy())
-    else:
-        det_center: list[object] = [0.0, 0.0]
+    det_center = object_list(det_center_raw) if isinstance(det_center_raw, list) else []
     while len(det_center) < 2:
         det_center.append(0.0)
     return [

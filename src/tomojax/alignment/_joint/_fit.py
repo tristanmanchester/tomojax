@@ -73,12 +73,6 @@ if TYPE_CHECKING:
         binning: int
         grid: dict[str, object]
 
-    class _RefineStage(TypedDict):
-        ops: Operators
-        sigma: float
-        last: LevelRecord
-        placement: Mapping[str, Place] | None
-
     class FitRecord(TypedDict):
         fit: list[str]
         calibration: CalibrationCorrections
@@ -465,8 +459,7 @@ def fit_poses(
         if len(y0) < 2 or poses.shape != (len(y0), 4, 4) or not np.isfinite(poses).all():
             raise ValueError("pose fitting needs finite (views, 4, 4) poses for two or more views")
         native = (float(detector.du), float(detector.dv))
-        # Native pixels per radian: the object's half width, so a unit of any
-        # parameter moves its edge by about one pixel.
+        # Native pixels per radian at the object edge.
         lever = 0.5 * max(grid.nx * grid.vx, grid.ny * grid.vy) / native[0]
         parameters = Parameters(len(y0), fit, cone=frames is not None, lever=lever)
         pose_scales, frames = _physical_frame(poses, grid, native, lever, frames)
@@ -487,12 +480,13 @@ def fit_poses(
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         config = resolve_align_config(config, parameters.fit, cone=frames is not None)
-        state: tuple[jax.Array, jax.Array] | None = None
+        x = p = last = None
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(measured, bins)
         for level in schedule.levels:
+            last = None  # Release the previous level before building the next one.
             with (
                 scaled_images(scale),
                 progress.task(
@@ -500,7 +494,7 @@ def fit_poses(
                 ),
             ):
                 y, precision, g, ops, cal = _level(
-                    binned.pop(0),  # the level's arrays are its own from here
+                    binned.pop(0),
                     scale,
                     noise,
                     poses,
@@ -516,9 +510,7 @@ def fit_poses(
                     detector_roll=detector_roll,
                     config=config,
                 )
-                # Only the angular size prior depends on the level's noise scale.
-                # Reuse the same physical translation prior and its compiled solves
-                # across levels when those rotation columns are absent.
+                # Without angular columns, reuse the translation prior across levels.
                 if prior is None or "rotations" in parameters.fit:
                     prior = MotionPrior(
                         len(y0),
@@ -541,35 +533,32 @@ def fit_poses(
                     cal["eps"],
                     ops=ops,
                     budget=level.budget,
-                    x0=None if state is None else state[0],
-                    p0=None if state is None else state[1],
+                    x0=x,
+                    p0=p,
                     pose_sigma=cal["sigma"],
                     delta=cal["delta"],
                     scales=cal["scales"],
                     placement=placement,
                 )
-                state = x, p
-                levels.append(
-                    {
-                        "binning": level.binning,
-                        "grid": asdict(g),
-                        **record,
-                    }
-                )
-        if state is None or prior is None:
+                last = x, p, y, precision, ops, cal
+                levels.append({"binning": level.binning, "grid": asdict(g), **record})
+        if last is None or prior is None:
             raise ValueError("expected a fit schedule with at least one level")
-        x, p = state
-        del state
-        stage: _RefineStage = {
-            "ops": ops,
-            "sigma": cal["sigma"],
-            "last": levels[-1],
-            "placement": placement,
-        }
+        x, p, y, precision, ops, cal = last
+        del last
         total = config.refine_iterations if prior.nlocal else 0
         with scaled_images(scale), progress.task("refine", "refine poses", total, "updates"):
             p, refinement, (offsets, energy) = refine(
-                x, p, y, precision, prior, **stage, config=config
+                x,
+                p,
+                y,
+                precision,
+                prior,
+                ops=ops,
+                sigma=cal["sigma"],
+                last=levels[-1],
+                placement=placement,
+                config=config,
             )
         table, changes = parameters.physical(np.asarray(p, np.float64), pose_scales)
         x = x[margin : margin + base.nz] / np.float32(cal["scale"])

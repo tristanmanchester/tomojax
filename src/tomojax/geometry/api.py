@@ -7,8 +7,7 @@ build on.
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from tomojax.core.geometry.cone import is_cone_beam, view_frames
 from tomojax.geometry._calibration import (
@@ -28,10 +27,12 @@ if TYPE_CHECKING:
     from tomojax.geometry._axis_geometry import axis_pose_stack, axis_unit_from_rotations
 
 
-def __getattr__(name: str) -> Any:
+def __getattr__(name: str) -> object:
     if name not in {"axis_pose_stack", "axis_unit_from_rotations"}:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module("tomojax.geometry._axis_geometry"), name)
+    from tomojax.geometry._axis_geometry import axis_pose_stack, axis_unit_from_rotations
+
+    value = axis_pose_stack if name == "axis_pose_stack" else axis_unit_from_rotations
     globals()[name] = value
     return value
 

@@ -7,8 +7,7 @@ first use. Expert helpers for calibration state and axis order are in
 
 from __future__ import annotations
 
-from importlib import import_module
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from tomojax.core.geometry import (
     ConeBeam,
@@ -28,18 +27,14 @@ from tomojax.core.geometry import (
 if TYPE_CHECKING:
     from tomojax.core.geometry.views import stack_view_poses
 
-_LAZY = {
-    "stack_view_poses": "tomojax.core.geometry.views",
-}
 
-
-def __getattr__(name: str) -> Any:
-    module = _LAZY.get(name)
-    if module is None:
+def __getattr__(name: str) -> object:
+    if name != "stack_view_poses":
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    value = getattr(import_module(module), name)
-    globals()[name] = value
-    return value
+    from tomojax.core.geometry.views import stack_view_poses
+
+    globals()[name] = stack_view_poses
+    return stack_view_poses
 
 
 def __dir__() -> list[str]:
