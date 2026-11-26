@@ -109,6 +109,10 @@ class UlpStats:
     median: float
     max: int
 
+    def within(self, envelope: UlpStats) -> bool:
+        """Whether neither the median nor the maximum exceeds ``envelope``'s."""
+        return self.median <= envelope.median and self.max <= envelope.max
+
 
 def ulp_distance(a: npt.ArrayLike, b: npt.ArrayLike) -> npt.NDArray[np.int64]:
     """Per-element distance between two float32 arrays in units in the last place.
@@ -261,17 +265,18 @@ def compare(current: Measured, baseline: BaselineCase, *, tolerance: float) -> l
     # run-to-run noise, so every one of n repeats landing beyond all m baseline distances has
     # probability 1 / C(n + m, n): 1/126 for 5 repeats on both sides. On a bit-exact CPU the
     # baseline spread is zero and any difference fails.
-    best = closest(current.outputs, baseline.reference)
     envelope = spread_envelope(baseline.spread)
-    passed = best.median <= envelope.median and best.max <= envelope.max
+    best = closest(current.outputs, baseline.reference, envelope)
     detail = f"ULP median/max {best.median:g}/{best.max}, spread {envelope.median:g}/{envelope.max}"
-    return [error, Check("ulp", passed, detail)]
+    return [error, Check("ulp", best.within(envelope), detail)]
 
 
-def closest(outputs: Sequence[Float32Array], reference: Float32Array) -> UlpStats:
-    """The smallest median and maximum ULP distance of any repeat from ``reference``."""
+def closest(
+    outputs: Sequence[Float32Array], reference: Float32Array, envelope: UlpStats
+) -> UlpStats:
+    """The repeat nearest ``reference``: one within ``envelope`` if any is, else by maximum."""
     distances = [ulp_stats(out, reference) for out in outputs]
-    return UlpStats(min(d.median for d in distances), min(d.max for d in distances))
+    return min(distances, key=lambda d: (not d.within(envelope), d.max, d.median))
 
 
 def save_baseline(path: Path, device: Device, measured: Sequence[Measured]) -> None:
@@ -372,10 +377,10 @@ def summary_table(
         case, metrics, seconds = m.case, m.metrics, m.metrics["seconds"]
         reference = None if baseline is None else baseline.cases[case.name]
         ulp = "-"
-        if reference is not None and all(o.shape == reference.reference.shape for o in m.outputs):
-            best = closest(m.outputs, reference.reference)
-            ulp = f"{best.median:g}/{best.max}"
         envelope = spread_envelope(m.spread if reference is None else reference.spread)
+        if reference is not None and all(o.shape == reference.reference.shape for o in m.outputs):
+            best = closest(m.outputs, reference.reference, envelope)
+            ulp = f"{best.median:g}/{best.max}"
         judged = checks.get(case.name, [])
         result = "-" if not judged else "PASS" if all(c.passed for c in judged) else "FAIL"
         failures += [f"{case.name} {c.name}: {c.detail}" for c in judged if not c.passed]

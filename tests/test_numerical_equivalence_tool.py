@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 from types import ModuleType
 import zipfile
@@ -112,6 +114,10 @@ def test_a_difference_within_the_baseline_spread_passes_and_beyond_it_fails():
     # One repeat inside the spread is enough: the others may be noise drawn further out.
     repeats = [moved(5, 9), moved(5, 2), moved(5, 9)]
     assert _verdicts(_measured(case, [0.1] * 3, repeats), baseline)["ulp"] is True
+    # That one repeat must be inside on both counts: a small median from one repeat and a
+    # small maximum from another are not a repeat inside the spread.
+    repeats = [moved(5, 4), moved(100, 1)]
+    assert _verdicts(_measured(case, [0.1] * 2, repeats), baseline)["ulp"] is False
 
 
 @pytest.mark.surface
@@ -221,15 +227,26 @@ def _rewrite(source, target, *, meta=None, array=None):
 
 
 @pytest.mark.numerical
-def test_a_cpu_baseline_compares_equal_and_injected_regressions_exit_1(
-    tmp_path, monkeypatch, capsys
-):
-    monkeypatch.setenv("JAX_PLATFORMS", "cpu")  # main() sets it for --device; restore it after
+def test_a_cpu_baseline_compares_equal_and_injected_regressions_exit_1(tmp_path):
+    def run(*arguments):
+        # Its own process: --device is settled before JAX starts, and pytest's JAX has started.
+        command = [sys.executable, str(ROOT / "tools/check_numerical_equivalence.py")]
+        command += ["--device", "cpu", "--geometries", "parallel", "--methods", "fbp", "cgls"]
+        environment = {k: v for k, v in os.environ.items() if k != "JAX_PLATFORMS"}
+        return subprocess.run(
+            [*command, *map(str, arguments)],
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=300,
+        )
+
     baseline = tmp_path / "baseline.npz"
-    common = ["--device", "cpu", "--geometries", "parallel", "--methods", "fbp", "cgls"]
-    assert tool.main([*common, "--quick", "--save-baseline", str(baseline)]) == 0
+    saved = run("--quick", "--save-baseline", baseline)
+    assert saved.returncode == 0, saved.stderr
     record = tmp_path / "record.json"
-    assert tool.main([*common, "--compare-baseline", str(baseline), "--json-out", str(record)]) == 0
+    assert run("--compare-baseline", baseline, "--json-out", record).returncode == 0
     saved = json.loads(record.read_text())
     assert saved["passed"] is True and [c["case"]["method"] for c in saved["cases"]] == [
         "fbp",
@@ -244,9 +261,8 @@ def test_a_cpu_baseline_compares_equal_and_injected_regressions_exit_1(
 
     nudged = tmp_path / "nudged.npz"
     _rewrite(baseline, nudged, array=one_ulp_off)
-    _ = capsys.readouterr()
-    assert tool.main([*common, "--compare-baseline", str(nudged)]) == 1
-    assert "parallel/fbp ulp:" in capsys.readouterr().out
+    failed = run("--compare-baseline", nudged)
+    assert failed.returncode == 1 and "parallel/fbp ulp:" in failed.stdout
 
     def more_accurate(meta):
         meta["cases"][1]["metrics"]["nrmse"] = [
@@ -256,6 +272,6 @@ def test_a_cpu_baseline_compares_equal_and_injected_regressions_exit_1(
 
     stricter = tmp_path / "stricter.npz"
     _rewrite(baseline, stricter, meta=more_accurate)
-    assert tool.main([*common, "--compare-baseline", str(stricter)]) == 1
-    out = capsys.readouterr().out
-    assert "parallel/cgls error:" in out and "ulp:" not in out
+    failed = run("--compare-baseline", stricter)
+    assert failed.returncode == 1
+    assert "parallel/cgls error:" in failed.stdout and "ulp:" not in failed.stdout
