@@ -9,6 +9,19 @@
   of a cuDNN convolution, so alignment runs on Volta GPUs with stock CUDA 12 and cuDNN
   wheels. Results match previous runs on parallel beam and agree within one float32 ULP on
   cone beam and laminography.
+- Reading and correcting uncompressed HDF5 scans is several times faster with
+  bit-identical outputs. Unfiltered chunked or contiguous stacks (including behind
+  external links) are read at their stored byte offsets with up to 32 parallel positional
+  reads and cached chunk offsets. `Frames.corrected()` reads in blocks of at least
+  256 MiB, runs calibration moments and host output copies on up to 8 CPU threads, and
+  keeps active bracketing flat sets on the device while consecutive batches share them.
+- `tj.reconstruct_slabs` sizes raw row blocks to 1 MiB per view (at least 1 GiB, capped at
+  1/24 of available host memory per block, holding at most three blocks), prefetches the
+  first block during calibration, and uploads slabs as views with one pitched copy.
+  Streamed CUDA Fourier slabs check finiteness on the GPU compute stream before download.
+  On an 8,000-view 2160 × 2560 Diamond K11 scan (93 GB uncompressed, one V100S on GPFS),
+  file-to-volume Fourier reconstruction runs in 83.3 s cold (39.5 s warm, 26 GiB peak host
+  RAM) and `Frames.corrected()` in 141.3 s (down from 434 s).
 - `tj.load_frames` reads NeXus scan files by their structure: the frames of the default
   plot, the `image_key` of the detector holding them, and the rotation as the plotted
   coordinate with angular units, its own or those recorded for its positioner. Diamond

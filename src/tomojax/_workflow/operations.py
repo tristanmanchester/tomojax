@@ -687,7 +687,11 @@ def reconstruct_slabs(
     also require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.
     CUDA consumes corrected rows without a corrected-projection host round trip.
-    Raw reads are prefetched within bounded storage and calibration is reused.
+    Unfiltered HDF5 stacks use parallel positional reads with cached chunk
+    offsets. Raw row blocks target 1 MiB per view (at least 1 GiB per block,
+    capped at 1/24 of available host memory, with at most three blocks held).
+    The first block prefetches while calibration runs, and calibration is reused
+    across slabs.
     The context drains pending work on normal completion, early exit or failure.
     Raw frames and calibration arrays must remain unchanged inside the context.
     Cone FDK corrects host row bands in device-sized view batches and retains

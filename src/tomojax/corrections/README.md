@@ -11,8 +11,14 @@ that is already corrected. Views are corrected on the device a batch at a time.
 Each step is recorded in `Scan.corrections` and saved with the scan.
 
 HDF5 and TIFF sample and calibration frames stay lazy until correction, so
-`Frames.cropped` reads only that detector window of all three. Flat and dark
-means are accumulated in float64 over bounded batches. A pixel whose flat does
+`Frames.cropped` reads only that detector window of all three. Unfiltered HDF5
+frames (chunked or contiguous, including external links) are read at their stored
+byte offsets with up to 32 parallel positional reads in blocks of at least 256 MiB,
+with chunk offsets cached while the file size and modification time stay unchanged.
+Flat and dark means accumulate in float64 across row bands on up to 8 CPU threads,
+corrected view batches copy into the host output across up to 8 threads, and the
+active bracketing flat sets stay on the device while consecutive batches share them.
+A pixel whose flat does
 not exceed the dark by `epsilon` and three standard errors of their means (or
 whose calibration is not finite) is unmeasured. Interior gaps are interpolated
 in transmission along the same detector row in each view, before phase retrieval

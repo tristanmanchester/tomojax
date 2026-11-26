@@ -16,6 +16,8 @@ When a large host array would exceed half of available host RAM, TomoJAX backs i
 | Host-slab volume (FBP, FDK, Fourier, MLEM, SIRT) | Volume exceeds half of available RAM |
 | Multi-volume solver state (host-slab CGLS, FISTA-TV, accelerated SIRT) | Combined output and work volumes exceed half of available RAM |
 
+During raw-frame slab reconstruction (`tj.reconstruct_slabs`), raw row blocks target 1 MiB per view (at least 1 GiB per block, capped at 1/24 of available host RAM). Up to three blocks stay live at once (current, prefetched next, and previous while slabs still reference it), taking at most 1/8 of available host RAM (or 1 GiB per block on smaller hosts).
+
 `tj.load` logs the spill location; `tj.reconstruct` logs it and records the directory in `info["temporary_file"]`. Because the temporary file is unlinked, it disappears once the array is garbage-collected. Save it with `tj.save`, or pass your own writable memmap as `out=` so the volume is written straight to a named file (an explicit `out=` array is never moved, and solver work files are placed beside it when `out=` is a memmap).
 
 A full-size synchrotron scan easily hits this limit (Diamond I13 159815 is 73 GB corrected). If `TMPDIR` lacks enough free space, TomoJAX raises `MemoryError` listing the required size and free space. On Linux systems where `/tmp` is `tmpfs` (RAM-backed), point `TMPDIR` to a fast local disk before loading, or reduce size with `binning=` or `Frames.selected(...)`.
@@ -84,7 +86,7 @@ Geometry-specific slab behavior:
 
 `Frames.corrected()` produces a complete corrected stack in host memory (or `TMPDIR`). `tj.reconstruct_slabs` uses the following storage strategies.
 
-Uncompressed HDF5 frames, chunked or contiguous and also behind an external link, are read with many positional reads at once, as parallel file systems need, and a band of detector rows reads only those rows of each frame.
+Uncompressed (unfiltered) HDF5 frames, chunked or contiguous and including external links, are read directly at their stored byte offsets with up to 32 parallel positional reads. Chunk offsets are indexed once and cached while the file size and modification time stay the same, and a row band reads only the needed rows of each chunk. Filtered, virtual, compact, and externally stored datasets read through HDF5. The first raw block prefetches while calibration runs, each slab uploads directly from its block with one pitched copy (a host copy runs only when a slab crosses two blocks), and streamed CUDA Fourier slabs check finiteness on the GPU before download.
 
 - **Cone-beam FDK:** `tj.reconstruct_slabs(frames, "fbp")` keeps full-scan angular weights while correcting one row band at a time.
 - **Unposed axial parallel with an unrolled detector:** supports `"fbp"`, `"fourier"`, `"sirt"`, and `"mlem"` (with optional `config=` and `warm_start=True`). A full Diamond I12 scan (56.6 GB SIRT volume) ran in 24 minutes using [1.4 GB of VRAM](measurements.md#scans-larger-than-the-gpu).

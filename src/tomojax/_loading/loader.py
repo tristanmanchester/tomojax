@@ -532,9 +532,12 @@ class Frames:
         each in the order given (see :mod:`tomojax.corrections`). ``epsilon``
         must be finite and positive; it bounds the flat field and transmission
         below. Views are corrected on the device in batches of ``views_per_batch``,
-        a positive integer. Automatic view batches target 32 MiB for simple
-        pipelines, or 256 MiB including additional workspace such as the padded
-        FFT arrays needed for Paganin phase retrieval.
+        a positive integer; the active bracketing flat sets stay on the device
+        across consecutive batches that share them. Automatic view batches target
+        32 MiB for simple pipelines, or 256 MiB including additional workspace
+        such as the padded FFT arrays needed for Paganin phase retrieval.
+        Unfiltered HDF5 stacks are read in parallel positional blocks, and
+        calibration means and host output copies run across multiple CPU threads.
 
         ``binning`` averages blocks of ``binning`` x ``binning`` detector pixels of
         the line integrals, as :meth:`Scan.binned` does, without holding the

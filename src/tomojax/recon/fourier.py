@@ -55,7 +55,8 @@ class FourierConfig:
     CUDA allocation exhaustion still halves it down to one slice. FFT plans and
     allocator caches consume additional memory. Large CUDA calls overlap host
     row preparation, device transfers, FFT execution and output writes, retaining
-    at most two pending device slabs. A bounded cache retains immutable
+    at most two pending device slabs, and check finiteness on the GPU before
+    download. A bounded cache retains immutable
     geometry arrays; each call owns its working buffers.
     Host transfer buffers use exact-sized pinned allocations. Upload staging is
     reused after its copy completes; returned output slabs keep independent storage.
