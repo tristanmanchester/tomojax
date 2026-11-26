@@ -237,3 +237,34 @@ def test_a_feature_saves_reopens_and_exports(session, tmp_path):
     assert tifffile.imread(slices[10]).sum() == 8 * 10 and tifffile.imread(slices[0]).sum() == 0
     wrong = c.call("save", source=box["handle"], path=str(tmp_path / "block.tif"))
     assert wrong["isError"] and ".h5" in wrong["content"][0]["text"]
+
+
+def test_a_malformed_recipe_gets_the_shape_to_send(session):
+    c, (volume, _, _) = session
+    calls = {
+        "missing": {"source": volume},
+        "untyped": {"source": volume, "recipe": {"seeds": [[1, 2, 3]]}},
+        "misnamed": {"source": volume, "recipe": {"type": "seeded", "seed": [1, 2, 3]}},
+    }
+    hints = {}
+    for key, arguments in calls.items():
+        reply = c.rpc("tools/call", {"name": "feature", "arguments": arguments})["result"]
+        assert reply["isError"]
+        hints[key] = reply["structuredContent"]["next"]
+    for hint in (hints["missing"], hints["untyped"]):
+        assert hint.startswith('Give recipe as {type: "box", corners: ')
+        assert all(f'type: "{t}"' in hint for t in ("sphere", "cylinder", "prism", "band"))
+    # Naming the type narrows the hint to that recipe.
+    assert hints["misnamed"] == (
+        'Give recipe as {type: "seeded", seeds: [[number, ...], ...], tolerance?: number, '
+        'tolerance_unit?: "noise" | "value", smoothing?: number, max_radius?: number}.'
+    )
+
+
+def test_save_names_the_suffixes_it_writes(session, tmp_path):
+    c, (volume, _, _) = session
+    reply = c.call("save", source=volume, path=str(tmp_path / "volume.tj"))
+    assert reply["isError"]
+    assert reply["structuredContent"]["message"] == (
+        "cannot save to volume.tj: give a path ending in .h5, .hdf, .hdf5, .npz, .nx, .nxs"
+    )

@@ -34,6 +34,8 @@ Pass `marks` to `view` in the `planes`, `projection`, `sinogram` or `difference`
 
 The structured result has a `marks` list in the same order. Each entry gives the mark's `positions` in array indices and lists every rendered plane (`panel`, the index into `panels`) with `drawn`, the mark's `pixel` `[x, y]` in the returned image `image`, and the `value` under a point-like mark or the `mean` inside a box, circle or polygon, from the displayed samples. `percentile` is the share of the plane's samples below that value and `display` its place between the display limits (0 the lower, 1 the upper). A mark not drawn has `reason`: `off_plane` (with its `distance`) or `outside_roi`. Check this before showing the user: a value at a low percentile, or near 0 on the display scale, under a mark meant for a bright structure means you missed.
 
+A point can snap to what you mean. Add `"snap": "peak"` (brightest), `"trough"` (darkest) or `"edge"` (steepest change), and optionally `within` (index units, default 5). On each plane the point is drawn on, it moves to that sample within reach, after smoothing by one sample, and the report adds `snapped` (its array indices on that plane) and `moved` (how far, in index units). Snap reaches only `within`: a mark far from a thin structure still misses, so check `value` and `percentile` after snapping too, and use the `snapped` indices as the seed for a feature.
+
 Ticks are on by default when marks or features are given; pass `ticks=false` to hide them, or `ticks=true` to get them without marks.
 
 ## Ask, then make a feature

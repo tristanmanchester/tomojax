@@ -46,7 +46,6 @@
   "long_files": {
     "src/tomojax/_loading.py": 821,
     "src/tomojax/alignment/_joint/_solver.py": 962,
-    "src/tomojax/cli/mcp/tools/__init__.py": 818,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
@@ -66,13 +65,13 @@
     "_data": 2231,
     "alignment": 5435,
     "backends": 269,
-    "cli": 13011,
+    "cli": 13116,
     "core": 10115,
     "corrections": 3232,
     "datasets": 1087,
     "forward": 403,
     "geometry": 916,
-    "io": 4069,
+    "io": 4070,
     "motion": 153,
     "nuisance": 232,
     "recon": 15539,

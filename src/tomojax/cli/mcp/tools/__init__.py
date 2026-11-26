@@ -23,6 +23,7 @@ from tomojax.cli.mcp.supervisor import WorkerError, activity
 from tomojax.cli.mcp.tools import seeing
 from tomojax.cli.mcp.tools.budget import bounded
 from tomojax.cli.mcp.tools.references import PRIMARY, resolve, wire_arguments
+from tomojax.cli.mcp.tools.schemas import expected, schema
 from tomojax.cli.mcp.tools.workflows import MODELS, forms
 from tomojax.wire.arrays import Id, Record
 
@@ -130,17 +131,6 @@ def result(data: Object, *, text: str | None = None, error: bool = False) -> Cal
     )
 
 
-DRY_HELP = {
-    "Evaluate": "Validate settings and report split sizes before data-dependent view rejection.",
-    "Open": "Validate the file and report the object kind, path and geometry.",
-    "Simulate": "Report the resolved view count, phantom shape and projection shape.",
-    "Align": "Resolve the fit method, working grids, budgets and placement.",
-    "Reconstruct": "Resolve the reconstruction method, grid, iterations and placement.",
-    "Save": "Report dataset and manifest paths and whether the destination exists.",
-    "Export": "Report destination existence, paths, slice count, and first and last filenames.",
-}
-
-
 def elapsed_samples(samples: list[Object]) -> list[Object]:
     now = time.time()
     return [
@@ -150,34 +140,6 @@ def elapsed_samples(samples: list[Object]) -> list[Object]:
         }
         for s in samples
     ]
-
-
-def schema(cls: type[Record], definitions: Object) -> Object:
-    """Inline the root and enrich matching fields from the worker's parameter document."""
-    generated = msgspec.json.schema(cls)
-    nested = generated["$defs"]
-    root = nested.pop(cls.__name__)
-    for name, struct in [(cls.__name__, root), *nested.items()]:
-        properties = definitions.get(name, {}).get("properties", {})
-        for key, entry in struct["properties"].items():
-            entry.update(
-                {
-                    k: v
-                    for k, v in properties.get(key, {}).items()
-                    if k in {"description", "x-unit", "x-choices"}
-                }
-            )
-    for field, help_text in {
-        "config": "Expert settings. Use describe for the method's keys.",
-        "dry_run": DRY_HELP.get(
-            cls.__name__,
-            f"Validate the proposed {cls.__name__} operation and report its parameters.",
-        ),
-        "detail": "Use full for the worker info and provenance when available.",
-    }.items():
-        if field in root["properties"]:
-            root["properties"][field]["description"] = help_text
-    return {**root, **({"$defs": nested} if nested else {})}
 
 
 def preview_image(path: Path) -> ImageContent:
@@ -681,15 +643,25 @@ class Tools:
         return result({"action": args.action, "target": args.target})
 
 
-def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolResult:
-    """Preserve worker categories, nested paths and enumerated parameter choices."""
+def tool_error(
+    name: str, err: ValueError | OSError, spec: Object, arguments: Object | None = None
+) -> CallToolResult:
+    """Preserve worker categories, nested paths and enumerated parameter choices.
+
+    A request that fails validation also gets the expected shape of the argument at fault.
+    """
     kind = err.kind if isinstance(err, WorkerError) else "invalid_parameter"
     path = err.path if isinstance(err, WorkerError) else None
     message = str(err)
+    hint = None
     if isinstance(err, msgspec.ValidationError):
-        match = re.search(r" - at `\$\.(.+?)`$", message)
+        match = re.search(r" - at `\$\.(.+?)`$", message) or re.search(
+            r"missing required field `(\w+)`$", message
+        )
         if match:
             path = match[1]
+            field = re.split(r"[.\[]", path, maxsplit=1)[0]
+            hint = expected(spec, field, (arguments or {}).get(field))
     choices = spec["properties"].get(path, {}).get("enum")
     hints = {
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
@@ -703,6 +675,8 @@ def tool_error(name: str, err: ValueError | OSError, spec: Object) -> CallToolRe
     next_step = hints.get(kind, f"Check the {name} tool parameters and retry.")
     if choices:
         next_step = "Choose one of " + ", ".join(map(str, choices)) + "."
+    elif hint:
+        next_step = f"Give {hint}."
     data = {"kind": kind, "path": path, "message": message, "next": next_step}
     return result(data, text=f"{kind}: {message}. {next_step}", error=True)
 
@@ -823,7 +797,7 @@ def binding(
         try:
             reply = await handler(msgspec.convert(arguments, type=cls))
         except (ValueError, OSError) as err:
-            reply = tool_error(name, err, spec)
+            reply = tool_error(name, err, spec, arguments)
         job = activity.get()
         if job and job.notes and reply.structured_content is not None:
             reply.structured_content.setdefault("notes", job.notes)

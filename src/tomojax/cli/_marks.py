@@ -10,9 +10,9 @@ the plane normal.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
-from math import floor, log10, sqrt
+from math import ceil, floor, log10, sqrt
 from typing import TYPE_CHECKING, Annotated, Literal
 
 import msgspec
@@ -56,9 +56,17 @@ class Mark(Record, kw_only=True):
 
 
 class PointMark(Mark, tag="point", kw_only=True):
-    """A dot at one array position."""
+    """A dot at one array position.
+
+    ``snap`` moves the dot, on each plane it is drawn on, to the brightest
+    (``peak``) or darkest (``trough``) sample or the strongest edge (``edge``)
+    within ``within`` index units, after light smoothing; the report says where
+    it went.
+    """
 
     at: Position
+    snap: Literal["peak", "trough", "edge"] | None = None
+    within: Radius = 5.0
 
 
 class TextMark(Mark, tag="text", kw_only=True):
@@ -116,6 +124,15 @@ class Frame:
     cols: tuple[int, int, int]
     normal: tuple[int, int] | None
 
+    def index(self, row: float, col: float) -> tuple[float, ...]:
+        """Array indices of a sample-grid position on this plane."""
+        position = [0.0] * len(self.axes)
+        position[self.rows[0]] = self.rows[1] + row * self.rows[2]
+        position[self.cols[0]] = self.cols[1] + col * self.cols[2]
+        if self.normal is not None:
+            position[self.normal[0]] = self.normal[1]
+        return tuple(position)
+
 
 @dataclass(frozen=True)
 class Cell:
@@ -145,20 +162,10 @@ class Placement:
         c = self.cell
         return c.x <= x < c.x + self.size[1] * c.sx and c.y <= y < c.y + self.size[0] * c.sy
 
-    def index(self, row: float, col: float) -> tuple[float, ...]:
-        """Array indices of a sample-grid position on this plane."""
-        f = self.frame
-        position = [0.0] * len(f.axes)
-        position[f.rows[0]] = f.rows[1] + row * f.rows[2]
-        position[f.cols[0]] = f.cols[1] + col * f.cols[2]
-        if f.normal is not None:
-            position[f.normal[0]] = f.normal[1]
-        return tuple(position)
-
     def located(self, x: float, y: float) -> tuple[float, ...]:
         """Array indices of an image pixel on this plane."""
         c = self.cell
-        return self.index((y - c.y) / c.sy - 0.5, (x - c.x) / c.sx - 0.5)
+        return self.frame.index((y - c.y) / c.sy - 0.5, (x - c.x) / c.sx - 0.5)
 
 
 def locate(
@@ -282,6 +289,57 @@ def project(mark: AnyMark, frame: Frame) -> Shape:
     if worst > TOLERANCE:
         return Shape(kind, (), distance=worst, reason="off_plane")
     return Shape(kind, tuple(grid(p) for p in points), distance=worst)
+
+
+def snapped(
+    pixels: np.ndarray, at: tuple[float, float], mark: PointMark, steps: tuple[int, int]
+) -> tuple[float, float]:
+    """The sample-grid position a point mark snaps to on one plane.
+
+    Searches the samples within ``mark.within`` index units of ``at`` (``steps``
+    converts index units to samples along rows and columns) on a copy smoothed
+    by one sample, for the largest or smallest value or gradient magnitude.
+    """
+    from scipy import ndimage
+
+    h, w = pixels.shape[:2]
+    reach = (mark.within / steps[0], mark.within / steps[1])
+    r0, c0 = round(at[0]), round(at[1])
+    top, left = max(r0 - ceil(reach[0]) - 2, 0), max(c0 - ceil(reach[1]) - 2, 0)
+    bottom, right = min(r0 + ceil(reach[0]) + 3, h), min(c0 + ceil(reach[1]) + 3, w)
+    if top >= bottom or left >= right:
+        return at
+    crop = np.asarray(pixels[top:bottom, left:right], float)
+    crop = np.where(np.isfinite(crop), crop, np.nanmedian(crop) if np.isfinite(crop).any() else 0)
+    smooth = ndimage.gaussian_filter(crop, 1.0)
+    if mark.snap == "edge":
+        rise, run = np.gradient(smooth)
+        score = np.hypot(rise, run)
+    else:
+        score = smooth if mark.snap == "peak" else -smooth
+    rows, cols = np.ogrid[top:bottom, left:right]
+    near = ((rows - at[0]) / reach[0]) ** 2 + ((cols - at[1]) / reach[1]) ** 2 <= 1
+    if not near.any():
+        return at
+    best = np.unravel_index(np.argmax(np.where(near, score, -np.inf)), score.shape)
+    return (float(top + best[0]), float(left + best[1]))
+
+
+def snap(
+    mark: AnyMark, shape: Shape, pixels: np.ndarray, frame: Frame
+) -> tuple[Shape, dict[str, object]]:
+    """Move a snapping point mark on one plane, and report where it went."""
+    r0, c0 = shape.points[0]
+    h, w = pixels.shape[:2]
+    if not (isinstance(mark, PointMark) and mark.snap):
+        return shape, {}
+    if not (-0.5 <= r0 < h - 0.5 and -0.5 <= c0 < w - 0.5):
+        return shape, {}
+    steps = (frame.rows[2], frame.cols[2])
+    r1, c1 = snapped(pixels, (r0, c0), mark, steps)
+    moved = float(np.hypot((r1 - r0) * steps[0], (c1 - c0) * steps[1]))
+    report = {"snapped": [round(v, 2) for v in frame.index(r1, c1)], "moved": round(moved, 2)}
+    return replace(shape, points=((r1, c1),)), report
 
 
 def anchor(shape: Shape) -> tuple[float, float]:
@@ -465,6 +523,7 @@ def draw(
             distance = round(shape.distance or 0.0, 3)
             reports.append({"drawn": False, "reason": "off_plane", "distance": distance})
             continue
+        shape, moved = snap(mark, shape, pixels, overlay.frame)
         row, col = anchor(shape)
         covered = footprint(shape, size)
         extended = shape.kind in ("box", "circle", "polyline", "polygon")
@@ -483,6 +542,7 @@ def draw(
             "image": cell.image,
             "pixel": [round(x, 1), round(y, 1)],
             "mean" if extended else "value": value,
+            **moved,
         }
         if value is not None and finite.size:
             below = np.searchsorted(finite, value) / finite.size
