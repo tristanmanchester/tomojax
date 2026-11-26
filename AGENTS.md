@@ -37,7 +37,9 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
 ## Studio
 
 `just studio-check` runs `cargo fmt --check`, Clippy with `-D warnings` and
-`cargo test` on Rust 1.99.1. After a visual change run `just studio-verify`,
+`cargo test` on Rust 1.99.1. For project, protocol, job and preview logic,
+`cargo test --manifest-path studio/Cargo.toml -p studio-core` takes seconds and
+builds no window, GPU or HDF5 library. After a visual change run `just studio-verify`,
 which builds Studio and captures each workspace headless into
 `.artifacts/studio-snap/`, and look at the images.
 [Studio verification](studio/README.md#verification) · [Studio architecture](studio/ARCHITECTURE.md)
