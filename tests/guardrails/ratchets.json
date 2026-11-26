@@ -19,7 +19,7 @@
     "tomojax.evaluation": 2,
     "tomojax.progress": 13,
     "tomojax.interactive": 7,
-    "tomojax.corrections": 15,
+    "tomojax.corrections": 14,
     "tomojax.forward": 3,
     "tomojax.recon": 21,
     "tomojax.io": 8,
@@ -33,7 +33,7 @@
   },
   "cli_flags": {
     "inspect": 7,
-    "correct": 36,
+    "correct": 35,
     "reconstruct": 21,
     "align": 20,
     "export": 7,
@@ -61,12 +61,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5320,
+    "reportAny": 5306,
     "reportMissingImports": 57,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 900,
-    "reportUnknownMemberType": 1622,
-    "reportUnknownVariableType": 992,
+    "reportUnknownArgumentType": 871,
+    "reportUnknownMemberType": 1593,
+    "reportUnknownVariableType": 978,
     "reportUnusedCallResult": 142
   },
   "explicit_any": 456,
