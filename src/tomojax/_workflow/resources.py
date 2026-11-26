@@ -10,17 +10,17 @@ from tomojax._typed_arrays import device_id
 from tomojax.wire.resources import Placement, Snapshot
 
 if TYPE_CHECKING:
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._scan import Scan
-    from tomojax._smooth_alignment import CenterSelection, JointSelection
+    from tomojax._scan.model import Scan
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
 
 
 def sample(
     plan: CenterSelection | JointSelection | ResolvedReconstruction | None = None,
 ) -> tuple[Snapshot, ...]:
     """Sample only on the execution thread. CPU availability is host/cgroup room."""
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CenterSelection
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection
     from tomojax.backends import device_free_memory_bytes
     from tomojax.core.devices import current_device
     from tomojax.core.host_volume import host_available_memory_bytes
@@ -91,7 +91,7 @@ def estimate(
     transfers. Runtime compilation, allocator fragmentation and external allocations
     can change the eventual strategy and peak.
     """
-    from tomojax._smooth_alignment import CenterSelection, JointSelection
+    from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
 
     views, rows, cols = scan.projections.shape
     hosts = views * rows * cols * scan.projections.dtype.itemsize

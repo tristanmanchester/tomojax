@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from tomojax import progress
-from tomojax._scan import Alignment, Reconstruction
-from tomojax._simulate import Simulation
-from tomojax._stack_files import slice_name, tiff_stack_entry
+from tomojax._loading.stack_files import slice_name, tiff_stack_entry
+from tomojax._scan.model import Alignment, Reconstruction
+from tomojax._scan.simulation import Simulation
 from tomojax.io.api import Inspection
 
 if TYPE_CHECKING:
@@ -153,8 +153,8 @@ def export_volume(
     source: str | dict[str, object] | None,
 ) -> None:
     """Export registered pixels with the durable source known to the caller."""
-    from tomojax._scan import Alignment
-    from tomojax._simulate import Simulation
+    from tomojax._scan.model import Alignment
+    from tomojax._scan.simulation import Simulation
 
     if isinstance(reconstruction, Simulation):
         volume = reconstruction.phantom

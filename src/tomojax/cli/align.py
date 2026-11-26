@@ -14,11 +14,11 @@ from typing import TYPE_CHECKING, get_args
 import numpy as np
 
 from tomojax import progress
-from tomojax._field_of_view import (
+from tomojax._parameters import Fit, method_fit
+from tomojax._workflow.field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
 )
-from tomojax._parameters import Fit, method_fit
 from tomojax.cli._options import EXIT_STATUS, add_config, add_force, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax import Alignment, Scan
-    from tomojax._smooth_alignment import CenterSelection, JointSelection
-    from tomojax._workflow import Region
+    from tomojax._workflow.operations import Region
+    from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
     from tomojax.alignment import AlignConfig
     from tomojax.cli._watch import WatchDirectory
     from tomojax.wire.progress import Result
@@ -305,7 +305,7 @@ def _dry_run_plan(
         "fit": list(fit),
         "method": args.method,
     }
-    from tomojax._smooth_alignment import JointSelection
+    from tomojax._workflow.smooth_alignment import JointSelection
 
     if isinstance(work, JointSelection):
         document["config"] = asdict(work.config)
@@ -386,8 +386,8 @@ def _run(
     progress.check_canceled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
-    from tomojax._smooth_alignment import JointSelection, resolve_alignment
-    from tomojax._workflow import align_resolved, alignment_task
+    from tomojax._workflow.operations import align_resolved, alignment_task
+    from tomojax._workflow.smooth_alignment import JointSelection, resolve_alignment
     from tomojax.cli._plans import announce, dry_run, plan_product
 
     fit = method_fit(args.method, None if args.fit is None else tuple(args.fit))

@@ -108,7 +108,7 @@ def test_fourier_rejects_rotational_pose_corrections_before_writing():
 
 
 def test_preflight_reads_bounded_view_and_detector_row_batches():
-    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow.planning import resolve_reconstruction
 
     reads = []
 
@@ -129,7 +129,7 @@ def test_preflight_reads_bounded_view_and_detector_row_batches():
 
 
 def test_preflight_uses_each_views_translated_rows_on_a_device():
-    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow.planning import resolve_reconstruction
 
     grid = tj.Grid(5, 5, 1, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(7, 9, 1, 1), [130, 25, 80])

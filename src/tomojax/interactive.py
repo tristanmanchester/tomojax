@@ -8,16 +8,16 @@ from typing import TYPE_CHECKING, Any, Literal
 import numpy as np
 
 from tomojax import progress
-from tomojax._loading import corrected_data
-from tomojax._planning import (
+from tomojax._loading.loader import corrected_data
+from tomojax._scan.model import Scan, bind_step_geometry, binned_geometry, shifted_center
+from tomojax._workflow.operations import reconstruct, reconstruct_resolved
+from tomojax._workflow.planning import (
     ResolvedReconstruction,
     plane_dimension,
     resolve_grid,
     resolve_reconstruction,
 )
-from tomojax._region import RegionEstimate, estimate_region
-from tomojax._scan import Scan, bind_step_geometry, binned_geometry, shifted_center
-from tomojax._workflow import reconstruct, reconstruct_resolved
+from tomojax._workflow.region import RegionEstimate, estimate_region
 from tomojax.core.registration import planes, recorded_length_unit
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import grid_volume_origin
@@ -27,7 +27,7 @@ from tomojax.recon.api import AngularCoverageError, axial_fbp_plane
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
-    from tomojax._loading import Frames
+    from tomojax._loading.loader import Frames
     from tomojax._parameters import Method, RegionName
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Grid
@@ -56,7 +56,7 @@ def _axial_plane(plan: ResolvedReconstruction, axis: Axis, index: int) -> Any:
         scan.geometry, scan.grid, scan.detector, scan.projections, plan.config, index
     )
     if value is not None and plan.cylinder is not None:
-        from tomojax._field_of_view import cylinder_support
+        from tomojax._workflow.field_of_view import cylinder_support
 
         mask = cylinder_support(replace(scan.grid, nz=1), plan.cylinder)[0]
         value = np.where(mask, value, 0)

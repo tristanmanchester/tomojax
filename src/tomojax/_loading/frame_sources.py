@@ -7,21 +7,21 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from tomojax._loading_geometry import frame_geometry
+from tomojax._loading.geometry import frame_geometry
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from tomojax._loading import Frames
-    from tomojax._loading_geometry import DeclaredGeometry
-    from tomojax._scan import Scan
+    from tomojax._loading.geometry import DeclaredGeometry
+    from tomojax._loading.loader import Frames
+    from tomojax._scan.model import Scan
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
 
 def line_integral_frames(scan: Scan, stack: Any, key: np.ndarray) -> Frames:
     """Pair lazy sample storage with the saved scan's geometry and acquisition positions."""
-    from tomojax._loading import Frames
+    from tomojax._loading.loader import Frames
 
     frames = Frames(
         stack,
@@ -44,7 +44,7 @@ def acquisition_frames(
     angles_path: str | None = None,
     **overrides: Any,
 ) -> Frames | None:
-    from tomojax._loading import Frames
+    from tomojax._loading.loader import Frames
     from tomojax.io.api import read_acquisition
 
     found = read_acquisition(
@@ -80,7 +80,7 @@ def tiff_frames(
     geometry: ScanGeometry | None = None,
     declared: DeclaredGeometry | None = None,
 ) -> Frames:
-    from tomojax._loading import Frames
+    from tomojax._loading.loader import Frames
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import read_tiff_frames
 
@@ -112,7 +112,7 @@ def tiff_frames(
 def selected_frames(frames: Frames, kept: np.ndarray, counts: Any) -> Frames:
     """Attach selected sample storage while preserving calibration coordinates."""
     from tomojax._data import views_of
-    from tomojax._scan import cut
+    from tomojax._scan.model import cut
 
     at = np.arange(frames.views) + 0.5 if frames.view_positions is None else frames.view_positions
     return replace(

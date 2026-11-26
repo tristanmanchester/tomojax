@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax._planning import resolve_reconstruction
+from tomojax._workflow.planning import resolve_reconstruction
 from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
 from tomojax.cli.main import main
 from tomojax.wire.resources import Snapshot

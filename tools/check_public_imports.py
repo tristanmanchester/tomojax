@@ -34,7 +34,7 @@ PRODUCT_BOUNDARY_IMPORT_RULES = (
     ),
 )
 ALLOWED_PRODUCT_SURFACE_IMPORTS = {
-    ("tomojax._smooth_alignment", "tomojax.alignment._integration"),
+    ("tomojax._workflow.smooth_alignment", "tomojax.alignment._integration"),
 }
 
 

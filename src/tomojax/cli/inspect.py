@@ -152,7 +152,7 @@ def _make_previews(
     listing: bool,
 ) -> pv.Previews:
     import tomojax as tj
-    from tomojax._loading import is_raw_input
+    from tomojax._loading.loader import is_raw_input
     from tomojax.io.api import saved_without_frames
 
     out = pv.Previews()

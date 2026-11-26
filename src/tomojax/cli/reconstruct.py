@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast, get_args
 
 import numpy as np
 
-from tomojax._field_of_view import (
+from tomojax._parameters import Filter, Method, ReconMethod
+from tomojax._workflow.field_of_view import (
     REGION_CHOICES,
     REGION_HELP,
 )
-from tomojax._parameters import Filter, Method, ReconMethod
 from tomojax.cli._options import add_config, add_force, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli._watch import watch_directory
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax import Reconstruction, Scan
-    from tomojax._workflow import Region
+    from tomojax._workflow.operations import Region
     from tomojax.cli._watch import WatchDirectory
     from tomojax.cli.config import ConfigMetadata
     from tomojax.recon.api import MethodConfig
@@ -363,8 +363,8 @@ def _run(
 
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
-    from tomojax._planning import resolve_reconstruction
-    from tomojax._workflow import reconstruct_resolved
+    from tomojax._workflow.operations import reconstruct_resolved
+    from tomojax._workflow.planning import resolve_reconstruction
     from tomojax.cli._plans import announce, dry_run, plan_product
 
     shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])

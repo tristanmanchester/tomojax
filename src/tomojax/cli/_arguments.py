@@ -12,8 +12,8 @@ import msgspec
 import numpy as np
 
 import tomojax as tj
-from tomojax._loading import projection_frames
-from tomojax._scan import frame_output_grid
+from tomojax._loading.loader import projection_frames
+from tomojax._scan.model import frame_output_grid
 from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
@@ -150,7 +150,7 @@ def source(
             frames, is_raw = projection_frames(Path(ref.path), require_raw=raw is True)
             return frames if raw or (raw is None and is_raw) else scan_layout(frames, raw=is_raw)
         if raw is None:
-            from tomojax._loading import is_raw_input
+            from tomojax._loading.loader import is_raw_input
 
             raw = is_raw_input(ref.path)
         return tj.load_frames(ref.path) if raw else tj.load(ref.path)

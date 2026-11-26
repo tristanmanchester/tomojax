@@ -8,14 +8,14 @@ from typing import TYPE_CHECKING, Any, get_args
 import numpy as np
 
 from tomojax._parameters import Method, ReconMethod
-from tomojax._scan import Scan, with_grid
+from tomojax._scan.model import Scan, with_grid
 from tomojax.errors import InvalidParameter
 from tomojax.recon.api import MethodConfig, method_config, validate_reconstruction
 
 if TYPE_CHECKING:
-    from tomojax._field_of_view import Cylinder
     from tomojax._parameters import RegionName
-    from tomojax._region import RegionEstimate
+    from tomojax._workflow.field_of_view import Cylinder
+    from tomojax._workflow.region import RegionEstimate
     from tomojax.geometry import Grid
 
 
@@ -58,7 +58,7 @@ def resolve_grid(
     ``shape`` (``(nz, ny, nx)``) resamples the chosen region, or the scan's grid, to
     those voxel counts over the same physical extent; it replaces ``grid``.
     """
-    from tomojax._field_of_view import region_grid
+    from tomojax._workflow.field_of_view import region_grid
 
     if grid is not None and (region is not None or shape is not None):
         raise InvalidParameter("grid", "pass grid= or region= and shape=, not both")

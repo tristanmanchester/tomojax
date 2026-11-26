@@ -24,7 +24,7 @@ def scan_path(tmp_path_factory):
 
 
 def test_plan_text_names_the_method_grid_and_estimated_memory(scan_path):
-    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow.planning import resolve_reconstruction
     from tomojax.cli._plans import plan_product  # check-public-imports: allow-private
 
     scan = tj.load(scan_path)
@@ -49,7 +49,7 @@ def test_plan_text_names_the_method_grid_and_estimated_memory(scan_path):
 
 
 def test_the_header_compares_device_memory_with_device_memory(scan_path):
-    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow.planning import resolve_reconstruction
 
     scan = tj.load(scan_path)
     work = resolve_reconstruction(scan, "fbp")
@@ -66,7 +66,7 @@ def test_the_header_compares_device_memory_with_device_memory(scan_path):
 
 
 def _count_resolutions(monkeypatch):
-    from tomojax import _planning
+    from tomojax._workflow import planning as _planning
 
     calls = []
     resolve = _planning.resolve_reconstruction
@@ -95,7 +95,7 @@ def test_a_run_resolves_once_and_says_what_it_will_do(monkeypatch, tmp_path, sca
 
 
 def test_running_out_of_memory_says_what_the_plan_needed(monkeypatch, tmp_path, scan_path, capsys):
-    from tomojax import _planning, _workflow
+    from tomojax._workflow import operations as _workflow, planning as _planning
 
     def exhausted(*_args, **_kwargs):
         raise MemoryError("out of memory allocating the volume")
@@ -150,7 +150,7 @@ def test_the_cli_alignment_has_the_task_tree_of_tj_align(tmp_path, scan_path, ca
 
 
 def test_alignment_previews_are_zero_outside_the_cylinder_at_every_level(scan_path):
-    from tomojax._smooth_alignment import resolve_alignment
+    from tomojax._workflow.smooth_alignment import resolve_alignment
 
     scan = tj.load(scan_path)
     radius = resolve_alignment(scan, region="cyl").cylinder.radius

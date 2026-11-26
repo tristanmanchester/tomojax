@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from tomojax import _typed_arrays, progress, recon
-from tomojax._loading import Frames, load
+from tomojax._loading.loader import Frames, load
 from tomojax._parameters import (
     AlignMethod,
     AnnotationModule,
@@ -37,7 +37,7 @@ from tomojax._parameters import (
     RegionName,
     method_fit,
 )
-from tomojax._scan import (
+from tomojax._scan.model import (
     Alignment,
     Reconstruction,
     Scan,
@@ -50,7 +50,7 @@ from tomojax._scan import (
     source_of,
     with_grid,
 )
-from tomojax._simulate import Simulation
+from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import Device
 from tomojax.alignment import AlignConfig
 from tomojax.core.registration import SlabPlanes, recorded_length_unit, registration
@@ -63,16 +63,17 @@ if TYPE_CHECKING:
 
     import jax
 
-    from tomojax import _region, corrections
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CenterSelection, JointSelection
+    from tomojax import corrections
+    from tomojax._workflow import region as _region
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
     from tomojax.corrections.api import CorrectedRows
     from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
     from tomojax.recon.types import ReconstructionSlab
 else:
     corrections = AnnotationModule("tomojax.corrections")
-    _region = AnnotationModule("tomojax._region")
+    _region = AnnotationModule("tomojax._workflow.region")
 
 type Region = RegionName | _region.RegionEstimate
 LOG = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ def reconstruction_from_record(
     record: ProjectionDataset,
     read_scan: Callable[[str | PathLike[str]], Scan],
 ) -> Reconstruction:
-    from tomojax._files import saved_volume_grid
+    from tomojax._loading.files import saved_volume_grid
 
     if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
@@ -315,7 +316,7 @@ def save(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> tj.save("copy.nxs", scan)  # doctest: +SKIP
     """
-    from tomojax._simulate import Simulation
+    from tomojax._scan.simulation import Simulation
     from tomojax.io import save_dataset
     from tomojax.io.api import replace_dataset
 
@@ -598,7 +599,7 @@ def reconstruct(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> recon = tj.reconstruct(scan, "cgls", iterations=50)  # doctest: +SKIP
     """
-    from tomojax._planning import resolve_reconstruction
+    from tomojax._workflow.planning import resolve_reconstruction
 
     progress.check_canceled()
 
@@ -650,7 +651,7 @@ def reconstruct_resolved(
         LOG.info("The %.1f GiB volume is held in a temporary file in %s, as more than half of "
                  "host memory", volume.nbytes / 2**30, directory)  # fmt: skip
     if plan.cylinder is not None:
-        from tomojax._field_of_view import zero_outside_cylinder
+        from tomojax._workflow.field_of_view import zero_outside_cylinder
 
         volume = zero_outside_cylinder(volume, scan.grid, plan.cylinder, in_place=True)
     return Reconstruction(volume, scan.geometry, method, {**info, **plan.info}, scan)
@@ -845,7 +846,7 @@ def _slab_results(
     cfg: MethodConfig,
 ) -> Generator[tuple[slice, Reconstruction]]:
     """Assemble the scan and reconstruction for each completed, owned output slab."""
-    from tomojax._scan import detector_window, rebuild
+    from tomojax._scan.model import detector_window, rebuild
     from tomojax.geometry import grid_volume_origin
 
     origin = grid_volume_origin(target)
@@ -1022,7 +1023,7 @@ def align(
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP
     """
-    from tomojax._smooth_alignment import resolve_alignment
+    from tomojax._workflow.smooth_alignment import resolve_alignment
 
     with alignment_task(method, fit):
         plan = resolve_alignment(
@@ -1052,7 +1053,7 @@ def alignment_task(
 
 def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignment:
     """Execute the selected center or joint-image fit."""
-    from tomojax._smooth_alignment import CenterSelection, align_poses
+    from tomojax._workflow.smooth_alignment import CenterSelection, align_poses
 
     if isinstance(plan, CenterSelection):
         with registration(scan), progress.runtime() as actual:
@@ -1071,7 +1072,7 @@ def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignm
     assert result.scan is not None  # the alignment's corrected scan
     image = result.volume
     if cylinder is not None and image is not None and result.grid is not None:
-        from tomojax._field_of_view import zero_outside_cylinder
+        from tomojax._workflow.field_of_view import zero_outside_cylinder
 
         image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
     # The fit's working grid belongs to its image; the scan keeps the caller's grid.

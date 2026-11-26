@@ -252,8 +252,8 @@ def test_recon_help_does_not_import_jax() -> None:
 @pytest.mark.parametrize(
     ("caller", "allowed"),
     [
-        ("src/tomojax/_smooth_alignment.py", True),
-        ("src/tomojax/_workflow.py", False),
+        ("src/tomojax/_workflow/smooth_alignment.py", True),
+        ("src/tomojax/_workflow/operations.py", False),
         ("src/tomojax/cli/align.py", False),
         ("src/tomojax/cli/recon.py", False),
         ("examples/custom_alignment.py", False),

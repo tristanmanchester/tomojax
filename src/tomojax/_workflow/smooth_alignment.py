@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from tomojax._parameters import method_fit
-from tomojax._planning import resolve_grid
-from tomojax._scan import Reconstruction, describe, record_of, with_grid
+from tomojax._scan.model import Reconstruction, describe, record_of, with_grid
+from tomojax._workflow.planning import resolve_grid
 from tomojax.alignment._integration import CenterSelection, fit_poses
 from tomojax.backends.api import is_oom_error
 from tomojax.errors import InvalidParameter
@@ -17,10 +17,10 @@ from tomojax.geometry import stack_view_poses
 from tomojax.progress import warn
 
 if TYPE_CHECKING:
-    from tomojax._field_of_view import Cylinder
     from tomojax._parameters import Fit, RegionName
-    from tomojax._region import RegionEstimate
-    from tomojax._scan import Alignment, Scan
+    from tomojax._scan.model import Alignment, Scan
+    from tomojax._workflow.field_of_view import Cylinder
+    from tomojax._workflow.region import RegionEstimate
     from tomojax.alignment import AlignConfig
     from tomojax.alignment._integration import FitSchedule
     from tomojax.geometry import Grid
@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
-    from tomojax._calibration import publish_calibration
+    from tomojax._workflow.calibration import publish_calibration
 
     grid = plan.grid
     if grid is not None:
@@ -191,7 +191,7 @@ def transfer_alignment(
     """Apply fitted globals and segment-interpolated local updates to unseen views."""
     from scipy.spatial.transform import Rotation
 
-    from tomojax._calibration import publish_calibration
+    from tomojax._workflow.calibration import publish_calibration
 
     calibration = alignment.info["calibration"]
     if not isinstance(calibration, dict):

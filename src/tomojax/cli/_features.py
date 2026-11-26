@@ -405,7 +405,7 @@ def export_feature(
     source: dict[str, object],
 ) -> None:
     """Write the mask as 0/1 planes along its first axis, as TIFFs or one raw file."""
-    from tomojax._files import write_volume
+    from tomojax._loading.files import write_volume
 
     if feature.ndim != 3:
         raise InvalidParameter("source", "export needs a three-dimensional feature")

@@ -83,7 +83,7 @@ def test_user_text_is_never_read_as_markup(tmp_path, capsys):
 
 
 def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tmp_path, capsys):
-    from tomojax import _workflow
+    from tomojax._workflow import operations as _workflow
 
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
@@ -104,7 +104,8 @@ def test_a_tomojax_bug_prints_a_traceback_and_where_to_report_it(monkeypatch, tm
 def _noisy_reconstruct(monkeypatch):
     """A solve that warns and logs from TomoJAX and from another package."""
     import tomojax
-    from tomojax import _workflow, progress
+    from tomojax import progress
+    from tomojax._workflow import operations as _workflow
 
     def noisy(plan, *, out=None):
         scan = plan.scan

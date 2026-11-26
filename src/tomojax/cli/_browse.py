@@ -14,7 +14,7 @@ import h5py
 import msgspec
 import numpy as np
 
-from tomojax._files import saved_volume_grid
+from tomojax._loading.files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
 from tomojax.cli._frame_reads import frame_pixels, windowed

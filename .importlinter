@@ -10,16 +10,8 @@ layers =
     tomojax.torch
     tomojax.interactive
     tomojax._workflow
-    tomojax._resources
-    tomojax._smooth_alignment
-    tomojax._calibration
-    tomojax._planning
-    tomojax._field_of_view
-    tomojax._region
     tomojax._loading
-    tomojax._loading_geometry
     tomojax._scan
-    tomojax._astra
     tomojax.alignment
     tomojax.datasets
     tomojax.io
@@ -37,6 +29,38 @@ layers =
     tomojax.errors
     tomojax.wire
 
+[importlinter:contract:workflow-layers]
+name = Workflow modules build on planning, field of view and region
+type = layers
+containers = tomojax._workflow
+layers =
+    evaluation
+    operations
+    resources
+    smooth_alignment
+    calibration
+    planning
+    field_of_view
+    region
+
+[importlinter:contract:loading-layers]
+name = Loading modules build on record geometry
+type = layers
+containers = tomojax._loading
+layers =
+    files
+    loader : frame_sources
+    geometry | stack_files
+
+[importlinter:contract:scan-layers]
+name = The scan model builds only on ASTRA conversion
+type = layers
+containers = tomojax._scan
+layers =
+    simulation
+    model
+    astra
+
 [importlinter:contract:cli-uses-align-facade]
 name = CLI uses alignment facade instead of nested alignment internals
 type = forbidden
@@ -44,14 +68,9 @@ allow_indirect_imports = True
 source_modules =
     tomojax.cli
     tomojax.interactive
-    tomojax._smooth_alignment
-    tomojax._region
     tomojax._workflow
-    tomojax._resources
-    tomojax._planning
     tomojax._loading
     tomojax._scan
-    tomojax._astra
 forbidden_modules =
     tomojax.alignment._geometry
     tomojax.alignment._joint
@@ -63,16 +82,13 @@ allow_indirect_imports = True
 source_modules =
     tomojax.cli
     tomojax.interactive
-    tomojax._smooth_alignment
-    tomojax._region
     tomojax._workflow
-    tomojax._resources
-    tomojax._planning
     tomojax._loading
     tomojax._scan
-    tomojax._astra
 forbidden_modules =
     tomojax.core.geometry
+ignore_imports =
+    tomojax._workflow.evaluation -> tomojax.core.geometry.cone
 
 [importlinter:contract:rich-stays-in-the-cli]
 name = Only the console script imports Rich, never the library or the worker
@@ -90,6 +106,7 @@ source_modules =
     tomojax.corrections
     tomojax._workflow
     tomojax._loading
+    tomojax._scan
     tomojax.interactive
     tomojax.cli.serve
     tomojax.cli._session

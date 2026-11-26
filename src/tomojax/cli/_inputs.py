@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, get_args
 
-from tomojax._loading_geometry import DeclaredGeometry
+from tomojax._loading.geometry import DeclaredGeometry
 from tomojax._parameters import GeometryName, TiltAbout
 
 if TYPE_CHECKING:

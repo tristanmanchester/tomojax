@@ -14,17 +14,14 @@ import numpy as np
 
 import tomojax as tj
 from tomojax import interactive, progress
-from tomojax._loading import (
+from tomojax._loading.loader import (
     load_raw_frames_with_declaration,
     load_scan_with_declaration,
     projection_frames,
 )
-from tomojax._planning import resolve_reconstruction
-from tomojax._resources import sample
-from tomojax._scan import combined_geometry, describe
-from tomojax._simulate import build_sim_config, simulate_config
-from tomojax._smooth_alignment import resolve_alignment
-from tomojax._workflow import (
+from tomojax._scan.model import combined_geometry, describe
+from tomojax._scan.simulation import build_sim_config, simulate_config
+from tomojax._workflow.operations import (
     align_resolved,
     alignment_from_record,
     alignment_task,
@@ -33,6 +30,9 @@ from tomojax._workflow import (
     simulation_from_record,
     validate_save,
 )
+from tomojax._workflow.planning import resolve_reconstruction
+from tomojax._workflow.resources import sample
+from tomojax._workflow.smooth_alignment import resolve_alignment
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, scan_layout, source
 from tomojax.cli._handles import Root, handle, stage_array
@@ -49,7 +49,7 @@ from tomojax.wire.progress import Event, Preview
 if TYPE_CHECKING:
     from os import PathLike
 
-    from tomojax._evaluation import SplitSettings
+    from tomojax._workflow.evaluation import SplitSettings
 
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
@@ -319,7 +319,7 @@ class Admission:
 
     @prepare.register
     def evaluate(self, operation: op.Evaluate) -> Work:
-        from tomojax._evaluation import (
+        from tomojax._workflow.evaluation import (
             local_motion,
             partition_layout,
             partitions,
@@ -440,7 +440,7 @@ class Admission:
 
     @prepare.register
     def region(self, operation: op.RegionPreview) -> Work:
-        from tomojax._region import check_region_geometry
+        from tomojax._workflow.region import check_region_geometry
 
         scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=self.validating)
         check_region_geometry(scan)
@@ -495,7 +495,7 @@ class Admission:
 
     @prepare.register
     def edit(self, operation: op.Select | op.Crop | op.Bin | op.Poses) -> Work:
-        from tomojax._scan import detector_window
+        from tomojax._scan.model import detector_window
         from tomojax.core.validation import view_indices
 
         kinds = (tj.Scan, tj.Frames) if isinstance(operation, op.Select | op.Crop) else (tj.Scan,)
@@ -545,8 +545,8 @@ class Admission:
             layout_only=self.validating,
         )
         if isinstance(operation, op.ReconstructSlabs):
-            from tomojax._scan import geometry_record
-            from tomojax._workflow import slab_settings
+            from tomojax._scan.model import geometry_record
+            from tomojax._workflow.operations import slab_settings
             from tomojax.io.api import dataset_output_format, slab_volume
             from tomojax.recon.api import validate_slab_grid
 
@@ -624,7 +624,7 @@ class Admission:
 
     @prepare.register
     def durable(self, operation: op.Save | op.Export) -> Work:
-        from tomojax._files import validate_export_options
+        from tomojax._loading.files import validate_export_options
 
         kinds = (tj.Reconstruction, tj.Alignment, tj.Simulation)
         held = self.context.leases[operation.source].value
@@ -692,7 +692,7 @@ class Admission:
             elif isinstance(operation, op.Save):
                 tj.save(staged[path], value, include_scan=operation.include_scan)
             else:
-                from tomojax._files import export_volume
+                from tomojax._loading.files import export_volume
 
                 export_volume(
                     staged[path],
@@ -718,7 +718,7 @@ def export_summary(
     count: int | None = None,
 ) -> dict[str, Any]:
     """Name the slice files an export writes; ``count`` overrides the grid's plane count."""
-    from tomojax._stack_files import slice_name
+    from tomojax._loading.stack_files import slice_name
 
     if count is None:
         assert not isinstance(value, ex.Feature)

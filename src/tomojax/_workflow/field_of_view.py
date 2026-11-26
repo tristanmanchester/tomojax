@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
     import jax
 
-    from tomojax._region import RegionEstimate
-    from tomojax._scan import Scan
+    from tomojax._scan.model import Scan
+    from tomojax._workflow.region import RegionEstimate
 
 # The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
 # cylinder about the axis ("cube", "cyl", which also zeros outside it).
@@ -58,7 +58,7 @@ def region_grid(
     NumPy order) resamples the region to new voxel counts, preserving its
     physical extent.
     """
-    from tomojax._region import RegionEstimate
+    from tomojax._workflow.region import RegionEstimate
 
     if isinstance(region, RegionEstimate):
         _check_estimate_matches_scan(scan, region)
@@ -94,7 +94,7 @@ def region_grid(
 
 def _check_estimate_matches_scan(scan: Scan, estimate: RegionEstimate) -> None:
     """Reject a ``RegionEstimate`` built from a different scan or geometry."""
-    from tomojax._scan import describe
+    from tomojax._scan.model import describe
 
     ref = estimate.scan
     same_shape = tuple(scan.projections.shape) == tuple(ref.projections.shape)

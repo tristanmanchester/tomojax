@@ -144,9 +144,9 @@ def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
         projections=np.zeros_like(scan.projections),
         geometry=replace(scan.geometry, tilt=0.1),
     )
-    monkeypatch.setattr("tomojax._region.device_free_memory_bytes", lambda **kw: 2**20)
+    monkeypatch.setattr("tomojax._workflow.region.device_free_memory_bytes", lambda **kw: 2**20)
     monkeypatch.setattr(
-        "tomojax._region.reconstruct_arrays",
+        "tomojax._workflow.region.reconstruct_arrays",
         lambda method, geometry, grid, *args: (np.zeros((grid.nz, grid.ny, grid.nx)), {}),
     )
     estimate = tj.estimate_region(scan)
@@ -158,7 +158,7 @@ def test_shallow_region_coarsens_a_fixed_physical_survey(monkeypatch) -> None:
 
 @pytest.mark.numerical
 def test_support_scoring_stays_on_the_budgeted_preview_grid(monkeypatch) -> None:
-    import tomojax._region as region
+    from tomojax._workflow import region
 
     # A 35-degree scan whose budgeted preview is 16 x 16 x 8 voxels of 16: widening
     # it to its padded depth (8 x 16) used to rebuild a 24 x 24 x 8 scoring grid.

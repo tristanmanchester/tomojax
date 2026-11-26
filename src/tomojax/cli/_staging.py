@@ -49,7 +49,7 @@ class Destination:
             if not self.path.is_symlink() and self.path.is_dir() != self.stage.is_dir():
                 raise ValueError(f"incompatible destination type: {self.path}")
             if self.stage.is_dir() and self.path.is_dir() and not self.path.is_symlink():
-                from tomojax._stack_files import tiff_stack_entry
+                from tomojax._loading.stack_files import tiff_stack_entry
 
                 originals = self.work / "original"
                 originals.mkdir()

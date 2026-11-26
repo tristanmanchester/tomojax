@@ -242,7 +242,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args, metadata = parse_args_with_config(parser, argv, namespace=_Args())
 
     import tomojax as tj
-    from tomojax._simulate import build_sim_config, simulate_config
+    from tomojax._scan.simulation import build_sim_config, simulate_config
 
     def run() -> Result | None:
         settings = metadata["settings"]

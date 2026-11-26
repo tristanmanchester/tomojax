@@ -87,7 +87,7 @@ def _decode(value: object, default: str) -> str:
 
 def stored_grid(handle: h5py.File, path: Path) -> tuple[tj.Grid | None, dict, dict, str]:
     """Read volume placement and disk axis order without touching its pixels."""
-    from tomojax._files import saved_volume_grid
+    from tomojax._loading.files import saved_volume_grid
 
     grid_meta = json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}"))
     geom_group = handle.get("/entry/geometry")

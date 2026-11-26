@@ -32,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from tomojax import Frames, Scan
-    from tomojax._loading_geometry import DeclaredGeometry
+    from tomojax._loading.geometry import DeclaredGeometry
     from tomojax.corrections import Step
     from tomojax.wire.progress import Result
 
@@ -426,7 +426,7 @@ def _prepared(
 ) -> _Prepared:
     """Load raw frames or a scan, select views and crop; Rings runs first when asked."""
     from tomojax import Frames
-    from tomojax._loading import (
+    from tomojax._loading.loader import (
         is_raw_input,
         load_raw_frames_with_declaration,
         load_scan_with_declaration,

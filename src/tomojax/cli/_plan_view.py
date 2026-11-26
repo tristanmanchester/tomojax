@@ -12,8 +12,8 @@ from tomojax.cli._results import unit_of
 
 if TYPE_CHECKING:
     import tomojax as tj
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CenterSelection, JointSelection
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
     from tomojax.geometry import Grid
     from tomojax.wire.resources import Placement
 
@@ -72,8 +72,8 @@ def placement_text(placement: Placement) -> str:
 
 def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[str, str]]:
     """The plan as (heading, text) rows."""
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CenterSelection
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):
@@ -125,8 +125,8 @@ def plan_text(scan: tj.Scan, work: Work, placement: Placement) -> str:
 
 def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -> str:
     """One line saying what a run is about to do."""
-    from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CenterSelection
+    from tomojax._workflow.planning import ResolvedReconstruction
+    from tomojax._workflow.smooth_alignment import CenterSelection
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):

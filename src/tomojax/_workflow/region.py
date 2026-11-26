@@ -13,7 +13,7 @@ from scipy.ndimage import gaussian_filter, gaussian_filter1d
 from scipy.signal.windows import tukey
 
 from tomojax import progress
-from tomojax._scan import Scan, describe, with_grid
+from tomojax._scan.model import Scan, describe, with_grid
 from tomojax.backends import device_free_memory_bytes
 from tomojax.core.devices import announce
 from tomojax.geometry import Grid, stack_view_poses

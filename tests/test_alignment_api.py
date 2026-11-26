@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax import _smooth_alignment
+from tomojax._workflow import smooth_alignment as _smooth_alignment
 from tomojax.cli.main import main
 from tomojax.geometry import stack_view_poses
 
