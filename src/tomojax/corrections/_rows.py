@@ -11,6 +11,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.devices import current_device
+from tomojax.core.host_transfer import upload_host
+from tomojax.core.host_volume import host_available_memory_bytes
+
 from ._engine import (
     Corrected,
     apply_steps,
@@ -145,8 +149,31 @@ class CorrectedRows:
         return (self.flat, *before, log, *after)
 
 
+# Each view's rows of a raw block are one positional read. File systems serve reads
+# of a megabyte two to five times faster than the 130 KiB reads of 1 GiB blocks of an
+# 8,000-view scan 2560 pixels wide; a parallel file system shows the most difference.
+_RUN_BYTES = 1 << 20
+_BLOCK_BYTES = 1 << 30
+
+
+def _block_rows(shape: tuple[int, int, int], itemsize: int) -> int:
+    """Rows per raw block: a megabyte per view, at least 1 GiB, within the host's room.
+
+    At most three blocks are held: the current one, the next, being read, and
+    the previous one while slabs still use it. They take at most an eighth of
+    the available host memory, or 1 GiB each when that is less.
+    """
+    views, rows, cols = shape
+    row = views * cols * itemsize
+    size = max(_BLOCK_BYTES, views * _RUN_BYTES)
+    room = host_available_memory_bytes()
+    if room is not None:
+        size = min(size, max(_BLOCK_BYTES, room // 24))
+    return max(1, min(rows, size // row))
+
+
 class _RowReader:
-    """One current raw block and one prefetched block; requests own their small copies.
+    """One current raw block and one prefetched block; requests are views of a block.
 
     The first block is read from the start, while the calibration is computed.
     """
@@ -154,22 +181,24 @@ class _RowReader:
     def __init__(self, counts: Any) -> None:
         self.counts = counts
         views, rows, cols = counts.shape
-        self.batch = max(1, min(rows, (1 << 30) // (views * cols * counts.dtype.itemsize)))
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-raw-rows")
-        self.current = None
-        self.first = -1
-        self.future = None if isinstance(counts, np.ndarray) else self.pool.submit(self._read, 0)
-        self.next_first = 0
+        self.current: np.ndarray | None = None
+        self.first, self.next_first, self.future = -1, 0, None
+        self.batch: int = rows
+        if isinstance(counts, np.ndarray):  # already in memory: one block, never read
+            self.current, self.first = counts, 0
+        else:
+            self.batch = _block_rows((views, rows, cols), counts.dtype.itemsize)
+            self.future = self.pool.submit(self._read, 0)
 
     def _read(self, first: int) -> np.ndarray:
         stop = min(first + self.batch, self.counts.shape[1])
         return self.counts.window(slice(first, stop), slice(None))[:]
 
     def read(self, first: int, stop: int) -> np.ndarray:
-        if isinstance(self.counts, np.ndarray):
-            return np.ascontiguousarray(self.counts[:, first:stop])
-        views, rows, cols = self.counts.shape
-        output = np.empty((views, stop - first, cols), dtype=self.counts.dtype)
+        """Rows ``first:stop`` of every view: a view of one block, or a copy across two."""
+        rows = self.counts.shape[1]
+        parts: list[np.ndarray] = []
         at = first
         while at < stop:
             block = at // self.batch * self.batch
@@ -190,9 +219,9 @@ class _RowReader:
                 )
             end = min(stop, block + self.batch)
             assert self.current is not None
-            output[:, at - first : end - first] = self.current[:, at - block : end - block]
+            parts.append(self.current[:, at - block : end - block])
             at = end
-        return output
+        return parts[0] if len(parts) == 1 else np.concatenate(parts, axis=1)
 
     def close(self) -> None:
         self.pool.shutdown(wait=True, cancel_futures=True)
@@ -348,7 +377,7 @@ def corrected_row_source(
                 fields.usable[first:stop],
             )
             projections, nonpositive, nonfinite, above = first_pass(
-                jax.device_put(raw),
+                upload_host(raw, current_device()),
                 *device_interpolation,
                 *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
                 epsilon=epsilon,
