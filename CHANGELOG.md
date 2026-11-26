@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `tj.load_frames` reads NeXus scan files by their structure: the frames of the default
+  plot, the `image_key` of the detector holding them, and the rotation as the plotted
+  coordinate with angular units, its own or those recorded for its positioner. Diamond
+  DIAD (K11) scans, whose NXtomo entry records no angles, load with no arguments.
+- A scan stopped early loads: when the key or angles run past the frames or stop short
+  of them, the frames they all cover are read, with a warning and the counts in the
+  acquisition record (`frame_records`). Before, a key longer than the frames was an error.
+
 ## 1.0.0rc6 (2026-11-26)
 
 - Spelling is US English everywhere, with no aliases for the old names. Renamed:

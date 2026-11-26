@@ -52,9 +52,23 @@ NaN angles); unknown units fail rather than being guessed. An
 `{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion, including floating-point exports.
 Raw NXtomo entries may be nested and link to external detector files; keep those
 files beside the metadata file. Repeated links to one dataset are not ambiguous.
-For other HDF5 layouts, per-frame shape disambiguates named angle/key datasets
-from different detectors. A sole named dataset with an invalid shape is rejected,
-not treated as absent. Ambiguous candidates require an explicit metadata path.
+For other HDF5 layouts, the NeXus structure comes first: the frames are the
+default plot's (root and entry `@default` to an NXdata `@signal`), the
+`image_key` is the one in the NXdetector holding those frames, and the angles are
+the NXdata coordinate along the frames (`@axes`, `<name>_indices`) with angular
+units. A coordinate without units takes those of the same-named fields recorded
+elsewhere in its entry when they agree, as GDA records each positioner once per
+scan; the record names them in `angle_units_path`. Several angular coordinates
+resolve to the scan axis (`@axes`) or ask for `angles_path`. After that,
+per-frame shape disambiguates named angle/key datasets from different detectors.
+A sole named dataset with an invalid shape is rejected, not treated as absent.
+Ambiguous candidates require an explicit metadata path.
+
+A key or angles that the path or the structure pairs with the frames may be
+longer or shorter than the stack: writers append frames, labels and positions in
+separate streams, so a scan stopped early leaves them at different lengths. The
+frames read are those, from the first, that all of them cover; a warning gives
+the counts and the acquisition record keeps them as `frame_records`.
 
 `tomojax.load` of a processed file leaves out frames that `image_key` marks as
 other than sample views. Saving a scan retains every pose update, including an

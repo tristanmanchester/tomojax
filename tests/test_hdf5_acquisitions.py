@@ -222,3 +222,117 @@ def test_a_virtual_source_recorded_at_a_missing_absolute_path_is_read_beside_the
     np.testing.assert_array_equal(
         tj.load_frames(path, detector=tj.Detector(4, 2, 1.0, 1.0)).counts[:], 7
     )
+
+
+# A GDA (Diamond) NeXus scan: the frames in their own file, linked from the scan file; an
+# NXdata group plotting them with per-frame coordinates (the demanded rotation, labeled mm,
+# the encoder's unlabeled readback, a beam monitor); the NXdetector holding the frames and the
+# planned image_key; the rotation stage's fields recorded once, with units; a second detector
+# with a stack and labels of its own; and, optionally, an NXtomo subentry without angles.
+_PLANNED_KEY = [1, 1, 2, 0, 0, 0, 0, 1, 2]
+_LEVELS = [1100, 1100, 100, 600, 350, 850, 225, 1100, 100]
+_DEMAND = [0.0, 0.0, 0.0, 0.0, 45.0, 90.0, 135.0, 135.0, 135.0]
+
+
+def _gda_scan(tmp_path, *, written=9, encoder=None, nxtomo=True, demand_units="mm", axes=True):
+    frames = tmp_path / "scan-imaging.h5"
+    with h5py.File(frames, "w") as file:
+        file["entry/detector/detector"] = np.stack(
+            [np.full((2, 3), level, np.uint16) for level in _LEVELS[:written]]
+        )
+        readback = (np.asarray(_DEMAND) + 0.01)[: written if encoder is None else encoder]
+        file["entry/encoder/value"] = readback
+    path = tmp_path / "scan.nxs"
+    with h5py.File(path, "w") as file:
+        entry = file.create_group("entry")
+        entry.attrs.update(NX_class="NXentry", default="imaging")
+        plot = entry.create_group("imaging")
+        plot["data"] = h5py.ExternalLink(frames.name, "/entry/detector/detector")
+        plot.create_dataset("stage_cs_theta", data=_DEMAND).attrs["units"] = demand_units
+        plot["stage_theta"] = h5py.ExternalLink(frames.name, "/entry/encoder/value")
+        plot.create_dataset("ring_current", data=np.full(written, 300.0)).attrs["units"] = "mA"
+        plot.attrs.update(
+            NX_class="NXdata",
+            signal="data",
+            axes=np.array([b"stage_cs_theta" if axes else b".", b".", b"."]),
+            stage_cs_theta_indices=[0],
+            stage_theta_indices=[0],
+            ring_current_indices=[0],
+        )
+        monitor = entry.create_group("monitor")
+        monitor["data"] = np.zeros((written, 1, 4))
+        monitor.attrs.update(NX_class="NXdata", signal="data")
+        detector = entry.create_group("instrument/imaging")
+        detector.attrs["NX_class"] = "NXdetector"
+        detector["data"] = h5py.ExternalLink(frames.name, "/entry/detector/detector")
+        detector["image_key"] = _PLANNED_KEY
+        other = entry.create_group("instrument/monitor")
+        other.attrs["NX_class"] = "NXdetector"
+        other["data"] = monitor["data"]
+        other["image_key"] = np.zeros(written, np.int32)
+        stage = entry.create_group("instrument/stage")
+        stage.attrs["NX_class"] = "NXpositioner"
+        stage.create_dataset("stage_theta", data=0.01).attrs["units"] = "deg"
+        if nxtomo:
+            tomo = entry.create_group("tomo_entry")
+            tomo.attrs["NX_class"] = "NXsubentry"
+            tomo["definition"] = "NXtomo"
+            tomo.create_group("sample").attrs["NX_class"] = "NXsample"
+            tomo["instrument/detector/data"] = h5py.ExternalLink(
+                frames.name, "/entry/detector/detector"
+            )
+            tomo["instrument/detector/image_key"] = detector["image_key"]
+            tomo["instrument/detector/x_rotation_axis_pixel_position"] = "NaN"
+    return path
+
+
+@pytest.mark.parametrize("nxtomo", [True, False])
+def test_a_gda_scan_loads_from_its_nexus_structure(tmp_path, nxtomo):
+    # The frames come from the default plot (not the monitor's stack), their labels from their
+    # detector (not the monitor's), and the angles from the encoder: the plot's one coordinate
+    # with angular units, taken from the stage's recorded field of the same name.
+    frames = tj.load_frames(_gda_scan(tmp_path, nxtomo=nxtomo))
+    assert frames.views == 4 and len(frames.flats) == 3 and len(frames.darks) == 2
+    np.testing.assert_allclose(frames.geometry.angles, [0.01, 45.01, 90.01, 135.01], atol=1e-5)
+    record = frames.source.geometry_metadata
+    acquisition = record["acquisition"]
+    assert acquisition["angles_path"] == "/entry/imaging/stage_theta"
+    assert acquisition["angle_units_path"] == "/entry/instrument/stage/stage_theta"
+    assert acquisition["image_key_path"] in (
+        "/entry/instrument/imaging/image_key",
+        "/entry/tomo_entry/instrument/detector/image_key",
+    )
+    assert "frame_records" not in acquisition
+    assert record["length_unit"] == "pixel"  # no pixel size recorded
+    np.testing.assert_allclose(
+        frames.corrected().projections[:, 0, 0], -np.log([0.5, 0.25, 0.75, 0.125]), rtol=1e-6
+    )
+
+
+@pytest.mark.parametrize("nxtomo", [True, False])
+@pytest.mark.parametrize(("written", "encoder", "views"), [(6, None, 3), (6, 5, 2), (9, 8, 4)])
+def test_a_scan_stopped_early_reads_the_frames_every_record_covers(
+    tmp_path, caplog, nxtomo, written, encoder, views
+):
+    # The planned key and demand outrun the frames written; the encoder may stop a frame short.
+    frames = tj.load_frames(_gda_scan(tmp_path, written=written, encoder=encoder, nxtomo=nxtomo))
+    read = written if encoder is None else encoder
+    assert frames.views == views and len(frames.flats) == 2 + (read > 7)
+    np.testing.assert_allclose(frames.geometry.angles, np.asarray(_DEMAND[3 : 3 + views]) + 0.01)
+    records = frames.source.geometry_metadata["acquisition"]["frame_records"]
+    assert records == {"data": written, "image_key": 9, "angles": read}
+    assert f"reading the first {read} frames" in caplog.text
+    corrected = frames.corrected().projections[:, 0, 0]
+    np.testing.assert_allclose(corrected, -np.log([0.5, 0.25, 0.75, 0.125][:views]), rtol=1e-6)
+
+
+@pytest.mark.parametrize("axes", [True, False])
+def test_several_rotation_coordinates_resolve_to_the_scan_axis_or_ask(tmp_path, axes):
+    path = _gda_scan(tmp_path, nxtomo=False, demand_units="deg", axes=axes)
+    if not axes:
+        with pytest.raises(KeyError, match="several rotation coordinates"):
+            tj.load_frames(path)
+        assert tj.load_frames(path, angles_path="/entry/imaging/stage_cs_theta").views == 4
+        return
+    frames = tj.load_frames(path)
+    np.testing.assert_array_equal(frames.geometry.angles, [0, 45, 90, 135])

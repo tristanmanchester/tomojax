@@ -164,14 +164,14 @@ def _metadata(file: h5py.File, layout: str, where: str) -> dict[str, object]:
 
 def _gda_angles(
     path: Path, file: h5py.File, located: LocatedFrames
-) -> tuple[LocatedFrames, dict[str, str]]:
+) -> tuple[LocatedFrames, dict[str, object]]:
     """An NXtomo entry without angles, completed from the same file's GDA rotation command.
 
     GDA writes some files twice over: its own layout, and an NXtomo entry for the same
     frames that may lack the angles. Only when the file's GDA layout is recognized, both
     describe the same frames dataset (the resolved target, not the shape) and the GDA
-    command has one angle per frame of the key do its angles complete the entry; the
-    record says the NXtomo entry recorded none. Otherwise the entry stays as it is.
+    command has one angle per frame of the key do its angles complete the entry.
+    Otherwise the entry stays as it is.
     """
     try:
         gda = locate_frames(str(path))
@@ -186,7 +186,7 @@ def _gda_angles(
         or file[gda.stack.dataset].id != file[located.stack.dataset].id
     ):
         return located, {}
-    completed: dict[str, str] = {"nxtomo_angles": "not_recorded"}
+    completed: dict[str, object] = {}
     for key in ("angle_units_recorded", "angle_units"):
         if key in recorded:
             completed[key] = recorded[key]
@@ -225,9 +225,15 @@ def read_hdf5_acquisition(
                 "to identify its sample/flat/dark frames"
             )
         acquisition = _metadata(file, name, where)
-        if name == "nxtomo" and located.angles is None and angles_path is None:
-            located, completed = _gda_angles(path, file, located)
-            acquisition.update(completed)
+        # How discovery completed the record: unit sources, per-frame record counts.
+        acquisition.update(
+            {key: value for key, value in (located.acquisition or {}).items() if key != "layout"}
+        )
+        if name == "nxtomo" and not angles and angles_path is None:
+            acquisition["nxtomo_angles"] = "not_recorded"
+            if located.angles is None:
+                located, completed = _gda_angles(path, file, located)
+                acquisition.update(completed)
         acquisition["angles_path"] = located.angles_path
         acquisition["image_key_path"] = located.image_key_path
         if located.image_key is not None:

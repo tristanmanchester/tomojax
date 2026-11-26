@@ -43,6 +43,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Format | Frames and calibration | Angles and geometry metadata |
 | --- | --- | --- |
 | External NXtomo (ESRF, Diamond, generic) | Group declaring `NXtomo` (`instrument/detector/data`, `image_key`); ESRF return frames (`image_key_control = -1`) excluded; single-row `(view, u)` sinograms stay lazy as `(view, 1, u)` | `sample/rotation_angle` (or `sample/transformations/rotation_angle`) with units (default degrees); `x_pixel_size`/`y_pixel_size` with length units |
+| NeXus scan files (Diamond GDA, generic) | The default plot's frames (`@default`, NXdata `@signal`), in this or a linked file; the `image_key` of their NXdetector; a scan stopped early reads the frames its key and angles cover | The NXdata coordinate along the frames with angular units, or with the units recorded for its positioner; no pixel size recorded loads in pixel units |
 | Data Exchange (APS, PSI TOMCAT, Elettra SYRMEP) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x`/`_y`; facility labels kept |
 | ESRF raw Bliss HDF5 | Sequence-owned detector blocks, image keys, and flat positions (synthetic-tested; all linked files required) | Unit-labeled angular commands; `technique/optic/sample_pixel_size`; distances from `technique/scan` |
 | ESRF SPEC EDF | Ordered single-image EDFs, references, accumulated darks divided by `DARK_N` | `.info`/XML `PixelSize` and `Distance`; supply `angles=` explicitly |

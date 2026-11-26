@@ -715,9 +715,13 @@ def load_frames(
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
     sample, flat and dark frames are read only as they are corrected. The
-    frames, key and angles are found at their NXtomo paths or as the file's only datasets of
-    that name (``data``, ``image_key``, ``rotation_angle``), or their paired GDA imaging
-    paths; ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise.
+    frames, key and angles are found at their NXtomo paths, their paired GDA imaging
+    paths, where the NeXus structure puts them (the default plot's frames, the
+    ``image_key`` of their NXdetector, the plot's coordinate with angular units) or as
+    the file's only datasets of that name (``data``, ``image_key``, ``rotation_angle``);
+    ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise. When the
+    key or angles run past the frames or stop short of them, as in a scan stopped
+    early, the frames they all cover are read, from the first, with a warning.
     Nikon, SkyScan, Zeiss and ESRF acquisitions are recognized by content and
     supply their own geometry and calibration. SkyScan logs require geometrically
     and flat-field corrected TIFF exports; their storage bit depth is not a

@@ -313,22 +313,25 @@ def test_ambiguous_beamline_metadata_requires_an_explicit_path(tmp_path, name, m
     path = tmp_path / "beamline.h5"
     _write_beamline_frames(path)
     with h5py.File(path, "a") as handle:
-        if not matching:
+        if not matching:  # one entry past the frames, as when a scan stops early
             entry = handle["entry1/tomo"]
+            planned = {"image_key": [0, 1, 0, 1], "rotation_angle": [0, np.nan, 90, 135]}
             del entry[name]
-            entry.create_dataset(name, data=np.zeros(4, np.int32)).attrs["units"] = "deg"
+            entry.create_dataset(name, data=planned[name]).attrs["units"] = "deg"
         handle.create_dataset(f"entry2/{name}", data=np.zeros(3 if matching else 5, np.int32))
     with pytest.raises(KeyError, match=f"several '{name}' datasets"):
         tj.load_frames(path, darks=0)
     keyword = "image_key_path" if name == "image_key" else "angles_path"
     arguments = {keyword: f"/entry1/tomo/{name}", "detector": tj.Detector(2, 2, 1, 1)}
-    if matching:
-        scan = tj.load_frames(path, **arguments, darks=0).corrected()
-        np.testing.assert_array_equal(scan.angles, [0, 90])
-        np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]))
-    else:
-        with pytest.raises(ValueError, match="shape"):
-            tj.load_frames(path, **arguments, darks=0)
+    frames = tj.load_frames(path, **arguments, darks=0)
+    scan = frames.corrected()
+    np.testing.assert_array_equal(scan.angles, [0, 90])
+    np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]))
+    if not matching:  # the record a caller names may outrun the frames: it covers all three
+        records = frames.source.geometry_metadata["acquisition"]["frame_records"]
+        assert (
+            records["data"] == 3 and records["image_key" if name == "image_key" else "angles"] == 4
+        )
 
 
 def test_a_missing_beamline_image_key_remains_supported(tmp_path):
