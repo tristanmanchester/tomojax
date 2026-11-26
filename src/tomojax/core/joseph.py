@@ -91,7 +91,7 @@ def forward_jax(
     """Reference model with ordinary AD; absolute weights are for roundoff bounds."""
     validate_interpolation(interpolation)
     shape = (grid.nx, grid.ny, grid.nz)
-    u, v = jnp.meshgrid(jnp.arange(detector.nu), jnp.arange(detector.nv))
+    v, u = jnp.indices((detector.nv, detector.nu), sparse=True)
 
     def one_view(cf: jax.Array) -> jax.Array:
         axis = cf[0].astype(jnp.int32)
@@ -142,8 +142,13 @@ def forward_jax(
                     value = value + row_value * weights_b[row]
             return accumulator + value * weight
 
+        # The transpose can recompute the indices and weights from k and cf.
+        # Saving them for every ray and plane dwarfs both the volume and images.
         return jax.lax.fori_loop(
-            0, max(shape), step, jnp.zeros((detector.nv, detector.nu), jnp.float32)
+            0,
+            max(shape),
+            jax.checkpoint(step, prevent_cse=False),
+            jnp.zeros((detector.nv, detector.nu), jnp.float32),
         )
 
     return jax.vmap(one_view)(coefficients)

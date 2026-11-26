@@ -19,9 +19,8 @@ if worker := os.environ.get("PYTEST_XDIST_WORKER"):
         index = int(worker.removeprefix("gw"))
         os.sched_setaffinity(0, cores[index % len(cores) :: count] or cores)
     if os.environ.get("JAX_PLATFORMS") != "cpu":
-        # Workers share the GPU, and a JAX pool only grows: uncapped, the pools fill the
-        # device until XLA cannot create a cuFFT plan, which leaves that worker's CUDA
-        # context unusable. Each pool gets its share of 70%; contexts and CuPy use the rest.
+        # Bound each worker's JAX pool on the shared GPU. Contexts, CuPy and
+        # library workspaces also need device memory outside these pools.
         os.environ.setdefault("XLA_PYTHON_CLIENT_MEM_FRACTION", f"{0.7 / count:.3f}")
 
 ROOT = Path(__file__).resolve().parents[1]

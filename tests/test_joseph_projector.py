@@ -431,9 +431,13 @@ def test_long_oblique_planes_and_gather_bounds_agree_with_autodiff(spacing, inte
     reference_forward = jax.jit(
         lambda x: forward_jax(coeff, x, grid, detector, interpolation=interpolation)
     )
-    reference_adjoint = jax.jit(
-        lambda y: adjoint_jax(coeff, y, grid, detector, interpolation=interpolation)
+    reference_adjoint = (
+        jax.jit(lambda y: adjoint_jax(coeff, y, grid, detector, interpolation=interpolation))
+        .lower(images)
+        .compile()
     )
+    # Workspace must fit below even one saved float per ray per plane.
+    assert reference_adjoint.memory_analysis().temp_size_in_bytes < images.nbytes * max(grid.shape)
     forward = jax.jit(lambda x: forward_cuda(coeff, x, grid, detector, interpolation=interpolation))
     adjoint = jax.jit(lambda y: adjoint_cuda(coeff, y, grid, detector, interpolation=interpolation))
     for actual, expected in [
