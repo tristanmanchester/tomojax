@@ -88,7 +88,9 @@ def project_joseph(
     -----
     The default linear discretization is the one the solvers use. CUDA supports JIT, vmap, JVP, VJP,
     jacfwd, jacrev and transposing a linearization, with first-order derivatives
-    only. Use the JAX reference for higher derivatives. Derivatives follow the
+    only. Use the JAX reference for higher derivatives; its transpose recomputes
+    interpolation indices and weights per plane instead of saving a ray-by-plane
+    tape. Derivatives follow the
     selected dominant-axis branch and interpolation cell, as in the reference.
     Axis switches are not smooth; cubic interpolation has continuous first
     coordinate derivatives within a fixed dominant-axis branch.

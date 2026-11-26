@@ -41,7 +41,9 @@ The explicit `backend="cuda"` runs on NVIDIA CUDA and supports first-order
 `jax.grad`, `jax.jvp`, `jax.jacfwd`, `jax.jacrev`, `jax.linearize`, transposing
 that linearization, and `jax.vmap`. The input volume and geometry are retained
 for reverse mode; the kernel recomputes sample derivatives without saving a
-ray-by-plane tape. Use the JAX backend for higher derivatives. Interpolation
+ray-by-plane tape. Use the JAX backend for higher derivatives; its reference
+transpose also recomputes interpolation indices and weights per plane instead of
+saving a ray-by-plane tape. Interpolation
 knots for the linear model and dominant-axis changes are nonsmooth; derivatives follow the branch
 selected at the supplied pose. Backend selection does not silently fall back.
 

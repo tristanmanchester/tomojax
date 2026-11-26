@@ -28,7 +28,8 @@ from the root:
   packages build on these contracts.
 - `tomojax.core.joseph` and `tomojax.core.cone`: the plane-sampled projector and
   its exact transpose, the JAX reference for parallel beams, laminography and
-  cone beams.
+  cone beams. The reference Joseph transpose recomputes interpolation indices
+  and weights per plane instead of saving a ray-by-plane tape.
 - `tomojax.core.cuda_projector`: the CUDA kernels of the Joseph projector and
   their JAX bindings. They are performance implementations, not a separate
   public domain API.

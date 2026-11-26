@@ -16,6 +16,10 @@
   `info` reports `resolved_tv_weight`, `effective_tv_weight`, `noise_score_rms`,
   `effective_iterations`, and `early_stop`. Explicit `tv_weight` values keep
   their physical-TV normalization and run to the iteration cap.
+- The JAX reference Joseph transpose recomputes interpolation indices and
+  weights per plane (`jax.checkpoint`) with sparse detector indices instead of
+  saving them across every ray and plane, keeping its transpose workspace below
+  one float per ray per plane.
 - Cone-beam CUDA kernels reduce tile maxima with warp shuffles instead of
   `__reduce_max_sync`, so they compile and run on Volta and Turing GPUs (V100, T4,
   RTX 20xx) as well as Ampere and newer cards.
