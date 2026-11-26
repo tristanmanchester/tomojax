@@ -1,6 +1,6 @@
 # Align a scan
 
-`tj.align` estimates geometry errors and sample motion jointly with the reconstructed volume. Choose which parameters to fit with `fit=`. Start with the simplest model that matches the artifact you see, check the result, and add parameters only while artifacts remain: unnecessary degrees of freedom cost accuracy, while missing ones leave errors the fit cannot represent.
+`tj.align` estimates geometry errors and sample motion. Choose which parameters to fit with `fit=`. Start with the simplest model that matches the artifact you see, check the result, and add parameters only while artifacts remain: unnecessary degrees of freedom cost accuracy, while missing ones leave errors the fit cannot represent.
 
 Before aligning, correct projections to line integrals and check declared geometry against the instrument ([real scan guide](real-laminography.md)). If the scan may contain broken frames or diffraction flashes, pass `RejectViews()` during correction so the aligner does not move views to chase bad frames; check `scan.corrections` afterwards, because `RejectViews` can also drop valid views on modulated or hopping beams. Reconstruct once without alignment to keep a baseline for comparison.
 
@@ -31,7 +31,7 @@ On the command line:
 tomojax align corrected.nxs -o aligned.nxs --fit translations roll
 ```
 
-Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Every combination runs the same joint volume-and-geometry solver across parallel, laminography, and cone-beam scans. After a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
+Pass one name or a tuple of distinct names in any order; omitted parameters stay fixed at their input values. Multiple parameters are fitted jointly with the volume for parallel, laminography and cone-beam scans. After a vertical shift of `n` pixels, the outermost `n` top and bottom slices on the default grid are only partly covered by data.
 
 | Name | Fitted parameters | Units and frame |
 | --- | --- | --- |
@@ -53,7 +53,9 @@ A wrong rotation center turns every small bright feature into a ring of the same
 
 For cone data, `"center"` also fits detector-v, though the data constrain it weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically.
 
-For a quick axial parallel estimate without reconstructing a volume, run `tj.align(scan, method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
+On an unposed, unrolled axial parallel scan with a densely sampled half-turn, `tj.align(scan, fit="center")` searches across the detector using Fourier slice sharpness and native opposing-ray agreement. The search models stationary detector structure and linear flat-field drift. The corrected geometry is in `result.scan`. This fit has no working image. Supplying a working grid, region, solver settings or `method="joint"` requests a joint image and geometry fit. Other geometries use the joint fit.
+
+For a quick estimate from opposing rays alone, run `tj.align(scan, method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
 
 ### Check the center by eye
 

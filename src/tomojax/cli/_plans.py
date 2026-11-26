@@ -22,10 +22,21 @@ def plan_product(
     work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,
     snapshot: tuple[p.Snapshot, ...] | None = None,
-) -> p.CenterPlan | p.JointPlan | p.ReconPlan:
+) -> p.CenterPlan | p.FocusPlan | p.JointPlan | p.ReconPlan:
     """Keep the working arrays and numerical configuration out of the wire record."""
     placement = estimate(scan, work, sample(work) if snapshot is None else snapshot)
     if isinstance(work, CenterSelection):
+        if work.focus is not None:
+            return p.FocusPlan(
+                len(work.focus.views),
+                work.focus.binning,
+                len(work.samples),
+                (
+                    f"Estimate Fourier slice focus from {len(work.focus.views)} views "
+                    f"at binning {work.focus.binning}.",
+                ),
+                placement,
+            )
         return p.CenterPlan(
             len(work.samples), ("Fit the center from near-opposite view pairs.",), placement
         )
@@ -60,7 +71,7 @@ def announce(
     work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,
     used: tuple[str, ...] = (),
-) -> p.CenterPlan | p.JointPlan | p.ReconPlan:
+) -> p.CenterPlan | p.FocusPlan | p.JointPlan | p.ReconPlan:
     """Estimate the plan, say what the run will do, and keep a memory hint for a failure.
 
     ``used`` names the options the command was given (``--region``, ``--grid``), which
@@ -92,7 +103,7 @@ def announce(
 def dry_run(
     mode: str,
     source: str,
-    plan: p.CenterPlan | p.JointPlan | p.ReconPlan,
+    plan: p.CenterPlan | p.FocusPlan | p.JointPlan | p.ReconPlan,
     scan: Scan,
     work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,

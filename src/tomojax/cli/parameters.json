@@ -3051,7 +3051,7 @@
             }
           ],
           "default": null,
-          "description": "How the parameters are estimated; None is \"joint\".",
+          "description": "None selects the axial center search when applicable and the joint fit otherwise.",
           "x-choices": [
             "joint",
             "opposite-views"

@@ -507,13 +507,7 @@ impl AppState {
                 } else if let Product::Files { paths } = &output.value {
                     self.complete_job(&job, None);
                     self.model.status = format!("Exported {} output files", paths.len());
-                } else if matches!(
-                    output.value,
-                    Product::ReconstructionPlan { .. }
-                        | Product::JointPlan { .. }
-                        | Product::OppositeViewsPlan { .. }
-                        | Product::Validated
-                ) {
+                } else if output.value.is_plan() || matches!(output.value, Product::Validated) {
                     let summary = serde_json::to_string_pretty(&output.value).unwrap_or_default();
                     if let Some(project) = &mut self.project
                         && let Some(j) = project.document.job_mut(&job)

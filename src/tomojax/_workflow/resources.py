@@ -100,6 +100,10 @@ def estimate(
     if isinstance(plan, CenterSelection):
         # Sample up to two interpolation neighbors at either end of every pair, in FP64.
         work = 8 * min(views, len(plan.samples) * 4) * min(rows, 64) * cols
+        if plan.focus is not None:
+            n = cols // plan.focus.binning
+            # Fourier grid and FFT scratch, sampled profiles and native gradient blocks.
+            work += 128 * (2 * n) ** 2 + 8 * cols * (len(plan.focus.views) + 48 * min(rows, 64))
         return Placement(devices, "resident", hosts + work, 0, snapshot)
     if isinstance(plan, JointSelection):
         # Levels execute in sequence and keep their host observations for the solve.

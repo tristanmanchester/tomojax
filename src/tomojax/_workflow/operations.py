@@ -917,18 +917,23 @@ def _slab_results(
 
 
 def _estimate_center(scan: Scan, selection: CenterSelection) -> tuple[Scan, dict[str, object]]:
-    """The scan with its center from near-opposite views, and the estimate's record.
-
-    Pixels are unchanged; the record gives the pair diagnostics, input and output.
-    The center fixes the median sampled-pair mean shift to zero, so it aliases
-    common sample motion.
-    """
-    report = selection.measure(scan.projections)
-    geometry = report.geometry
+    """Update the detector center and record the selected estimator's diagnostics."""
+    if selection.focus is None:
+        report = selection.measure(scan.projections)
+        geometry, diagnostics = report.geometry, report.to_dict()
+        method = "opposite_view_correlation"
+    else:
+        progress.placed(("cpu:0",))
+        value, diagnostics = selection.focused(scan.projections, scan.view_positions)
+        d = selection.geometry.detector
+        geometry = replace(
+            selection.geometry, detector=replace(d, center=(value * d.du, d.center[1]))
+        )
+        method = selection.method
     calibration: dict[str, object] = {
         "status": "estimated",
-        "method": "opposite_view_correlation",
-        "diagnostics": report.to_dict(),
+        "method": method,
+        "diagnostics": diagnostics,
         "input": list(scan.detector.center),
         "output": list(geometry.detector.center),
         "unit": "geometry_length",
@@ -974,7 +979,12 @@ def align(
     ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
     prior on their physical size.
 
-    ``method`` "joint" (the default) fits an image and the parameters together;
+    On a well-sampled axial parallel half-turn, ``fit="center"`` searches the
+    detector width using Fourier slice sharpness and native opposing-ray agreement.
+    This estimate has no working image. Supplying joint solver settings or a grid
+    requests a joint fit.
+
+    ``method="joint"`` fits an image and the parameters together;
     the same solver handles parallel, laminography and cone-beam scans. Existing
     poses are preserved and the fitted correction is composed with them. The
     returned scan carries both calibrated global geometry and local poses, so
@@ -998,7 +1008,7 @@ def align(
         The part of the scan's grid to fit on, in place of ``grid``, as for
         :func:`reconstruct`.
     method : {"joint", "opposite-views"} or None, optional
-        How the parameters are estimated; None is "joint".
+        None selects the axial center search when applicable and the joint fit otherwise.
     motion : {"independent", "smooth"} or None, optional
         Whether each view moves independently of its neighbors (the default) or the
         motion is smooth drift with occasional slips, for a steady stage (see
@@ -1074,7 +1084,7 @@ def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignm
 
     if isinstance(plan, CenterSelection):
         with registration(scan), progress.runtime() as actual:
-            alignment = _opposite_views(scan, plan)
+            alignment = _align_center(scan, plan)
         return replace(
             alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
         )
@@ -1098,13 +1108,13 @@ def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignm
     return Alignment(corrected, info, image, result.grid)
 
 
-def _opposite_views(scan: Scan, selection: CenterSelection) -> Alignment:
-    """Fit the center from near-opposite views, without an image."""
+def _align_center(scan: Scan, selection: CenterSelection) -> Alignment:
+    """Return the calibrated scan and its center correction in native detector pixels."""
     centered, record = _estimate_center(scan, selection)
     before, after = scan.detector.center[0], centered.detector.center[0]
     center = {"value": float(after), "change": float((after - before) / scan.detector.du)}
     info = {
-        "method": "opposite-views",
+        "method": selection.method,
         "fit": ["center"],
         "calibration": {"center": center},
         "diagnostics": record["diagnostics"],

@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from scipy.ndimage import shift
+from numpy.typing import NDArray
+from scipy.ndimage import gaussian_filter1d, shift
 from scipy.stats import t
 
 
@@ -16,6 +17,11 @@ class PairStatistics:
     offset_px: float
     sigma_px: float
     interval90_px: tuple[float, float]
+
+
+def filter_columns(data: np.ndarray, sigma: float, *, order: int = 0) -> NDArray[np.float64]:
+    """Smooth or differentiate detector profiles along u."""
+    return np.asarray(gaussian_filter1d(data, sigma, axis=-1, order=order), np.float64)
 
 
 def _overlap(columns: np.ndarray, *, lag: float, bandwidth: float) -> np.ndarray:

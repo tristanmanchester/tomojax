@@ -178,6 +178,13 @@ pub struct Level {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CenterRegistrationPlan {
+    pub pairs: usize,
+    pub reasons: Vec<String>,
+    pub placement: Placement,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Info {
     pub summary: BTreeMap<String, Value>,
     pub arrays: BTreeMap<String, ArrayDescriptor>,
@@ -259,15 +266,27 @@ pub enum Product {
         levels: Vec<Level>,
         placement: Placement,
     },
-    OppositeViewsPlan {
-        pairs: usize,
-        reasons: Vec<String>,
-        placement: Placement,
+    SinogramFocusPlan {
+        views: usize,
+        binning: usize,
+        #[serde(flatten)]
+        registration: CenterRegistrationPlan,
     },
+    OppositeViewsPlan(CenterRegistrationPlan),
     Validated,
 }
 
 impl Product {
+    pub fn is_plan(&self) -> bool {
+        matches!(
+            self,
+            Self::ReconstructionPlan { .. }
+                | Self::JointPlan { .. }
+                | Self::OppositeViewsPlan(_)
+                | Self::SinogramFocusPlan { .. }
+        )
+    }
+
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Scan { .. } => "scan",
@@ -285,7 +304,8 @@ impl Product {
             Self::Inspection { .. } => "inspection",
             Self::ReconstructionPlan { .. } => "reconstruction_plan",
             Self::JointPlan { .. } => "joint_plan",
-            Self::OppositeViewsPlan { .. } => "opposite_views_plan",
+            Self::SinogramFocusPlan { .. } => "sinogram_focus_plan",
+            Self::OppositeViewsPlan(_) => "opposite_views_plan",
             Self::Validated => "validated",
         }
     }

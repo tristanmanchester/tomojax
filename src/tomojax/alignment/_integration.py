@@ -2,17 +2,38 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.alignment._geometry.center_focus import angular_focus
+from tomojax.alignment._geometry.center_registration import paired_center
 from tomojax.alignment._geometry.detector_center import CenterSelection, opposite_samples
 from tomojax.alignment._joint._fit import FitSchedule, fit_poses, fit_schedule
 from tomojax.alignment._joint._parameters import parse_fit
 from tomojax.core.geometry.cone import cone_parts
+from tomojax.geometry import ParallelGeometry
 
 if TYPE_CHECKING:
+    import jax
+
     from tomojax.geometry import ScanGeometry
+
+
+def initial_center_change(
+    geometry: ScanGeometry, projections: np.ndarray | jax.Array, positions: np.ndarray | None
+) -> float:
+    """Measure the starting correction in native pixels using opposing ray constraints."""
+    if type(geometry) is not ParallelGeometry or geometry.detector_roll:
+        return 0.0
+    selection = opposite_samples(geometry)
+    focus = angular_focus(geometry)
+    if focus is not None:
+        center, _ = replace(selection, focus=focus).focused(projections, positions)
+    else:
+        center = paired_center(selection, projections, positions)
+    return center - geometry.detector.center[0] / geometry.detector.du
 
 
 def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
@@ -35,9 +56,11 @@ def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
 __all__ = [
     "CenterSelection",
     "FitSchedule",
+    "angular_focus",
     "cone_frames",
     "fit_poses",
     "fit_schedule",
+    "initial_center_change",
     "opposite_samples",
     "parse_fit",
 ]

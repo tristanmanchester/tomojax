@@ -10,7 +10,13 @@ import numpy as np
 from tomojax._parameters import method_fit
 from tomojax._scan.model import Reconstruction, describe, record_of, with_grid
 from tomojax._workflow.planning import resolve_grid
-from tomojax.alignment._integration import CenterSelection, fit_poses
+from tomojax.alignment._integration import (
+    CenterSelection,
+    angular_focus,
+    fit_poses,
+    initial_center_change,
+    opposite_samples,
+)
 from tomojax.backends.api import is_oom_error
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import stack_view_poses
@@ -36,6 +42,11 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     views = len(scan.angles)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
+    initial_center = (
+        initial_center_change(scan.geometry, scan.projections, scan.view_positions)
+        if "center" in plan.fit
+        else 0.0
+    )
     try:
         volume, working, fitted, record = fit_poses(
             scan.projections,
@@ -43,6 +54,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             scan.grid,
             scan.detector,
             fit=plan.fit,
+            initial_center=initial_center,
             keep_grid=grid is not None,
             frames=plan.frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
@@ -125,7 +137,6 @@ def resolve_alignment(
     from tomojax.alignment._integration import (
         cone_frames,
         fit_schedule,
-        opposite_samples,
         parse_fit,
     )
 
@@ -155,11 +166,6 @@ def resolve_alignment(
         return opposite_samples(scan.geometry)
     if method not in (None, "joint"):
         raise InvalidParameter("method", f"method is 'joint' or 'opposite-views', not {method!r}")
-    names = parse_fit(method_fit(method, fit))
-    config = replace(AlignConfig() if config is None else config, **supplied)
-    grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
-    if grid is not None:
-        scan = with_grid(scan, grid)
     acquisition = (
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
@@ -168,6 +174,20 @@ def resolve_alignment(
             "alignment requires declared acquisition geometry: this file records no rotation "
             "axis; pass geometry=... to tomojax.load"
         )
+    names = parse_fit(method_fit(method, fit))
+    if (
+        method is None
+        and names == ("center",)
+        and not supplied
+        and all(value is None for value in (config, grid, region, shape))
+    ):
+        focus = angular_focus(scan.geometry)
+        if focus is not None:
+            return replace(opposite_samples(scan.geometry), focus=focus)
+    config = replace(AlignConfig() if config is None else config, **supplied)
+    grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
+    if grid is not None:
+        scan = with_grid(scan, grid)
     frames = cone_frames(scan.geometry)
     cone = None
     if frames is not None:

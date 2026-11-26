@@ -311,3 +311,57 @@ def test_calibration_subset_excludes_every_interpolation_contributor(form):
     assert (
         estimate_center(scan.geometry, poisoned, views=views).detector == report.geometry.detector
     )
+
+
+@pytest.mark.parametrize(("views", "method"), [(37, "joint_volume_pose"), (181, "sinogram-focus")])
+def test_center_finds_large_offset_with_a_defective_detector_column(views, method):
+    # Analytic projections of two Gaussian absorbers, independent of the projector.
+    angles = np.linspace(13, 193, views)
+    detector = Detector(384, 4, 0.7, 1.2, center=(3.5, 0))
+    grid = Grid(64, 64, 4, 0.7, 0.7, 1.2)
+    center = -115.75
+    u = np.arange(detector.nu) - (detector.nu - 1) / 2 + center
+    phase = np.cos(np.deg2rad(angles - 13))[:, None]
+    profile = 0.4 * np.exp(-0.5 * ((u - 12 * phase) / 10) ** 2)
+    profile += 0.5 * np.exp(-0.5 * ((u + 16 * phase) / 4) ** 2)
+    profile[:, 94] += 1.0
+    noise = np.random.default_rng(75).normal(0, 0.006, (len(angles), detector.nv, detector.nu))
+    scan = tj.Scan(
+        (profile[:, None] + noise).astype(np.float32), ParallelGeometry(grid, detector, angles)
+    )
+    result = tj.align(scan, fit="center")
+    assert abs(result.scan.detector.center[0] / detector.du - center) < 0.5
+    assert result.info["method"] == method
+    assert (result.image is not None) == (method == "joint_volume_pose")
+
+
+def test_center_uses_interior_angles_when_both_endpoints_have_flat_shadows(tmp_path, capsys):
+    scan, *_ = _scan(views=181, span=180)
+    y = np.array(scan.projections, copy=True)
+    u = np.arange(y.shape[-1])
+    # Different objects in the opening and closing flat fields cast moving
+    # apparent centers. The same columns are also defective throughout the turn.
+    t = np.linspace(0, 1, len(y))[:, None, None]
+    y += (1 - t) * 6 * np.exp(-0.5 * ((u - 14) / 2) ** 2)
+    y += t * 6 * np.exp(-0.5 * ((u - 24) / 3) ** 2)
+    y[:, :, 51] += 3
+    fitted = tj.align(replace(scan, projections=y), fit="center")
+    assert fitted.info["method"] == "sinogram-focus"
+    assert abs(fitted.scan.detector.center[0] / scan.detector.du + 5.25) < 1.0
+    assert fitted.grid is None
+
+    import json
+
+    from tomojax.cli.main import main
+
+    source = tmp_path / "scan.nxs"
+    target = tmp_path / "calibrated.nxs"
+    tj.save(source, replace(scan, projections=y))
+    args = ["align", str(source), "--fit", "center", "--progress", "json"]
+    assert main([*args, "--dry-run"]) == 0
+    plan = json.loads(capsys.readouterr().out.splitlines()[-1])["info"]["summary"]
+    assert plan["type"] == "sinogram_focus_plan" and plan["method"] == "sinogram-focus"
+    assert main([*args, "-o", str(target)]) == 0
+    np.testing.assert_allclose(
+        tj.load(target).detector.center, fitted.scan.detector.center, atol=1e-5
+    )

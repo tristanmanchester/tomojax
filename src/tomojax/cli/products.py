@@ -224,6 +224,16 @@ class CenterPlan(Record, tag="opposite_views_plan"):
     placement: Placement
 
 
+class FocusPlan(Record, tag="sinogram_focus_plan"):
+    """Interior angular samples for the global search and native ray pairs for refinement."""
+
+    views: Count
+    binning: Count
+    pairs: Count
+    reasons: tuple[str, ...]
+    placement: Placement
+
+
 class Validated(Record, tag="validated"):
     """Successful shared preflight, including resolved inputs and destinations."""
 
@@ -256,6 +266,7 @@ type DataProduct = (
     | ReconPlan
     | JointPlan
     | CenterPlan
+    | FocusPlan
     | Validated
 )
 type Product = HandleProduct | DataProduct

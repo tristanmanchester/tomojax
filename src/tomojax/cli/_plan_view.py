@@ -77,8 +77,13 @@ def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[st
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):
+        label = f"opposite views: the center from {_pairs(len(work.samples))}"
+        if work.focus is not None:
+            label = (
+                f"Fourier focus from {len(work.focus.views)} views and {_pairs(len(work.samples))}"
+            )
         return [
-            ("method", f"opposite views: the center from {_pairs(len(work.samples))}"),
+            ("method", label),
             ("placement", placement_text(placement)),
         ]
     if isinstance(work, ResolvedReconstruction):
@@ -130,7 +135,7 @@ def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):
-        what = f"opposite views, {_pairs(len(work.samples))}"
+        what = f"{work.method.replace('-', ' ')}, {_pairs(len(work.samples))}"
     elif isinstance(work, ResolvedReconstruction):
         what = method_name(work)
         iterations = getattr(work.config, "iterations", None)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `tj.align(scan, fit="center")` searches the detector width on well-sampled axial
+  parallel scans. It uses the sharpness of a Fourier slice and registers native
+  opposing rays, including at large offsets. The result carries the corrected
+  scan. Use `method="joint"` when you also need a fitted working volume.
+
 - Use `Rings()` or `tomojax correct --rings` for fine and wide detector rings.
   The `Stripes` step, `--stripes WIDTH` and `stripes_varying` setting have been removed.
 - Fourier reconstruction accepts `filter="ramp"`, `"hann"`, or `"shepp-logan"`

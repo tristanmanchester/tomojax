@@ -43,7 +43,7 @@ class _Args(argparse.Namespace):
     force: bool
     progress: str
     fit: list[Fit] | None
-    method: str
+    method: str | None
     motion: str | None
     iterations: int | None
     image_iterations: int | None
@@ -107,9 +107,9 @@ def build_parser() -> ProgressParser:
     _ = parser.add_argument(
         "--method",
         choices=("joint", "opposite-views"),
-        default="joint",
-        help="joint (default): fit an image with the parameters; opposite-views: the center "
-        "alone from near-opposite views of an axial parallel scan, without an image",
+        default=None,
+        help="By default --fit center uses sinogram focus on dense axial half-turns. "
+        "Joint fits an image with the parameters. Opposite-views fits the center from paired rays.",
     )
     _ = parser.add_argument(
         "--motion",
@@ -235,6 +235,7 @@ def _write_manifest(
     *,
     fit: tuple[str, ...],
     masked: bool,
+    method: str,
 ) -> None:
     """Save the requested inputs, fitted geometry and solver record."""
     from tomojax.cli.manifest import build_manifest, save_manifest
@@ -251,7 +252,7 @@ def _write_manifest(
         "input_projection_shape": list(np.shape(scan.projections)),
         "input_poses": scan.poses is not None,
         "fit": list(fit),
-        "method": args.method,
+        "method": method,
         "region": {
             "requested": args.region,
             "grid_changed": result.grid is not None and result.grid != scan.grid,
@@ -283,6 +284,8 @@ def _validate_align_args(
         if args.method == "opposite-views":
             _validate_opposite_views(args, settings)
             return None
+        if not settings and all(getattr(args, name) is None for name in _SETTINGS):
+            return None
         return _build_align_config(args, settings)
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
@@ -298,15 +301,15 @@ def _dry_run_plan(
     """Return the JSON document of ``tomojax align --dry-run``."""
     import msgspec
 
+    from tomojax._workflow.smooth_alignment import JointSelection
+
     document: dict[str, object] = {
         **msgspec.to_builtins(plan),
         "input_path": args.data,
         "output_path": args.out,
         "fit": list(fit),
-        "method": args.method,
+        "method": "joint" if isinstance(work, JointSelection) else work.method,
     }
-    from tomojax._workflow.smooth_alignment import JointSelection
-
     if isinstance(work, JointSelection):
         document["config"] = asdict(work.config)
         document["grid"] = (scan.grid if work.grid is None else work.grid).to_dict()
@@ -396,6 +399,7 @@ def _run(
         work = resolve_alignment(
             scan, fit=fit, method=args.method, region=args.region, shape=shape, config=config
         )
+        method = "joint" if isinstance(work, JointSelection) else work.method
         if args.dry_run:
             plan = plan_product(scan, work)
             document = _dry_run_plan(args, fit, scan, work, plan)
@@ -410,12 +414,12 @@ def _run(
     if args.manifest is not None:
         progress.check_canceled()
         masked = isinstance(work, JointSelection) and work.cylinder is not None
-        _write_manifest(args, metadata, scan, result, fit=fit, masked=masked)
+        _write_manifest(args, metadata, scan, result, fit=fit, masked=masked, method=method)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 
         outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
-        return saved_result(args.out, result, method=args.method, outputs=outputs)
+        return saved_result(args.out, result, method=method, outputs=outputs)
     print(f"wrote {args.out} with fitted {', '.join(fit)} for {len(scan.angles)} views")
     for line in _fit_summary(result):
         print(line)

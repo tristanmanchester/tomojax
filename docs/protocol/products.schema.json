@@ -103,6 +103,9 @@
                   "$ref": "#/$defs/CenterPlan"
                 },
                 {
+                  "$ref": "#/$defs/FocusPlan"
+                },
+                {
                   "$ref": "#/$defs/Validated"
                 }
               ],
@@ -125,6 +128,7 @@
                   "reconstruction_plan": "#/$defs/ReconPlan",
                   "joint_plan": "#/$defs/JointPlan",
                   "opposite_views_plan": "#/$defs/CenterPlan",
+                  "sinogram_focus_plan": "#/$defs/FocusPlan",
                   "validated": "#/$defs/Validated"
                 }
               }
@@ -1086,6 +1090,48 @@
       },
       "required": [
         "type",
+        "pairs",
+        "reasons",
+        "placement"
+      ],
+      "additionalProperties": false
+    },
+    "FocusPlan": {
+      "title": "FocusPlan",
+      "description": "Interior angular samples for the global search and native ray pairs for refinement.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "sinogram_focus_plan"
+          ]
+        },
+        "views": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "binning": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "pairs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "placement": {
+          "$ref": "#/$defs/Placement"
+        }
+      },
+      "required": [
+        "type",
+        "views",
+        "binning",
         "pairs",
         "reasons",
         "placement"

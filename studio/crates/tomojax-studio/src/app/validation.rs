@@ -615,12 +615,7 @@ impl AppState {
                                 .status(Phase::Valid, "Settings validated by TomoJAX.");
                         }
                     }
-                    (
-                        Product::ReconstructionPlan { .. }
-                        | Product::JointPlan { .. }
-                        | Product::OppositeViewsPlan { .. },
-                        Work::Plan,
-                    ) => {
+                    (plan, Work::Plan) if plan.is_plan() => {
                         self.validation.view.plan = Some(output.value.clone());
                         self.validation.view.plan_inputs = self.validation.input_context.clone();
                         self.validation.next = Next::Complete;

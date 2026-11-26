@@ -254,13 +254,10 @@ fn plan_details(state: &AppState, plan: &Product) -> El {
             }
             (reasons, placement)
         }
-        Product::OppositeViewsPlan {
-            pairs,
-            reasons,
-            placement,
-        } => {
-            content = content.child(property("Angular pairs", pairs.to_string()));
-            (reasons, placement)
+        Product::SinogramFocusPlan { registration, .. }
+        | Product::OppositeViewsPlan(registration) => {
+            content = content.child(property("Angular pairs", registration.pairs.to_string()));
+            (&registration.reasons, &registration.placement)
         }
         _ => return el(),
     };

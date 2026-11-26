@@ -403,6 +403,19 @@ def _physical_frame(
     return cone_parameter_scales(poses, frames, grid, native), frames
 
 
+def _fit_inputs(
+    projections: ArrayLike | jax.Array, nominal_poses: ArrayLike | jax.Array, detector: Detector
+) -> tuple[np.ndarray, np.ndarray]:
+    """Read the projection stack without copying it and validate the matching pose table."""
+    y0 = np.asanyarray(projections)
+    poses = np.asarray(nominal_poses, np.float32)
+    if y0.ndim != 3 or y0.shape[1:] != (detector.nv, detector.nu):
+        raise ValueError("projection shape does not match the detector")
+    if len(y0) < 2 or poses.shape != (len(y0), 4, 4) or not np.isfinite(poses).all():
+        raise ValueError("pose fitting needs finite (views, 4, 4) poses for two or more views")
+    return y0, poses
+
+
 def fit_poses(
     projections: ArrayLike | jax.Array,
     nominal_poses: ArrayLike | jax.Array,
@@ -415,6 +428,7 @@ def fit_poses(
     detector_roll: float = 0.0,
     view_positions: ArrayLike | None = None,
     declared_poses: np.ndarray | None = None,
+    initial_center: float = 0.0,
     schedule: FitSchedule | None = None,
     placement: Mapping[str, Place] | None = None,
     config: AlignConfig | None = None,
@@ -428,8 +442,10 @@ def fit_poses(
     ``grid`` itself instead of a bounded resampling.
     ``frames`` supplies cone lab frames (views, 4, 3), with rows detector center,
     unit u, unit v, source; None selects parallel rays. A shared (4, 3) frame is
-    also accepted. ``fit`` selects shared center/tilt/roll and local translation/
-    rotation blocks. ``detector_roll`` supplies an existing parallel detector
+    also accepted. ``initial_center`` is the measured detector-u correction in native
+    pixels at which to start a selected center fit. ``fit`` selects shared
+    center/tilt/roll and local translation/rotation blocks. ``detector_roll``
+    supplies an existing parallel detector
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
     time (see :class:`ViewOrder`); the motion prior and the report's neighbor
@@ -452,12 +468,7 @@ def fit_poses(
     config = AlignConfig() if config is None else config
     announce()
     with jax.enable_x64(True):
-        y0 = np.asanyarray(projections)
-        poses = np.asarray(nominal_poses, np.float32)
-        if y0.ndim != 3 or y0.shape[1:] != (detector.nv, detector.nu):
-            raise ValueError("projection shape does not match the detector")
-        if len(y0) < 2 or poses.shape != (len(y0), 4, 4) or not np.isfinite(poses).all():
-            raise ValueError("pose fitting needs finite (views, 4, 4) poses for two or more views")
+        y0, poses = _fit_inputs(projections, nominal_poses, detector)
         native = (float(detector.du), float(detector.dv))
         # Native pixels per radian at the object edge.
         lever = 0.5 * max(grid.nx * grid.vx, grid.ny * grid.vy) / native[0]
@@ -480,7 +491,11 @@ def fit_poses(
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         config = resolve_align_config(config, parameters.fit, cone=frames is not None)
-        x = p = last = None
+        x = last = None
+        p = None
+        if "center_u" in parameters.globals:
+            p = np.zeros(parameters.size, np.float64)
+            p[parameters.local_size] = initial_center
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []

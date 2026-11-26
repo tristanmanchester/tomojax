@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import chi2
 
@@ -14,14 +13,16 @@ from tomojax import errors, progress
 from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
-from .center_statistics import PairStatistics, refine_pair
+from .center_statistics import PairStatistics, filter_columns, refine_pair
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
     import jax
 
     from tomojax.geometry import Geometry
+
+    from .center_focus import AngularFocus
 
 
 def _opposite_pairs(angles: np.ndarray, width: int) -> list[tuple[int, int, float]]:
@@ -147,8 +148,8 @@ def _paired_measurement(
     sigma = max(1.0, nu * np.deg2rad(angle_error) / 4)
     # Derivatives remove row backgrounds without introducing the padded-edge
     # bias of subtracting a finite detector mean before linear correlation.
-    a = gaussian_filter1d(first, sigma, axis=-1, order=1)
-    b = gaussian_filter1d(second[:, ::-1], sigma, axis=-1, order=1)
+    a = filter_columns(first, sigma, order=1)
+    b = filter_columns(second[:, ::-1], sigma, order=1)
     size = 1 << (2 * nu - 2).bit_length()
     spectrum = (np.fft.rfft(a, n=size) * np.conj(np.fft.rfft(b, n=size))).sum(axis=0)
     lags, heights = _correlation_modes(spectrum, nu)
@@ -366,12 +367,47 @@ class CenterSelection:
     geometry: ParallelGeometry
     views: tuple[int, ...] | None
     samples: tuple[AngularSample, ...]
+    focus: AngularFocus | None = None
+
+    @property
+    def method(self) -> str:
+        return "sinogram-focus" if self.focus is not None else "opposite-views"
+
+    def focused(
+        self, projections: np.ndarray | jax.Array, positions: np.ndarray | None
+    ) -> tuple[float, dict[str, object]]:
+        """Score angular focus and native opposing rays over the full detector width."""
+        from .center_registration import paired_center
+
+        assert self.focus is not None
+        focus = self.focus.scores(projections, positions)
+        value = paired_center(self, projections, positions, focus=focus)
+        return value, {
+            "focus_px": focus[0].item(int(np.argmax(focus[1]))),
+            "binning": self.focus.binning,
+            "views": len(self.focus.views),
+            "pairs": len(self.samples),
+        }
+
+    def images(
+        self, projections: np.ndarray | jax.Array, rows: np.ndarray
+    ) -> Iterator[tuple[AngularSample, np.ndarray, np.ndarray]]:
+        if not self.samples:
+            return
+        views = np.unique([i for first, second, _ in self.samples for i, _ in first + second])
+        data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
+        for sample in self.samples:
+            progress.check_canceled()
+            first, second, _ = sample
+            a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
+            b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
+            yield sample, a, b
 
     def measure(self, projections: np.ndarray | jax.Array) -> CenterEstimate:
         """Measure the sampled opposing pairs of the resolved selection."""
         geometry, samples = self.geometry, self.samples
         detector = geometry.detector
-        validate_projection_stack(
+        _ = validate_projection_stack(
             projections, detector, geometry=geometry, context="opposite-views"
         )
         with progress.task("opposite-views", "opposite view pairs", len(samples), "pairs"):
@@ -380,34 +416,28 @@ class CenterSelection:
             groups = np.array_split(np.arange(len(rows)), min(8, len(rows)))
             row_positions = np.asarray([np.mean(rows[group]) for group in groups])
             pairs, row_offsets = [], []
-            if samples:
-                views = np.unique([i for first, second, _ in samples for i, _ in first + second])
-                data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
-                for first, second, error in samples:
-                    progress.check_canceled()
-                    a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
-                    b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
-                    result = _paired_measurement(a, b, error)
-                    if result is None:
-                        progress.step("pairs")
-                        continue
-                    stat, alternatives, heights = result
-                    pairs.append(
-                        CenterPair(
-                            tuple(first),
-                            tuple(second),
-                            error,
-                            stat.offset_px,
-                            stat.sigma_px,
-                            stat.interval90_px,
-                            tuple(float(x) for x in alternatives),
-                            tuple(float(x) for x in heights),
-                        )
-                    )
-                    row_offsets.append(
-                        tuple(_paired_offset(a[group], b[group], error) for group in groups)
-                    )
+            for (first, second, error), a, b in self.images(projections, rows):
+                result = _paired_measurement(a, b, error)
+                if result is None:
                     progress.step("pairs")
+                    continue
+                stat, alternatives, heights = result
+                pairs.append(
+                    CenterPair(
+                        tuple(first),
+                        tuple(second),
+                        error,
+                        stat.offset_px,
+                        stat.sigma_px,
+                        stat.interval90_px,
+                        tuple(float(x) for x in alternatives),
+                        tuple(float(x) for x in heights),
+                    )
+                )
+                row_offsets.append(
+                    tuple(_paired_offset(a[group], b[group], error) for group in groups)
+                )
+                progress.step("pairs")
             if not pairs:
                 raise ValueError(
                     'method="opposite-views" needs finite, nonconstant opposite projections. '
