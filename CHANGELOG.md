@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Cone-beam CUDA kernels reduce tile maxima with warp shuffles instead of
+  `__reduce_max_sync`, so they compile and run on Volta and Turing GPUs (V100, T4,
+  RTX 20xx) as well as Ampere and newer cards.
+- `tj.align` applies its refinement Gaussian filter as separable weighted slices instead
+  of a cuDNN convolution, so alignment runs on Volta GPUs with stock CUDA 12 and cuDNN
+  wheels. Results match previous runs on parallel beam and agree within one float32 ULP on
+  cone beam and laminography.
 - `tj.load_frames` reads NeXus scan files by their structure: the frames of the default
   plot, the `image_key` of the detector holding them, and the rotation as the plotted
   coordinate with angular units, its own or those recorded for its positioner. Diamond
