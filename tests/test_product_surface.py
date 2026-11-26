@@ -12,6 +12,8 @@ pytestmark = pytest.mark.surface
 
 
 def test_cli_imports_do_not_configure_jax_allocator(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The library sets its default on first import. Isolate the subsequent CLI imports.
+    importlib.import_module("tomojax")
     for name in ("XLA_PYTHON_CLIENT_PREALLOCATE", "XLA_PYTHON_CLIENT_ALLOCATOR"):
         monkeypatch.delenv(name, raising=False)
 
