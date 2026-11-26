@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fourier reconstruction accepts `filter="ramp"`, `"hann"`, or `"shepp-logan"`
+  in `tj.reconstruct`, `tj.reconstruct_slabs` (via `FourierConfig(filter=...)`),
+  the CLI (`--filter`), and wire options. Passing a filter applies FBP's linear
+  detector-interpolation response and radial replicas inside the Cartesian
+  frequency grid, giving resolution and noise close to FBP at Fourier's speed;
+  omitting `filter` keeps the sharper, noisier native response.
 - FISTA calibrates automatic TV from detector noise and subpixel curvature and
   stops at the estimated noise level of the proximal gradient mapping. The
   default iteration cap is 200.

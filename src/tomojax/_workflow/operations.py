@@ -504,8 +504,11 @@ def reconstruct(
     ``fourier``
         Fourier-slice inversion of parallel-beam half-turn scans, with
         nonuniform or repeated angles and translation-only poses; no cone beams
-        or tilted axes. Input and output stay on the host;
-        :class:`~tomojax.recon.FourierConfig` selects NumPy or CuPy CUDA.
+        or tilted axes. Omitting ``filter`` (default) keeps the sharper,
+        noisier native response; ``filter="ramp"``, ``"shepp-logan"`` or
+        ``"hann"`` matches FBP's detector response at Fourier speed. Input and
+        output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
+        NumPy or CuPy CUDA.
     ``cgls``
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
@@ -569,8 +572,9 @@ def reconstruct(
     config : reconstruction config or None, optional
         Method-specific settings; explicit keywords replace its fields.
     filter : str or None, optional
-        FBP detector response for FBP or Fourier: ramp, shepp-logan or hann.
-        None uses the configuration or method default.
+        FBP detector response for fbp or fourier: ramp, shepp-logan or hann.
+        None uses the configuration or method default (ramp for fbp; native
+        response for fourier).
     iterations : int or None, optional
         Iteration count; None uses the method default or configuration.
     tv_weight : float or None, optional
@@ -687,6 +691,8 @@ def reconstruct_slabs(
     ``frames.geometry`` automatically), not Paganin or view rejection. SIRT/OSEM
     also require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.
+    Pass ``FourierConfig(filter="ramp")`` (or ``"hann"`` or ``"shepp-logan"``)
+    to match FBP's detector response in streamed Fourier reconstruction.
     CUDA consumes corrected rows without a corrected-projection host round trip.
     Unfiltered HDF5 stacks use parallel positional reads with cached chunk
     offsets. Raw row blocks target 1 MiB per view (at least 1 GiB per block,

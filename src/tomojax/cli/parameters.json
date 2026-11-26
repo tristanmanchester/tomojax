@@ -1432,7 +1432,7 @@
             }
           ],
           "default": null,
-          "description": "FBP detector response (\"ramp\", \"hann\" or \"shepp-logan\"). None uses the native Fourier response with a detector-Nyquist disk cutoff.",
+          "description": "FBP detector response (\"ramp\", \"hann\" or \"shepp-logan\"), or None (default) for the native Fourier response with a detector-Nyquist disk cutoff. Without a filter, edges are sharper and high-frequency noise is higher. Passing \"ramp\" reproduces default FBP's detector resolution and noise at Fourier speed; \"hann\" and \"shepp-logan\" add the corresponding FBP windows.",
           "x-choices": [
             "ramp",
             "hann",
@@ -2696,7 +2696,7 @@
             }
           ],
           "default": null,
-          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
+          "description": "FBP detector response for fbp or fourier: ramp, shepp-logan or hann. None uses the configuration or method default (ramp for fbp; native response for fourier).",
           "x-choices": [
             "ramp",
             "hann",
@@ -4713,7 +4713,7 @@
             }
           ],
           "default": null,
-          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
+          "description": "FBP detector response for fbp or fourier: ramp, shepp-logan or hann. None uses the configuration or method default (ramp for fbp; native response for fourier).",
           "x-choices": [
             "ramp",
             "hann",
@@ -4966,7 +4966,7 @@
             }
           ],
           "default": null,
-          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
+          "description": "FBP detector response for fbp or fourier: ramp, shepp-logan or hann. None uses the configuration or method default (ramp for fbp; native response for fourier).",
           "x-choices": [
             "ramp",
             "hann",

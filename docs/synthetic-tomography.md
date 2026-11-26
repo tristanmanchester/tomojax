@@ -10,7 +10,7 @@ tomojax reconstruct synthetic.nxs -o recon.nxs
 tomojax inspect recon.nxs --preview-dir previews
 ```
 
-`--size 32` builds a 32³ Shepp–Logan phantom and a 32×32 detector. `reconstruct` selects the Fourier-slice inverse automatically for this axial parallel scan, and `inspect` writes central projection and slice PNGs to `previews/`.
+`--size 32` builds a 32³ Shepp–Logan phantom and a 32×32 detector. `reconstruct` selects the Fourier-slice inverse automatically for this axial parallel scan (pass `--filter ramp` to match FBP's detector response instead of Fourier's sharper, noisier native response), and `inspect` writes central projection and slice PNGs to `previews/`.
 
 Run `tomojax simulate --help` for other phantoms, Poisson noise (`--poisson-scale`), and random seeds (`--seed`). Detector artifacts (dead or hot pixels, zingers, stripes) and custom `grid` or `detector` shapes can be configured in a TOML file passed to `--config`; `tomojax simulate --config-keys` lists every key.
 

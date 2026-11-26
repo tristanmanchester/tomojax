@@ -127,8 +127,7 @@ reordered, reversed and opposing views, offset detectors, anisotropic spacing
 and cropped output grids. Per-view translations are honored; rotational pose
 corrections and tilted axes are not supported. Projection FFTs use six-point Kaiser–Bessel radial
 interpolation, linear interpolation in the measured angle (periodic over a half
-turn) and a detector-Nyquist disk cutoff, followed by a
-padded Cartesian inverse FFT. The padding covers both the output grid and the
+turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
 into it. Missing detector data are assumed zero; this does not correct truncation.
 
@@ -142,12 +141,19 @@ volume = fourier(
 )
 ```
 
-Set `FourierConfig(filter="ramp")` to approximate the detector response of
-default FBP. The linear detector interpolant attenuates high frequencies and
-contributes spectral replicas in the corners of the Cartesian frequency grid.
-The `hann` and `shepp-logan` choices also apply the corresponding FBP window.
-Fourier still interpolates in angle, so noisy and sparsely sampled scans can
-differ from discrete backprojection.
+With `filter=None` (the default), Fourier cuts off at detector Nyquist. That
+native response resolves sharper edges than FBP on clean data while passing
+more high-frequency noise. Set `FourierConfig(filter="ramp")` (or pass
+`filter="ramp"` to `tj.reconstruct`, or `--method fourier --filter ramp` on the
+CLI) to match default FBP's detector response at the same speed and GPU memory.
+The filter applies FBP's linear detector-interpolation response
+(`sinc²(f) * |s| / f`, where `s` is the folded detector frequency) and folds
+radial replicas inside the Cartesian frequency grid. `hann` and `shepp-logan`
+add the corresponding FBP windows. On a rolled detector, Fourier resamples onto
+axial rows before inversion whereas FBP filters the rolled data in 2D. Fourier
+also interpolates linearly in angle and retains only the Cartesian frequency
+rectangle, so noisy or sparsely sampled scans still differ from discrete
+backprojection.
 
 Install `tomojax[fourier-cuda12]` for the optional CuPy implementation on a host
 with a working CUDA 12 runtime/toolkit and NVIDIA driver. The default

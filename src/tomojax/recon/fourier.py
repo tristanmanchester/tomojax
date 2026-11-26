@@ -68,8 +68,12 @@ class FourierConfig:
     slices_per_batch : int | None, optional
         Positive slab depth, or None to choose automatically as described above.
     filter : Filter or None, optional
-        FBP detector response ("ramp", "hann" or "shepp-logan"). None uses
-        the native Fourier response with a detector-Nyquist disk cutoff.
+        FBP detector response ("ramp", "hann" or "shepp-logan"), or None
+        (default) for the native Fourier response with a detector-Nyquist
+        disk cutoff. Without a filter, edges are sharper and high-frequency
+        noise is higher. Passing "ramp" reproduces default FBP's detector
+        resolution and noise at Fourier speed; "hann" and "shepp-logan" add
+        the corresponding FBP windows.
     backend : Literal['auto', 'numpy', 'cupy'], optional
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
@@ -119,11 +123,14 @@ def fourier(
 
     This approximate inverse uses six-point Kaiser--Bessel radial interpolation,
     linear interpolation in measured angle and a padded Cartesian inverse FFT.
-    The native response cuts off at detector Nyquist. Selecting an FBP filter
-    includes the detector interpolation response and its radial replicas inside
-    the Cartesian frequency grid. DC uses periodic angular trapezoid weights.
-    Missing detector data are zero. Truncation or angular undersampling can cause
-    artifacts; no amplitude fitting, clipping or truncation correction is applied.
+    With ``filter=None`` (default), the native response cuts off at detector
+    Nyquist, preserving sharper edges while transmitting more high-frequency
+    noise than FBP. Setting ``filter`` to ``"ramp"``, ``"hann"`` or
+    ``"shepp-logan"`` applies FBP's linear detector-interpolation response,
+    any chosen window and radial replicas inside the Cartesian frequency grid.
+    DC uses periodic angular trapezoid weights. Missing detector data are zero.
+    Truncation or angular undersampling can cause artifacts; no amplitude
+    fitting, clipping or truncation correction is applied.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
     ``(nz, ny, nx)`` order. New outputs are C-contiguous for downstream volume

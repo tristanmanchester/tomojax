@@ -401,6 +401,32 @@ Measured on commit `1db61b18` on K11-52544 (reconstructing a 2160 × 2560 × 256
 | `tj.reconstruct_slabs(frames, "fbp")` (file to volume) | 356.7 s | 26 GiB | — |
 | `Frames.corrected()` (8,000 views to host stack) | 141.3 s | 168 GiB | — |
 
+### Fourier FBP-matched detector response
+
+Measured 2026-11-26 on commit `a56b53d1` comparing native Fourier (`filter=None`), Fourier with `filter="ramp"`, and TomoJAX FBP (`filter="ramp"`).
+
+On Diamond K11-52544 row 1080 (8,000 views, 2,560 columns, 0.54 µm pitch, no fitted gain, offset, or registration), `filter="ramp"` brings Fourier closer to FBP in both the sample disc (radius 0.66 of the field radius) and the outer annulus (0.66–0.94 of the field radius):
+
+| Region | Native vs FBP (corr / rel. L2) | `filter="ramp"` vs FBP (corr / rel. L2) |
+| --- | ---: | ---: |
+| Sample disc | 0.98141 / 10.99% | 0.99366 / 6.31% |
+| Outer annulus | 0.97059 / 15.67% | 0.98753 / 9.71% |
+
+On an independent analytic disk phantom at the same detector width and view count (2,560 bins, 8,000 views, 50,000 incident counts per bin; relative L2 inside 0.94 of the field radius against pixel-averaged truth; 10–90% clean edge width at central and off-axis inclusions), native Fourier keeps sharper edges at higher noise, while `filter="ramp"` matches FBP's edge width and noisy error:
+
+| Method | Clean / noisy rel. L2 | Central / outer edge (px) |
+| --- | ---: | ---: |
+| Fourier (`filter=None`) | 0.416% / 17.08% | 1.04 / 1.11 |
+| TomoJAX FBP (`filter="ramp"`) | 0.353% / 11.60% | 1.36 / 1.37 |
+| Fourier (`filter="ramp"`) | 0.398% / 11.46% | 1.36 / 1.40 |
+
+Full-volume `tj.reconstruct_slabs` on K11-52544 (2,160 × 2,560 × 2,560 voxels, 8,000 views, one V100S 32 GB, 10 CPUs) runs at the same speed and GPU memory with or without `filter="ramp"`, compared with 344.6 s for FBP from resident raw frames:
+
+| Input | Native elapsed | `filter="ramp"` elapsed | Peak GPU | Peak host RSS |
+| --- | ---: | ---: | ---: | ---: |
+| File (warm repeat) | 34.41 s (38.35 s first) | 34.23–34.25 s | 4.05 GiB | 17.53 / 17.43 GiB |
+| Raw frames in RAM | 30.00–30.34 s | 29.93–30.14 s | 4.05 GiB | 85.07 GiB |
+
 ### Packed-row axial CUDA FBP
 
 Measured on commit `bc0d2127` on K11-52544 (8,000 views of 2560 columns, warm one-GPU wall time):

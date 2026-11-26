@@ -140,7 +140,9 @@ By default, reconstruction keeps the scan's recorded grid (matching `region=None
 
 ### Fourier-slice inverse
 
-`--method fourier` (or `tj.reconstruct(scan, "fourier")`) runs a fast Fourier-slice inverse in host slabs for axial parallel scans without per-view rotational poses. It uses CuPy on CUDA when available (`tomojax[cuda12]` or `tomojax[fourier-cuda12]`) and NumPy otherwise; force a backend with `FourierConfig(backend="cupy")` or `"numpy"`. Use `tj.reconstruct(scan, "fourier", filter="ramp")` or `--method fourier --filter ramp` for the detector response of default FBP. The same option accepts `hann` and `shepp-logan`. For streaming, pass `config=FourierConfig(filter="ramp")` to `tj.reconstruct_slabs`. Omitting the filter keeps the sharper native Fourier response.
+`--method fourier` (or `tj.reconstruct(scan, "fourier")`) runs a fast Fourier-slice inverse in host slabs for axial parallel scans without per-view rotational poses. It uses CuPy on CUDA when available (`tomojax[cuda12]` or `tomojax[fourier-cuda12]`) and NumPy otherwise; force a backend with `FourierConfig(backend="cupy")` or `"numpy"`.
+
+By default (`filter=None`), Fourier uses its native response with a detector-Nyquist disk cutoff: edges stay sharper than in FBP, while high-frequency noise is higher. Pass `filter="ramp"` (`tj.reconstruct(scan, "fourier", filter="ramp")`, `--method fourier --filter ramp`, or `config=FourierConfig(filter="ramp")` in `tj.reconstruct_slabs`) for resolution and noise close to default FBP at Fourier's speed and GPU memory. The same option accepts `"hann"` and `"shepp-logan"` for stronger high-frequency smoothing.
 
 ### Expert settings and truncated scans
 
