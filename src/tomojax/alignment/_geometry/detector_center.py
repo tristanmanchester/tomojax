@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
     from .center_focus import AngularFocus
 
 
-def _opposite_pairs(angles: np.ndarray, width: int) -> list[tuple[int, int, float]]:
+def _opposite_pairs(angles: np.ndarray, width: int, max_gap: float) -> list[tuple[int, int, float]]:
     """At most sixteen uniformly distributed near-opposite view pairs."""
     angles = np.mod(np.asarray(angles, np.float64), 360)
     if len(angles) < 2:
@@ -44,7 +45,7 @@ def _opposite_pairs(angles: np.ndarray, width: int) -> list[tuple[int, int, floa
             strict=True,
         )
     ):
-        if i != j and error <= 2:
+        if i != j and error <= max_gap:
             pair = (i, int(j)) if angles[i] <= angles[j] else (int(j), i)
             pairs[pair] = float(error)
     if not pairs:
@@ -70,12 +71,14 @@ def _opposite_pairs(angles: np.ndarray, width: int) -> list[tuple[int, int, floa
     return [(*ordered[i], pairs[ordered[i]]) for i in picks]
 
 
-def _angular_sample(angles: np.ndarray, index: int, shift: float) -> list[tuple[int, float]]:
+def _angular_sample(
+    angles: np.ndarray, index: int, shift: float, max_gap: float
+) -> list[tuple[int, float]]:
     """Locally interpolate/extrapolate one view to an exactly opposing direction."""
     if abs(shift) < 1e-4:
         return [(index, 1.0)]
     delta = (angles - angles[index] + 180) % 360 - 180
-    local = np.flatnonzero((np.abs(delta) > 1e-4) & (np.abs(delta) <= 2))
+    local = np.flatnonzero((np.abs(delta) > 1e-4) & (np.abs(delta) <= max_gap))
     if not len(local):
         return []
     directed = local[delta[local] * shift > 0]
@@ -88,14 +91,15 @@ def _angular_sample(angles: np.ndarray, index: int, shift: float) -> list[tuple[
 def _sample_pairs(
     angles: np.ndarray,
     width: int,
+    max_gap: float,
 ) -> list[tuple[list[tuple[int, float]], list[tuple[int, float]], float]]:
     pairs = []
-    for i, j, error in _opposite_pairs(angles, width):
+    for i, j, error in _opposite_pairs(angles, width, max_gap):
         # Share the interpolation distance between both ends instead of treating
         # a nearly opposite pair as exact (which confounds angle and center).
         delta = float((angles[j] - angles[i]) % 360 - 180)
-        first = _angular_sample(angles, i, delta / 2)
-        second = _angular_sample(angles, j, -delta / 2)
+        first = _angular_sample(angles, i, delta / 2, max_gap)
+        second = _angular_sample(angles, j, -delta / 2, max_gap)
         if first and second:
             pairs.append((first, second, error))
     return pairs
@@ -451,7 +455,10 @@ class CenterSelection:
 
 
 def opposite_samples(
-    geometry: object, views: slice | Sequence[int] | np.ndarray | None = None
+    geometry: object,
+    views: slice | Sequence[int] | np.ndarray | None = None,
+    *,
+    focus: AngularFocus | None = None,
 ) -> CenterSelection:
     """Original view indices and interpolation weights for the estimator's work."""
     if type(geometry) is not ParallelGeometry:
@@ -461,15 +468,22 @@ def opposite_samples(
     angles = np.asarray(geometry.angles, np.float64)
     eligible = np.arange(len(angles)) if views is None else view_indices(views, len(angles))
     calibration_views = None if views is None else tuple(int(i) for i in eligible)
+    # An endpoint-exclusive half turn leaves one angular interval at its seam.
+    # Its measured spacing sets the extrapolation distance for native matching.
+    max_gap = (
+        2.0
+        if focus is None
+        else max(2.0, math.degrees(np.max(np.diff(focus.angles)).item()) + 1e-6)
+    )
     samples = [
         (
             [(int(eligible[i]), w) for i, w in first],
             [(int(eligible[i]), w) for i, w in second],
             error,
         )
-        for first, second, error in _sample_pairs(angles[eligible], detector.nu)
+        for first, second, error in _sample_pairs(angles[eligible], detector.nu, max_gap)
     ]
-    return CenterSelection(geometry, calibration_views, tuple(samples))
+    return CenterSelection(geometry, calibration_views, tuple(samples), focus)
 
 
 def estimate_center_report(

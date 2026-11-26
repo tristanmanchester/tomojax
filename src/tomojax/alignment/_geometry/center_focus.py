@@ -12,6 +12,8 @@ from tomojax import progress
 from tomojax._typed_arrays import numpy_float64_array
 from tomojax.geometry import ParallelGeometry
 
+from .center_parity import parity_scores
+
 if TYPE_CHECKING:
     import jax
     from numpy.typing import NDArray
@@ -34,13 +36,16 @@ class AngularFocus:
     def scores(
         self, projections: np.ndarray | jax.Array, positions: np.ndarray | None
     ) -> FocusScores:
-        """Score every resolved center in native pixels by normalized edge sparsity."""
+        """Score detector centers in native pixels by angular parity and edge sparsity."""
         nv, nu = map(int, np.shape(projections)[1:])
         rows = np.linspace(0, nv - 1, min(16, nv)).round().astype(int)
         profiles: list[NDArray[np.float64]] = []
+        means: list[NDArray[np.float64]] = []
         for ids in np.array_split(self.views, math.ceil(len(self.views) / 16)):
             progress.check_canceled()
             slab = np.asarray(projections[ids[:, None], rows[None, :], :], np.float64)
+            slab = np.where(np.isfinite(slab), slab, np.nan)
+            means.append(np.nan_to_num(np.asarray(np.nanmean(slab, axis=1), np.float64)))
             profiles.append(np.asarray(np.nanmedian(slab, axis=1), np.float64))
         y: FloatImage = np.concatenate(profiles)
         # Project out view pedestal, stationary gain and linear flat-field drift.
@@ -77,7 +82,9 @@ class AngularFocus:
         # One angular degree of freedom per resolved radial cell. A Fourier slice
         # interpolates neighboring rays, so treating n*n pixels as independent
         # would swamp the native opposing-ray measurements.
-        return numpy_float64_array(centers), numpy_float64_array(-2 * n * np.log(costs))
+        fine, parity = parity_scores(np.concatenate(means), self.angles, sampled.astype(np.float64))
+        sharpness = np.interp(fine, centers, -2 * n * np.log(costs))
+        return fine, parity + sharpness
 
 
 def _polar_grid(
@@ -127,6 +134,6 @@ def angular_focus(geometry: ScanGeometry) -> AngularFocus | None:
     gap = max(float(np.max(np.diff(theta))), float(target[-1] - theta[-1]))
     # Angular Nyquist for a disk: its outermost ray moves at most one cell per view.
     width = min(geometry.detector.nu, 256, int(2 / gap))
-    if width < 32:
+    if len(theta) < 6 or width < max(2, min(32, geometry.detector.nu)):
         return None
     return AngularFocus(order[indices], theta, max(1, math.ceil(geometry.detector.nu / width)))

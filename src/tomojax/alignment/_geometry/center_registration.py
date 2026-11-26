@@ -65,9 +65,62 @@ def _match(a: Profile, b: Profile, stride: int, lags: NDArray[np.float64]) -> ND
     spectrum = np.asarray(
         np.sum(np.fft.rfft(a, n=n) * np.conj(np.fft.rfft(b, n=n)), axis=0), np.complex128
     )
-    corr = np.fft.fftshift(np.fft.irfft(spectrum)) / power
-    rho = np.interp(lags, (np.arange(n) - n // 2) * stride, corr, left=0.0, right=0.0)
+    spectrum[-1] *= 0.5
+    corr = np.fft.fftshift(np.fft.irfft(spectrum, n=16 * n)) * (16 / power)
+    rho = np.interp(lags, (np.arange(16 * n) / 16 - n // 2) * stride, corr, left=0, right=0)
     return -np.log(np.maximum(1 - np.maximum(rho, 0) ** 2, np.finfo(float).eps))
+
+
+def _raw_match(
+    a: Profile, b: Profile, lags: NDArray[np.float64], sigma: float, log_scale: float
+) -> NDArray[np.float64]:
+    """Profile native residual energy on the detector pixels measured at both angles."""
+    width = a.shape[1]
+    n = 1 << (2 * width - 2).bit_length()
+    u = np.arange(width)
+    # Fraction of each Gaussian derivative lobe inside the detector.
+    distance = np.minimum(u, width - 1 - u)
+    window = -np.expm1(-0.5 * (distance / sigma) ** 2)
+    transform = np.fft.rfft(window, n=n)
+    x, y = (np.fft.rfft(p * window, n=n) for p in (a, b))
+    ax, by = (np.fft.rfft(np.sum(p * p, axis=0, dtype=np.float64) * window, n=n) for p in (a, b))
+    cross = np.asarray(np.sum(x * y.conj(), axis=0), np.complex128)
+    energy = ax * transform.conj() + transform * by.conj()
+    # Zero-padding the cross spectra interpolates both the residual and its
+    # normalization to fractional lags before taking the log likelihood.
+    spectra = np.stack((cross, energy))
+    spectra[:, -1] *= 0.5
+    indices = np.rint(lags * 16).astype(int) % (16 * n)
+    values = np.fft.irfft(spectra, n=16 * n)[:, indices] * 16
+    aligned = np.asarray(values[0], np.float64)
+    power = np.asarray(values[1], np.float64)
+    total = float(ax.item(0).real + by.item(0).real)
+    fraction: NDArray[np.float64] = np.maximum(power, 0) / total if total else np.zeros_like(power)
+    rho = np.divide(2 * aligned, power, out=np.zeros_like(power), where=power > 0).clip(0, 1)
+    return fraction * (log_scale - np.log(np.maximum(1 - rho**2, np.finfo(float).eps)))
+
+
+def _template_score(
+    a: Profile, b: Profile, x: Profile, y: Profile, sigma: float, lags: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    """Marginalize native and detector-corrected matches on their illuminated support."""
+    # The participation ratio counts illuminated columns. Divide by the
+    # integral of the squared autocorrelation of a Gaussian derivative.
+    energy = np.asarray(np.sum(x**2 + y**2, axis=0, dtype=np.float64), np.float64)
+    squared = float(energy @ energy)
+    support = np.sum(energy, dtype=np.float64).item() ** 2 / squared if squared else 0.0
+    independent = support / (0.75 * math.sqrt(2 * math.pi) * sigma)
+    corrected = _match(x, -y[:, ::-1], 1, lags)
+    # Compare both hypotheses in the same gradient-variance units.
+    # A temporal median can contain stationary parts of the specimen.
+    raw_power = float(np.linalg.norm(a) * np.linalg.norm(b))
+    moving_power = float(np.linalg.norm(x) * np.linalg.norm(y))
+    score = independent * corrected
+    if moving_power and raw_power:
+        log_scale = math.log(min(1.0, moving_power / raw_power))
+        raw = _raw_match(a, -b[:, ::-1], lags, sigma, log_scale)
+        score = np.logaddexp(score, independent * raw)
+    return score
 
 
 def _shape_score(a: Profile, b: Profile, lags: NDArray[np.float64]) -> NDArray[np.float64]:
@@ -100,7 +153,7 @@ def paired_center(
     )
     needed = {i for left, right, _ in selection.samples for i, _ in left + right}
     templates = _detector_gradients(projections, rows, at, needed)
-    lags = np.arange(1 - d.nu, d.nu, dtype=np.float64)
+    lags = np.arange(16 * (1 - d.nu), 16 * (d.nu - 1) + 1) / 16
     angular = np.zeros_like(lags) if focus is None else np.interp(-lags / 2, *focus)
     offsets: list[float] = []
     for (left, right, mismatch), first, second in selection.images(projections, rows):
@@ -121,10 +174,7 @@ def paired_center(
                 expected = [filter_columns(p, math.sqrt(sigma**2 - 1)) for p in expected]
             x, y = a - expected[0], b - expected[1]
             good = np.isfinite(x).all(axis=1) & np.isfinite(y).all(axis=1)
-            # Effective independent columns for a Gaussian derivative of white
-            # noise: integral of its squared normalized autocorrelation.
-            independent = d.nu / (0.75 * math.sqrt(2 * math.pi) * sigma)
-            score += independent * _match(x[good], -y[good, ::-1], 1, lags)
+            score += _template_score(a[good], b[good], x[good], y[good], sigma, lags)
         score += _shape_score(a, b, lags)
         score += angular
         if np.ptp(score) > 0:
@@ -133,7 +183,7 @@ def paired_center(
             if 0 < i < len(score) - 1:
                 lo, mid, hi = (score.item(k) for k in (i - 1, i, i + 1))
                 delta = 0.5 * (lo - hi) / (lo - 2 * mid + hi)
-            offsets.append(-0.5 * (lags.item(i) + delta))
+            offsets.append(-0.5 * (lags.item(i) + delta / 16))
     if offsets:
         return float(np.median(offsets))
     if focus is not None:

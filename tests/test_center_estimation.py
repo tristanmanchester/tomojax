@@ -365,3 +365,34 @@ def test_center_uses_interior_angles_when_both_endpoints_have_flat_shadows(tmp_p
     np.testing.assert_allclose(
         tj.load(target).detector.center, fitted.scan.detector.center, atol=1e-5
     )
+
+
+@pytest.mark.parametrize(("width", "center"), [(24, 6.3), (32, -7.7)])
+def test_fractional_center_on_a_short_detector_with_an_exclusive_half_turn(width, center):
+    detector = Detector(width, width, 1, 1)
+    moved = tj.simulate(
+        "shepp", size=width, n_views=2 * width, detector=replace(detector, center=(center, 0))
+    ).scan
+    nominal = replace(moved, geometry=replace(moved.geometry, detector=detector))
+    fitted = tj.align(nominal, fit="center")
+    assert fitted.info["method"] == "sinogram-focus"
+    assert fitted.scan.detector.center[0] == pytest.approx(center, abs=0.1)
+
+
+def test_short_reversed_scan_with_stationary_stripes_and_a_drifting_flat():
+    width, center = 32, -5.6
+    angles = np.linspace(17, 197, 96, endpoint=False)
+    theta = np.deg2rad(angles)
+    u = np.arange(width) - (width - 1) / 2 + center
+    # Two Gaussian absorbers have sinusoidal projected positions. Both detector
+    # defects stay at fixed columns while the second grows over the acquisition.
+    profile = np.exp(-0.5 * ((u - (3.84 * np.sin(theta))[:, None]) / 1.76) ** 2)
+    profile += 0.7 * np.exp(-0.5 * ((u + (5.12 * np.cos(theta))[:, None]) / 2.24) ** 2)
+    profile += 0.35 * np.cos(1.7 * u)
+    profile += (
+        0.65 * np.linspace(0, 1, len(angles))[:, None] * np.exp(-0.5 * ((u + 7.04) / 2.88) ** 2)
+    )
+    detector = Detector(width, 1, 0.8, 1.2)
+    geometry = ParallelGeometry(Grid(width, width, 1, 0.8, 0.8, 1.2), detector, angles[::-1])
+    fitted = tj.align(tj.Scan(profile[::-1, None].astype(np.float32), geometry), fit="center")
+    assert fitted.scan.detector.center[0] / detector.du == pytest.approx(center, abs=0.1)

@@ -52,6 +52,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         d,
         *,
         fit,
+        initial_center,
         keep_grid,
         frames,
         detector_roll,
@@ -59,6 +60,7 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         schedule,
         config=None,
     ):
+        assert initial_center == 0
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)

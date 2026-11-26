@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -27,10 +26,10 @@ def initial_center_change(
     """Measure the starting correction in native pixels using opposing ray constraints."""
     if type(geometry) is not ParallelGeometry or geometry.detector_roll:
         return 0.0
-    selection = opposite_samples(geometry)
     focus = angular_focus(geometry)
+    selection = opposite_samples(geometry, focus=focus)
     if focus is not None:
-        center, _ = replace(selection, focus=focus).focused(projections, positions)
+        center, _ = selection.focused(projections, positions)
     else:
         center = paired_center(selection, projections, positions)
     return center - geometry.detector.center[0] / geometry.detector.du

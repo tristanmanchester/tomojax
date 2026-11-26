@@ -53,7 +53,7 @@ A wrong rotation center turns every small bright feature into a ring of the same
 
 For cone data, `"center"` also fits detector-v, though the data constrain it weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically.
 
-On an unposed, unrolled axial parallel scan with a densely sampled half-turn, `tj.align(scan, fit="center")` searches across the detector using Fourier slice sharpness and native opposing-ray agreement. The search models stationary detector structure and linear flat-field drift. The corrected geometry is in `result.scan`. This fit has no working image. Supplying a working grid, region, solver settings or `method="joint"` requests a joint image and geometry fit. Other geometries use the joint fit.
+On an unposed, unrolled axial parallel scan with a densely sampled half-turn, `tj.align(scan, fit="center")` uses all sampled angles to measure the rotation center. It scores Fourier slice sharpness and checks how the real and imaginary components join across a half-turn. Opposing views refine the center in fractions of a native pixel using their common detector area. An acquisition that ends one view short of 180° can still supply a pair. The fit accounts for stationary detector structure and linear flat-field drift. The corrected geometry is in `result.scan`. This fit has no working image. Supplying a working grid, region, solver settings or `method="joint"` requests a joint image and geometry fit. Other geometries use the joint fit.
 
 For a quick estimate from opposing rays alone, run `tj.align(scan, method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
 

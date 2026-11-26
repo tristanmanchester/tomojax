@@ -183,7 +183,7 @@ def resolve_alignment(
     ):
         focus = angular_focus(scan.geometry)
         if focus is not None:
-            return replace(opposite_samples(scan.geometry), focus=focus)
+            return opposite_samples(scan.geometry, focus=focus)
     config = replace(AlignConfig() if config is None else config, **supplied)
     grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if grid is not None:
