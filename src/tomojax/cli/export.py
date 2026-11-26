@@ -71,7 +71,7 @@ def _z_slice(dataset: h5py.Dataset, axes: str, z: int) -> np.ndarray:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the export command: :func:`tomojax.export`, reading the volume a slice at a time."""
-    from tomojax._files import validate_export_range, write_volume
+    from tomojax._loading.files import validate_export_range, write_volume
 
     parser = _build_parser()
     parser.set_invocation(list(sys.argv[1:] if argv is None else argv))

@@ -672,7 +672,7 @@ def test_load_frames_honors_apply_poses_false(tmp_path: Path) -> None:
 def test_host_cylinder_uses_one_mask_plane_and_keeps_solver_output(
     cylinder_scan, cylinder_mask, monkeypatch
 ):
-    from tomojax import _field_of_view
+    from tomojax._workflow import field_of_view as _field_of_view
     from tomojax.recon import api
 
     build_mask = _field_of_view.cylinder_support

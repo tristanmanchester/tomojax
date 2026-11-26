@@ -189,7 +189,8 @@ ban-relative-imports = "parents"
 ]
 "{tools,bench}/**" = ["T20"]
 "src/tomojax/cli/**" = ["T20"]
-"src/tomojax/**/_*.py" = [
+# Private modules: underscored files and every module in an underscored package.
+"src/tomojax/{**/_*.py,_*/**/*.py}" = [
     "D100",
     "D101",
     "D102",

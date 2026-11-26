@@ -4,7 +4,7 @@ from typing import get_args
 
 import tomojax as tj
 from tomojax import alignment, corrections, datasets
-from tomojax._loading_geometry import DeclaredGeometry
+from tomojax._loading.geometry import DeclaredGeometry
 from tomojax.recon.api import MethodConfig
 
 

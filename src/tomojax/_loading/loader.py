@@ -23,15 +23,15 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._data import calibration_issues, read_nxtomo, views_of
-from tomojax._frame_sources import (
+from tomojax._loading.frame_sources import (
     acquisition_frames,
     line_integral_frames,
     selected_frames,
     tiff_frames,
 )
-from tomojax._loading_geometry import center_of, centered, frame_geometry
+from tomojax._loading.geometry import center_of, centered, frame_geometry
 from tomojax._parameters import AnnotationModule
-from tomojax._scan import (
+from tomojax._scan.model import (
     Scan,
     bind_step_geometry,
     binned_geometry,
@@ -52,7 +52,7 @@ from tomojax.io.projection_layout import saved_projection_layout
 if TYPE_CHECKING:
     from tomojax import corrections
     from tomojax._data import FrameStack
-    from tomojax._loading_geometry import DeclaredGeometry
+    from tomojax._loading.geometry import DeclaredGeometry
     from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames

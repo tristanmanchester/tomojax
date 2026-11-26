@@ -10,7 +10,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax._field_of_view import cylinder_support, region_grid
+from tomojax._workflow.field_of_view import cylinder_support, region_grid
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 pytestmark = pytest.mark.numerical

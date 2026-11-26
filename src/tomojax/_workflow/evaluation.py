@@ -12,12 +12,12 @@ import numpy as np
 import tomojax as tj
 from tomojax import progress
 from tomojax._data import views_of
-from tomojax._frame_sources import selected_frames
+from tomojax._loading.frame_sources import selected_frames
 from tomojax._parameters import method_fit
-from tomojax._planning import resolve_reconstruction
-from tomojax._scan import bind_step_geometry, frame_output_grid, selected_scan, with_grid
-from tomojax._smooth_alignment import transfer_alignment
-from tomojax._workflow import reconstruct_resolved
+from tomojax._scan.model import bind_step_geometry, frame_output_grid, selected_scan, with_grid
+from tomojax._workflow.operations import reconstruct_resolved
+from tomojax._workflow.planning import resolve_reconstruction
+from tomojax._workflow.smooth_alignment import transfer_alignment
 from tomojax.core.geometry.cone import segments_of
 from tomojax.core.host_volume import host_array, release_planes, resident_limit
 from tomojax.errors import InvalidParameter

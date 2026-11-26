@@ -5,7 +5,7 @@ frames are read with :func:`tomojax.load_frames`.
 """
 
 from tomojax._data import slab_volume
-from tomojax._json import JsonValue, normalize_json, read_json_object
+from tomojax.core.json_values import JsonValue, normalize_json, read_json_object
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._angles import load_angles
 from tomojax.io._calibration import read_calibration_frames

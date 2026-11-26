@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 from typing import Any, cast, get_args
 
-from tomojax._loading_geometry import DeclaredGeometry
+from tomojax._loading.geometry import DeclaredGeometry
 from tomojax._parameters import GeometryName, TiltAbout
 
 # The flags ``tomojax correct`` lists in --help for acquisition inputs.

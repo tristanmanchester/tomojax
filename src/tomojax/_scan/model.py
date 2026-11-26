@@ -2,7 +2,7 @@
 
 :class:`Scan` and what changes one (views kept, a detector block, line-integral
 corrections, binning), and its record in a dataset file. Files become scans in
-:mod:`tomojax._loading`.
+:mod:`tomojax._loading.loader`.
 """
 
 from __future__ import annotations
@@ -366,7 +366,7 @@ class Scan:
         ValueError
             If ASTRA geometry or data shape is unsupported or inconsistent.
         """
-        from tomojax._astra import from_astra
+        from tomojax._scan.astra import from_astra
         from tomojax.geometry import ConeSegments
 
         data, segments = from_astra(projections, proj_geom, vol_geom)
@@ -468,7 +468,7 @@ class Scan:
         ValueError
             If the scan is not a supported cone-beam geometry.
         """
-        from tomojax._astra import to_astra
+        from tomojax._scan.astra import to_astra
 
         return to_astra(np.asarray(self.projections), self.geometry, self.grid, self.detector)
 

@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 
 import msgspec
 
-from tomojax._planning import ResolvedReconstruction
-from tomojax._resources import estimate, sample
-from tomojax._smooth_alignment import CenterSelection, JointSelection
+from tomojax._workflow.planning import ResolvedReconstruction
+from tomojax._workflow.resources import estimate, sample
+from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
 from tomojax.cli import products as p
 from tomojax.cli.wire_options import Grid
 
 if TYPE_CHECKING:
-    from tomojax._scan import Scan
+    from tomojax._scan.model import Scan
     from tomojax.wire.progress import Result
 
 

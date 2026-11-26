@@ -23,15 +23,15 @@ preserved. See https://tomojax.dev/large-scans/ for process-wide memory configur
 from __future__ import annotations
 
 from importlib import import_module
+import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from tomojax._files import export, inspect
-    from tomojax._loading import Frames, load, load_frames
-    from tomojax._region import RegionEstimate, estimate_region
-    from tomojax._scan import Alignment, Reconstruction, Scan
-    from tomojax._simulate import Simulation, simulate
-    from tomojax._workflow import (
+    from tomojax._loading.files import export, inspect
+    from tomojax._loading.loader import Frames, load, load_frames
+    from tomojax._scan.model import Alignment, Reconstruction, Scan
+    from tomojax._scan.simulation import Simulation, simulate
+    from tomojax._workflow.operations import (
         align,
         backproject,
         load_alignment,
@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         reconstruct_slabs,
         save,
     )
+    from tomojax._workflow.region import RegionEstimate, estimate_region
     from tomojax.errors import InvalidParameter
     from tomojax.geometry import (
         ConeBeam,
@@ -53,35 +54,45 @@ if TYPE_CHECKING:
     )
     from tomojax.recon.api import Projector
 
-from tomojax._runtime import configure_jax_allocator_defaults as _configure_jax_allocator_defaults
 from tomojax._version import __version__
 
-_configure_jax_allocator_defaults()
+# Grow JAX's pool on demand, to JAX's own ceiling, for Python and the shell alike.
+# JAX eagerly reserves 75% of device memory by default, leaving too little for
+# cuSolver initialization and TomoJAX's CuPy workspaces on small GPUs; growing
+# the pool on demand avoids that reservation while retaining reuse. The ceiling
+# stays JAX's 75%. The pool never hands memory back, so what lives outside it
+# (the CUDA context, kernel modules, cuSolver, CuPy) has only what the ceiling
+# leaves: at 90% that was 0.3 GiB on an 8 GB card once a level had grown the
+# pool, and K11 67208's refinement could not load a kernel. An explicit
+# ``XLA_CLIENT_MEM_FRACTION`` (or JAX's legacy ``XLA_PYTHON_CLIENT_MEM_FRACTION``),
+# preallocation or allocator still wins. An existing JAX backend cannot be
+# reconfigured: this default applies at import, before its first operation.
+_ = os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 
 _SOURCES = {
     "InvalidParameter": "tomojax.errors",
     "Projector": "tomojax.recon.api",
-    "Alignment": "tomojax._scan",
-    "Frames": "tomojax._loading",
-    "Reconstruction": "tomojax._scan",
-    "RegionEstimate": "tomojax._region",
-    "Scan": "tomojax._scan",
-    "Simulation": "tomojax._simulate",
-    "align": "tomojax._workflow",
-    "backproject": "tomojax._workflow",
-    "estimate_region": "tomojax._region",
-    "export": "tomojax._files",
-    "inspect": "tomojax._files",
-    "simulate": "tomojax._simulate",
-    "load": "tomojax._loading",
-    "load_alignment": "tomojax._workflow",
-    "load_simulation": "tomojax._workflow",
-    "load_frames": "tomojax._loading",
-    "load_reconstruction": "tomojax._workflow",
-    "project": "tomojax._workflow",
-    "reconstruct": "tomojax._workflow",
-    "reconstruct_slabs": "tomojax._workflow",
-    "save": "tomojax._workflow",
+    "Alignment": "tomojax._scan.model",
+    "Frames": "tomojax._loading.loader",
+    "Reconstruction": "tomojax._scan.model",
+    "RegionEstimate": "tomojax._workflow.region",
+    "Scan": "tomojax._scan.model",
+    "Simulation": "tomojax._scan.simulation",
+    "align": "tomojax._workflow.operations",
+    "backproject": "tomojax._workflow.operations",
+    "estimate_region": "tomojax._workflow.region",
+    "export": "tomojax._loading.files",
+    "inspect": "tomojax._loading.files",
+    "simulate": "tomojax._scan.simulation",
+    "load": "tomojax._loading.loader",
+    "load_alignment": "tomojax._workflow.operations",
+    "load_simulation": "tomojax._workflow.operations",
+    "load_frames": "tomojax._loading.loader",
+    "load_reconstruction": "tomojax._workflow.operations",
+    "project": "tomojax._workflow.operations",
+    "reconstruct": "tomojax._workflow.operations",
+    "reconstruct_slabs": "tomojax._workflow.operations",
+    "save": "tomojax._workflow.operations",
     "ConeBeam": "tomojax.geometry",
     "ConeGeometry": "tomojax.geometry",
     "Detector": "tomojax.geometry",

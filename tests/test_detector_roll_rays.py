@@ -105,7 +105,7 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     import tomojax as tj
 
     # check-public-imports: allow-private
-    from tomojax._scan import record_of, scan_from_record
+    from tomojax._scan.model import record_of, scan_from_record
 
     grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
     rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=20, detector_roll=1.5)

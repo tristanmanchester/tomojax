@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_args
 import numpy as np
 
 from tomojax._parameters import GeometryName, TiltAbout
-from tomojax._scan import frame_output_grid, geometry_of
+from tomojax._scan.model import frame_output_grid, geometry_of
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import (
     ConeBeam,
@@ -320,7 +320,7 @@ def centered[T: Located](item: T, center: tuple[float, float] | None) -> T:
     """``item`` with its first detector centered at ``center`` and every segment moved alike."""
     if center is None:
         return item
-    from tomojax._scan import shifted_center
+    from tomojax._scan.model import shifted_center
 
     u, v = item.geometry.detector.center
     geometry = shifted_center(item.geometry, center[0] - u, center[1] - v)

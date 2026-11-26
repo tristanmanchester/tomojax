@@ -9,8 +9,8 @@ import msgspec
 import numpy as np
 
 from tomojax import interactive
-from tomojax._planning import plane_dimension
-from tomojax._scan import detector_window
+from tomojax._scan.model import detector_window
+from tomojax._workflow.planning import plane_dimension
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._handles import stage_array
 from tomojax.cli._results import scan_axes, unit_of
@@ -20,7 +20,7 @@ from tomojax.wire.arrays import Array, Axis, Coordinates
 
 if TYPE_CHECKING:
     import tomojax as tj
-    from tomojax._planning import ResolvedReconstruction
+    from tomojax._workflow.planning import ResolvedReconstruction
     from tomojax.corrections import Step
 
 

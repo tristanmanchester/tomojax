@@ -23,7 +23,7 @@ pytestmark = pytest.mark.surface
 
 def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp_path, caplog):
     import tomojax as tj
-    from tomojax import _workflow
+    from tomojax._workflow import operations as _workflow
 
     path, output, manifest = tmp_path / "scan.nxs", tmp_path / "result.nxs", tmp_path / "run.json"
     write_projection_dataset(path)
@@ -213,7 +213,7 @@ def _fake_reconstruct(
 ) -> dict[str, object]:
     """Record what the CLI asks the resolver for, and solve nothing (or raise ``error``)."""
     import tomojax
-    from tomojax import _planning, _workflow
+    from tomojax._workflow import operations as _workflow, planning as _planning
 
     calls: dict[str, object] = {}
     resolve = _planning.resolve_reconstruction
@@ -407,7 +407,7 @@ def test_recon_cli_cylinder_masks_fista_after_solving(tmp_path: Path) -> None:
     scan = tj.load(scan_path)
     grid = tj.load_reconstruction(recon_path).grid
     # check-public-imports: allow-private
-    from tomojax._field_of_view import cylinder_support, region_grid
+    from tomojax._workflow.field_of_view import cylinder_support, region_grid
 
     # --region cyl solves unconstrained on the cylinder grid and masks outside afterwards.
     _, cylinder = region_grid(scan, "cyl")

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax import datasets
-    from tomojax._scan import Scan
+    from tomojax._scan.model import Scan
     from tomojax.datasets import SimConfig
 else:
     datasets = AnnotationModule("tomojax.datasets")
@@ -58,7 +58,7 @@ class Simulation(NamedTuple):
         numpy.ndarray or None
             A ``(views, 6)`` table, or None when no motion was simulated.
         """
-        from tomojax._scan import simulated_poses
+        from tomojax._scan.model import simulated_poses
 
         if (rows := simulated_poses(self.scan.source)) is None:
             return None
@@ -186,7 +186,7 @@ def simulate_config(
     """Run ``tomojax.datasets.simulate`` and wrap the result in :class:`Simulation`."""
     from tomojax import datasets as _datasets
     from tomojax._data import LoadedNXTomo, NXTomoMetadata
-    from tomojax._scan import scan_from_record
+    from tomojax._scan.model import scan_from_record
     from tomojax.core.devices import announce
     from tomojax.io import ProjectionDataset
 

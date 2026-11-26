@@ -12,6 +12,19 @@ Use the same names across interfaces, including `method`, `iterations`, `tv_weig
 | MCP and bundled Skill | `tomojax mcp` exposes worker operations to agents and serves guidance from the bundled Skill. Install the Skill with `tomojax skill -o SKILLS_DIR`. [`src/tomojax/cli/mcp/`](../src/tomojax/cli/mcp/) · [`src/tomojax/skill/tomojax/`](../src/tomojax/skill/tomojax/) |
 | Studio | `tomojax studio` launches the Rust app. Studio owns projects, durable asset identities, the local job queue and display preferences. [`studio/src/`](../studio/src/) · [Studio architecture](../studio/ARCHITECTURE.md) |
 
+## Library packages
+
+`src/tomojax/__init__.py` resolves each `tj.*` name lazily from one of three private packages. Each package may import those below it in this table, never those above. [Import contracts](../.importlinter)
+
+| Package | Contents |
+| --- | --- |
+| [`_workflow/`](../src/tomojax/_workflow/) | `tj.reconstruct`, `tj.align`, `tj.project`, `tj.save` and the `tj.load_*` readers in `operations.py`, with the steps they call: settings planning, field of view and region selection, memory estimates, the joint alignment workflow and held-out evaluation. |
+| [`_loading/`](../src/tomojax/_loading/) | `tj.load` and `Frames` in `loader.py`, record geometry, frame sources, and `tj.inspect` and `tj.export` in `files.py`. |
+| [`_scan/`](../src/tomojax/_scan/) | `Scan`, `Alignment` and `Reconstruction` in `model.py`, `tj.simulate` in `simulation.py`, and ASTRA geometry conversion. |
+| Domain packages | `alignment`, `datasets`, `io`, `corrections`, `recon`, `forward`, `backends`, `nuisance`, `motion`, `geometry` and `core`, which the private packages build on. |
+
+Three private modules stay at the root: `_parameters.py` holds the parameter vocabulary every layer shares, `_typed_arrays.py` the array types that public signatures name, and `_version.py` the version.
+
 ## Studio workspaces
 
 | Workspace | Responsibilities and starting points |

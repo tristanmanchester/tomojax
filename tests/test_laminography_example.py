@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax import _smooth_alignment as automatic
+from tomojax._workflow import smooth_alignment as automatic
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint import working_scale

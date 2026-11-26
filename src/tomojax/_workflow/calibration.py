@@ -20,7 +20,7 @@ from tomojax.geometry import (
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from tomojax._scan import Scan
+    from tomojax._scan.model import Scan
     from tomojax.geometry import ScanGeometry
 
 type _SingleGeometry = ConeGeometry | ParallelGeometry | LaminographyGeometry | RotationAxisGeometry

@@ -300,10 +300,9 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     """The solver fits an increment; the public result stores complete physical poses."""
     from scipy.spatial.transform import Rotation
 
-    from tomojax import _smooth_alignment
-
     # check-public-imports: allow-private
     from tomojax._data.geometry_meta import AugmentedGeometry
+    from tomojax._workflow import smooth_alignment as _smooth_alignment
 
     grid, detector, _, angles = _laminography(views=5)
     calibrated = (

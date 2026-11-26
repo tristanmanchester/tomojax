@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from tomojax.geometry._calibration.state import CalibrationState, CalibrationVariable
 
 if TYPE_CHECKING:
-    from tomojax._json import JsonValue
+    from tomojax.core.json_values import JsonValue
 
 
 @dataclass(frozen=True)

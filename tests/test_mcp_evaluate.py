@@ -92,7 +92,8 @@ def test_prediction_batches_match_single_batch_and_release_before_next(
 
     monkeypatch.setattr(api, "predict_projections", measured)
     monkeypatch.setattr(
-        "tomojax._evaluation._PREDICTION_BYTES", 7 * scan.detector.nv * scan.detector.nu * 4
+        "tomojax._workflow.evaluation._PREDICTION_BYTES",
+        7 * scan.detector.nv * scan.detector.nu * 4,
     )
     (actual,) = evaluate(scan, tmp_path, **settings).scores
     (expected,) = reference.scores
@@ -430,7 +431,9 @@ def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch):
     )
     corrections = (wire_options.BeamHardening(rates=(0.8, 1.2), weights=(0.5, 0.5)),)
     expected = evaluate(data.scan, tmp_path, corrections=corrections)
-    monkeypatch.setattr("tomojax._evaluation._PARTITION_BYTES", data.scan.projections[0].nbytes)
+    monkeypatch.setattr(
+        "tomojax._workflow.evaluation._PARTITION_BYTES", data.scan.projections[0].nbytes
+    )
     reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
     monkeypatch.setattr(tj, "load", lambda *args: pytest.fail("eager loader"))
     corrected = tj.Scan.corrected
@@ -449,7 +452,7 @@ def test_saved_scan_streamed_into_budgeted_partitions(tmp_path, monkeypatch):
 
 
 def test_candidate_and_alignment_image_lifetimes(tmp_path, monkeypatch):
-    from tomojax import _evaluation
+    from tomojax._workflow import evaluation as _evaluation
 
     scan = tj.simulate(size=8, n_views=24).scan
     volumes = []
@@ -490,7 +493,7 @@ def test_raw_partitions_stage_counts_and_only_transfer_bracketing_flats(tmp_path
     )
     reference = evaluate(replace(scan, projections=data), tmp_path)
     plane = data[0].nbytes
-    monkeypatch.setattr("tomojax._evaluation._PARTITION_BYTES", plane)
+    monkeypatch.setattr("tomojax._workflow.evaluation._PARTITION_BYTES", plane)
     monkeypatch.setattr("tomojax.corrections._engine._SIMPLE_FRAME_BYTES", plane)
     transfer = jax.device_put
     corrected = tj.Frames.corrected

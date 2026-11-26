@@ -9,11 +9,11 @@ from scipy.spatial.transform import Rotation
 from tomojax import Scan
 
 # check-public-imports: allow-private
-from tomojax._calibration import publish_calibration
+from tomojax._data.geometry_meta import nominal_geometry
+from tomojax._scan.model import describe, record_of, scan_from_record
 
 # check-public-imports: allow-private
-from tomojax._data.geometry_meta import nominal_geometry
-from tomojax._scan import describe, record_of, scan_from_record
+from tomojax._workflow.calibration import publish_calibration
 from tomojax.core.geometry.cone import cone_parts  # check-public-imports: allow-private
 from tomojax.geometry import (
     ConeBeam,
