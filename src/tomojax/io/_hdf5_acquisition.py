@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
 
-from tomojax._data import locate_frames
+from tomojax._data import child_dataset, locate_frames
 
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
@@ -36,15 +36,15 @@ _MM = {
 }
 
 
-def _text(value: Any) -> str:
+def _text(value: object) -> str:
     value = np.asarray(value).reshape(-1)[0]
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
-def _length(file: Any, path: str) -> float | None:
-    if path not in file:
+def _length(file: h5py.File, path: str) -> float | None:
+    data = child_dataset(file, path)
+    if data is None:
         return None
-    data = file[path]
     unit = _text(data.attrs.get("units", data.attrs.get("unit", ""))).strip().lower()
     # Without a recorded length unit, a physical pitch is not established.
     if unit not in _MM:
@@ -53,15 +53,17 @@ def _length(file: Any, path: str) -> float | None:
     return value if np.isfinite(value) else None
 
 
-def _entries(file: Any) -> list[str]:
+def _entries(file: h5py.File) -> list[str]:
     """Acquisition containers under local or externally linked NXtomo entries."""
     definitions: list[str] = []
     containers: list[str] = []
-    seen = set()
+    seen: set[tuple[object, bool]] = set()
 
-    def visit(name: str, entry: Any, *, inherited: bool) -> None:
-        definition = entry.get("definition")
-        label = definition[()] if definition is not None else entry.attrs.get("definition", "")
+    def visit(name: str, entry: h5py.Group, *, inherited: bool) -> None:
+        definition = child_dataset(entry, "definition")
+        label: object = (
+            definition[()] if definition is not None else entry.attrs.get("definition", "")
+        )
         declared = _text(label) == "NXtomo"
         scope = inherited or declared
         identity = (entry.id, scope)
@@ -82,7 +84,7 @@ def _entries(file: Any) -> list[str]:
     return containers or definitions
 
 
-def _contains(file: Any, entry: str, data_path: str) -> bool:
+def _contains(file: h5py.File, entry: str, data_path: str) -> bool:
     """Compare ancestor objects, not path spellings that may be link aliases."""
     root = file[entry]
     parent = ("/" + data_path.strip("/")).rsplit("/", 1)[0]
@@ -93,7 +95,7 @@ def _contains(file: Any, entry: str, data_path: str) -> bool:
     return False
 
 
-def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
+def _layout(file: h5py.File, data_path: str | None) -> tuple[str, str, str, str] | None:
     """Return format, stack, key and angle paths for a recognized acquisition."""
     if "exchange/data" in file:
         where = data_path or "/exchange/data"
@@ -136,8 +138,8 @@ def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | Non
     return "nxtomo", where, key if key in file else "", angles
 
 
-def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
-    acquisition: dict[str, Any] = {"layout": layout, "data_path": where, "length_unit": "mm"}
+def _metadata(file: h5py.File, layout: str, where: str) -> dict[str, object]:
+    acquisition: dict[str, object] = {"layout": layout, "data_path": where, "length_unit": "mm"}
     if layout == "data_exchange":
         prefix = "/measurement/instrument/detector/"
         names = ("actual_pixel_size_x", "actual_pixel_size_y")
@@ -145,8 +147,9 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
             ("beamline", "/measurement/instrument/source/beamline"),
             ("source", "/measurement/instrument/source/name"),
         ):
-            if path in file:
-                acquisition[field] = _text(file[path][()])
+            item = child_dataset(file, path)
+            if item is not None:
+                acquisition[field] = _text(item[()])
     else:
         prefix = (
             where.rsplit("/", 2)[0] + "/instrument/detector/"
@@ -160,7 +163,7 @@ def _metadata(file: Any, layout: str, where: str) -> dict[str, Any]:
 
 
 def _gda_angles(
-    path: Path, file: Any, located: LocatedFrames
+    path: Path, file: h5py.File, located: LocatedFrames
 ) -> tuple[LocatedFrames, dict[str, str]]:
     """An NXtomo entry without angles, completed from the same file's GDA rotation command.
 
@@ -200,8 +203,7 @@ def read_hdf5_acquisition(
     """Recognize NXtomo/Data Exchange by their contents, never the file suffix."""
     if not path.is_file() or not h5py.is_hdf5(path):
         return None
-    with h5py.File(path, "r") as handle:
-        file: Any = handle
+    with h5py.File(path, "r") as file:
         layout = _layout(file, data_path)
         if layout is None:
             return None
@@ -238,7 +240,8 @@ def read_hdf5_acquisition(
             if name == "data_exchange"
             else "/" + where.strip("/").split("/")[0] + "/sample/name"
         )
-        sample_name = _text(file[sample_path][()]) if sample_path in file else None
+        sample_label = child_dataset(file, sample_path)
+        sample_name = _text(sample_label[()]) if sample_label is not None else None
     stack = located.stack
     key_values = located.image_key
     key_values = np.zeros(len(stack), np.int32) if key_values is None else key_values

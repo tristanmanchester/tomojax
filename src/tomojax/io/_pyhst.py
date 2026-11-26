@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax._typed_arrays import object_mapping
 from tomojax.geometry import Detector, Grid
 
 from ._acquisition import RawAcquisition
@@ -77,7 +78,10 @@ def _geometry(fields: dict[str, str], count: int) -> tuple[Detector, Grid, np.nd
     )
     shape = ends - starts
     center = (starts + (shape - 1) / 2 - [axis, axis, (nv - 1) / 2]) * [du, du, dv]
-    options: dict[str, Any] = ast.literal_eval(fields.get("OPTIONS", "{}"))
+    raw_options: object = ast.literal_eval(fields.get("OPTIONS", "{}"))
+    options = object_mapping(raw_options)
+    if not isinstance(raw_options, dict):
+        raise ValueError("PyHST OPTIONS must be a dictionary")
     centered = options.get(
         "axis_to_the_center", "Y" if _yes(fields, "AXIS_TO_THE_CENTER", default=True) else "N"
     )

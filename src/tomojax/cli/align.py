@@ -9,7 +9,7 @@ from functools import partial
 import logging
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, get_args
 
 import numpy as np
 
@@ -174,13 +174,14 @@ def _config_settings() -> dict[str, object]:
 
 def _build_align_config(
     args: _Args,
-    settings: Mapping[str, Any],
+    settings: Mapping[str, object],
 ) -> AlignConfig:
     """Validate expert TOML settings and construct ``AlignConfig`` before loading data."""
     from tomojax.alignment import AlignConfig
 
-    defaults = asdict(AlignConfig())
-    coerced: dict[str, Any] = {}
+    config = AlignConfig()
+    defaults: dict[str, object] = asdict(config)
+    coerced: dict[str, object] = {}
     for key, value in settings.items():
         if key == "levels":
             if not isinstance(value, list | tuple) or not all(
@@ -201,8 +202,9 @@ def _build_align_config(
         ):
             raise ValueError(f"{key} must be a number")
         coerced[key] = value
-    given = {name: getattr(args, name) for name in _SETTINGS if getattr(args, name) is not None}
-    return replace(AlignConfig(**coerced), **given)
+    given: dict[str, object] = vars(args)
+    overrides = {name: given[name] for name in _SETTINGS if given[name] is not None}
+    return replace(replace(config, **coerced), **overrides)
 
 
 def _validate_opposite_views(
@@ -268,7 +270,7 @@ def _write_manifest(
 def _validate_align_args(
     parser: ProgressParser,
     args: _Args,
-    settings: Mapping[str, Any],
+    settings: Mapping[str, object],
 ) -> AlignConfig | None:
     """Validate CLI and TOML arguments before loading scan data."""
     if args.fit is not None and len(args.fit) != len(set(args.fit)):
@@ -360,9 +362,8 @@ def _fit_summary(result: Alignment) -> list[str]:
 def main() -> int:
     """Run ``tomojax align``."""
     parser = build_parser()
-    namespace, metadata = parse_args_with_config(parser)
-    args = cast("_Args", namespace)
-    settings = cast("dict[str, Any]", metadata["settings"])
+    args, metadata = parse_args_with_config(parser, namespace=_Args())
+    settings = metadata["settings"]
     config = _validate_align_args(parser, args, settings)
     watch = watch_directory(args.watch_dir, working=True)
     operation = partial(_run, parser, args, metadata, config, watch)
@@ -372,7 +373,7 @@ def main() -> int:
 def _run(
     parser: ProgressParser,
     args: _Args,
-    metadata: Mapping[str, Any],
+    metadata: Mapping[str, object],
     config: AlignConfig | None,
     watch: WatchDirectory | None,
 ) -> Result | None:

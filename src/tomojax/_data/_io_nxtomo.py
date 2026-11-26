@@ -6,7 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
@@ -19,6 +19,8 @@ from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
 from ._io_frames import Hdf5Frames
 from ._io_helpers import (
     attr_to_str,
+    child_dataset,
+    child_group,
     detector_group,
     ensure_group,
     load_detector_metadata,
@@ -455,11 +457,13 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
     volume_np = None
 
     with h5py.File(path, "r") as f:
-        entry = cast("h5py.Group", f["/entry"])
+        entry = child_group(f, "/entry")
+        if entry is None:
+            raise KeyError("Missing /entry")
         det_grp = detector_group(entry)
         if det_grp is not None and "data" in det_grp:
             where = "/entry/instrument/detector/data"
-        elif "data" in entry and "projections" in entry["data"]:
+        elif "data/projections" in entry:
             where = "/entry/data/projections"
         elif "projections" in entry:
             where = "/entry/projections"
@@ -469,8 +473,8 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
             raise KeyError("Could not find projections dataset under /entry")
         if where is None:
             out["projections"] = None
-            angles = next((f[p] for p in ROTATION_ANGLE_PATHS if p in f), None)
-            n_views = 0 if angles is None else int(cast("h5py.Dataset", angles).shape[0])
+            angles = next((child_dataset(f, p) for p in ROTATION_ANGLE_PATHS if p in f), None)
+            n_views = 0 if angles is None else angles.shape[0]
             image_key = np.zeros(n_views, np.int32)
         else:
             stack = Hdf5Frames.open(path, where)
@@ -592,26 +596,22 @@ def validate_nxtomo(path: str) -> ValidationReport:
     report: ValidationReport = {"issues": []}
     try:
         with h5py.File(path, "r") as f:
-            if "/entry" not in f:
+            e = child_group(f, "/entry")
+            if e is None:
                 report["issues"].append("Missing /entry")
                 return report
-            e = cast("h5py.Group", f["/entry"])
             issues, angle_path, n_views = _required_entry_issues(f, e)
             report["issues"].extend(issues)
-            if "instrument/detector/image_key" in e:
-                report["issues"].extend(
-                    _image_key_issues(
-                        cast("h5py.Dataset", e["instrument/detector/image_key"]), frames=n_views
-                    )
-                )
-            if angle_path is not None:
-                report["issues"].extend(
-                    _rotation_angle_issues(
-                        cast("h5py.Dataset", f[angle_path]), frames=n_views, path=path
-                    )
-                )
+            key = child_dataset(e, "instrument/detector/image_key")
+            if key is not None:
+                report["issues"].extend(_image_key_issues(key, frames=n_views))
+            angles = None if angle_path is None else child_dataset(f, angle_path)
+            if angles is not None:
+                report["issues"].extend(_rotation_angle_issues(angles, frames=n_views, path=path))
     except OSError as exc:
         report["issues"].append(f"Unable to read HDF5 file: {exc}")
+    except ValueError as exc:
+        report["issues"].append(str(exc))
     return report
 
 

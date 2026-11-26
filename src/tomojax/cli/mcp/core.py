@@ -29,6 +29,7 @@ from tomojax.cli.mcp.tasks import Tasks
 if TYPE_CHECKING:
     from mcp.server.mcpserver.context import Context
 
+    from tomojax.cli._marks import Placement
     from tomojax.cli.mcp.supervisor import Object
 
 PACKAGE = "tomojax.cli.mcp.tools"
@@ -123,7 +124,7 @@ class Core:
         self.parts = Parts()
         self.tasks = Tasks(self.parts)
         # Where each returned view image's planes sit, by render ID, for pixel marks.
-        self.renders: dict[str, Any] = {}
+        self.renders: dict[str, list[Placement]] = {}
         self.render_count = itertools.count(1)
         self.server = Server(
             "tomojax",

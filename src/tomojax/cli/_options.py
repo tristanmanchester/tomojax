@@ -13,7 +13,9 @@ from __future__ import annotations
 import argparse
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, cast
+from typing import TYPE_CHECKING, NoReturn, Protocol
+
+from tomojax._typed_arrays import object_list
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
@@ -70,16 +72,22 @@ def hide_expert(
     parser.epilog = ending if parser.epilog is None else f"{parser.epilog}\n\n{ending}"
 
 
+class _Settings(Protocol):
+    def __call__(self, *, method: str | None = None) -> Mapping[str, object]: ...
+
+
 class _ConfigKeys(argparse.Action):
     def __init__(
         self,
         option_strings: Sequence[str],
         dest: str,
         settings: Mapping[str, object] | Callable[[], Mapping[str, object]] | None = None,
+        method_settings: _Settings | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(option_strings, dest, nargs=0, default=argparse.SUPPRESS, **kwargs)  # type: ignore[arg-type]
         self._settings = settings
+        self._method_settings = method_settings
 
     @cached_property
     def settings(self) -> Mapping[str, object]:
@@ -87,13 +95,12 @@ class _ConfigKeys(argparse.Action):
         return (self._settings() if callable(self._settings) else self._settings) or {}
 
     def _setting_entries(self, namespace: argparse.Namespace) -> dict[str, str]:
-        selected = self.settings
-        if callable(self._settings):
-            import inspect
-
-            if "method" in inspect.signature(self._settings).parameters:
-                method = getattr(namespace, "method", None)
-                selected = cast("Mapping[str, object]", cast("Any", self._settings)(method=method))
+        method: object = getattr(namespace, "method", None)
+        selected = (
+            self._method_settings(method=method)
+            if isinstance(method, str) and self._method_settings is not None
+            else self.settings
+        )
         formatted: dict[str, str] = {}
         for key, value in selected.items():
             if value is None:
@@ -122,10 +129,11 @@ class _ConfigKeys(argparse.Action):
             text = getattr(action, "expert_help", None) or action.help
             text = "" if text in (None, argparse.SUPPRESS) else str(text)
             # A flag that stores False documents what false means.
-            negated = action.nargs == 0 and cast("object", action.const) is False
+            constant: object = action.const
+            negated = action.nargs == 0 and constant is False
             if negated:
                 text = f"false: {text}" if text else ""
-            default = cast("object", action.default)
+            default: object = action.default
             suffix = f"  # {text}" if text else ""
             prefix = "# " if default is None else ""
             rhs = "..." if default is None else _toml(default)
@@ -143,8 +151,9 @@ def _toml(value: object) -> str:
         return "true" if value else "false"
     if isinstance(value, str):
         return f'"{value}"'
+    items = object_list(value)
     if isinstance(value, list | tuple):
-        return "[" + ", ".join(_toml(v) for v in cast("Iterable[object]", value)) + "]"
+        return "[" + ", ".join(_toml(v) for v in items) + "]"
     return str(value)
 
 
@@ -152,6 +161,7 @@ def add_config(
     parser: argparse.ArgumentParser,
     *,
     settings: Mapping[str, object] | Callable[[], Mapping[str, object]] | None = None,
+    method_settings: _Settings | None = None,
 ) -> None:
     """Add ``--config FILE`` and ``--config-keys``.
 
@@ -167,6 +177,7 @@ def add_config(
         "--config-keys",
         action=_ConfigKeys,
         settings=settings,
+        method_settings=method_settings,
         help="List the keys a --config file may set, and exit",
     )
 

@@ -6,23 +6,17 @@ from datetime import UTC, datetime
 import json
 import platform
 import sys
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, cast
 
 from tomojax._version import __version__
 from tomojax.io.api import JsonValue, normalize_json
 
 if TYPE_CHECKING:
     import argparse
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Callable, Mapping, Sequence
     import os
 
 SCHEMA_VERSION = 1
-
-
-class _JaxRuntime(Protocol):
-    def default_backend(self) -> object: ...
-
-    def devices(self) -> Sequence[object]: ...
 
 
 def _normalize_json(value: object) -> JsonValue:
@@ -54,24 +48,25 @@ def _versions() -> dict[str, JsonValue]:
     try:
         import jax
 
-        versions["jax"] = getattr(jax, "__version__", None)
-    except Exception:
+        versions["jax"] = jax.__version__
+    except (ImportError, RuntimeError):
         pass
     try:
         import jaxlib
 
-        versions["jaxlib"] = getattr(jaxlib, "__version__", None)
-    except Exception:
+        version: object = getattr(jaxlib, "__version__", None)
+        versions["jaxlib"] = _normalize_json(version)
+    except (ImportError, RuntimeError):
         pass
     return versions
 
 
 def _device_field(device: object, name: str) -> JsonValue:
-    value = getattr(device, name, None)
+    value: object = getattr(device, name, None)
     if callable(value):
         try:
             value = value()
-        except Exception as exc:
+        except RuntimeError as exc:
             return f"<unavailable: {exc}>"
     return _normalize_json(value)
 
@@ -79,18 +74,19 @@ def _device_field(device: object, name: str) -> JsonValue:
 def _jax_runtime() -> dict[str, JsonValue]:
     try:
         import jax
-    except Exception as exc:
+    except (ImportError, RuntimeError) as exc:
         return {"available": False, "backend": None, "devices": [], "error": str(exc)}
 
-    jax_runtime = cast("_JaxRuntime", jax)
     report: dict[str, JsonValue] = {"available": True, "backend": None, "devices": []}
     errors: list[str] = []
     try:
-        report["backend"] = _normalize_json(jax_runtime.default_backend())
-    except Exception as exc:
+        report["backend"] = _normalize_json(jax.default_backend())
+    except RuntimeError as exc:
         errors.append(f"default_backend: {exc}")
     try:
-        devices = jax_runtime.devices()
+        # jaxlib device objects have no stubs, and the manifest uses only their metadata.
+        list_devices = cast("Callable[[], Sequence[object]]", jax.devices)
+        devices = list_devices()
         report["devices"] = [
             {
                 "id": _device_field(device, "id"),
@@ -101,7 +97,7 @@ def _jax_runtime() -> dict[str, JsonValue]:
             }
             for device in devices
         ]
-    except Exception as exc:
+    except RuntimeError as exc:
         errors.append(f"devices: {exc}")
     if errors:
         report["error"] = "; ".join(errors)

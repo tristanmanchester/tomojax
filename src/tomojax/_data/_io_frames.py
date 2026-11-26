@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import ClassVar
 
 import h5py
 import numpy as np
@@ -46,11 +46,10 @@ class Hdf5Frames(FrameStack):
                 raise ValueError(f"{path}:{dataset} is not a 2-D sinogram or 3-D stack of frames")
             n, cols = int(data.shape[0]), int(data.shape[-1])
             rows = 1 if data.ndim == 2 else int(data.shape[1])
-            layout = cast(Any, data)  # h5py's typing omits the storage layout
-            validate_virtual_pixels(layout)
+            validate_virtual_pixels(data)
             # Unfiltered data supports direct reads of partial chunks. __getitem__
             # bypasses the chunk cache so narrow windows do not fetch whole frames.
-            windows = not layout.is_virtual and layout.id.get_create_plist().get_nfilters() == 0
+            windows = not data.is_virtual and data.id.get_create_plist().get_nfilters() == 0
             return cls(
                 path,
                 dataset,
@@ -68,7 +67,9 @@ class Hdf5Frames(FrameStack):
         # no compression. Filtered/virtual datasets retain their normal cache.
         cache = 0 if self._efficient_row_windows else None
         with h5py.File(self.path, "r", rdcc_nbytes=cache) as file:
-            data: Any = file[self.dataset]
+            data = file[self.dataset]
+            if not isinstance(data, h5py.Dataset):
+                raise ValueError(f"{self.path}:{self.dataset} no longer holds a detector stack")
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
             detector = (cols,) if data.ndim == 2 else (rows, cols)
@@ -108,8 +109,7 @@ def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
     signals and duplicate instrument links. Entry names are not prescribed.
     """
     found: list[tuple[str, str, str]] = []
-    entries: Any = file  # h5py's File stub omits inherited Group methods.
-    for name, entry in entries.items():
+    for name, entry in file.items():
         if not isinstance(entry, h5py.Group):
             continue
         prefix = f"/{name}"
@@ -480,8 +480,7 @@ def _only(
             if fits(item):
                 found.append("/" + where)
 
-    visitable: Any = file
-    visitable.visit_links(visit)
+    file.visit_links(visit)
     if validate_unmatched and not found:
         found = named
     if len(found) > 1:

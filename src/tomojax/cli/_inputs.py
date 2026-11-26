@@ -4,10 +4,48 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Any, cast, get_args
+from typing import TYPE_CHECKING, TypedDict, get_args
 
 from tomojax._loading_geometry import DeclaredGeometry
 from tomojax._parameters import GeometryName, TiltAbout
+
+if TYPE_CHECKING:
+    import numpy as np
+
+
+class InputArgs(argparse.Namespace):
+    """Namespace populated by the acquisition flags."""
+
+    flats: str | None
+    darks: str | None
+    angles: str | None
+    pixel_size: list[float] | None
+    detector_center: list[float] | None
+    geometry: GeometryName | None
+    tilt: float | None
+    tilt_about: TiltAbout | None
+    detector_roll: float | None
+    detector_pitch: float | None
+    detector_yaw: float | None
+    source_to_axis: float | None
+    source_to_detector: float | None
+    axis_offset: float | None
+    data_path: str | None
+    image_key_path: str | None
+    angles_path: str | None
+    apply_poses: bool
+
+
+class LoadKeywords(TypedDict):
+    flats: float | str | None
+    darks: float | str | None
+    angles: np.ndarray | None
+    pixel_size: tuple[float, float] | None
+    data_path: str | None
+    image_key_path: str | None
+    angles_path: str | None
+    apply_poses: bool
+
 
 # The flags ``tomojax correct`` lists in --help for acquisition inputs.
 PUBLIC = (
@@ -102,14 +140,14 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
 
 def validate_inputs(
     parser: argparse.ArgumentParser,
-    args: argparse.Namespace,
+    args: InputArgs,
 ) -> DeclaredGeometry | None:
     """Validate input and geometry flag combinations at parse time (usage status 2)."""
-    sizes = cast("list[float] | None", args.pixel_size)
+    sizes = args.pixel_size
     if sizes is not None and len(sizes) not in (1, 2):
         parser.error("--pixel-size takes one value, or two (u then v)")
-    kind = cast("GeometryName | None", args.geometry)
-    center = cast("list[float] | None", args.detector_center)
+    kind = args.geometry
+    center = args.detector_center
     if kind is None:
         dangling = [
             f"--{name.replace('_', '-')}"
@@ -140,37 +178,37 @@ def validate_inputs(
         parser.error("--geometry cone needs --source-to-axis and --source-to-detector")
     return DeclaredGeometry(
         kind=kind,
-        tilt=cast("float | None", args.tilt),
-        tilt_about="x" if args.tilt_about is None else cast("TiltAbout", args.tilt_about),
-        detector_roll=0.0 if args.detector_roll is None else cast("float", args.detector_roll),
-        detector_pitch=0.0 if args.detector_pitch is None else cast("float", args.detector_pitch),
-        detector_yaw=0.0 if args.detector_yaw is None else cast("float", args.detector_yaw),
-        source_to_axis=cast("float | None", args.source_to_axis),
-        source_to_detector=cast("float | None", args.source_to_detector),
-        axis_offset=0.0 if args.axis_offset is None else cast("float", args.axis_offset),
+        tilt=args.tilt,
+        tilt_about="x" if args.tilt_about is None else args.tilt_about,
+        detector_roll=0.0 if args.detector_roll is None else args.detector_roll,
+        detector_pitch=0.0 if args.detector_pitch is None else args.detector_pitch,
+        detector_yaw=0.0 if args.detector_yaw is None else args.detector_yaw,
+        source_to_axis=args.source_to_axis,
+        source_to_detector=args.source_to_detector,
+        axis_offset=0.0 if args.axis_offset is None else args.axis_offset,
         detector_center=None if center is None else (center[0], center[1]),
     )
 
 
-def load_keywords(args: argparse.Namespace) -> dict[str, Any]:
+def load_keywords(args: InputArgs) -> LoadKeywords:
     """``tj.load``'s keywords from the validated flags."""
     from tomojax.io.api import load_angles
 
-    angles = cast("str | None", args.angles)
-    sizes = cast("list[float] | None", args.pixel_size)
+    angles = args.angles
+    sizes = args.pixel_size
     return {
-        "flats": _level_or_path(cast("str | None", args.flats)),
-        "darks": _level_or_path(cast("str | None", args.darks)),
+        "flats": _level_or_path(args.flats),
+        "darks": _level_or_path(args.darks),
         "angles": None if angles is None else load_angles(Path(angles)),
         "pixel_size": None if sizes is None else (sizes[0], sizes[-1]),
-        "data_path": cast("str | None", args.data_path),
-        "image_key_path": cast("str | None", args.image_key_path),
-        "angles_path": cast("str | None", args.angles_path),
-        "apply_poses": cast("bool", args.apply_poses),
+        "data_path": args.data_path,
+        "image_key_path": args.image_key_path,
+        "angles_path": args.angles_path,
+        "apply_poses": args.apply_poses,
     }
 
 
-def input_paths(args: argparse.Namespace) -> list[str]:
+def input_paths(args: InputArgs) -> list[str]:
     """The files the flags name, which must exist."""
     named = (args.flats, args.darks, args.angles)
     return [p for p in named if isinstance(p, str) and _level_or_path(p) == p]

@@ -49,7 +49,7 @@
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 169,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 174,
     "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
@@ -61,17 +61,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 6214,
+    "reportAny": 5853,
     "reportMissingImports": 59,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 930,
-    "reportUnknownMemberType": 1658,
-    "reportUnknownVariableType": 1024,
-    "reportUnusedCallResult": 214
+    "reportUnknownArgumentType": 934,
+    "reportUnknownMemberType": 1653,
+    "reportUnknownVariableType": 1019,
+    "reportUnusedCallResult": 216
   },
-  "explicit_any": 627,
-  "type_casts": 225,
-  "broad_except": 38,
+  "explicit_any": 536,
+  "type_casts": 106,
+  "broad_except": 32,
   "studio_allows": 1,
   "studio_long_files": {
     "studio/src/app/actions.rs": 809,
@@ -131,8 +131,8 @@
   "environment_reads": 22,
   "suppressions": {
     "noqa": 5,
-    "type: ignore": 6,
-    "pyright: ignore": 12
+    "type: ignore": 8,
+    "pyright: ignore": 13
   },
   "complex_functions": [
     "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",

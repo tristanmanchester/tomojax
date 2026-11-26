@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
+from zipfile import BadZipFile
 
 import numpy as np
 
@@ -653,7 +654,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
             from .projection_layout import saved_projection_layout
 
             saved_projection_layout(input_path)
-        except Exception as exc:
+        except (BadZipFile, EOFError, OSError, ValueError, KeyError, TypeError) as exc:
             return [str(exc)]
         return []
     if suffix in _HDF5_SUFFIXES:

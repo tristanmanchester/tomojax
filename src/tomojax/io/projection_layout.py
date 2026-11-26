@@ -1,24 +1,30 @@
 """Saved scan metadata and lazy sample storage in logical detector order."""
 
+from __future__ import annotations
+
 from dataclasses import replace
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
 from tomojax._data import Hdf5Frames, npz_layout, read_nxtomo
 from tomojax.io._datasets import ProjectionDataset, psi_record
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 def saved_npz_layout(
     path: Path, *, volume_only: bool = False
-) -> tuple[ProjectionDataset, dict[str, Any]]:
+) -> tuple[ProjectionDataset, dict[str, np.ndarray]]:
     """Read the archive's record and its saved arrays."""
     payload, arrays = npz_layout(path, volume_only=volume_only)
     return ProjectionDataset.from_nxtomo(payload, source_path=path), arrays
 
 
-def saved_projection_layout(path: Path) -> tuple[ProjectionDataset, Any]:
+def saved_projection_layout(
+    path: Path,
+) -> tuple[ProjectionDataset, Hdf5Frames | MatlabFrames | np.ndarray | None]:
     """Read a geometry record with shape-only projections and the matching pixel source."""
     if path.suffix.lower() == ".mat":
         record = psi_record(path, layout_only=True)

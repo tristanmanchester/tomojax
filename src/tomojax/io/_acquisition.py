@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from os import PathLike
 
     import numpy as np
+
+    from tomojax._data import FrameStack
 
     from ._datasets import ProjectionDataset
 
@@ -25,9 +27,9 @@ class RawAcquisition:
     """
 
     record: ProjectionDataset
-    counts: Any
-    flats: Any = None
-    darks: Any = None
+    counts: FrameStack
+    flats: FrameStack | None = None
+    darks: FrameStack | np.ndarray | float | None = None
     flat_positions: np.ndarray | None = None
     white_level: float | None = None
     view_positions: np.ndarray | None = None

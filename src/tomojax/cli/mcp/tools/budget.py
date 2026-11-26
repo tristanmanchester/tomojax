@@ -6,7 +6,7 @@ import base64
 import json
 from math import ceil
 import struct
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from mcp_types import CallToolResult, ImageContent, TextContent
 import msgspec
@@ -14,6 +14,8 @@ import msgspec
 from tomojax.cli.images import MAX_EDGE
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from tomojax.cli.mcp.parts import Parts
 
 LIMIT = 20_000
@@ -54,7 +56,7 @@ def bounded(reply: CallToolResult, parts: Parts) -> CallToolResult:
         if uri
         else "Result exceeds the paging limit. Repeat the call with a smaller result."
     )
-    data: dict[str, Any] = {"continuation": uri} if uri else {"message": message}
+    data: dict[str, str] = {"continuation": uri} if uri else {"message": message}
     fields = reply.structured_content or {}
     headline = " ".join(
         str(fields[k])[:160] for k in ("handle", "kind", "method", "next") if fields.get(k)
@@ -73,7 +75,7 @@ def bounded(reply: CallToolResult, parts: Parts) -> CallToolResult:
     return clipped
 
 
-def retain_fields(clipped: CallToolResult, fields: dict[str, Any]) -> None:
+def retain_fields(clipped: CallToolResult, fields: Mapping[str, object]) -> None:
     """Keep identifiers, affected files and next steps ahead of verbose summaries."""
     data = clipped.structured_content
     assert data is not None

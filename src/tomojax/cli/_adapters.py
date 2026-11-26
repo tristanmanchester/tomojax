@@ -79,7 +79,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         command.operation if isinstance(command, op.Run | op.Plan | op.Validate) else command
     )
 
-    def diagnostic(pointer: str, data: Any) -> Array:
+    def diagnostic(pointer: str, data: object) -> Array:
         a = np.asarray(data)
         axes = tuple(Axis(f"axis{i}", "diagnostic", "index", Uniform(0, 1)) for i in range(a.ndim))
         return Array(stage_array(context, a), a.shape, a.dtype.str, axes, "unspecified", pointer)

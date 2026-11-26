@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import fields, replace
 import os
-from typing import TYPE_CHECKING, Literal, cast, get_args
+from typing import TYPE_CHECKING, Literal, get_args
 
 from tomojax._parameters import GeometryName, Phantom
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
@@ -14,11 +15,31 @@ from tomojax.cli.config import parse_args_with_config
 from ._runtime import transfer_guard_context
 
 if TYPE_CHECKING:
-    import argparse
     from collections.abc import Sequence
 
     from tomojax.datasets import SimulationArtifacts
     from tomojax.wire.progress import Result
+
+
+class _Args(argparse.Namespace):
+    out: str
+    force: bool
+    progress: str
+    size: int
+    n_views: int | None
+    grid: list[int] | None
+    detector: list[int] | None
+    geometry: GeometryName
+    phantom: Phantom
+    rotation: float | None
+    tilt: float | None
+    source_to_axis: float | None
+    source_to_detector: float | None
+    poisson_scale: float
+    translation_sigma: float
+    seed: int
+    transfer_guard: str
+
 
 TransferGuardName = Literal["off", "log", "disallow"]
 
@@ -184,25 +205,25 @@ def _settings() -> dict[str, object]:
 
 def _validate_args(
     parser: ProgressParser,
-    args: argparse.Namespace,
+    args: _Args,
     artifact_settings: dict[str, object],
 ) -> SimulationArtifacts | None:
     from tomojax.datasets import SimulationArtifacts
 
-    if cast("int", args.size) < 1:
+    if args.size < 1:
         parser.error("--size must be a positive integer")
-    n_views = cast("int | None", args.n_views)
+    n_views = args.n_views
     if n_views is not None and n_views < 1:
         parser.error("--n-views must be a positive integer")
-    shape = cast("list[int] | None", args.grid)
+    shape = args.grid
     if shape is not None and min(shape) < 1:
         parser.error("--grid dimensions must be positive integers")
-    pixels = cast("list[int] | None", args.detector)
+    pixels = args.detector
     if pixels is not None and min(pixels) < 1:
         parser.error("--detector dimensions must be positive integers")
-    if cast("float", args.poisson_scale) < 0:
+    if args.poisson_scale < 0:
         parser.error("--poisson-scale must be nonnegative")
-    geometry = cast("str", args.geometry)
+    geometry = args.geometry
     if geometry != "cone" and (
         args.source_to_axis is not None or args.source_to_detector is not None
     ):
@@ -218,39 +239,39 @@ def _validate_args(
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
     parser = _build_parser()
-    args, metadata = parse_args_with_config(parser, argv)
+    args, metadata = parse_args_with_config(parser, argv, namespace=_Args())
 
     import tomojax as tj
     from tomojax._simulate import build_sim_config, simulate_config
 
     def run() -> Result | None:
-        settings = cast("dict[str, object]", metadata["settings"])
-        out = cast("str", args.out)
-        check_paths(parser, outputs=[out], force=cast("bool", args.force))
+        settings = metadata["settings"]
+        out = args.out
+        check_paths(parser, outputs=[out], force=args.force)
         artifacts = _validate_args(
             parser, args, {k: v for k, v in settings.items() if k not in _PHANTOM_SETTINGS}
         )
-        shape = cast("list[int] | None", args.grid)
-        pixels = cast("list[int] | None", args.detector)
+        shape = args.grid
+        pixels = args.detector
         grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
         detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
         phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
-        with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
+        with transfer_guard_context(args.transfer_guard):
             resolved_grid, resolved_detector, cfg = build_sim_config(
-                cast("Phantom", args.phantom),
-                size=cast("int", args.size),
-                n_views=cast("int | None", args.n_views),
-                geometry=cast("GeometryName", args.geometry),
-                rotation=cast("float | None", args.rotation),
-                tilt=cast("float | None", args.tilt),
-                source_to_axis=cast("float | None", args.source_to_axis),
-                source_to_detector=cast("float | None", args.source_to_detector),
-                poisson_scale=cast("float", args.poisson_scale),
+                args.phantom,
+                size=args.size,
+                n_views=args.n_views,
+                geometry=args.geometry,
+                rotation=args.rotation,
+                tilt=args.tilt,
+                source_to_axis=args.source_to_axis,
+                source_to_detector=args.source_to_detector,
+                poisson_scale=args.poisson_scale,
                 translation_sigma=args.translation_sigma,
                 artifacts=artifacts,
                 grid=grid,
                 detector=detector,
-                seed=cast("int", args.seed),
+                seed=args.seed,
                 phantom_settings=phantom_keys or None,
             )
             result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)

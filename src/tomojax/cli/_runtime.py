@@ -3,11 +3,13 @@ from __future__ import annotations
 from contextlib import nullcontext
 import logging
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Mapping
     from contextlib import AbstractContextManager
+
+from tomojax._typed_arrays import object_list, object_mapping
 
 LOG = logging.getLogger(__name__)
 _DISABLED_TRANSFER_GUARD_MODES = frozenset(("off", "none", "disable", "disabled"))
@@ -31,17 +33,15 @@ def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[ob
     try:
         import jax
 
-        return cast("AbstractContextManager[object]", jax.transfer_guard(mode))
-    except Exception as exc:
+        return jax.transfer_guard(mode)
+    except (ImportError, AttributeError, ValueError, RuntimeError) as exc:
         _warn_transfer_guard_demotion(mode, str(exc))
         return nullcontext()
 
 
 def report_automatic(info: Mapping[str, object]) -> None:
     """Keep a successful but limited automatic result visible without a manifest."""
-    automatic = info.get("automatic")
-    if isinstance(automatic, dict):
-        record = cast("Mapping[str, object]", automatic)
-        if record.get("status") == "limited":
-            reasons = cast("Sequence[object]", record.get("reasons", ()))
-            LOG.warning("Automatic workflow is limited: %s", "; ".join(map(str, reasons)))
+    automatic = object_mapping(info.get("automatic"))
+    if automatic.get("status") == "limited":
+        reasons = object_list(automatic.get("reasons"))
+        LOG.warning("Automatic workflow is limited: %s", "; ".join(map(str, reasons)))

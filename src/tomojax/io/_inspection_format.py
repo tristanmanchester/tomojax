@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
-
-    from tomojax.io._inspection_types import InspectionReport
+    from tomojax.io._inspection_types import (
+        AlignmentReport,
+        AnglesReport,
+        DetectorMetadataReport,
+        FlatsDarksReport,
+        InspectionReport,
+        MemoryEstimatesReport,
+        ProjectionReport,
+        VolumeReport,
+    )
 
 
 def _fmt_value(value: object, *, precision: int = 6) -> str:
@@ -61,17 +68,22 @@ def format_inspection_report(report: InspectionReport) -> str:
     return "\n".join(lines)
 
 
-def _projection_rows(projection: Mapping[str, Any]) -> list[tuple[str, str]]:
+def _projection_rows(projection: ProjectionReport) -> list[tuple[str, str]]:
     if not projection["found"]:
         return [("projections", "not found")]
     stats = projection["stats"]
     nonfinite = projection["nonfinite"]
-    detector = projection["detector_shape"] or {}
+    detector = projection["detector_shape"]
     views, rows, columns = (projection["shape"] or [None, None, None])[:3]
     shape = f"{views} views of {rows} x {columns} pixels" if detector else str(projection["shape"])
     values = ", ".join(
-        f"{name} {_fmt_value(stats[key])}"
-        for name, key in (("min", "min"), ("1%", "p01"), ("median", "p50"), ("99%", "p99"))
+        f"{name} {_fmt_value(value)}"
+        for name, value in (
+            ("min", stats["min"]),
+            ("1%", stats["p01"]),
+            ("median", stats["p50"]),
+            ("99%", stats["p99"]),
+        )
     )
     values += f", max {_fmt_value(stats['max'])}, mean {_fmt_value(stats['mean'])}"
     counts = (nonfinite["nan_count"], nonfinite["posinf_count"], nonfinite["neginf_count"])
@@ -84,7 +96,7 @@ def _projection_rows(projection: Mapping[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
-def _angle_rows(angles: Mapping[str, Any]) -> list[tuple[str, str]]:
+def _angle_rows(angles: AnglesReport) -> list[tuple[str, str]]:
     if not angles["found"]:
         return [("angles", "not found")]
     return [
@@ -97,7 +109,7 @@ def _angle_rows(angles: Mapping[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
-def _detector_rows(detector: Mapping[str, Any]) -> list[tuple[str, str]]:
+def _detector_rows(detector: DetectorMetadataReport) -> list[tuple[str, str]]:
     if not detector["found"]:
         return [("detector", "not found")]
     center = detector["center"]
@@ -113,7 +125,7 @@ def _detector_rows(detector: Mapping[str, Any]) -> list[tuple[str, str]]:
     ]
 
 
-def _flats_darks_text(flats_darks: Mapping[str, Any]) -> str:
+def _flats_darks_text(flats_darks: FlatsDarksReport) -> str:
     if flats_darks["flats_present"] or flats_darks["darks_present"]:
         return (
             f"{flats_darks['flat_count']} flats, {flats_darks['dark_count']} darks, "
@@ -125,7 +137,7 @@ def _flats_darks_text(flats_darks: Mapping[str, Any]) -> str:
     return "not found"
 
 
-def _alignment_text(alignment: Mapping[str, Any]) -> str:
+def _alignment_text(alignment: AlignmentReport) -> str:
     if not alignment["found"]:
         return "none"
     parts: list[str] = []
@@ -140,11 +152,11 @@ def _alignment_text(alignment: Mapping[str, Any]) -> str:
     return ", ".join(parts)
 
 
-def _memory_rows(memory: Mapping[str, Any]) -> list[tuple[str, str]]:
+def _memory_rows(memory: MemoryEstimatesReport) -> list[tuple[str, str]]:
     if not memory["feasible"]:
         return [("volume working sets", f"not estimated ({memory['notes']})")]
     modes = memory["modes"]
-    grid = " x ".join(str(n) for n in memory["reconstruction_grid_shape"])
+    grid = " x ".join(str(n) for n in memory["reconstruction_grid_shape"] or [])
     sets = ", ".join(
         f"{name} {_size(modes[key]['estimated_working_set_bytes'])}"
         for name, key in (
@@ -168,7 +180,7 @@ def _size(count: int) -> str:
     return f"{value:.1f} TiB"  # pragma: no cover - the loop always returns
 
 
-def _volume_text(volume: Mapping[str, Any]) -> str:
+def _volume_text(volume: VolumeReport) -> str:
     if not volume["found"]:
         return "none"
     shape = " x ".join(str(n) for n in volume["shape"] or [])

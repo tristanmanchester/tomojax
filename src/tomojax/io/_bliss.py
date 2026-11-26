@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
 
-from tomojax._data import Hdf5Frames
+from tomojax._data import Hdf5Frames, child_dataset
+from tomojax._typed_arrays import numpy_array, numpy_float64_array
 
 from ._datasets import ProjectionDataset
 from ._frame_blocks import FrameBlocks
@@ -43,25 +44,29 @@ _LENGTH_MM: dict[str, float] = {
 }
 
 
-def _text(value: Any) -> str:
+def _text(value: object) -> str:
     return value.decode() if isinstance(value, bytes) else str(value)
 
 
-def _value(group: Any, key: str, default: Any = None) -> Any:
-    return group[key][()] if key in group else default
+def _value(group: h5py.Group, key: str, default: object = None) -> object:
+    data = child_dataset(group, key)
+    if data is None:
+        return default
+    value: object = data[()]
+    return value
 
 
-def _length(group: Any, key: str, *, default_unit: str) -> np.ndarray | None:
-    if key not in group:
+def _length(group: h5py.Group, key: str, *, default_unit: str) -> np.ndarray | None:
+    data = child_dataset(group, key)
+    if data is None:
         return None
-    data = group[key]
     unit = _text(data.attrs.get("unit", data.attrs.get("units", default_unit)))
-    return np.asarray(data[()], np.float64) * _LENGTH_MM[unit]
+    return numpy_float64_array(data[()]) * _LENGTH_MM[unit]
 
 
-def _category(entry: Any) -> int | None:
+def _category(entry: h5py.Group) -> int | None:
     if "technique/image_key" in entry:
-        return int(entry["technique/image_key"][()])
+        return int(numpy_float64_array(_value(entry, "technique/image_key")))
     title = _text(_value(entry, "title", ""))
     for key, starts in (
         (2, ("dark",)),
@@ -74,9 +79,9 @@ def _category(entry: Any) -> int | None:
     return None
 
 
-def _sequence(file: Any, data_path: str | None) -> tuple[Any, list[Any]] | None:
-    entries: dict[str, Any] = {k: g for k, g in file.items() if isinstance(g, h5py.Group)}
-    roots: dict[str, Any] = {
+def _sequence(file: h5py.File, data_path: str | None) -> tuple[h5py.Group, list[h5py.Group]] | None:
+    entries: dict[str, h5py.Group] = {k: g for k, g in file.items() if isinstance(g, h5py.Group)}
+    roots: dict[str, h5py.Group] = {
         k: g
         for k, g in entries.items()
         if "technique/scan_category" in g or _text(_value(g, "title", "")).startswith("tomo:")
@@ -95,19 +100,24 @@ def _sequence(file: Any, data_path: str | None) -> tuple[Any, list[Any]] | None:
     if title not in {"tomo:basic", "tomo:fullturn", "tomo:fulltomo", "tomo:halfturn"}:
         raise ValueError(f"{root.name}: unsupported Bliss sequence {title!r}")
     if "measurement/scan_numbers" in root:
-        steps = [root.file[f"{int(n)}.1"] for n in root["measurement/scan_numbers"][()]]
+        steps: list[h5py.Group] = []
+        for scan_number in numpy_float64_array(_value(root, "measurement/scan_numbers")):
+            step = root.file[f"{int(scan_number)}.1"]
+            if not isinstance(step, h5py.Group):
+                raise ValueError(f"{step.name}: expected a Bliss step scan group")
+            steps.append(step)
     else:
         # Older Bliss did not record child scan numbers. The next initialization
         # closes the sequence; numeric scan order is not lexicographic order.
-        def number(g: Any) -> float:
-            return float(g.name.rsplit("/", 1)[-1])
+        def number(g: h5py.Group) -> float:
+            return float(str(g.name).rsplit("/", 1)[-1])
 
-        sibling_entries: list[Any] = [
+        sibling_entries: list[h5py.Group] = [
             g
             for g in root.file.values()
             if isinstance(g, h5py.Group) and _text(_value(g, "title", ""))
         ]
-        sibling_roots: list[Any] = [
+        sibling_roots: list[h5py.Group] = [
             g
             for g in sibling_entries
             if "technique/scan_category" in g or _text(_value(g, "title", "")).startswith("tomo:")
@@ -118,17 +128,17 @@ def _sequence(file: Any, data_path: str | None) -> tuple[Any, list[Any]] | None:
     return root, steps
 
 
-def _detector_stack(entry: Any, detector_name: str | None) -> Hdf5Frames:
-    data: Any
-    found: list[Any]
+def _detector_stack(entry: h5py.Group, detector_name: str | None) -> Hdf5Frames:
     if detector_name:
         paths = (f"instrument/{detector_name}/data", f"measurement/{detector_name}")
         found = [entry[p] for p in paths if p in entry]
         data = found[0] if found else None
     else:
+        instrument = entry.get("instrument")
+        groups = instrument.values() if isinstance(instrument, h5py.Group) else ()
         found = [
             g["data"]
-            for g in entry.get("instrument", {}).values()
+            for g in groups
             if isinstance(g, h5py.Group)
             and _text(g.attrs.get("NX_class", "")) == "NXdetector"
             and "data" in g
@@ -136,17 +146,16 @@ def _detector_stack(entry: Any, detector_name: str | None) -> Hdf5Frames:
         if len(found) != 1:
             raise ValueError(f"{entry.name}: no unique Bliss NXdetector")
         data = found[0]
-    if data is None or data.ndim != 3:
+    if not isinstance(data, h5py.Dataset) or data.ndim != 3 or data.name is None:
         raise ValueError(f"{entry.name}: missing Bliss detector stack")
     return Hdf5Frames.open(str(data.file.filename), data.name)
 
 
-def _rotation_series(data: Any, n: int) -> np.ndarray | None:
+def _rotation_series(data: h5py.Group | h5py.Dataset, n: int) -> np.ndarray | None:
     """A scan-start position is not a measured multi-frame angular series."""
     if not isinstance(data, h5py.Dataset):
         return None
-    data = cast(Any, data)  # h5py stubs omit Dataset.name.
-    angles = np.asarray(data[()], np.float64)
+    angles = numpy_float64_array(data[()])
     if angles.shape != (n,) and not (n == 1 and angles.ndim == 0):
         return None
     unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
@@ -161,8 +170,8 @@ def _rotation_series(data: Any, n: int) -> np.ndarray | None:
     return angles.reshape(n).astype(np.float32)
 
 
-def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
-    declared = np.atleast_1d(_value(root, "technique/tomoconfig/rotation", []))
+def _angles(entry: h5py.Group, root: h5py.Group, n: int) -> np.ndarray:
+    declared = numpy_array(_value(root, "technique/tomoconfig/rotation", [])).reshape(-1)
     names = tuple(_text(v) for v in declared) or _ROTATIONS
     # Prefer converted commands across all locations before considering motors.
     # A static positioner or raw channel must not hide a measured angular series.
@@ -186,18 +195,20 @@ def _angles(entry: Any, root: Any, n: int) -> np.ndarray:
 
 
 def _collect_steps(
-    root: Any, steps: list[Any]
+    root: h5py.Group, steps: list[h5py.Group]
 ) -> tuple[dict[int, list[Hdf5Frames]], np.ndarray, np.ndarray]:
     name = _value(root, "technique/detector/name")
     if name is None:
-        names = np.atleast_1d(_value(root, "technique/tomoconfig/detector", []))
+        names = numpy_array(_value(root, "technique/tomoconfig/detector", [])).reshape(-1)
         name = names[0] if len(names) == 1 else None
     name = _text(name) if name is not None else None
-    blocks: dict[int, list[Any]] = {0: [], 1: [], 2: []}
-    angles, positions, n = [], [], 0
+    blocks: dict[int, list[Hdf5Frames]] = {0: [], 1: [], 2: []}
+    angles: list[np.ndarray] = []
+    positions: list[int] = []
+    n = 0
     for entry in steps:
         kind = _category(entry)
-        if kind not in blocks:
+        if kind is None or kind not in blocks:
             continue
         stack = _detector_stack(entry, name)
         blocks[kind].append(stack)
@@ -206,18 +217,22 @@ def _collect_steps(
             n += len(stack)
         elif kind == 1:
             positions.extend([n] * len(stack))
-    if n != int(root["technique/scan/tomo_n"][()]):
+    if n != int(numpy_float64_array(_value(root, "technique/scan/tomo_n"))):
         raise ValueError(f"{root.name}: projection count does not match Bliss tomo_n")
     return blocks, np.concatenate(angles), np.asarray(positions, np.float64)
 
 
-def _read_sequence(root: Any, steps: list[Any]) -> RawAcquisition:
+def _read_sequence(root: h5py.Group, steps: list[h5py.Group]) -> RawAcquisition:
     from ._acquisition import RawAcquisition
 
     blocks, angles, positions = _collect_steps(root, steps)
     counts = FrameBlocks.join(blocks[0])
     pixel = _length(root, "technique/optic/sample_pixel_size", default_unit="um")
-    metadata: dict[str, Any] = {"layout": "esrf_bliss", "data_path": root.name, "length_unit": "mm"}
+    metadata: dict[str, object] = {
+        "layout": "esrf_bliss",
+        "data_path": root.name,
+        "length_unit": "mm",
+    }
     for key in ("sample_detector_distance", "source_sample_distance"):
         value = _length(root, f"technique/scan/{key}", default_unit="mm")
         if value is not None:

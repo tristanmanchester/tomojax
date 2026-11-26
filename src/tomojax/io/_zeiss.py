@@ -8,7 +8,7 @@ from datetime import datetime
 from itertools import pairwise
 from pathlib import Path
 import re
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 import olefile
@@ -20,15 +20,15 @@ from ._datasets import ProjectionDataset
 from ._view_offsets import DISTANCES_KEY, OFFSETS_KEY, with_view_offsets
 
 if TYPE_CHECKING:
+    from typing import BinaryIO
+
     from ._acquisition import RawAcquisition
 
 
 class _OleFile(olefile.OleFileIO):
     """Build large allocation tables without copying their accumulated prefix."""
 
-    fat: array.array[int]
-
-    def loadfat_sect(self, sect: Any) -> int | None:
+    def loadfat_sect(self, sect: bytes | array.array[int]) -> int | None:
         # Keep olefile's sector decoding, reads and enclosing DIFAT validation.
         # Only table accumulation differs: extend is linear in the new block.
         sectors = sect if isinstance(sect, array.array) else self.sect2array(sect)
@@ -67,19 +67,19 @@ class _ZeissFrames(FrameStack):
 
     def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
         result = np.empty((len(indices), self.rows, self.cols), self.dtype)
-        source: Any
-        path = self.path
-        with _OleFile(path) if self.fat is None else Path(path).open("rb") as source:
+        path, fat = self.path, self.fat
+        with _OleFile(path) if fat is None else Path(path).open("rb") as source:
             row_bytes = self.image_shape[1] * self.dtype.itemsize
             for destination, index in enumerate(indices):
                 offset, size = rows.start * row_bytes, self.rows * row_bytes
-                if self.fat is None:
+                if isinstance(source, _OleFile):
                     stream = source.openstream(self.streams[index])
-                    stream.seek(offset)
+                    _ = stream.seek(offset)
                     raw = stream.read(size)
                 else:
+                    assert fat is not None
                     raw = _stream_range(
-                        source, self.fat, self.sector_size, self.starts[index], offset, size
+                        source, fat, self.sector_size, self.starts[index], offset, size
                     )
                 frame = np.frombuffer(raw, dtype=self.dtype).reshape(self.rows, self.image_shape[1])
                 result[destination] = frame[:, ::-1][:, cols]
@@ -87,7 +87,7 @@ class _ZeissFrames(FrameStack):
         return result
 
 
-def _stream_entry(container: Any, name: str, *, path: Path) -> Any:
+def _stream_entry(container: _OleFile, name: str, *, path: Path) -> olefile.OleDirectoryEntry:
     entry = container.root
     for part in name.split("/"):
         try:
@@ -101,7 +101,7 @@ def _stream_entry(container: Any, name: str, *, path: Path) -> Any:
 
 
 def _stream_range(
-    file: Any, fat: np.ndarray, sector_size: int, sector: int, offset: int, size: int
+    file: BinaryIO, fat: np.ndarray, sector_size: int, sector: int, offset: int, size: int
 ) -> bytearray:
     """Read a logical byte range, coalescing adjacent physical FAT sectors.
 
@@ -123,13 +123,13 @@ def _stream_range(
         begin = max(0, int(start) * sector_size - head)
         end = min(size, int(stop) * sector_size - head)
         physical = (int(sectors[start]) + 1) * sector_size + (head if start == 0 else 0)
-        file.seek(physical)
+        _ = file.seek(physical)
         target[begin:end] = file.read(end - begin)
     return result
 
 
 def _stack(
-    container: Any,
+    container: _OleFile,
     path: Path,
     streams: tuple[str, ...],
     shape: tuple[int, int],
@@ -159,7 +159,7 @@ def _stack(
     )
 
 
-def _values(container: Any, name: str, dtype: str) -> np.ndarray:
+def _values(container: _OleFile, name: str, dtype: str) -> np.ndarray:
     return np.frombuffer(container.openstream(name).read(), dtype=np.dtype(dtype))
 
 
@@ -167,15 +167,15 @@ _DARK = "AcquisitionSettings/CameraStaticBackground"
 _LINEAR = "ConfigureBackup/ConfigCamera/Camera 1/MaxLinearRange"
 
 
-def _scalar(container: Any, name: str, dtype: str = "<u4") -> float:
+def _scalar(container: _OleFile, name: str, dtype: str = "<u4") -> float:
     return float(_values(container, name, dtype).item())
 
 
-def _text(container: Any, name: str) -> str:
+def _text(container: _OleFile, name: str) -> str:
     return container.openstream(name).read().split(b"\0", 1)[0].decode("latin-1").strip()
 
 
-def _beam_hardening(container: Any, path: Path) -> dict[str, object] | None:
+def _beam_hardening(container: _OleFile, path: Path) -> dict[str, object] | None:
     """The reconstructor's beam hardening constant and the tube settings of a scan.
 
     XMReconstructor stores its settings in the reconstruction, so the
@@ -212,7 +212,7 @@ def _is_ole(path: Path) -> bool:
         return file.read(8) == olefile.MAGIC
 
 
-def _images(container: Any, path: Path) -> _ZeissFrames:
+def _images(container: _OleFile, path: Path) -> _ZeissFrames:
     # NoOfImages can be the planned count of an interrupted acquisition.
     # The numbered streams establish which images were actually recorded;
     # per-view metadata must still agree with their count, without truncation.
@@ -240,7 +240,7 @@ def _images(container: Any, path: Path) -> _ZeissFrames:
     )
 
 
-def _exposures(container: Any, prefix: str, count: int) -> np.ndarray | None:
+def _exposures(container: _OleFile, prefix: str, count: int) -> np.ndarray | None:
     for name in (f"{prefix}/ExpTimes", f"{prefix}/ExpTime", f"{prefix.rsplit('/', 1)[0]}/ExpTime"):
         if container.exists(name):
             values = _values(container, name, "<f4")
@@ -254,7 +254,7 @@ def _exposures(container: Any, prefix: str, count: int) -> np.ndarray | None:
     return None
 
 
-def _dates(container: Any, name: str) -> np.ndarray:
+def _dates(container: _OleFile, name: str) -> np.ndarray:
     """Xradia date records are forty-byte local timestamps, including padding."""
     result = []
     for raw in _values(container, name, "S40"):
@@ -265,7 +265,7 @@ def _dates(container: Any, name: str) -> np.ndarray:
 
 
 def _references(
-    container: Any, path: Path, counts: _ZeissFrames
+    container: _OleFile, path: Path, counts: _ZeissFrames
 ) -> tuple[_ZeissFrames | None, np.ndarray | None, np.ndarray | None]:
     """Read flat counts with their durations and acquisition timestamps."""
     prefix = "MultiReferenceData"
@@ -322,7 +322,7 @@ def read_zeiss_images(path: Path) -> _ZeissFrames | None:
         return _images(container, path)
 
 
-def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | None]:
+def _offsets(container: _OleFile, count: int) -> tuple[np.ndarray | None, float | None]:
     """Recorded per-view image shifts in detector pixels, and the center shift if calibrated.
 
     ``AutoRecon/CenterShift`` adds to the horizontal image shifts. Its sign was
@@ -354,7 +354,7 @@ def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | Non
     return shifts, _scalar(container, center, "<f4") if container.exists(center) else None
 
 
-def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:
+def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:
     """Keep incomplete calibration separate from the image storage contract.
 
     The orientation is the vendor's: with the columns reversed and a view's angle
@@ -380,7 +380,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         if container.exists("ImageInfo/XrayGeometry")
         else None
     )
-    metadata: dict[str, Any] = {}
+    metadata: dict[str, object] = {}
     pitch = pixel
     if cone:
         if all(

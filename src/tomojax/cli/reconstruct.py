@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
-from dataclasses import dataclass, fields
+from dataclasses import fields
 from functools import partial
 import logging
 from pathlib import Path
 import sys
-from typing import TYPE_CHECKING, Any, cast, get_args
+from typing import TYPE_CHECKING, Any, TypedDict, cast, get_args
 
 import numpy as np
 
@@ -36,14 +36,13 @@ if TYPE_CHECKING:
     from tomojax import Reconstruction, Scan
     from tomojax._workflow import Region
     from tomojax.cli._watch import WatchDirectory
+    from tomojax.cli.config import ConfigMetadata
     from tomojax.recon.api import MethodConfig
     from tomojax.wire.progress import Result
 
 LOG = logging.getLogger(__name__)
 
 _METHODS = get_args(ReconMethod.__value__)
-# The options that are tj.reconstruct keywords besides the method and grid.
-_KEYWORDS = ("filter", "iterations", "tv_weight", "nonnegative", "warm_start", "seed")
 # Configuration fields a TOML file cannot hold.
 _NOT_SETTINGS = frozenset({"support", "devices"})
 
@@ -106,7 +105,7 @@ def build_parser() -> ProgressParser:
     _ = p.add_argument(
         "--dry-run", action="store_true", help="Print the plan (method, grid, memory) and stop"
     )
-    add_config(p, settings=_settings)
+    add_config(p, settings=_settings, method_settings=_settings)
     _ = p.add_argument(
         "--method",
         choices=("auto", *_METHODS),
@@ -193,19 +192,19 @@ def _settings(*, method: str | None = None) -> dict[str, object]:
 
     if method is not None and method != "auto" and method in _METHODS:
         config = method_config(method)
-        return {
-            item.name: cast("object", getattr(config, item.name))
-            for item in fields(config)
-            if item.init and item.name not in _NOT_SETTINGS
-        }
+        selected: dict[str, object] = {}
+        for item in fields(config):
+            if item.init and item.name not in _NOT_SETTINGS:
+                value: object = getattr(config, item.name)
+                selected[item.name] = value
+        return selected
     defaults: dict[str, list[tuple[str, object]]] = {}
     for name in _METHODS:
         config = method_config(name)
         for item in fields(config):
             if item.init and item.name not in _NOT_SETTINGS:
-                defaults.setdefault(item.name, []).append(
-                    (name, cast("object", getattr(config, item.name)))
-                )
+                default: object = getattr(config, item.name)
+                defaults.setdefault(item.name, []).append((name, default))
     out: dict[str, object] = {}
     for key, pairs in defaults.items():
         values = [v for _, v in pairs]
@@ -215,71 +214,65 @@ def _settings(*, method: str | None = None) -> dict[str, object]:
     return out
 
 
-@dataclass(frozen=True)
-class _Run:
+class _MethodOptions(TypedDict, total=False):
+    filter: Filter | None
+    iterations: int | None
+    tv_weight: float | None
+    nonnegative: bool | None
+    seed: int | None
+
+
+class _Args(argparse.Namespace):
     """The command's arguments."""
 
     data: str
     out: str | None
     method: Method
-    filter: str | None
+    filter: Filter | None
     iterations: int | None
     tv_weight: float | None
     nonnegative: bool | None
     warm_start: bool | None
     seed: int | None
-    grid: tuple[int, int, int] | None
+    grid: list[int] | None
     region: Region | None
     apply_poses: bool
     include_scan: bool
     preview: str | None
     manifest: str | None
 
-    @classmethod
-    def of(cls, args: argparse.Namespace) -> _Run:
-        """The typed values of ``args``."""
-        grid = cast("list[int] | None", args.grid)
-        return cls(
-            data=cast("str", args.data),
-            out=cast("str | None", args.out),
-            method=cast("Method", args.method),
-            filter=cast("str | None", args.filter),
-            iterations=cast("int | None", args.iterations),
-            tv_weight=cast("float | None", args.tv_weight),
-            nonnegative=cast("bool | None", args.nonnegative),
-            warm_start=cast("bool | None", args.warm_start),
-            seed=cast("int | None", args.seed),
-            grid=None if grid is None else (grid[0], grid[1], grid[2]),
-            region=cast("Region | None", args.region),
-            apply_poses=cast("bool", args.apply_poses),
-            include_scan=cast("bool", args.include_scan),
-            preview=cast("str | None", args.preview),
-            manifest=cast("str | None", args.manifest),
-        )
+    force: bool
+    dry_run: bool
+    progress: str
+    watch_dir: str | None
 
-    def keywords(self) -> dict[str, object]:
-        """The options given that are :func:`tomojax.reconstruct` keywords."""
-        given = {name: cast("object", getattr(self, name)) for name in _KEYWORDS}
-        return {name: value for name, value in given.items() if value is not None}
+    def settings(self) -> _MethodOptions:
+        """The CLI's method-specific arguments, with None for unset options."""
+        return {
+            "filter": self.filter,
+            "iterations": self.iterations,
+            "tv_weight": self.tv_weight,
+            "nonnegative": self.nonnegative,
+            "seed": self.seed,
+        }
 
     def validate(
         self,
         parser: ProgressParser,
-        args: argparse.Namespace,
-        metadata: Mapping[str, object],
+        settings: Mapping[str, object],
     ) -> MethodConfig | None:
         if self.grid is not None and min(self.grid) < 1:
             parser.error("--grid dimensions must be positive integers")
         if not Path(self.data).exists():
             raise FileNotFoundError(f"input not found: {self.data}")
-        outputs = [] if args.dry_run else [self.out, self.preview, self.manifest]
-        check_paths(parser, inputs=[self.data], outputs=outputs, force=cast("bool", args.force))
+        outputs = [] if self.dry_run else [self.out, self.preview, self.manifest]
+        check_paths(parser, inputs=[self.data], outputs=outputs, force=self.force)
         try:
-            return self.config(cast("dict[str, object]", metadata["settings"]))
+            return self.method_config(settings)
         except (TypeError, ValueError) as exc:
             parser.error(str(exc))
 
-    def config(self, settings: Mapping[str, object]) -> MethodConfig | None:
+    def method_config(self, settings: Mapping[str, object]) -> MethodConfig | None:
         """The method's configuration with the config file's ``settings``.
 
         The options are checked against it too, so one the method does not
@@ -287,25 +280,26 @@ class _Run:
         """
         from tomojax.recon.api import method_config
 
+        options = {name: value for name, value in self.settings().items() if value is not None}
         if self.method == "auto":
-            method_specific = sorted([*settings, *self.keywords()])
+            warm_start_key = [] if self.warm_start is None else ["warm_start"]
+            method_specific = sorted([*settings, *options, *warm_start_key])
             if method_specific:
                 raise ValueError(
                     f"method 'auto' does not take method-specific options "
                     f"({', '.join(method_specific)}); pass an explicit --method"
                 )
             return None
-        expert = cast("dict[str, Any]", dict(settings))
+        # The parser checks these dynamic keys against the solver fields before this call.
+        expert = cast("Mapping[str, Any]", settings)
         config = method_config(self.method, config=None, warm_start=self.warm_start, **expert)
-        options = cast("dict[str, Any]", self.keywords())
-        options.pop("warm_start", None)
-        _ = method_config(self.method, config=config, **options)
+        _ = method_config(self.method, config=config, **cast("_MethodOptions", options))
         return config
 
 
 def _write_manifest(
-    args: argparse.Namespace,
-    metadata: Mapping[str, object],
+    args: _Args,
+    metadata: ConfigMetadata,
     scan: Scan,
     result: Reconstruction,
     *,
@@ -314,12 +308,11 @@ def _write_manifest(
     """Write ``--manifest``: the run's inputs and settings and the reconstruction's record."""
     from tomojax.cli.manifest import build_manifest, save_manifest
 
-    run = _Run.of(args)
     payload: dict[str, object] = {
-        "input_path": run.data,
-        "output_path": run.out,
-        "preview_path": run.preview,
-        "manifest_path": run.manifest,
+        "input_path": args.data,
+        "output_path": args.out,
+        "preview_path": args.preview,
+        "manifest_path": args.manifest,
         "config_path": metadata["config_path"],
         "config_file_values": metadata["config_file_values"],
         "explicit_cli_keys": metadata["explicit_cli_keys"],
@@ -329,7 +322,7 @@ def _write_manifest(
         "input_projection_shape": list(np.shape(scan.projections)),
         "input_poses": scan.poses is not None,
         "region": {
-            "requested": run.region,
+            "requested": args.region,
             "grid_changed": result.grid != scan.grid,
             "cylindrical_output_mask": masked,
         },
@@ -340,14 +333,14 @@ def _write_manifest(
         "reconstruction": result.info,
     }
     manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
-    save_manifest(str(run.manifest), manifest)
-    LOG.info("Saved reproducibility manifest to %s", run.manifest)
+    save_manifest(str(args.manifest), manifest)
+    LOG.info("Saved reproducibility manifest to %s", args.manifest)
 
 
 def main() -> int:
     """Run ``tomojax reconstruct``."""
     parser = build_parser()
-    args, metadata = parse_args_with_config(parser)
+    args, metadata = parse_args_with_config(parser, namespace=_Args())
     if not args.dry_run and not args.out:
         parser.error("the following arguments are required: -o/--output")
     watch = watch_directory(args.watch_dir, working=False)
@@ -357,34 +350,38 @@ def main() -> int:
 
 def _run(
     parser: ProgressParser,
-    args: argparse.Namespace,
-    metadata: Mapping[str, object],
+    args: _Args,
+    metadata: ConfigMetadata,
     watch: WatchDirectory | None,
 ) -> Result | None:
     import tomojax as tj
     from tomojax import progress
     from tomojax.cli._runtime import report_automatic
 
-    run = _Run.of(args)
-    config = run.validate(parser, args, metadata)
+    config = args.validate(parser, metadata["settings"])
     progress.check_canceled()
 
-    scan = tj.load(run.data, apply_poses=run.apply_poses)
+    scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
     from tomojax._planning import resolve_reconstruction
     from tomojax._workflow import reconstruct_resolved
     from tomojax.cli._plans import announce, dry_run, plan_product
 
-    keywords = {name: cast("Any", getattr(run, name)) for name in _KEYWORDS}
-    shape = None if run.grid is None else (run.grid[2], run.grid[1], run.grid[0])
+    shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
     work = resolve_reconstruction(
-        scan, run.method, region=run.region, shape=shape, config=config, **keywords
+        scan,
+        args.method,
+        region=args.region,
+        shape=shape,
+        config=config,
+        warm_start=args.warm_start,
+        **args.settings(),
     )
     if args.dry_run:
-        return dry_run(args.progress, run.data, plan_product(scan, work), scan, work)
-    used = tuple(f for f, v in (("--region", run.region), ("--grid", run.grid)) if v is not None)
+        return dry_run(args.progress, args.data, plan_product(scan, work), scan, work)
+    used = tuple(f for f, v in (("--region", args.region), ("--grid", args.grid)) if v is not None)
     _ = announce("reconstruct", scan, work, used=used)
-    assert run.out is not None
+    assert args.out is not None
     with progress.previews() if watch is not None else nullcontext():
         result = reconstruct_resolved(work)
     report_automatic(result.info)
@@ -396,25 +393,25 @@ def _run(
         LOG.warning(
             "%s records no rotation center; the detector middle was used. "
             "Fit one with tomojax align --fit center before reconstructing.",
-            run.data,
+            args.data,
         )
     progress.check_canceled()
-    tj.save(run.out, result, include_scan=run.include_scan)
-    if run.preview is not None:
+    tj.save(args.out, result, include_scan=args.include_scan)
+    if args.preview is not None:
         from tomojax.cli._images import save_volume_plane
 
         progress.check_canceled()
-        label = f"z plane · {result.method} · {Path(run.out).name}"
-        _ = save_volume_plane(Path(run.preview), result.volume, result.grid, "z", label)
-    if run.manifest is not None:
+        label = f"z plane · {result.method} · {Path(args.out).name}"
+        _ = save_volume_plane(Path(args.preview), result.volume, result.grid, "z", label)
+    if args.manifest is not None:
         progress.check_canceled()
-        _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")
+        _write_manifest(args, metadata, scan, result, masked=args.region == "cyl")
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 
-        outputs = tuple(str(p) for p in (run.out, run.preview, run.manifest) if p is not None)
-        return saved_result(run.out, result, outputs=outputs, include_scan=run.include_scan)
-    print(f"wrote {run.out}: {result.method} volume {tuple(np.shape(result.volume))}")
+        outputs = tuple(str(p) for p in (args.out, args.preview, args.manifest) if p is not None)
+        return saved_result(args.out, result, outputs=outputs, include_scan=args.include_scan)
+    print(f"wrote {args.out}: {result.method} volume {tuple(np.shape(result.volume))}")
     return None
 
 
