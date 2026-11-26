@@ -8,7 +8,7 @@ other scans use angular covariance and a spatial scene-power prior.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from functools import lru_cache, partial
+from functools import partial
 from itertools import pairwise
 from typing import TYPE_CHECKING, ClassVar, cast
 
@@ -28,38 +28,16 @@ from tomojax.geometry import (
 )
 
 from ._records import Correction
-from ._ring_offsets import offset_prior, shifted_columns
+from ._ring_offsets import correlate, offset_prior, quadratic_taps, shifted_columns, window_sum
 from ._ring_parity import regularize
 from ._ring_reference_cuda import reference as cuda_reference
+from ._ring_turn import turn_response
 from ._steps import Domain, Step, bitonic_median
 
 if TYPE_CHECKING:
     from tomojax.geometry import ScanGeometry
 
 WINDOWS = (30, 20, 14, 9, 6)
-
-
-@lru_cache(maxsize=16)
-def _quadratic_taps(window: int, guard: int) -> np.ndarray:
-    """Weights giving each column the local quadratic through its neighbors (guard left out)."""
-    j = np.arange(-window, window + 1, dtype=np.float64)
-    keep = np.abs(j) > guard
-    design = np.stack([np.ones_like(j), j, j * j], axis=1)[keep]
-    taps = np.zeros_like(j)
-    taps[keep] = np.linalg.pinv(design)[0]
-    return taps
-
-
-def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
-    """Apply a symmetric stencil, accumulating reflected samples together."""
-    half = len(kernel) // 2
-    shifted = shifted_columns(x, half)
-    out = float(kernel[half]) * x
-    for j in range(1, half + 1):
-        k = float((kernel[half - j] + kernel[half + j]) * 0.5)
-        if k:
-            out = out + k * (shifted[half - j] + shifted[half + j])
-    return out
 
 
 def _weighted_quadratics(
@@ -113,7 +91,7 @@ def _reference(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> jax.Ar
     """Adaptive spatial reference, with a tiled float32 CUDA implementation."""
     if ranked.dtype != jnp.float32:
         return _reference_jax(ranked, gamma, local)
-    taps = tuple(tuple(_quadratic_taps(w, 1)) for w in WINDOWS)
+    taps = tuple(tuple(quadratic_taps(w, 1)) for w in WINDOWS)
     return jax.lax.platform_dependent(
         ranked,
         cuda=lambda values: cuda_reference(values, taps, gamma, local),
@@ -130,8 +108,8 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     followed rather than turned into a column correction. Neighbors are Tukey-weighted by their
     misfit to the +-6 quadratic so that a defective column does not steer them.
     """
-    taps = [_quadratic_taps(w, 1) for w in WINDOWS]
-    r = ranked - _correlate(ranked, taps[-1])
+    taps = [quadratic_taps(w, 1) for w in WINDOWS]
+    r = ranked - correlate(ranked, taps[-1])
     sigma = MAD_TO_SD * jnp.median(jnp.abs(r), axis=1, keepdims=True)
     u = r / (4.685 * jnp.maximum(sigma, 1e-3 * jnp.median(sigma) + 1e-12))
     weights = 1e-3 + jnp.where(jnp.abs(u) < 1, (1 - u * u) ** 2, 0.0)
@@ -250,7 +228,7 @@ def _angular_variance(influence: jax.Array, groups: tuple[int, ...]) -> jax.Arra
         length = max(1, int(np.sqrt(size)))
         centered = part - part.mean(0, keepdims=True)
         padded = jnp.pad(centered, ((length - 1, length - 1), (0, 0)))
-        windows = jax.lax.reduce_window(padded, 0.0, jax.lax.add, (length, 1), (1, 1), "VALID")
+        windows = window_sum(padded, length, "VALID")
         power = jnp.abs(jnp.fft.rfft(windows, axis=1)) ** 2
         effective = size - length + (length * length - 1) / (3 * size)
         variance = variance + power.sum(0) / length * size / max(effective, 1)
@@ -348,10 +326,10 @@ def _row_response(
     admissible everywhere when ``q`` only summarizes the views; the inverse is
     increasing, so it carries the least value through each pass.
     """
-    taps = _quadratic_taps(6, 0)
+    taps = quadratic_taps(6, 0)
     responses: list[tuple[jax.Array, jax.Array]] = []
     for k in range(passes):
-        ref = _correlate(q, taps)
+        ref = correlate(q, taps)
         instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
         level, beta, xm, il, ib, ml, mb = _fit_unsorted(q, ref, instrument)
         beta = _response_posterior(beta, ib, mb, taps, groups)
@@ -361,12 +339,16 @@ def _row_response(
             beta = jnp.maximum(beta, -0.5)
             alpha = level - beta * xm
         else:
-            # Opposed rays constrain wider offsets too. Use the adaptive
-            # reference for the level, keeping the slope's known transfer.
-            narrow, ref = ref, _reference(q)
-            beta = regularize(beta, axis)
+            grid_axis = round(2 * axis) / 2
+            offset = offset_prior(q, groups)
+            level = _response_posterior(level, il, ml, taps, groups, offset)
+            transmission = -jnp.expm1(-ref)
+            mean_transmission = transmission.mean(0)
+            level = regularize(level + beta * (mean_transmission - xm), grid_axis)
+            beta = regularize(beta, grid_axis)
             adjacent = (q[neighbors] * weights[:, :, None]).sum(1)
-            alpha = regularize(_turn_offset(q, narrow, ref, beta, adjacent), axis)
+            intercept = regularize(_turn_offset(q, ref, _reference(q), beta, adjacent), grid_axis)
+            alpha, beta = turn_response(q, ref, transmission, level, beta, intercept, axis)
         alpha, beta = _feasible_response(q, ref, alpha, beta, lowest)
         responses.append((alpha, beta))
         q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)
@@ -567,7 +549,7 @@ def correct_rings(
 
 
 def mirror_axis(geometry: object) -> float | None:
-    """The rotation axis's detector column on the half-pixel grid, or None.
+    """The rotation axis's detector column, or None.
 
     None unless ``geometry`` is a stationary parallel-beam scan over one evenly sampled full turn.
     """
@@ -576,8 +558,7 @@ def mirror_axis(geometry: object) -> float | None:
     if _periodic_order(np.asarray(geometry.angles, np.float64)) is None:
         return None
     detector = geometry.detector
-    column = detector.nu / 2.0 - 0.5 - float(detector.center[0]) / float(detector.du)
-    return round(2.0 * column) / 2.0
+    return detector.nu / 2.0 - 0.5 - float(detector.center[0]) / float(detector.du)
 
 
 @dataclass(frozen=True)
@@ -602,23 +583,19 @@ class Rings(Step):
     prior where it would otherwise produce a noninvertible response.
 
     On a stationary parallel-beam scan over one evenly sampled full turn,
-    the offset fit uses a local quadratic through 30 columns on either side,
-    narrowed toward 6 where the object changes faster. The slope fit uses
-    six neighbors on each side and accounts for angular covariance. The
-    offset is a weighted median over views. Views where wide and narrow
-    references disagree beyond the angular noise carry less weight. Keeping
-    these references unsorted preserves their spatial smoothness at the axis.
-    The fits use cyclic angular neighbors and average a repeated closing phase.
+    short angular arcs measure each column's mean response and its change
+    with transmission. A cubic interpolation compares opposing arcs at the
+    reflected detector coordinates. Repeatable differences between the arcs
+    estimate the detector power in a neighborhood around each column. This
+    determines how much the arc fit can revise the local spatial estimate.
 
-    Opposed columns see the same lines over a full turn. The difference
-    between a fitted response and its reflection measures detector error.
-    Its power at each spatial scale sets the allowed size of the symmetric
-    correction, accounting for correlation between reflected neighbors.
-    The variance and effective degrees are estimated, not a calibrated
-    scan-wide confidence bound. DC power is inferred from the lowest measured
-    odd-frequency band. Purely even detector errors and rotationally symmetric
-    object structure remain ambiguous, especially at broad scales; this is
-    not a no-change guarantee. The axis used, or none, is recorded.
+    A weighted median over views provides a more precise intercept on locally
+    quadratic rays. The angular scatter of the local spatial contrast and
+    the residual variation across arcs weight the two estimates. The local
+    field prior uses reflection on the nearest half-pixel grid. The arc
+    comparison uses the recorded physical axis. A symmetric sample feature
+    and a symmetric detector offset can still give identical measurements.
+    The fit averages a repeated closing phase and uses cyclic angular neighbors.
 
     Otherwise, each unsorted view is compared with a quadratic through six
     neighboring columns on either side. Independent neighboring views supply
@@ -717,7 +694,7 @@ class Rings(Step):
         Returns
         -------
         float or None
-            Detector column on the half-pixel grid, or None when the geometry is
+            Physical axis position in detector columns, or None when the geometry is
             not a stationary parallel-beam full turn.
         """
         return self._axis

@@ -6,12 +6,26 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.corrections._ring_parity import _plan, _uniform_interp, regularize
+from tomojax.corrections._ring_parity import _plan, _uniform_interp, opposed_contrast, regularize
 from tomojax.corrections._rings import (  # check-public-imports: allow-private
     _feasible_response,
     _invert,
     _weighted_quadratics,
 )
+
+
+def test_fractional_opposed_rays_cancel_the_scene_and_measure_column_response() -> None:
+    axis = 19.3
+    u = np.arange(47) - axis
+    # Linear and cubic terms reverse sign after half a turn. Each even
+    # profile belongs to a distinct pair of angular arcs.
+    angle = np.arange(8)[:, None] * np.pi / 4
+    scene = (2 + np.cos(2 * angle)) * (u / 20) ** 2 + np.sin(angle) * (u / 20) ** 3
+    field = 0.03 * u
+    delta = np.asarray(opposed_contrast(jnp.asarray(scene + field, jnp.float32), axis))
+    paired = 2 * axis - np.arange(len(u)) >= 0
+    expected = np.where(paired, np.sqrt(2) * field, 0)
+    np.testing.assert_allclose(delta, np.broadcast_to(expected, delta.shape), atol=1e-6)
 
 
 @pytest.mark.parametrize("size", [63, 64])

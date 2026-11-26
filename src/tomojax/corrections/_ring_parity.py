@@ -2,10 +2,30 @@
 
 from functools import lru_cache
 from itertools import pairwise
+from math import sqrt
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+
+def opposed_contrast(arcs: jax.Array, axis: float) -> jax.Array:
+    """Difference of conjugate rays, normalized to single-column noise power."""
+    columns = arcs.shape[1]
+    mirror = 2 * axis - np.arange(columns)
+    degree = min(3, columns - 1)
+    first = np.clip(np.floor(mirror).astype(int) - degree // 2, 0, columns - degree - 1)
+    h = np.clip(mirror, 0, columns - 1) - first
+    opposite = jnp.roll(arcs, len(arcs) // 2, axis=0)
+    reflected = jax.lax.full(arcs.shape, 0, arcs.dtype)
+    for i in range(degree + 1):
+        weight = np.ones(columns)
+        for j in range(degree + 1):
+            if i != j:
+                weight *= (h - j) / (i - j)
+        reflected += opposite[:, first + i] * weight
+    paired = (mirror >= 0) & (mirror <= columns - 1)
+    return jnp.where(paired, (arcs - reflected) / sqrt(2.0), 0)
 
 
 @lru_cache(maxsize=16)

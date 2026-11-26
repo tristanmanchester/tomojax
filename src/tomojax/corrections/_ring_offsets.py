@@ -1,5 +1,8 @@
 """Estimate the additive detector field from angular ranks and adjacent-column contrasts."""
 
+from functools import lru_cache
+from typing import Literal
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,11 +12,40 @@ from tomojax.core.robust import MAD_TO_SD
 from ._steps import bitonic_median, odd_even_median
 
 
+def window_sum(values: jax.Array, width: int, padding: Literal["SAME", "VALID"]) -> jax.Array:
+    """Sum contiguous samples along the leading axis."""
+    shape = (width,) + (1,) * (values.ndim - 1)
+    return jax.lax.reduce_window(values, 0.0, jax.lax.add, shape, (1,) * values.ndim, padding)
+
+
 def shifted_columns(x: jax.Array, half: int) -> list[jax.Array]:
     """The columns of ``x`` shifted by ``-half..half``, edge columns repeated."""
     padded = jnp.pad(x, ((0, 0), (half, half)), mode="edge")
     n = x.shape[1]
     return [padded[:, half + j : half + j + n] for j in range(-half, half + 1)]
+
+
+@lru_cache(maxsize=16)
+def quadratic_taps(window: int, guard: int) -> np.ndarray:
+    """Weights giving each column the local quadratic through its neighbors (guard left out)."""
+    j = np.arange(-window, window + 1, dtype=np.float64)
+    keep = np.abs(j) > guard
+    design = np.stack([np.ones_like(j), j, j * j], axis=1)[keep]
+    taps = np.zeros_like(j)
+    taps[keep] = np.linalg.pinv(design)[0]
+    return taps
+
+
+def correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
+    """Apply a symmetric stencil, accumulating reflected samples together."""
+    half = len(kernel) // 2
+    shifted = shifted_columns(x, half)
+    out = float(kernel[half]) * x
+    for j in range(1, half + 1):
+        k = float((kernel[half - j] + kernel[half + j]) * 0.5)
+        if k:
+            out = out + k * (shifted[half - j] + shifted[half + j])
+    return out
 
 
 def _block_means(values: jax.Array, scale: int) -> tuple[jax.Array, jax.Array]:

@@ -71,10 +71,11 @@ On a half turn, ranked transmissions across angular arcs measure offsets.
 Persistent jumps between columns locate the edges of wider defects. The
 variation between arcs sets the weight of both measurements. On a stationary
 parallel-beam full turn, opposed columns measure the same lines through the
-sample. Their differences constrain offsets across a wider neighborhood. The
-offset fit takes a weighted median over views, giving less weight to a view
-where narrow and wide references disagree. Symmetric sample features and
-symmetric detector offsets can still give the same data.
+sample. The fit compares short angular arcs at reflected detector coordinates.
+Repeatable differences measure how much detector power can support a broader
+offset or slope. Locally quadratic rays constrain the offset through a weighted
+median. Symmetric sample features and symmetric detector offsets can still give
+the same data.
 The step records the mirror axis it used. The CLI applies `--rings` with the
 selected and cropped geometry before view rejection and detector binning.
 

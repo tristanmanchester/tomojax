@@ -121,7 +121,7 @@ def test_full_turn_with_fewer_columns_than_correlation_lags(columns: int) -> Non
 
 
 def test_mirror_only_on_a_stationary_parallel_full_turn() -> None:
-    assert Rings(_geometry(360.0, 180, offset=0.3)).mirror_axis == 127.0
+    assert Rings(_geometry(360.0, 180, offset=0.3)).mirror_axis == pytest.approx(127.2)
     assert Rings(_geometry(362.0, 181)).mirror_axis == 127.5  # last view repeats the first
     assert Rings(_geometry(540.0, 270)).mirror_axis is None
     assert Rings(_geometry(360.0, 180)) != Rings(_geometry(360.0, 180, offset=1.0))
