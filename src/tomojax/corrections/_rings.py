@@ -144,7 +144,12 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     scatter = MAD_TO_SD * scatter / np.sqrt(1 + (taps[-1] ** 2).sum())
     r = r - r.mean(1, keepdims=True)
     var = jnp.maximum((r * r).mean(1, keepdims=True), jnp.finfo(r.dtype).tiny)
-    rho = [jnp.clip((r[:, k:] * r[:, :-k]).mean(1, keepdims=True) / var, 0, 1) for k in (1, 2)]
+    rho = [
+        jnp.clip((r[:, k:] * r[:, :-k]).mean(1, keepdims=True) / var, 0, 1)
+        if k < r.shape[1]
+        else jnp.zeros_like(var)
+        for k in (1, 2)
+    ]
     out = refs[0]
     for w, t, ref in zip(WINDOWS[1:], taps[1:], refs[1:], strict=True):
         d = np.pad(t, WINDOWS[0] - w) - taps[0]
@@ -296,6 +301,38 @@ def _response_posterior(
     return jnp.fft.irfft(estimate, n=profile.size).astype(profile.dtype)
 
 
+def _turn_offset(
+    q: jax.Array,
+    narrow: jax.Array,
+    ref: jax.Array,
+    beta: jax.Array,
+    adjacent: jax.Array,
+) -> jax.Array:
+    """The column intercept from views where the spatial references agree.
+
+    A moving boundary can bias a broad reference in either direction. The
+    narrow-to-broad discrepancy estimates interpolation error. Angular second
+    differences measure the noise floor without the constant column offset.
+    Interpolate the weighted median between sample mass centers so that the
+    fitted intercept changes continuously as a view's weight changes.
+    """
+    noise = MAD_TO_SD * jnp.median(jnp.abs(q - adjacent), axis=0)
+    scale = jnp.maximum(noise, np.spacing(np.ones((), dtype=q.dtype)))
+    weights = 1 / (1 + ((ref - narrow) / scale) ** 2)
+    residual = q - ref + beta * jnp.expm1(-ref)
+    order = jnp.argsort(residual, axis=0)
+    mass = jnp.take_along_axis(weights, order, axis=0)
+    centered = jnp.cumsum(mass, axis=0) - 0.5 * mass - 0.5 * weights.sum(0)
+    hi = jnp.clip(jnp.sum(centered < 0, axis=0), 1, len(q) - 1)
+    pair = jnp.stack([hi - 1, hi])
+    bounds = jnp.take_along_axis(centered, pair, axis=0)
+    left, right = jnp.unstack(bounds)
+    values = jnp.take_along_axis(residual, jnp.take_along_axis(order, pair, axis=0), axis=0)
+    fraction = jnp.clip(-left / jnp.where(right > left, right - left, 1), 0, 1)
+    low, high = jnp.unstack(values)
+    return low + fraction * (high - low)
+
+
 def _row_response(
     q: jax.Array,
     neighbors: jax.Array,
@@ -312,7 +349,7 @@ def _row_response(
     increasing, so it carries the least value through each pass.
     """
     taps = _quadratic_taps(6, 0)
-    responses = []
+    responses: list[tuple[jax.Array, jax.Array]] = []
     for k in range(passes):
         ref = _correlate(q, taps)
         instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
@@ -322,15 +359,15 @@ def _row_response(
             offset = offset_prior(q, groups) if k == 0 else None
             level = _response_posterior(level, il, ml, taps, groups, offset)
             beta = jnp.maximum(beta, -0.5)
+            alpha = level - beta * xm
         else:
             # Opposed rays constrain wider offsets too. Use the adaptive
             # reference for the level, keeping the slope's known transfer.
-            ref = _reference(q)
-            instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
-            level, _, xm, *_ = _fit_unsorted(q, ref, instrument)
-            level = regularize(level, axis, "significance")
+            narrow, ref = ref, _reference(q)
             beta = regularize(beta, axis, "significance")
-        alpha, beta = _feasible_response(q, ref, level - beta * xm, beta, lowest)
+            adjacent = (q[neighbors] * weights[:, :, None]).sum(1)
+            alpha = regularize(_turn_offset(q, narrow, ref, beta, adjacent), axis, "significance")
+        alpha, beta = _feasible_response(q, ref, alpha, beta, lowest)
         responses.append((alpha, beta))
         q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)
     alphas, betas = zip(*responses, strict=True)
@@ -567,7 +604,9 @@ class Rings(Step):
     On a stationary parallel-beam scan over one evenly sampled full turn,
     the offset fit uses a local quadratic through 30 columns on either side,
     narrowed toward 6 where the object changes faster. The slope fit uses
-    six neighbors on each side and accounts for angular covariance. Keeping
+    six neighbors on each side and accounts for angular covariance. The
+    offset is a weighted median over views. Views where wide and narrow
+    references disagree beyond the angular noise carry less weight. Keeping
     these references unsorted preserves their spatial smoothness at the axis.
     The fits use cyclic angular neighbors and average a repeated closing phase.
 

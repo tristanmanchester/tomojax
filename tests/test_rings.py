@@ -109,6 +109,17 @@ def test_detector_reversal_and_flat_data() -> None:
     assert float(jnp.abs(Rings().apply(flat) - flat).max()) < 1e-6
 
 
+@pytest.mark.parametrize("columns", [1, 2])
+def test_full_turn_with_fewer_columns_than_correlation_lags(columns: int) -> None:
+    geometry = tj.ParallelGeometry(
+        tj.Grid(columns, columns, 1, 1, 1, 1),
+        tj.Detector(columns, 1, 1, 1),
+        np.arange(32) * 360 / 32,
+    )
+    q = jnp.full((32, 1, columns), 0.3, jnp.float32)
+    np.testing.assert_allclose(Rings(geometry).apply(q), q, atol=1e-6)
+
+
 def test_mirror_only_on_a_stationary_parallel_full_turn() -> None:
     assert Rings(_geometry(360.0, 180, offset=0.3)).mirror_axis == 127.0
     assert Rings(_geometry(362.0, 181)).mirror_axis == 127.5  # last view repeats the first

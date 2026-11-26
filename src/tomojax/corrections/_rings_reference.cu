@@ -216,8 +216,8 @@ extern "C" __global__ void row_correlations(const float *residual, float *rho) {
             p2 += a * (r[x - 2] - mean);
     }
     float variance = fmaxf(block_sum(vtotal, work) / float(N), 1.1754943508222875e-38f);
-    float rho1 = fminf(fmaxf((block_sum(p1, work) / float(N - 1)) / variance, 0.0f), 1.0f);
-    float rho2 = fminf(fmaxf((block_sum(p2, work) / float(N - 2)) / variance, 0.0f), 1.0f);
+    float rho1 = fminf(fmaxf((block_sum(p1, work) / float(max(1, N - 1))) / variance, 0.0f), 1.0f);
+    float rho2 = fminf(fmaxf((block_sum(p2, work) / float(max(1, N - 2))) / variance, 0.0f), 1.0f);
     if (t == 0) {
         rho[row * 2] = rho1;
         rho[row * 2 + 1] = rho2;
