@@ -129,7 +129,7 @@ class CGLSConfig(Record, tag="CGLSConfig"):
 class FISTAConfig(Record, tag="FISTAConfig"):
     """Wire fields of FISTAConfig."""
 
-    iterations: int = 50
+    iterations: int = 200
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
     tv_weight: float | None = None
     regularizer: Literal["tv", "huber_tv"] = "tv"

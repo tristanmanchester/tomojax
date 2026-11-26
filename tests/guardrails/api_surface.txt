@@ -718,7 +718,7 @@ class tomojax.recon.FDKConfig(
 class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk: 'FDKConfig' = <factory>) -> None
 class tomojax.recon.FISTAConfig(
         *,
-        iterations: int = 50,
+        iterations: int = 200,
         data_term: Literal['absolute', 'per_view_contrast'] = 'absolute',
         tv_weight: float | None = None,
         regularizer: Literal['tv', 'huber_tv'] = 'tv',

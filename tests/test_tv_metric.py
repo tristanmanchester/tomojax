@@ -155,7 +155,9 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
             grid,
             detector,
             data,
-            config=replace(cfg, tv_weight=info["resolved_tv_weight"]),
+            config=replace(
+                cfg, tv_weight=info["resolved_tv_weight"], iterations=info["effective_iterations"]
+            ),
         )
         np.testing.assert_allclose(explicit, expected, rtol=2e-5, atol=3e-7)
     length, amplitude = 1000, 3
@@ -199,3 +201,36 @@ def test_fista_weights_on_one_or_two_pixel_rows_resolve_to_zero(pixels):
             config=FISTAConfig(iterations=2, tv_weight=weight, backend="jax"),
         )
         assert np.isfinite(volume).all() and info["effective_tv_weight"] == 0
+
+
+def test_automatic_fista_has_no_weight_floor_for_affine_detector_signal():
+    from tomojax.recon import FISTAConfig, fista
+
+    grid, detector = Grid(8, 8, 2, 1, 1, 1), Detector(8, 2, 1, 1)
+    geometry = ParallelGeometry(grid, detector, np.arange(8) * 20)
+    ramp = np.broadcast_to(np.arange(8, dtype=np.float32), (8, 2, 8))
+    _, info = fista(geometry, grid, detector, ramp, config=FISTAConfig(iterations=0))
+    assert info["contrast_scale"] > 0
+    assert info["effective_tv_weight"] == info["resolved_tv_weight"] == 0
+
+
+def test_noise_stopped_fista_replays_with_reported_weight_and_budget():
+    from tomojax.recon import FISTAConfig, fista
+
+    grid, detector = Grid(8, 8, 2, 1, 1, 1), Detector(8, 2, 1, 1)
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 24, endpoint=False))
+    data = np.random.default_rng(281).normal(size=(24, 2, 8)).astype(np.float32)
+    config = FISTAConfig(backend="jax", lower_bound=0)
+    result, info = fista(geometry, grid, detector, data, config=config)
+    assert info["noise_score_rms"] > 0 and info["early_stop"]
+    assert 0 < info["effective_iterations"] < config.iterations
+    replay, _ = fista(
+        geometry,
+        grid,
+        detector,
+        data,
+        config=replace(
+            config, tv_weight=info["resolved_tv_weight"], iterations=info["effective_iterations"]
+        ),
+    )
+    np.testing.assert_allclose(result, replay, rtol=3e-5, atol=3e-7)

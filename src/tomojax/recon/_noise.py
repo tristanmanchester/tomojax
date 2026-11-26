@@ -51,6 +51,14 @@ def _require_samples(present: jax.Array | bool | np.bool_) -> None:
         raise ValueError("Noise level cannot be estimated: pass tv_weight explicitly.")
 
 
+def _sample_cells(population: int) -> np.ndarray:
+    return (
+        np.arange(population)
+        if population <= 65536
+        else np.random.default_rng(0).integers(population, size=65536)
+    )
+
+
 def estimate_projection_noise(
     projections: _SampledStack | jax.Array | np.ndarray,
     *,
@@ -81,11 +89,7 @@ def estimate_projection_noise(
         _require_samples(False)
     rows, columns = nv // dv, nu // du
     population = n * rows * columns
-    selected = (
-        np.arange(population)
-        if population <= 65536
-        else np.random.default_rng(0).integers(population, size=65536)
-    )
+    selected = _sample_cells(population)
     views, cells = np.divmod(selected, rows * columns)
     row, column = np.divmod(cells, columns)
     on_device = any(isinstance(x, jax.Array | Tracer) for x in (projections, weights))
@@ -111,3 +115,34 @@ def estimate_projection_noise(
     median = xp.nanmedian(coefficients)
     sigma = xp.nanmedian(xp.abs(coefficients - median)) * MAD_TO_SD
     return jax.lax.stop_gradient(sigma) if on_device else sigma
+
+
+def detector_error_scale(projections: jax.Array | np.ndarray) -> jax.Array | np.float64:
+    """Combine measurement noise and unresolved subpixel curvature on the detector.
+
+    After removing its cell mean, the quadratic interpolation remainder of a
+    uniform subpixel coordinate has variance (second difference)**2 / 720.
+    Each three-point stencil contributes 6 sigma**2 from measurement noise.
+    Independent subpixel coordinates give additive variances across axes.
+    """
+    sigma = estimate_projection_noise(projections)
+    n, nv, nu = projections.shape
+    v, u = int(nv >= 3), int(nu >= 3)
+    population = n * (nv - 2 * v) * (nu - 2 * u)
+    selected = _sample_cells(population)
+    views, cells = np.divmod(selected, (nv - 2 * v) * (nu - 2 * u))
+    rows, columns = np.divmod(cells, nu - 2 * u)
+    rows, columns = rows + v, columns + u
+    xp = jnp if isinstance(projections, jax.Array | Tracer) else np
+    center = projections[views, rows, columns].astype(np.float32)
+
+    def difference(a: int, b: int) -> jax.Array | np.ndarray:
+        left = projections[views, rows - a, columns - b].astype(np.float32)
+        right = projections[views, rows + a, columns + b].astype(np.float32)
+        return (left - center) + (right - center)
+
+    dv = difference(v, 0)
+    du = difference(0, u)
+    curvature = xp.mean(dv * dv + du * du) - 6 * (v + u) * sigma**2
+    variance = sigma**2 + xp.maximum(curvature, 0) / 720
+    return jax.lax.stop_gradient(jnp.sqrt(variance)) if xp is jnp else np.float64(np.sqrt(variance))

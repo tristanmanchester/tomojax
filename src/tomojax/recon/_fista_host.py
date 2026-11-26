@@ -16,7 +16,7 @@ from tomojax.wire.metrics import Metric
 
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
-from ._tv_metric import raise_tv_weight
+from ._tv_metric import voxel_noise_weight
 from ._tv_ops import gradient_norm_squared
 
 if TYPE_CHECKING:
@@ -185,7 +185,9 @@ class HostFista:
         if self.noise_scale is not None:
             if self.metric is None:
                 raise ValueError("automatic host FISTA TV requires a resolved TV metric")
-            self.metric = raise_tv_weight(self.metric, self.noise_scale * self.noise_gradient_rms())
+            self.metric = voxel_noise_weight(
+                self.metric, self.noise_scale * self.noise_gradient_rms(), self.shape
+            )
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz
         if limit is None:
@@ -230,7 +232,7 @@ class HostFista:
             self.Z.put(z0, z1, part)
         return float(limit), value
 
-    def update(self, limit: float, momentum: np.float32, *, gradient: bool = False) -> None:
+    def update(self, limit: float, momentum: np.float32, *, gradient: bool = False) -> bool:
         """Gradient step, global finite-step TV proximal, and the resident clipped momentum."""
         cfg, xp = self.cfg, self.xp
         metric = self.metric
@@ -242,7 +244,13 @@ class HostFista:
                 self.G.put(z0, z1, step)
             del step
 
+        peak = 0.0
+        score = metric.noise_score_rms if cfg.tolerance is None and metric is not None else None
+
         def momentum_sink(z0: int, z1: int, new: CuPyValue) -> None:
+            nonlocal peak
+            if score is not None:
+                peak = max(peak, float(xp.max(xp.abs(self.Z.view(z0, z1) - new))))
             old = self.X.view(z0, z1)
             self.X.put(z0, z1, new)
             self.Z.put(z0, z1, xp.clip(new + momentum * (new - old), self.lower, self.upper))
@@ -257,6 +265,8 @@ class HostFista:
             lower=self.lower,
             upper=self.upper,
         )
+
+        return score is not None and limit * peak <= float(score)
 
     def regularizer(self) -> float:
         """Isotropic TV with each slab's outgoing z edge, counted once."""
@@ -290,7 +300,7 @@ class HostFista:
                 at_zero if gradient else self.apply(self.Z, self.G, residual=True, step=1 / limit)
             )
             tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
-            self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
+            done = self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
             if cfg.tolerance and cfg.patience:
                 small = (
                     bool(losses)

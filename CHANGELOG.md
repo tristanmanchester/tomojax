@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- FISTA calibrates automatic TV from detector noise and subpixel curvature and
+  stops at the estimated noise level of the proximal gradient mapping. The
+  default iteration cap is 200.
 - Cone-beam CUDA kernels reduce tile maxima with warp shuffles instead of
   `__reduce_max_sync`, so they compile and run on Volta and Turing GPUs (V100, T4,
   RTX 20xx) as well as Ampere and newer cards.

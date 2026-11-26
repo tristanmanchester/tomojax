@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.recon._noise import estimate_projection_noise
+from tomojax.recon._noise import detector_error_scale, estimate_projection_noise
 
 
 @pytest.mark.parametrize("shape", [(5, 17, 19), (5, 1, 19), (5, 17, 1)])
@@ -87,3 +87,15 @@ def test_noise_drops_a_partially_masked_cell_whole():
     assert estimate_projection_noise(values, weights=weights) == pytest.approx(expected)
     actual = estimate_projection_noise(jnp.asarray(values), weights=jnp.asarray(weights))
     assert float(actual) == pytest.approx(expected, rel=2e-6)
+
+
+def test_subpixel_scale_matches_interpolation_of_quadratic_signal():
+    # Linear interpolation on [0, 1] of x**2 returns x. The sampling
+    # uncertainty is the SD of the actual interpolation residual in a cell.
+    x = (np.arange(10000) + 0.5) / 10000
+    expected = np.std(x - x**2)
+    quadratic = np.broadcast_to(np.arange(16, dtype=np.float32) ** 2, (8, 6, 16))
+    for data in (quadratic, jnp.asarray(quadratic)):
+        assert float(detector_error_scale(data)) == pytest.approx(expected, rel=1e-6)
+    ramp = np.broadcast_to(np.arange(16, dtype=np.float32), quadratic.shape)
+    assert detector_error_scale(ramp) == 0

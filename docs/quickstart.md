@@ -162,7 +162,7 @@ recon = tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv",
 Direct keywords (such as `iterations=100`) override fields of the same name in `config`.
 
 - **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
-- **FISTA TV weight:** `tv_weight=None` estimates noise from projections to set a dimensionless weight above a `5e-5` floor, normalized in physical coordinates so it stays invariant across length units. Pass a positive number to fix it, or `0` to disable TV.
+- **FISTA TV weight:** `tv_weight=None` estimates detector noise and interpolation uncertainty, backprojects their scale, and accounts for the TV cost of an isolated voxel. Pass a positive number to fix it, or `0` to disable TV.
 
 ### Export slices
 

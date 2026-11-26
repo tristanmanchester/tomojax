@@ -1388,7 +1388,7 @@
         },
         "iterations": {
           "type": "integer",
-          "default": 50
+          "default": 200
         },
         "data_term": {
           "enum": [

@@ -510,8 +510,8 @@ def reconstruct(
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
         Least squares with physical total variation, ``iterations`` (default
-        50), optionally ``nonnegative``. Default ``tv_weight=None`` raises an
-        empirical minimum of 5e-5 using a projection-only noise estimate. An
+        200), optionally ``nonnegative``. Default ``tv_weight=None`` calibrates TV
+        and stopping from detector noise and interpolation uncertainty. An
         explicit positive weight bypasses estimation; zero disables TV.
     ``sirt``
         SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.

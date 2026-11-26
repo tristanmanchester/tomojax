@@ -436,7 +436,7 @@ def test_recon_cli_config_settings_are_fields_of_the_methods_configuration(
     assert main([*args, "--config", str(config)]) == 0
 
     cfg = calls["config"]
-    assert (cfg.regularizer, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 50)
+    assert (cfg.regularizer, cfg.huber_delta, cfg.iterations) == ("huber_tv", 0.05, 200)
     # A key that is an option is passed as the keyword, which tj.reconstruct applies.
     assert calls["tv_weight"] == 0.01
 
@@ -807,13 +807,9 @@ def test_reconstruct_help_defaults_config_keys_and_boolean_overrides(
         main(["reconstruct", "--help"])
     assert help_exit.value.code == 0
     help_text = capsys.readouterr().out
-    assert f"cgls/fista/sirt/mlem {CGLSConfig().iterations}" in help_text
-    assert (
-        CGLSConfig().iterations
-        == FISTAConfig().iterations
-        == SIRTConfig().iterations
-        == MLEMConfig().iterations
-    )
+    assert f"cgls/sirt/mlem {CGLSConfig().iterations}" in help_text
+    assert CGLSConfig().iterations == SIRTConfig().iterations == MLEMConfig().iterations
+    assert f"fista {FISTAConfig().iterations}" in help_text
     assert f"spdhg {SPDHGConfig().iterations}" in help_text
 
     with pytest.raises(SystemExit) as keys_exit:

@@ -41,16 +41,19 @@ step, controlled by `tv_prox_iterations`; the outer step uses only the data
 operator's Lipschitz scale. Huber smoothing does not add a large global curvature
 penalty to that outer step.
 
-The default `tv_weight=None` automatically raises an empirical minimum of
-`5e-5` using a bounded, projection-only Haar-MAD noise estimate and one centered
-Gaussian backprojection probe. The minimum was selected on plate validation
-and image-checked on K11 and the corpus; it is not theoretically derived. Noise
-only raises it. This iid scale does not separate object texture or correlated
-noise, and its full-volume RMS can change with volume padding. An explicit
-positive weight bypasses estimation; `0` disables TV. Undefined noise estimates
-ask for an explicit weight rather than choosing a fallback. `info` reports
-`resolved_tv_weight`, `effective_tv_weight`, and the normalization scales.
-An iteration budget does not establish convergence.
+FISTA estimates a detector error scale from Haar-MAD measurement noise and the
+curvature of the measured detector image. A centered Gaussian backprojection
+propagates that scale into the data gradient. The automatic weight compares the
+estimated largest voxel score with the TV cost of a unit impulse in the flat
+interior. Coverage variation, detector correlations, and model bias limit this
+approximation. SPDHG retains its Haar-MAD calibration and empirical minimum of
+`5e-5`. Both solvers accept a dimensionless explicit weight, including zero.
+
+Automatic FISTA stops when the largest component of the proximal gradient
+mapping falls below one estimated score SD, or after 200 updates. The mapping
+uses the configured finite proximal solve. Inspect `early_stop` to distinguish
+statistical stopping from exhausting the budget. To replay an automatic run,
+pass `resolved_tv_weight` and `effective_iterations` from its `info` record.
 
 SIRT uses the exact matched projector pair with row/column normalization:
 `SIRTConfig(iterations=50, subsets=1, lower_bound=0, upper_bound=None, support=None)`.
