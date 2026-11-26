@@ -57,9 +57,14 @@ HDF5 and TIFF sample, flat, and dark stacks are read lazily during correction, s
 
 ### Ring removal
 
-Use `Rings()` for fine and wide rings. It fits each column's offset and
-transmission-dependent response. Crop detector rows for a quick preview so
-every view still contributes to the fit.
+Use `Rings()` in Python or `--rings` on the CLI to remove fine and wide detector
+rings. The step needs no width or tuning parameters; `frames.corrected`,
+`scan.corrected`, `tj.reconstruct_slabs`, and `tomojax correct --rings` bind the
+scan geometry automatically.
+
+```bash
+tomojax correct raw.nxs -o corrected.nxs --rings
+```
 
 ```python
 from tomojax.corrections import Rings
@@ -68,13 +73,28 @@ frames = tj.load_frames("raw.nxs").cropped(slice(100, 116), slice(None))
 scan = frames.corrected(Rings())
 ```
 
-A detector defect can give the same measurements as a circular feature centered
-on the rotation axis. Compare corrected and uncorrected slices there.
-See [detector-response correction](../src/tomojax/corrections/README.md).
+Crop detector rows for a quick preview so every view still contributes to the
+fit. `Rings()` models each column's additive offset and transmission-dependent
+response: on half-turn scans it estimates wide offsets from persistent jumps
+between columns as the sample rotates, and on stationary parallel-beam full
+turns it also compares opposed angular arcs.
+
+`Rings()` corrects stationary column errors only. Artifacts that vary with angle
+(bad or drifting flat fields, flux drops, or angular swirls) are not detector
+rings and are not removed, and this step does not interpolate dead pixels. A
+circular sample feature centered on the rotation axis gives the same
+measurements as a symmetric detector offset, so compare corrected and
+uncorrected slices near the axis.
+
+By default `Rings()` fits on 512 angular bin means, so it adds about 10 s on a
+half turn and 20 s on a full turn of an 8,000-view 2160 × 2560 streamed Fourier
+volume on one V100S, with ~15 MiB extra GPU memory. See
+[ring removal](../src/tomojax/corrections/README.md#ring-removal) and
+[ring measurements](measurements.md#ring-correction).
 
 ![A raw detector frame of a sandstone plug with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i12-first-slice.png)
 
-Diamond I12 sandstone (Vo et al., Zenodo 3339629; 1801 views of 2560-pixel rows): raw frame with 16 cropped rows marked, middle-row sinogram after the earlier sorting-based ring correction, and FBP slice at axis column 1417.5:
+Diamond I12 sandstone (Vo et al., Zenodo 3339629; 1801 views of 2560-pixel rows): raw frame with 16 cropped rows marked, middle-row sinogram after ring correction, and FBP slice at axis column 1417.5:
 
 ```bash
 uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-slice.png \

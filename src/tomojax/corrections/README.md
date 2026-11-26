@@ -45,7 +45,7 @@ Steps, each a frozen dataclass of its settings:
 | `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbors' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalized transmission before the log | Python only |
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in meters, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
-| `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
+| `Rings(geometry=None, *, views=512)` | line integrals | fine and wide column offsets and transmission-dependent responses; binds geometry automatically in `Frames.corrected` and `Scan.corrected` | `--rings` |
 | `RejectViews(z=6.0)` | line integrals | drops the views between an abrupt step in the mean line integral and the step back (a beam loss, a missed frame), and their geometry; smooth changes of the object are kept | `--reject-views [Z]` |
 | `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearization, see below | Python only |
 
@@ -62,28 +62,62 @@ Also exported:
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
 
-`Rings()` fits each detector column's offset and transmission-dependent
-response, then inverts that response for every view. The local slope fit
-compares a column with its neighbors and uses independent neighboring views
-to estimate how much of the difference follows the detector.
+## Ring removal
 
-On a half turn, ranked transmissions across angular arcs measure offsets.
-Persistent jumps between columns locate the edges of wider defects. The
-variation between arcs sets the weight of both measurements. On a stationary
-parallel-beam full turn, opposed columns measure the same lines through the
-sample. The fit compares short angular arcs at reflected detector coordinates.
-Repeatable differences measure how much detector power can support a broader
-offset or slope. Locally quadratic rays constrain the offset through a weighted
-median. Symmetric sample features and symmetric detector offsets can still give
-the same data.
-The step records the mirror axis it used. The CLI applies `--rings` with the
-selected and cropped geometry before view rejection and detector binning.
+`Rings()` is the library's ring-artifact correction (`tomojax correct --rings` on
+the CLI). It takes no width or tuning parameters. `Frames.corrected`,
+`Scan.corrected`, `tj.reconstruct_slabs`, and `tomojax correct --rings` bind the
+scan's geometry automatically when `geometry=None`, and `tomojax correct --rings`
+runs with the selected and cropped geometry before view rejection and detector
+binning.
 
-Built-in angular geometries supply the view ordering and angular interpolation
-weights within each trajectory; cone segments stay separate. Without such
-geometry, supply views in continuous acquisition order. At least two views per
-trajectory are required. This separation is statistical: fine stationary object
-structure can still resemble detector errors, and broad defects can be left.
+`Rings()` models each detector column as reporting `q + a + b (1 - exp(-q))`
+instead of the true line integral `q`, where `a` is an additive offset and `b`
+is a transmission-dependent response. After regularization, a constrained refit
+keeps every observation on an invertible branch with response derivative at
+least 0.5 so corrected line integrals are never clipped.
+
+How `Rings()` separates detector errors from the sample depends on the scan
+geometry:
+
+- **Half-turn, non-parallel, or non-uniform scans:** a local quadratic fit across
+  neighboring columns estimates fine column offsets and transmission slopes using
+  independent neighboring views as an instrument. Ranked transmission profiles
+  across angular arcs and persistent jumps between adjacent columns estimate
+  wider offsets without a fixed window width. Variation across disjoint angular
+  arcs weights both terms.
+- **Stationary parallel-beam full turns (evenly sampled 360°):** opposed columns
+  measure the same rays through the sample. `Rings()` compares short angular arcs
+  half a turn apart at reflected detector coordinates (with cubic interpolation at
+  the physical rotation axis) to estimate the detector power available for broader
+  offsets and transmission slopes. Where reflected neighborhoods overlap near the
+  axis, the offset weights account for the shared columns. A weighted median over
+  locally smooth views refines the column intercept.
+
+`Rings()` removes stationary column errors only. Artifacts that vary with view
+angle, such as bad or drifting flat fields, flux drops, or angular swirls, are
+not fixed to detector columns and stay in the reconstruction; fix the flats or
+drop affected frames with `RejectViews`. `Rings()` does not detect or interpolate
+dead pixels (flat/dark calibration interpolates bracketed unmeasured pixels;
+other bad pixels need repair beforehand). A circular sample feature centered on
+the rotation axis produces the same parallel-beam projections as a symmetric
+detector offset and cannot be separated without external calibration. Fine
+stationary object structure and broad detector defects can also remain ambiguous.
+
+By default `Rings()` fits on the means of about `views=512` contiguous angular
+bins and applies the fitted inverse to every view. Pass `views=None` to fit
+every view directly when sample structure moves across columns within a bin. On
+an 8,000-view 2160 × 2560 streamed Fourier reconstruction on one V100S, `Rings()`
+adds about 10 s on a half turn and 20 s on a full turn, with ~15 MiB extra GPU
+memory ([ring measurements](../../../docs/measurements.md#ring-correction)).
+Because it acts on whole detector rows, it runs inside `tj.reconstruct_slabs`
+and fused row-slab correction without holding an unbinned stack in host memory.
+
+Built-in angular geometries order views by angle within each trajectory and keep
+cone segments separate. Without such geometry, supply views in continuous
+acquisition order with at least two views per trajectory. The step records
+`mirror_axis` (the physical axis column on a full-turn parallel scan, or `None`)
+and `views` in `Scan.corrections`.
 
 ## Beam hardening
 

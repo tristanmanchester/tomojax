@@ -300,7 +300,59 @@ Checking recorded cone ray bundles (`ad7f9805`) confirms two exact geometric ali
 
 A fixed-pose Walnut 1 focal-scale test (`c46c52e3`) recovered synthetic scale within 3.24e−9 noiselessly, but on real walnut data shifted held-out correspondence MSE to 1.00034× (no improvement), so focal scaling is not fitted automatically.
 
-## Detector response and structure controls
+## Ring correction
+
+### Half-turn and full-turn synchrotron scans
+
+Measured 2026-11-26 (`f324a3fb`) on Diamond K11 (DIAD) scans and matched simulations on one Tesla V100S 32 GB GPU, and on Diamond I13 cuts on the RTX 4070 Laptop GPU. Fine-ring RMS averages each slice over concentric circles about the rotation axis (0.25 px radius bins, up to 16 angular sectors) minus its 15 px radial running mean, divided by that slice's robust spread (1.4826 × MAD inside 1,000 px). On real scans, this includes the sample's own fine radial texture so zero is unreachable.
+
+#### Real scans
+
+DIAD results cover all 51 rotation scans of visit `mg40414-1` (153 bands across detector rows 540, 1080, and 1620; 8,000 views of 2,560 columns over 180°, Fourier reconstruction). I13 results cover 12 detector rows each (rows 700–1437) of two 3,001-view full-turn scans (`159950` and `159965`, 100 flats before and after), evaluated as full turns at their opposed-view registered axes (columns 1159.1 and 1158.6) and as half turns using the first 1,500 views at the published axes (columns 1403.7 and 1404.1).
+
+| Scan or group | Bands / rows | Metric | No ring step | `Rings()` |
+| --- | ---: | --- | ---: | ---: |
+| DIAD ordinary half turns | 132 | Median fine-ring RMS, 5–1000 px | 0.292 | 0.128 |
+| DIAD hard half turns (wide rings, 40° starts) | 21 | Median fine-ring RMS, 5–1000 px | 0.364 | 0.214 |
+| DIAD K11-52510, row 1080 | 1 | Fine-ring RMS, 5–1000 px | 0.493 | 0.246 |
+| DIAD K11-52514, row 1080 | 1 | Fine-ring RMS, 5–1000 px | 0.346 | 0.211 |
+| I13 159950, full turn (registered axis) | 12 | Median fine-ring RMS, 5–1000 / 5–100 px | 0.263 / 1.190 | 0.135 / 0.330 |
+| I13 159965, full turn (registered axis) | 12 | Median fine-ring RMS, 5–1000 / 5–100 px | 0.270 / 1.252 | 0.136 / 0.321 |
+| I13 159950 / 159965, row 1035 (registered) | 2 | Center contrast (mean < 8 px minus 18–24 px) | 4.84 / 4.24 | −0.036 / −0.026 |
+| I13 159950, first 1,500 views (half turn) | 12 | Median fine-ring RMS, 5–1000 / 5–100 px | 0.166 / 0.698 | 0.089 / 0.301 |
+| I13 159965, first 1,500 views (half turn) | 12 | Median fine-ring RMS, 5–1000 / 5–100 px | 0.159 / 0.651 | 0.087 / 0.298 |
+
+Across all 24 full-turn I13 rows on registered axes, the largest absolute center contrast after `Rings()` is 0.310. On the DIAD 40°-start scans (`52557`, `52615`), angle-varying swirls are not column-fixed detector errors and remain untouched.
+
+#### Simulated scans with known truth
+
+One detector row at DIAD size (8,000 views × 2,560 columns, axis 10.3 px off center, two noise seeds) projected from two DIAD-derived objects (`52609` composite, `52571` featureless) and an analytic sharp-disk phantom with a particle on the rotation axis. All arms within a run share photon noise, and errors are measured over 5–1000 px against the ideal-detector reconstruction without a ring step. "DIAD-like" adds constant offsets plus a transmission-dependent response; "strong drift" adds the measured drift between K11-52510's flat sets; "finite flats" uses 100-frame flat noise with no other detector defects.
+
+| Object and turn | DIAD-like: fine share / total RMS | Strong drift: fine share / total RMS | Ideal detector total RMS (`Rings()`) | 100-frame flats total RMS (no step / `Rings()`) |
+| --- | ---: | ---: | ---: | ---: |
+| 52609, half turn | 0.155 / 0.034 | 0.344 / 0.098 | 0.009 | 0.037 / 0.023 |
+| 52609, full turn | 0.142 / 0.023 | 0.313 / 0.074 | 0.010 | 0.026 / 0.017 |
+| 52571, half turn | 0.158 / 0.080 | 0.339 / 0.280 | 0.020 | 0.129 / 0.071 |
+| 52571, full turn | 0.153 / 0.059 | 0.334 / 0.200 | 0.021 | 0.097 / 0.056 |
+| Sharp disks, half turn | 0.220 / 0.050 | 0.418 / 0.137 | 0.017 | 0.044 / 0.030 |
+| Sharp disks, full turn | 0.231 / 0.039 | 0.368 / 0.098 | 0.021 | 0.032 / 0.030 |
+
+Fine share is the corrected fine-ring RMS divided by the uncorrected fine-ring RMS (0.15 means 15% remains); total RMS includes broad and non-radial changes in units of the ideal slice's robust spread. On every object and turn, `Rings()` lowers total RMS on 100-frame finite flats relative to no correction, and its change on an ideal detector stays below 100-frame flat noise.
+
+Inside 15 px of the rotation axis on the sharp disks with a centered particle, strong full-turn drift leaves 2.013 total RMS (against 2.138 uncorrected), and full-turn finite-flat or weak-offset runs retain higher inner-15 px RMS than uncorrected scans. On an analytic parallel-beam test with a centered circular annulus (0.00312 peak line-integral signal), adding the annulus to the sample or multiplying the flat field by its exponential differs in line integrals by at most 1.67 × 10⁻¹⁶ across both half and full turns, so no projection-only correction can distinguish the two.
+
+#### Cost at full volume size
+
+K11-52567 (8,000 views of 2,160 × 2,560 pixels) held in host RAM and reconstructed with slab Fourier (`tj.reconstruct_slabs(frames, "fourier", corrections=...)`) on one Tesla V100S 32 GB GPU with 10 CPUs (warm runs). The full-turn row relabels the same raw frames to 360° as a speed control on one V100S host.
+
+| Geometry | No ring step (warm) | With `Rings()` (warm) | Device step alone (2,160 rows, scaled from 8 rows) | Peak GPU (no step / `Rings()`) |
+| --- | ---: | ---: | ---: | ---: |
+| Half turn (180°) | 28.3 s | 37.3–38.3 s | 5.7 s | 4.053 / 4.068 GiB |
+| Full turn (360° control) | 29.3–30.2 s | 50.0 s | 17.7 s | — |
+
+Peak host memory on the half-turn volume was 84.70 GiB without a ring step and 84.93 GiB with `Rings()`.
+
+### Structure controls against Algotom
 
 Comparing `tomojax.corrections.Rings` against Algotom 1.7 (`-log(remove_all_stripe(exp(-q)))`, default 3/51/21) on real parallel-beam cuts (`e71f900f`, `271fd6e3`). Injected detector response is `a + b(1 - exp(-q))` (RMS 0.004 and 0.006); off-axis structure probes are independent analytic Gaussian Radon traces (widths 2 and 8 px, peak 0.05, radii 0.35 and 0.7 of detector half-width):
 

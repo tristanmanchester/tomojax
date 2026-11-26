@@ -6,7 +6,7 @@ The pixel sizes and rotation centers below belong to these specific acquisitions
 
 ![Five slices, one from each recipe on this page, each above an enlarged region: ESRF bamboo, a PSI TOMCAT skin sample, an Elettra polystyrene foam, the PSI cSAXS porous glass and the Diamond I13 pellet.](images/beamline-first-slices.png)
 
-One native detector row from each scan, reconstructed with `tj.reconstruct(scan)`. The figure used the earlier sorting-based ring correction on ESRF and Diamond I13. The current example uses `Rings()` on both. Elettra extends beyond the detector (local tomography), and cSAXS reconstructs refractive phase rather than attenuation.
+One native detector row from each scan, reconstructed with `tj.reconstruct(scan)`. The example script applies `Rings()` to ESRF and Diamond I13. Elettra extends beyond the detector (local tomography), and cSAXS reconstructs refractive phase rather than attenuation.
 
 ```bash
 uv run python examples/gallery/beamline_first_slices.py DATA beamline-first-slices.png

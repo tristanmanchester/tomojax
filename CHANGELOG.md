@@ -6,9 +6,11 @@
   parallel scans. It uses the sharpness of a Fourier slice and registers native
   opposing rays, including at large offsets. The result carries the corrected
   scan. Use `method="joint"` when you also need a fitted working volume.
-
-- Use `Rings()` or `tomojax correct --rings` for fine and wide detector rings.
-  The `Stripes` step, `--stripes WIDTH` and `stripes_varying` setting have been removed.
+- `Rings()` (and `tomojax correct --rings`) is the single ring-artifact correction and
+  estimates fine and wide detector offsets without a width parameter on half-turn and
+  full-turn scans. `Stripes`, `--stripes WIDTH`, and `stripes_varying` have been removed
+  from Python, the CLI, the wire schema, and Studio; replace `Stripes(...)` with `Rings()`
+  and `--stripes WIDTH` with `--rings`.
 - Fourier reconstruction accepts `filter="ramp"`, `"hann"`, or `"shepp-logan"`
   in `tj.reconstruct`, `tj.reconstruct_slabs` (via `FourierConfig(filter=...)`),
   the CLI (`--filter`), and wire options. Passing a filter applies FBP's linear

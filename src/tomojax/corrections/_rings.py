@@ -570,48 +570,55 @@ class Rings(Step):
     A column whose gain or response the flat field does not describe reports
     ``q + a + b (1 - exp(-q))`` instead of the line integral ``q``: a stripe in
     the sinogram, a ring in the volume, stronger where the sample absorbs more
-    when ``b`` is not zero. The fitted response is inverted in two passes.
-    This step does not interpolate detector columns: low angular variation
-    alone cannot distinguish a defective pixel from object structure. Raw
-    flat/dark calibration interpolates bracketed pixels without measured
-    illumination; other defective measurements need independent calibration
-    evidence and repair before this step.
+    when ``b`` is not zero. The fit runs in two passes (one pass on binned
+    non-mirror scans). ``Frames.corrected``, ``Scan.corrected``, and
+    ``tj.reconstruct_slabs`` bind ``geometry`` automatically when it is None,
+    so callers normally pass ``Rings()`` with no arguments.
 
-    After statistical regularization, a constrained coefficient refit ensures
-    that every observation has an inverse on a branch with response derivative
-    at least one half. It minimizes coefficient displacement in the reference
-    regression metric subject to a conservative linear feasibility constraint;
+    This step removes stationary column errors only. Artifacts that vary with
+    view angle (such as bad or drifting flat fields, flux drops, or angular
+    swirls) are not detector rings and are not removed. This step does not
+    detect or interpolate dead pixels: low angular variation alone cannot
+    distinguish a defective pixel from object structure. Raw flat/dark
+    calibration interpolates bracketed pixels without measured illumination;
+    other defective measurements need independent calibration evidence and
+    repair before this step.
+
+    After statistical regularization, a constrained coefficient refit keeps
+    every observation on an invertible branch with response derivative at least
+    one half. It minimizes coefficient displacement in the reference regression
+    metric subject to a conservative linear feasibility constraint, so
     corrected line integrals are not clipped. This also modifies the parity
     prior where it would otherwise produce a noninvertible response.
 
     On a stationary parallel-beam scan over one evenly sampled full turn,
     short angular arcs measure each column's mean response and its change
-    with transmission. A cubic interpolation compares opposing arcs at the
+    with transmission. Cubic interpolation compares opposing arcs at the
     reflected detector coordinates. Repeatable differences between the arcs
-    estimate the detector power in a neighborhood around each column. The
-    offset fit weights the arc mean by its uncertainty where reflected
-    neighborhoods overlap and share the same detector columns.
+    estimate the detector power in a neighborhood around each column. Where
+    reflected neighborhoods overlap near the axis and share detector columns,
+    the offset fit weights the arc mean by its uncertainty across arcs.
 
-    A weighted median over views provides a more precise intercept on locally
-    quadratic rays. The angular scatter of the local spatial contrast and
-    the residual variation across arcs weight the two estimates. The local
-    field prior uses reflection on the nearest half-pixel grid. The arc
-    comparison uses the recorded physical axis. A symmetric sample feature
-    and a symmetric detector offset can still give identical measurements.
-    The fit averages a repeated closing phase and uses cyclic angular neighbors.
+    A weighted median over views refines the intercept on locally quadratic
+    rays. The angular scatter of the local spatial contrast and the residual
+    variation across arcs weight the two estimates. The local field prior uses
+    reflection on the nearest half-pixel grid, while the arc comparison uses
+    the recorded physical axis. A symmetric sample feature and a symmetric
+    detector offset can still give identical measurements. The fit averages a
+    repeated closing phase and uses cyclic angular neighbors.
 
     Otherwise, each unsorted view is compared with a quadratic through six
     neighboring columns on either side. Independent neighboring views supply
-    an instrument for the response fit, avoiding correlation between reference
-    noise and regression error. Angular covariance and the unfiltered scene's
+    an instrument for the response fit so reference noise does not correlate
+    with regression error. Angular covariance and the unfiltered scene's
     spatial power regularize the local response contrast before inversion.
-    Angular rank profiles estimate the column offsets at several spatial
-    scales. Persistent jumps between adjacent columns locate the boundaries
-    of wider defects. The variation between disjoint angular arcs sets the
-    weight of these measurements in the offset fit.
-    Smooth object structure is retained rather than interpreted as calibration
-    error. This is a statistical separation, not a no-change guarantee: fine
-    stationary object structure and broad detector errors can be ambiguous.
+    Angular rank profiles estimate column offsets at several spatial scales,
+    and persistent jumps between adjacent columns locate the boundaries of
+    wider defects. Variation between disjoint angular arcs weights both
+    measurements in the offset fit. Smooth object structure is retained rather
+    than interpreted as calibration error. Because the separation is
+    statistical, fine stationary object structure and broad detector errors can
+    remain ambiguous.
 
     Built-in angular geometries order the views by angle within each trajectory;
     single turns are unwrapped across the largest unsampled arc, explicit

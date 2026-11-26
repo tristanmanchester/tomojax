@@ -13,7 +13,7 @@ class Correction:
     """One correction applied to a scan: what it was, its settings and what it found.
 
     ``settings`` are the step's own (a flat field's frame and set counts, a
-    stripe filter's width); ``found`` holds what the data showed while it ran
+    ring correction's mirror axis); ``found`` holds what the data showed while it ran
     (pixels with no light, non-finite values set to zero). Both are JSON, so
     the record is saved with the scan and read back with it.
 

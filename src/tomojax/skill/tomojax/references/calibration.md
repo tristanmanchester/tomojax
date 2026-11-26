@@ -41,6 +41,6 @@ p = np.linspace(0, 2, 50)
 residual = empirical.inverse(physical.curve(p)) - p
 ```
 
-Inspect the settings and findings recorded by a corrected scan with
+For detector rings on line integrals, apply `corrections.Rings()` (no width parameter; `Frames.corrected` and `Scan.corrected` bind geometry automatically). Inspect the settings and findings recorded by a corrected scan with
 `saved = [step.to_dict() for step in scan.corrections]` and restore a record
 with `corrections.Correction.from_dict(saved[0])`.
