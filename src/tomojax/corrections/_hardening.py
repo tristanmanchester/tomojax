@@ -1,4 +1,4 @@
-"""Single-material beam hardening linearisation and its coefficient sources."""
+"""Single-material beam hardening linearization and its coefficient sources."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class BeamHardening(Step):
-    """Linearise single-material beam hardening.
+    """Linearize single-material beam hardening.
 
     A polychromatic beam's line integral through one material is
     ``q = g(p) = -ln sum_j w_j exp(-k_j p)``, where ``p`` is the material's
@@ -39,7 +39,7 @@ class BeamHardening(Step):
     that energy's.
 
     The coefficients come from :meth:`from_polynomial` (an explicit polynomial
-    linearisation) or :meth:`from_spectrum` (the source spectrum, filters and
+    linearization) or :meth:`from_spectrum` (the source spectrum, filters and
     detector). The curve is only as good as the stated tube settings and
     material: the scan is not used to check it. ``BeamHardening()`` leaves line
     integrals unchanged.
@@ -83,7 +83,7 @@ class BeamHardening(Step):
             raise InvalidParameter(
                 "energy_kev", "BeamHardening energy_kev must be positive and finite"
             )
-        rates, weights = mixture.normalise(
+        rates, weights = mixture.normalize(
             tuple(self.rates), tuple(self.weights), unit_slope=self.energy_kev is None
         )
         object.__setattr__(self, "rates", rates)
@@ -100,7 +100,7 @@ class BeamHardening(Step):
         Returns
         -------
         jax.Array
-            Linearised line integrals, retaining the input shape.
+            Linearized line integrals, retaining the input shape.
         """
         if self.rates == (1.0,):
             return batch
@@ -132,13 +132,13 @@ class BeamHardening(Step):
         Returns
         -------
         numpy.ndarray
-            The linearised line integrals that :meth:`apply` approximates in float32.
+            The linearized line integrals that :meth:`apply` approximates in float32.
         """
         return mixture.inverse(self.rates, self.weights, np.asarray(q))
 
     @classmethod
     def from_polynomial(cls, coefficients: Sequence[float], *, upto: float) -> BeamHardening:
-        """The physical curve closest to a polynomial linearisation ``p = sum_n c_n q^n``.
+        """The physical curve closest to a polynomial linearization ``p = sum_n c_n q^n``.
 
         The coefficients specify a polynomial in the measured line integral.
         This fits the mixture whose inverse best matches it for ``0 <= q <= upto``
@@ -158,7 +158,7 @@ class BeamHardening(Step):
         Returns
         -------
         BeamHardening
-            The fitted linearisation.
+            The fitted linearization.
 
         Raises
         ------
@@ -205,7 +205,7 @@ class BeamHardening(Step):
         Returns
         -------
         BeamHardening
-            The linearisation for that material and spectrum.
+            The linearization for that material and spectrum.
 
         Raises
         ------

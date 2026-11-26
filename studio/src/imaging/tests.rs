@@ -138,7 +138,7 @@ fn retired_artifacts_wait_for_active_reads_and_coordinate_prefetch_to_drain() {
 }
 
 #[test]
-fn anisotropic_planes_use_voxel_centres_and_keep_each_disk_axis() {
+fn anisotropic_planes_use_voxel_centers_and_keep_each_disk_axis() {
     let directory = tempfile::tempdir().unwrap();
     for fortran in [false, true] {
         let path = directory.path().join(format!("ramp-{fortran}.npy"));

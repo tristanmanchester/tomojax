@@ -1,6 +1,6 @@
 """Cone-beam Joseph projection: rays from a point source sampled on voxel planes.
 
-Each ray is sampled once per voxel-centre plane along the view's dominant axis
+Each ray is sampled once per voxel-center plane along the view's dominant axis
 and interpolated bilinearly within the plane, as in the parallel Joseph model;
 here the in-plane coordinates follow the ray from the source to its pixel, so
 magnification changes from plane to plane. Line integrals are in physical
@@ -59,7 +59,7 @@ def cone_coefficients(
 
 
 def beam_frame(beam: ConeBeam, detector: Detector) -> np.ndarray:
-    """``(4, 3)`` lab detector centre, unit u and v directions and source of ``beam``."""
+    """``(4, 3)`` lab detector center, unit u and v directions and source of ``beam``."""
     center, u_dir, v_dir = beam.detector_frame(detector)
     return np.stack([center, u_dir, v_dir, beam.source()]).astype(np.float32)
 
@@ -154,7 +154,7 @@ class ConeModel:
 
     @property
     def detector(self) -> Detector:
-        """The detector's pixel count and pitch (the parts differ in centre only)."""
+        """The detector's pixel count and pitch (the parts differ in center only)."""
         return self.parts[0][2]
 
     def frames(self, n_views: int) -> np.ndarray:

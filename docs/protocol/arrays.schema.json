@@ -290,7 +290,7 @@
     },
     "Uniform": {
       "title": "Uniform",
-      "description": "Centre coordinate of element zero and signed step in axis units.",
+      "description": "Center coordinate of element zero and signed step in axis units.",
       "type": "object",
       "properties": {
         "type": {

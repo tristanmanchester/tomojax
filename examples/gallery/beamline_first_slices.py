@@ -83,7 +83,7 @@ def slices(data: Path) -> dict[str, np.ndarray]:
 
 
 def figure(images: dict[str, np.ndarray], output: Path) -> None:
-    """Each slice whole above its enlarged region, sharing that slice's grey range."""
+    """Each slice whole above its enlarged region, sharing that slice's gray range."""
     style()
     fig, axes = plt.subplots(2, len(images), figsize=(13, 5.6))
     for (name, image), (whole, zoom) in zip(images.items(), axes.T, strict=True):

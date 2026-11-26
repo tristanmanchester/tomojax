@@ -35,7 +35,7 @@ class SetupParameters:
     Parameters
     ----------
     det_u_px, det_v_px : ScalarParameter
-        Detector u/v centre offsets in pixels.
+        Detector u/v center offsets in pixels.
     detector_roll_rad : ScalarParameter
         Detector-plane roll in radians.
     axis_rot_x_rad, axis_rot_y_rad : ScalarParameter

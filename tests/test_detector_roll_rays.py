@@ -60,7 +60,7 @@ def test_parallel_and_cone_roll_the_detector_the_same_way(roll):
 
     grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
     volume = np.zeros((33, 33, 33), np.float32)
-    volume[16 + 12, 16, 16] = 1.0  # (z, y, x): 12 voxels above the centre
+    volume[16 + 12, 16, 16] = 1.0  # (z, y, x): 12 voxels above the center
     parallel = ParallelGeometry(grid, detector, [0.0], detector_roll=roll)
     cone = ConeGeometry(grid, detector, [0.0], ConeBeam(100.0, 150.0, detector_roll=roll))
     columns = np.arange(65) - 32
@@ -85,7 +85,7 @@ def test_cone_pitch_and_yaw_move_the_detector_edges_as_documented(angle, voxel, 
 
     grid, detector = Grid(33, 33, 33, 1.0, 1.0, 1.0), Detector(65, 65, 1.0, 1.0)
     volume = np.zeros((33, 33, 33), np.float32)
-    volume[voxel] = 1.0  # (z, y, x): 12 voxels above or beside the centre
+    volume[voxel] = 1.0  # (z, y, x): 12 voxels above or beside the center
     offset = np.arange(65) - 32
 
     def outward(degrees):

@@ -55,7 +55,7 @@ def test_nondivisible_view_batches(method, host, devices, cancel, monkeypatch):
 
     with progress.watch(observe, control=control):
         if cancel:
-            with pytest.raises(progress.Cancelled):
+            with pytest.raises(progress.Canceled):
                 solve(geometry, grid, detector, data, config=config)
         else:
             actual = solve(geometry, grid, detector, data, config=config)

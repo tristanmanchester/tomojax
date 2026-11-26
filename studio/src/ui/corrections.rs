@@ -1,6 +1,6 @@
 //! Guided correction drafts with an explicit JSON escape hatch.
 //!
-//! The bundled engine schema supplies defaults and required fields. Unrecognised
+//! The bundled engine schema supplies defaults and required fields. Unrecognized
 //! steps and properties survive a guided edit, so recipes retain their meaning.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,7 +45,7 @@ const PRESETS: &[Preset] = &[
             },
             Field {
                 name: "size",
-                title: "Neighbourhood",
+                title: "Neighborhood",
                 unit: "px",
             },
         ],
@@ -53,7 +53,7 @@ const PRESETS: &[Preset] = &[
     Preset {
         name: "Stripes",
         title: "Suppress stripes",
-        help: "Correct detector-column artefacts before reconstruction.",
+        help: "Correct detector-column artifacts before reconstruction.",
         fields: &[
             Field {
                 name: "width",

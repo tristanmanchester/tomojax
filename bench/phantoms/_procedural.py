@@ -1,9 +1,9 @@
-"""Shared voxelisation for the procedural phantoms.
+"""Shared voxelization for the procedural phantoms.
 
 Each phantom is a function of physical position in mm. A *sampler* takes point
 coordinates and returns a material label per point and a *margin*: a lower
 estimate, in mm, of the distance from the point to the nearest material
-boundary. Voxels are first sampled at their centres; those whose margin is
+boundary. Voxels are first sampled at their centers; those whose margin is
 smaller than about a voxel are resampled on a ``fine`` x ``fine`` x ``fine``
 grid of sub-voxel points and store the mean attenuation of the samples. Edges
 are therefore antialiased by occupancy, never blurred, and a finer grid gives
@@ -15,7 +15,7 @@ lying inside a planar slab.
 
 Labels index the attenuation table; :data:`KEEP` marks samples that leave an
 existing volume unchanged, so a sampler can overlay one feature on another.
-Volumes are ``(z, y, x)`` with voxel centres at ``(i + 0.5) * voxel - fov / 2``.
+Volumes are ``(z, y, x)`` with voxel centers at ``(i + 0.5) * voxel - fov / 2``.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ Sampler = Callable[[np.ndarray, np.ndarray, np.ndarray], tuple[np.ndarray, np.nd
 
 @dataclass(frozen=True)
 class Grid:
-    """A cubic grid of ``n`` voxels per side spanning ``fov`` mm, centred on 0."""
+    """A cubic grid of ``n`` voxels per side spanning ``fov`` mm, centered on 0."""
 
     n: int
     fov: float
@@ -50,7 +50,7 @@ class Grid:
         return self.fov / self.n
 
     def centers(self) -> np.ndarray:
-        """Voxel-centre coordinates along one axis in mm."""
+        """Voxel-center coordinates along one axis in mm."""
         return ((np.arange(self.n) + 0.5) * self.voxel - self.fov / 2).astype(np.float64)
 
     def index_range(self, low: float, high: float) -> tuple[int, int]:
@@ -81,7 +81,7 @@ def sample_voxels(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return mean attenuation and kept fraction of voxels at ``centers``.
 
-    ``centers`` is ``(m, 3)`` in mm. Voxels whose centre margin is below
+    ``centers`` is ``(m, 3)`` in mm. Voxels whose center margin is below
     ``reach`` voxels are resampled with ``fine**3`` sub-voxel points.
     """
     table = np.append(np.asarray(mu, np.float64), 0.0)
@@ -104,7 +104,7 @@ def sample_voxels(
     return value, keep
 
 
-def voxelise(
+def voxelize(
     sample: Sampler,
     grid: Grid,
     mu: np.ndarray,
@@ -114,7 +114,7 @@ def voxelise(
     under: np.ndarray | None = None,
     reach: float = 1.2,
 ) -> np.ndarray:
-    """Voxelise ``sample`` on ``grid``, optionally only inside ``box`` (mm).
+    """Voxelize ``sample`` on ``grid``, optionally only inside ``box`` (mm).
 
     With ``under``, the result is composited onto that volume in place: each
     voxel keeps ``under`` in proportion to its :data:`KEEP` samples.
@@ -155,7 +155,7 @@ def sample_where(
     fine: int,
     reach: float = 1.2,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Like :func:`voxelise` but only for voxels where ``mask`` is true.
+    """Like :func:`voxelize` but only for voxels where ``mask`` is true.
 
     Returns the mean attenuation and kept fraction of those voxels, in the
     order of ``np.flatnonzero(mask)``.
@@ -180,7 +180,7 @@ def sample_where(
 
 
 def box_cdf(t: np.ndarray, widths: np.ndarray) -> np.ndarray:
-    """Return P(U1 + U2 + U3 <= t) for centred uniforms of the given widths.
+    """Return P(U1 + U2 + U3 <= t) for centered uniforms of the given widths.
 
     ``widths`` is ``(..., 3)``; zero widths are raised to a tiny fraction of the
     largest so the closed form (a sum of truncated cubes) stays finite.
@@ -213,7 +213,7 @@ def slab_fraction(
     """Return the fraction of a voxel cube inside a planar slab.
 
     The slab is ``low <= normal . (p - center) + offset <= high``: ``offset`` is
-    the voxel centre's coordinate across the slab and ``normal`` the unit slab
+    the voxel center's coordinate across the slab and ``normal`` the unit slab
     normal, ``(..., 3)``. Exact for a plane; for curved layers it is exact to
     the curvature over one voxel.
     """

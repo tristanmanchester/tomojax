@@ -22,7 +22,7 @@ import warnings
 import msgspec
 import numpy as np
 
-from tomojax.errors import Cancelled, classify
+from tomojax.errors import Canceled, classify
 from tomojax.wire.arrays import Array, Axis, Column, Coordinates, Fixed, Npy
 from tomojax.wire.metrics import Metric
 from tomojax.wire.progress import NoteLevel
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "Advanced",
-    "Cancelled",
+    "Canceled",
     "Control",
     "Event",
     "Finished",
@@ -73,7 +73,7 @@ type _Name = Literal[
     "line_search",
     "write",
 ]
-type _Status = Literal["done", "failed", "cancelled"]
+type _Status = Literal["done", "failed", "canceled"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,7 +147,7 @@ class Finished:
     task : int
         Task identifier.
     status : str
-        One of done, failed or cancelled.
+        One of done, failed or canceled.
     time : float
         Monotonic seconds since the watch began.
     """
@@ -289,12 +289,12 @@ class Control:
     def __init__(self) -> None:
         self._condition = Condition()
         self._state: _State = "running"
-        self._cancelled = False
+        self._canceled = False
 
     def pause(self) -> None:
         """Request a pause at the next checkpoint."""
         with self._condition:
-            if self._state == "running" and not self._cancelled:
+            if self._state == "running" and not self._canceled:
                 self._state = "pause-requested"
 
     def resume(self) -> None:
@@ -306,7 +306,7 @@ class Control:
     def cancel(self) -> None:
         """Request cancellation and wake a paused operation."""
         with self._condition:
-            self._cancelled = True
+            self._canceled = True
             self._condition.notify_all()
 
     @property
@@ -322,7 +322,7 @@ class Control:
             return self._state
 
     @property
-    def cancelled(self) -> bool:
+    def canceled(self) -> bool:
         """Whether cancellation has been requested.
 
         Returns
@@ -331,20 +331,20 @@ class Control:
             True once cancellation has been requested.
         """
         with self._condition:
-            return self._cancelled
+            return self._canceled
 
     def checkpoint(self) -> None:
-        """Block while paused or raise when cancelled.
+        """Block while paused or raise when canceled.
 
         Raises
         ------
-        Cancelled
-            If the operation was cancelled.
+        Canceled
+            If the operation was canceled.
         """
         while True:
             with self._condition:
-                if self._cancelled:
-                    raise Cancelled()
+                if self._canceled:
+                    raise Canceled()
                 if self._state == "running":
                     return
                 self._state = "paused"
@@ -353,9 +353,9 @@ class Control:
             if active is not None:
                 active.watcher.emit(Paused, active.id)
             with self._condition:
-                self._condition.wait_for(lambda: self._cancelled or self._state != "paused")
-                if self._cancelled:
-                    raise Cancelled()
+                self._condition.wait_for(lambda: self._canceled or self._state != "paused")
+                if self._canceled:
+                    raise Canceled()
             if active is not None:
                 active.watcher.pause_time += monotonic() - start
                 active.watcher.emit(Resumed, active.id)
@@ -505,10 +505,10 @@ def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> N
     if not final and now - watcher.last_preview < 1:
         return
     try:
-        check_cancelled()
+        check_canceled()
         arrays = build()
-        check_cancelled()
-    except Cancelled as exc:
+        check_canceled()
+    except Canceled as exc:
         if handler_failed(exc) or not (final or active.done == active.total):
             raise
         return
@@ -558,7 +558,7 @@ def chunks(total: int) -> Iterator[tuple[int, int]]:
         return
     first, length = 0, 1
     while first < total:
-        check_cancelled()
+        check_canceled()
         stop = min(total, first + length)
         start = monotonic()
         yield first, stop
@@ -576,7 +576,7 @@ class Runtime:
         self.lock = RLock()
 
     def record(self, *, slabbed: bool) -> dict[str, object]:
-        """Summarise decisions after all workers have joined."""
+        """Summarize decisions after all workers have joined."""
         return {
             "devices": tuple(self.devices),
             "strategy": "slabbed" if slabbed else "resident",
@@ -672,7 +672,7 @@ def warn(message: str, *, stacklevel: int) -> None:
 
 
 class _LogNotes(logging.NullHandler):
-    """Observe the TomoJAX logger hierarchy without serialising independent watches."""
+    """Observe the TomoJAX logger hierarchy without serializing independent watches."""
 
     def handle(self, record: logging.LogRecord) -> bool:
         # Adding a handler normally disables logging's last-resort stderr handler.
@@ -739,7 +739,7 @@ def handler_failed(exc: BaseException) -> bool:
     return watcher is not None and watcher.error is exc
 
 
-def check_cancelled() -> None:
+def check_canceled() -> None:
     watcher = _watch.get()
     if watcher is not None and watcher.control is not None:
         watcher.control.checkpoint()
@@ -755,7 +755,7 @@ def outcome() -> Iterator[None]:
         raise
     except BaseException as exc:
         if active is not None:
-            active.status = "cancelled" if isinstance(exc, Cancelled) else "failed"
+            active.status = "canceled" if isinstance(exc, Canceled) else "failed"
         raise
 
 
@@ -767,7 +767,7 @@ def task(name: _Name, label: str, total: int | None, unit: str) -> Iterator[None
         return
     parent = current_task.get()
     if parent is not None:
-        check_cancelled()
+        check_canceled()
     # Initializers, slab solves and alignment image updates belong to their owner.
     if name == "correction" and parent is not None and parent.name != "load":
         yield
@@ -787,7 +787,7 @@ def task(name: _Name, label: str, total: int | None, unit: str) -> Iterator[None
         watcher.emit(Started, task.id, parent.id if parent else None, name, label, total, unit)
         try:
             with outcome():
-                check_cancelled()
+                check_canceled()
                 yield
         finally:
             if watcher.error is None:

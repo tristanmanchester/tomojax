@@ -100,7 +100,7 @@
                   "$ref": "#/$defs/JointPlan"
                 },
                 {
-                  "$ref": "#/$defs/CentrePlan"
+                  "$ref": "#/$defs/CenterPlan"
                 },
                 {
                   "$ref": "#/$defs/Validated"
@@ -124,7 +124,7 @@
                   "inspection": "#/$defs/Inspection",
                   "reconstruction_plan": "#/$defs/ReconPlan",
                   "joint_plan": "#/$defs/JointPlan",
-                  "opposite_views_plan": "#/$defs/CentrePlan",
+                  "opposite_views_plan": "#/$defs/CenterPlan",
                   "validated": "#/$defs/Validated"
                 }
               }
@@ -649,7 +649,7 @@
     },
     "Sweep": {
       "title": "Sweep",
-      "description": "Ordered planes with a leading signed centre-offset coordinate.",
+      "description": "Ordered planes with a leading signed center-offset coordinate.",
       "type": "object",
       "properties": {
         "type": {
@@ -1060,9 +1060,9 @@
       ],
       "additionalProperties": false
     },
-    "CentrePlan": {
-      "title": "CentrePlan",
-      "description": "Centre estimation uses paired projections.",
+    "CenterPlan": {
+      "title": "CenterPlan",
+      "description": "Center estimation uses paired projections.",
       "type": "object",
       "properties": {
         "type": {

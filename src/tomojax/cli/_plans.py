@@ -8,7 +8,7 @@ import msgspec
 
 from tomojax._planning import ResolvedReconstruction
 from tomojax._resources import estimate, sample
-from tomojax._smooth_alignment import CentreSelection, JointSelection
+from tomojax._smooth_alignment import CenterSelection, JointSelection
 from tomojax.cli import products as p
 from tomojax.cli.wire_options import Grid
 
@@ -19,15 +19,15 @@ if TYPE_CHECKING:
 
 def plan_product(
     scan: Scan,
-    work: CentreSelection | JointSelection | ResolvedReconstruction,
+    work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,
     snapshot: tuple[p.Snapshot, ...] | None = None,
-) -> p.CentrePlan | p.JointPlan | p.ReconPlan:
+) -> p.CenterPlan | p.JointPlan | p.ReconPlan:
     """Keep the working arrays and numerical configuration out of the wire record."""
     placement = estimate(scan, work, sample(work) if snapshot is None else snapshot)
-    if isinstance(work, CentreSelection):
-        return p.CentrePlan(
-            len(work.samples), ("Fit the centre from near-opposite view pairs.",), placement
+    if isinstance(work, CenterSelection):
+        return p.CenterPlan(
+            len(work.samples), ("Fit the center from near-opposite view pairs.",), placement
         )
     if isinstance(work, JointSelection):
         levels = tuple(
@@ -57,10 +57,10 @@ def plan_product(
 def announce(
     command: str,
     scan: Scan,
-    work: CentreSelection | JointSelection | ResolvedReconstruction,
+    work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,
     used: tuple[str, ...] = (),
-) -> p.CentrePlan | p.JointPlan | p.ReconPlan:
+) -> p.CenterPlan | p.JointPlan | p.ReconPlan:
     """Estimate the plan, say what the run will do, and keep a memory hint for a failure.
 
     ``used`` names the options the command was given (``--region``, ``--grid``), which
@@ -92,9 +92,9 @@ def announce(
 def dry_run(
     mode: str,
     source: str,
-    plan: p.CentrePlan | p.JointPlan | p.ReconPlan,
+    plan: p.CenterPlan | p.JointPlan | p.ReconPlan,
     scan: Scan,
-    work: CentreSelection | JointSelection | ResolvedReconstruction,
+    work: CenterSelection | JointSelection | ResolvedReconstruction,
     *,
     document: dict[str, object] | None = None,
 ) -> Result | None:

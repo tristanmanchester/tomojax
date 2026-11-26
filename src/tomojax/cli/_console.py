@@ -1,6 +1,6 @@
 """Human output of the ``tomojax`` command: errors with hints, suggestions and tracebacks.
 
-Display goes to stderr and data to stdout. Rich decides colour from the terminal
+Display goes to stderr and data to stdout. Rich decides color from the terminal
 (``NO_COLOR``, ``FORCE_COLOR``, ``TERM=dumb``, not a TTY). Text is never wrapped or
 cut, and user-supplied text is never read as markup.
 """
@@ -78,9 +78,9 @@ def report_usage_error(prog: str, message: str, *, hint: str | None = None) -> N
     )
 
 
-def report_cancelled(prog: str) -> None:
+def report_canceled(prog: str) -> None:
     """Say on stderr that the command stopped at the user's request."""
-    console().print(Text(f"{prog}: cancelled", style="dim"))
+    console().print(Text(f"{prog}: canceled", style="dim"))
 
 
 def report_warning(message: str, *, level: str = "warning") -> None:
@@ -135,7 +135,7 @@ __all__ = [
     "ISSUES_URL",
     "USAGE",
     "console",
-    "report_cancelled",
+    "report_canceled",
     "report_error",
     "report_internal",
     "report_usage_error",

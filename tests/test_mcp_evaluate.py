@@ -30,7 +30,7 @@ def evaluate(data, tmp_path, *, split=STRIDE, candidates=(CGLS,), corrections=()
 
 
 def test_dry_run_validates_partitions_without_reading_detector(tmp_path, monkeypatch):
-    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_io_workflows import _labeled_dataset
     from tests.test_worker_adapters import trace_detector_reads
     from tomojax.io import save_dataset
 
@@ -59,7 +59,7 @@ def test_dry_run_validates_partitions_without_reading_detector(tmp_path, monkeyp
         validate(wire_options.Stripes(), op.AlignSettings(fit="rotations"))
     with pytest.raises(ValueError, match="guard"):
         validate(wire_options.Stripes(), split=op.Interleaved(stride=2, guard=1))
-    save_dataset(path, _labelled_dataset([8, *([4] * 24), 2], [1, *([0] * 24), 2]))
+    save_dataset(path, _labeled_dataset([8, *([4] * 24), 2], [1, *([0] * 24), 2]))
     assert validate(wire_options.Zingers()).details["test_views"] == 4
     assert reads == []
 

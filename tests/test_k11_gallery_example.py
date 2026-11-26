@@ -1,4 +1,4 @@
-"""The K11 gallery planes follow their stated physical grid and share one grey range."""
+"""The K11 gallery planes follow their stated physical grid and share one gray range."""
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -25,7 +25,7 @@ def _encoded_reconstruct(calls):
     return reconstruct
 
 
-def test_plane_orients_each_cut_and_centres_its_grid(monkeypatch):
+def test_plane_orients_each_cut_and_centers_its_grid(monkeypatch):
     monkeypatch.syspath_prepend(str(GALLERY))
     import _k11
 
@@ -47,7 +47,7 @@ def test_plane_orients_each_cut_and_centres_its_grid(monkeypatch):
 
 
 @pytest.mark.parametrize("module", ["k11_ruby_sphere", "k11_glass_layer"])
-def test_figure_draws_200_um_bars_on_one_grey_range(monkeypatch, tmp_path, module):
+def test_figure_draws_200_um_bars_on_one_gray_range(monkeypatch, tmp_path, module):
     monkeypatch.syspath_prepend(str(GALLERY))
     gallery = __import__(module)
     figures = []
@@ -63,7 +63,7 @@ def test_figure_draws_200_um_bars_on_one_grey_range(monkeypatch, tmp_path, modul
 
     fig = figures[0]
     limits = {ax.images[0].get_clim() for ax in fig.axes}
-    assert len(limits) == 1  # one grey range across the planes
+    assert len(limits) == 1  # one gray range across the planes
     low, high = limits.pop()
     values = np.concatenate([cut.ravel() for _, cut in cuts])
     assert (low, high) == tuple(np.percentile(values, (1, 99.5)))

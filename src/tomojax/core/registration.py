@@ -65,7 +65,7 @@ def recorded_length_unit(meta: Mapping[str, Any]) -> str | None:
 
 
 def volume_axes(grid: Grid, unit: str) -> tuple[Axis, ...]:
-    """Voxel centres in public storage order."""
+    """Voxel centers in public storage order."""
     return tuple(
         Axis(name, "volume", unit, Uniform(start, pitch))
         for name, start, pitch in zip(
@@ -141,14 +141,14 @@ def registered_plane(
 def _inside(radius: float, axes: tuple[Axis, ...], i: int, fixed: float, plane: Any) -> np.ndarray:
     """True where ``plane`` (axis ``i`` of zyx fixed at ``fixed``) lies inside the cylinder."""
 
-    def centres(k: int, count: int) -> np.ndarray:
+    def centers(k: int, count: int) -> np.ndarray:
         coordinates = axes[k].coordinates
         assert isinstance(coordinates, Uniform)
         return coordinates.origin + np.arange(count) * coordinates.spacing
 
     rows, columns = np.shape(plane)[-2:]
-    x = np.asarray(fixed) if i == 2 else centres(2, columns)
-    y = np.asarray(fixed) if i == 1 else centres(1, rows if i == 0 else columns)
+    x = np.asarray(fixed) if i == 2 else centers(2, columns)
+    y = np.asarray(fixed) if i == 1 else centers(1, rows if i == 0 else columns)
     tolerance = 8 * np.finfo(np.float64).eps * radius
     # hypot avoids squaring physical lengths, which can underflow or overflow.
     inside = np.hypot(x[None, :], y[:, None]) if i == 0 else np.hypot(x, y)[None, :]

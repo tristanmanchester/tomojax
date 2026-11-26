@@ -22,7 +22,7 @@ use crate::{
     ui::model::*,
 };
 use controls::ControlWatch;
-use local::{CANCELLED, LocalMessage, LocalTask, check_cancel};
+use local::{CANCELED, LocalMessage, LocalTask, check_cancel};
 
 /// The local-task key of copies into a project, which **Cancel copy** stops.
 const IMPORT_COPY: &str = "import-copy";
@@ -137,7 +137,7 @@ pub struct AppState {
     recent_names: std::collections::HashMap<PathBuf, String>,
     applied_window: Option<[f32; 2]>,
     window_prefill: [viewing::Prefilled; 2],
-    centre_sinogram: bool,
+    center_sinogram: bool,
     form_context: editing::FormContext,
     last_autosave: Instant,
     view_history: Vec<project::Workspace>,
@@ -194,7 +194,7 @@ impl AppState {
             recent_names: Default::default(),
             applied_window: None,
             window_prefill: Default::default(),
-            centre_sinogram: true,
+            center_sinogram: true,
             form_context: editing::FormContext::default(),
             last_autosave: Instant::now(),
             view_history: Vec::new(),
@@ -301,7 +301,7 @@ impl AppState {
             Workspace::Reconstruct => self.ui.reconstruct_operation = operation.into(),
             _ => self.ui.prepare_operation = operation.into(),
         }
-        self.model.parameters = forms::initialise(&mut self.ui, &self.catalog, operation, values);
+        self.model.parameters = forms::initialize(&mut self.ui, &self.catalog, operation, values);
         if operation == "open"
             && values.is_none()
             && let Some(asset) = self
@@ -431,7 +431,7 @@ impl AppState {
                             self.start_metadata(&id);
                         }
                     }
-                    Err(error) if error == CANCELLED => self.model.status = "Copy cancelled".into(),
+                    Err(error) if error == CANCELED => self.model.status = "Copy canceled".into(),
                     Err(error) => self.model.error = Some(error),
                 }
             }
@@ -446,7 +446,7 @@ impl AppState {
                     Ok(()) => self.complete_asset(&job, asset),
                     Err(error) => {
                         if !self.shutting_down {
-                            self.fail_job(&job, &error, error == CANCELLED)
+                            self.fail_job(&job, &error, error == CANCELED)
                         }
                     }
                 }
@@ -462,7 +462,7 @@ impl AppState {
                 Ok(()) => self.complete_job(&job, None),
                 Err(error) => {
                     if !self.shutting_down {
-                        self.fail_job(&job, &error, error == CANCELLED)
+                        self.fail_job(&job, &error, error == CANCELED)
                     }
                 }
             },
@@ -554,7 +554,7 @@ impl AppState {
                                 error.message,
                                 matches!(
                                     error.kind,
-                                    crate::protocol::ErrorKind::Cancelled
+                                    crate::protocol::ErrorKind::Canceled
                                         | crate::protocol::ErrorKind::Superseded
                                 ),
                             );
@@ -703,7 +703,7 @@ impl AppState {
             self.restore_view(&project::Workspace::default());
             self.ui.main_view = self.default_view();
             self.ui.display.indices = self.volume_dimensions().unwrap_or_default().map(|n| n / 2);
-            self.centre_sinogram = true;
+            self.center_sinogram = true;
         }
         self.image_key.clear();
         self.last_context = Value::Null;
@@ -775,8 +775,8 @@ impl AppState {
                 let inputs = project.root.join("inputs").join(&asset.id);
                 self.copying += 1;
                 let selection = selection.clone();
-                self.spawn_local(Some(IMPORT_COPY.into()), move |cancelled| {
-                    let result = copy_acquisition(&path, &inputs, &cancelled);
+                self.spawn_local(Some(IMPORT_COPY.into()), move |canceled| {
+                    let result = copy_acquisition(&path, &inputs, &canceled);
                     LocalEvent::Copied {
                         asset,
                         result,
@@ -815,8 +815,8 @@ impl AppState {
         };
         let asset = id.to_owned();
         self.metadata_pending += 1;
-        self.spawn_local(None, move |cancelled| {
-            let result = check_cancel(&cancelled).and_then(|()| metadata::quick_metadata(&path));
+        self.spawn_local(None, move |canceled| {
+            let result = check_cancel(&canceled).and_then(|()| metadata::quick_metadata(&path));
             LocalEvent::Metadata { asset, result }
         });
     }
@@ -900,14 +900,14 @@ impl AppState {
 fn copy_acquisition(
     path: &Path,
     inputs: &Path,
-    cancelled: &std::sync::atomic::AtomicBool,
+    canceled: &std::sync::atomic::AtomicBool,
 ) -> Result<PathBuf, String> {
     let name = path.file_name().unwrap_or_default();
     if let Some(folder) = path.parent().filter(|_| path.is_file())
         && !project::holds_whole_acquisition(path)
     {
         let copy = inputs.join(folder.file_name().unwrap_or_default());
-        return stage_copy_input(folder, &copy, cancelled).map(|()| copy.join(name));
+        return stage_copy_input(folder, &copy, canceled).map(|()| copy.join(name));
     }
     if crate::metadata::is_hdf5(path) && crate::metadata::reads_other_files(path).unwrap_or(false) {
         return Err(format!(
@@ -916,18 +916,18 @@ fn copy_acquisition(
         ));
     }
     let copy = inputs.join(name);
-    stage_copy_input(path, &copy, cancelled).map(|()| copy)
+    stage_copy_input(path, &copy, canceled).map(|()| copy)
 }
 
 fn stage_copy_input(
     source: &Path,
     destination: &Path,
-    cancelled: &std::sync::atomic::AtomicBool,
+    canceled: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
-    check_cancel(cancelled)?;
+    check_cancel(canceled)?;
     let staging = destination.with_extension(format!("{}-partial", project::new_id("copy")));
-    let result = copy_input(source, &staging, cancelled).and_then(|()| {
-        check_cancel(cancelled)?;
+    let result = copy_input(source, &staging, canceled).and_then(|()| {
+        check_cancel(canceled)?;
         if destination.exists() {
             return Err("The copy destination already exists".into());
         }
@@ -946,9 +946,9 @@ fn stage_copy_input(
 fn copy_input(
     source: &Path,
     destination: &Path,
-    cancelled: &std::sync::atomic::AtomicBool,
+    canceled: &std::sync::atomic::AtomicBool,
 ) -> Result<(), String> {
-    check_cancel(cancelled)?;
+    check_cancel(canceled)?;
     if destination.starts_with(source) {
         return Err("Choose a project outside the source folder before copying that folder".into());
     }
@@ -972,13 +972,13 @@ fn copy_input(
             copy_input(
                 &entry.path(),
                 &destination.join(entry.file_name()),
-                cancelled,
+                canceled,
             )?;
         }
     } else if meta.is_file() {
         std::fs::create_dir_all(destination.parent().ok_or("Invalid copy destination")?)
             .map_err(|e| e.to_string())?;
-        local::copy_file(source, destination, cancelled)?;
+        local::copy_file(source, destination, canceled)?;
     } else {
         return Err("Only regular files and acquisition directories can be copied".into());
     }

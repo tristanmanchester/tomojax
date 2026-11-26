@@ -79,7 +79,7 @@ def test_auto_rejects_method_specific_options(option):
 
 @pytest.mark.parametrize("status", [None, "recorded", "provided", "inferred", "not_recorded"])
 def test_automatic_reconstruction_keeps_the_given_center(status):
-    # tj.reconstruct reconstructs with the centre it is given, whatever the file recorded.
+    # tj.reconstruct reconstructs with the center it is given, whatever the file recorded.
     grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1, center=(-2.2, 0))
     angles = np.linspace(0, 180, 33)
     geometry = tj.ParallelGeometry(grid, detector, angles)
@@ -114,7 +114,7 @@ def test_automatic_segmented_cone_preserves_calibration():
 
 
 def _phantom(n=16):
-    # An off-centre Gaussian, so a wrong centre or ignored poses move it visibly.
+    # An off-center Gaussian, so a wrong center or ignored poses move it visibly.
     xyz = np.indices((n, n, n)).astype(float)
     center = np.array([7.5, 6.5, 8.5])[:, None, None, None]
     return np.exp(-np.sum((xyz - center) ** 2, axis=0) / 10).astype(np.float32)
@@ -222,7 +222,7 @@ def test_one_orbit_with_per_view_detector_offsets_reconstructs_with_fdk():
     assert shifted.method == "fbp" and shifted.info["automatic"]["status"] == "ok"
     # 0.0589 against 0.0377 measured. The same orbit with one shared detector offset of these
     # sizes (a plain ConeGeometry, no segments) gives 0.043-0.068: the extra is FDK's own
-    # behaviour with an off-centre detector on a 16^3 case, which per-view offsets do not worsen.
+    # behavior with an off-center detector on a 16^3 case, which per-view offsets do not worsen.
     assert _error(shifted, volume) < 2 * _error(unshifted, volume)
     # Two orbits whose arrangements differ (a source at two heights) stay with CGLS.
     two = ConeSegments(

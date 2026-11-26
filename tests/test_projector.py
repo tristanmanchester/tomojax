@@ -47,7 +47,7 @@ def test_operator_matches_functions_and_independent_transpose(kind):
 @pytest.mark.parametrize("kind", ["parallel", "lamino"])
 def test_rolled_detector_projects_as_the_alignment_folds_it(kind):
     # The joint fit writes a parallel detector roll on the poses (an inverse rotation about the
-    # beam through the detector centre) and projects with Joseph planes; tj.project on the
+    # beam through the detector center) and projects with Joseph planes; tj.project on the
     # rolled geometry must be the same model, not a different one.
     from tomojax.forward import project_joseph
     from tomojax.geometry import stack_view_poses

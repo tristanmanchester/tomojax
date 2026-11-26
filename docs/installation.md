@@ -24,7 +24,7 @@ uv pip install --python .venv/bin/python "tomojax[cuda12]"
 JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert jax.default_backend() == 'gpu'"
 ```
 
-Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialise. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver.
+Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialize. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver.
 
 ## Optional extras and Studio
 
@@ -58,7 +58,7 @@ uv pip install --python .venv/bin/python "/absolute/path/to/tomojax/dist/tomojax
 .venv/bin/tomojax --help
 ```
 
-Replace `[cpu]` with `[cuda12]` for CUDA, or point `uv pip install` at the `.tar.gz` sdist to build in an isolated environment. Both distributions include the GPL-3.0 licence; the wheel bundles the CUDA C sources and typing marker. For development setup, see [CONTRIBUTING.md](../CONTRIBUTING.md).
+Replace `[cpu]` with `[cuda12]` for CUDA, or point `uv pip install` at the `.tar.gz` sdist to build in an isolated environment. Both distributions include the GPL-3.0 license; the wheel bundles the CUDA C sources and typing marker. For development setup, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Verify the installation
 
@@ -72,7 +72,7 @@ Run a small synthetic reconstruction from the environment directory:
 
 `inspect` prints `Valid: yes` and writes three central slice previews to `previews/`. Commands refuse to overwrite existing files unless you pass `--force`. Prefix with `JAX_PLATFORMS=cpu` or `JAX_PLATFORMS=cuda` to pin the backend.
 
-If `tomojax` is not found, check your virtual environment path or activate it with `source .venv/bin/activate`. If CUDA fails to initialise, verify your NVIDIA driver and JAX GPU installation first.
+If `tomojax` is not found, check your virtual environment path or activate it with `source .venv/bin/activate`. If CUDA fails to initialize, verify your NVIDIA driver and JAX GPU installation first.
 
 ## Maintainer package checks
 

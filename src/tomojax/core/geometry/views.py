@@ -1,4 +1,4 @@
-"""Helpers for materialising per-view pose stacks."""
+"""Helpers for materializing per-view pose stacks."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def stack_view_poses(
     """Stack world-from-object poses for the first ``n_views`` views.
 
     A geometry class may define ``stack_poses(n_views, dtype)`` to build the
-    stack in one vectorised step (looked up on the class, so wrappers that
+    stack in one vectorized step (looked up on the class, so wrappers that
     forward attributes to a base geometry do not inherit it).
 
     Parameters

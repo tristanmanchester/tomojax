@@ -283,7 +283,7 @@ class HostFista:
         losses, t, streak, done = [], np.float32(1), 0, False
         zero = self.initial is None and self.lower <= 0 <= self.upper
         for step in range(cfg.iterations):
-            progress.check_cancelled()
+            progress.check_canceled()
             loss = 0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
             gradient = step == 0 and zero
             loss += (

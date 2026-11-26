@@ -1,4 +1,4 @@
-"""Synthetic projection artefact models for deterministic synthetic datasets."""
+"""Synthetic projection artifact models for deterministic synthetic datasets."""
 
 from __future__ import annotations
 
@@ -17,8 +17,8 @@ type JsonObject = dict[str, JsonValue]
 IntensityDriftMode = Literal["none", "linear", "sinusoidal"]
 
 
-class ArtefactMetadata(TypedDict, total=False):
-    """JSON-compatible metadata emitted after applying synthetic artefacts."""
+class ArtifactMetadata(TypedDict, total=False):
+    """JSON-compatible metadata emitted after applying synthetic artifacts."""
 
     enabled: bool
     seed: int
@@ -42,8 +42,8 @@ class ArtefactMetadata(TypedDict, total=False):
 
 
 @dataclass(frozen=True, slots=True)
-class SimulationArtefacts:
-    """Configure simple projection-domain simulation artefacts.
+class SimulationArtifacts:
+    """Configure simple projection-domain simulation artifacts.
 
     These operations modify line integrals, not a physical photon-count detector
     response. Use ``DetectorModel`` for count-domain detector simulations.
@@ -102,7 +102,7 @@ class SimulationArtefacts:
     intensity_drift_mode: IntensityDriftMode = "none"
 
     def to_dict(self) -> JsonObject:
-        """Return a JSON-compatible artefact configuration.
+        """Return a JSON-compatible artifact configuration.
 
         Returns
         -------
@@ -140,12 +140,12 @@ class SimulationArtefacts:
             )
 
     def has_enabled(self) -> bool:
-        """Return whether any artefact field will alter projections.
+        """Return whether any artifact field will alter projections.
 
         Returns
         -------
         bool
-            Whether at least one configured artefact is enabled.
+            Whether at least one configured artifact is enabled.
         """
         return (
             self.poisson_scale > 0.0
@@ -160,7 +160,7 @@ class SimulationArtefacts:
         )
 
 
-ARTEFACT_ORDER = [
+ARTIFACT_ORDER = [
     "detector_blur",
     "intensity_drift",
     "stripes",
@@ -183,32 +183,32 @@ _RNG_OFFSETS = {
 }
 
 
-def normalise_simulation_artefacts(
-    artefacts: SimulationArtefacts | None,
-) -> SimulationArtefacts:
-    """Return validated explicit artefacts or the disabled default."""
-    if artefacts is not None:
-        return artefacts
-    return SimulationArtefacts()
+def normalize_simulation_artifacts(
+    artifacts: SimulationArtifacts | None,
+) -> SimulationArtifacts:
+    """Return validated explicit artifacts or the disabled default."""
+    if artifacts is not None:
+        return artifacts
+    return SimulationArtifacts()
 
 
-def apply_simulation_artefacts(
+def apply_simulation_artifacts(
     projections: jnp.ndarray,
-    artefacts: SimulationArtefacts | None,
+    artifacts: SimulationArtifacts | None,
     *,
     seed: int,
-) -> tuple[jnp.ndarray, ArtefactMetadata]:
-    """Apply deterministic, composable projection artefacts.
+) -> tuple[jnp.ndarray, ArtifactMetadata]:
+    """Apply deterministic, composable projection artifacts.
 
-    The forward projector remains pure JAX. Artefacts are intentionally applied
+    The forward projector remains pure JAX. Artifacts are intentionally applied
     as a host-side post-processing step, matching the existing simulator noise
     path while keeping all randomness explicit and reproducible.
     """
-    cfg = artefacts or SimulationArtefacts()
-    metadata: ArtefactMetadata = {
+    cfg = artifacts or SimulationArtifacts()
+    metadata: ArtifactMetadata = {
         "enabled": cfg.has_enabled(),
         "seed": int(seed),
-        "order": list(ARTEFACT_ORDER),
+        "order": list(ARTIFACT_ORDER),
         "config": cfg.to_dict(),
     }
     if not cfg.has_enabled():
@@ -298,8 +298,8 @@ def apply_simulation_artefacts(
     return jnp.asarray(out.astype(original_dtype, copy=False)), metadata
 
 
-def _rng(seed: int, artefact_name: str) -> np.random.Generator:
-    offset = _RNG_OFFSETS[artefact_name]
+def _rng(seed: int, artifact_name: str) -> np.random.Generator:
+    offset = _RNG_OFFSETS[artifact_name]
     return np.random.default_rng((int(seed) + offset) % (2**32))
 
 

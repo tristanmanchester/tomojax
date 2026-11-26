@@ -7,12 +7,12 @@ use std::sync::{
 };
 use std::thread::JoinHandle;
 
-pub(super) const CANCELLED: &str = "Cancelled during file work";
+pub(super) const CANCELED: &str = "Canceled during file work";
 pub(super) type Cancellation = Arc<AtomicBool>;
 
 pub(super) struct LocalTask {
     pub job: Option<String>,
-    pub cancelled: Cancellation,
+    pub canceled: Cancellation,
     pub thread: JoinHandle<()>,
 }
 
@@ -28,8 +28,8 @@ impl AppState {
         work: impl FnOnce(Cancellation) -> LocalEvent + Send + 'static,
     ) {
         let task = project::new_id("io");
-        let cancelled = Arc::new(AtomicBool::new(false));
-        let token = cancelled.clone();
+        let canceled = Arc::new(AtomicBool::new(false));
+        let token = canceled.clone();
         let send = self.local_send.clone();
         let wake = self.wake.clone();
         let id = task.clone();
@@ -42,7 +42,7 @@ impl AppState {
             task,
             LocalTask {
                 job,
-                cancelled,
+                canceled,
                 thread,
             },
         );
@@ -61,7 +61,7 @@ impl AppState {
             .values()
             .filter(|task| task.job.as_deref() == Some(job))
         {
-            task.cancelled.store(true, Ordering::Release);
+            task.canceled.store(true, Ordering::Release);
             found = true;
         }
         found
@@ -75,7 +75,7 @@ impl AppState {
 
     pub(super) fn stop_local_tasks(&mut self) {
         for task in self.local_tasks.values() {
-            task.cancelled.store(true, Ordering::Release);
+            task.canceled.store(true, Ordering::Release);
         }
         for (_, task) in self.local_tasks.drain() {
             let _ = task.thread.join();
@@ -83,9 +83,9 @@ impl AppState {
     }
 }
 
-pub(super) fn check_cancel(cancelled: &AtomicBool) -> Result<(), String> {
-    if cancelled.load(Ordering::Acquire) {
-        Err(CANCELLED.into())
+pub(super) fn check_cancel(canceled: &AtomicBool) -> Result<(), String> {
+    if canceled.load(Ordering::Acquire) {
+        Err(CANCELED.into())
     } else {
         Ok(())
     }
@@ -95,9 +95,9 @@ pub(super) fn check_cancel(cancelled: &AtomicBool) -> Result<(), String> {
 pub(super) fn copy_file(
     source: &Path,
     destination: &Path,
-    cancelled: &AtomicBool,
+    canceled: &AtomicBool,
 ) -> Result<(), String> {
-    check_cancel(cancelled)?;
+    check_cancel(canceled)?;
     let mut input = std::fs::File::open(source).map_err(|e| e.to_string())?;
     let mut output = std::fs::OpenOptions::new()
         .write(true)
@@ -106,7 +106,7 @@ pub(super) fn copy_file(
         .map_err(|e| e.to_string())?;
     let mut buffer = vec![0u8; 1024 * 1024];
     loop {
-        check_cancel(cancelled)?;
+        check_cancel(canceled)?;
         let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
         if count == 0 {
             break;
@@ -115,6 +115,6 @@ pub(super) fn copy_file(
             .write_all(&buffer[..count])
             .map_err(|e| e.to_string())?;
     }
-    check_cancel(cancelled)?;
+    check_cancel(canceled)?;
     output.sync_all().map_err(|e| e.to_string())
 }

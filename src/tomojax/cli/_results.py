@@ -135,7 +135,7 @@ def disk_volume(
 
 
 def scan_axes(det: tj.Detector, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
-    """Pixel centres in the detector's local frame, in stored (view, v, u) order."""
+    """Pixel centers in the detector's local frame, in stored (view, v, u) order."""
     return (
         view,
         Axis("v", "detector", unit, Uniform(det.center[1] - (det.nv - 1) * det.dv / 2, det.dv)),
@@ -151,9 +151,9 @@ def saved_result(
     method: str | None = None,
     include_scan: bool = True,
 ) -> Result:
-    """Describe the arrays actually saved and externalise array-valued diagnostics."""
+    """Describe the arrays actually saved and externalize array-valued diagnostics."""
     import tomojax as tj
-    from tomojax.cli.execution import summarise, volume_metadata
+    from tomojax.cli.execution import summarize, volume_metadata
     from tomojax.recon.api import solver_name
 
     with ExitStack() as cleanup:
@@ -195,7 +195,7 @@ def saved_result(
             if isinstance(item, tj.Alignment):
                 poses = item.poses
                 storage = files.reference(poses, _POSES if scan.poses is not None else None)
-                # NXtomo persists poses in FP32. Synthesised zero poses retain their NPY dtype.
+                # NXtomo persists poses in FP32. Synthesized zero poses retain their NPY dtype.
                 dtype = np.dtype("float32").str if isinstance(storage, Hdf5) else poses.dtype.str
                 columns = pose_columns(unit)
                 arrays["poses"] = Array(
@@ -207,7 +207,7 @@ def saved_result(
                     "poses",
                     columns=columns,
                 )
-        summary = summarise(info, externalise=files.diagnostic)
+        summary = summarize(info, externalize=files.diagnostic)
         result = Result(2, (*outputs, *files.paths), method, arrays, summary)
         _ = cleanup.pop_all()
         return result
@@ -221,11 +221,11 @@ def report_result(
     arrays: dict[str, Array] | None = None,
 ) -> Result:
     """Terminal record for a report or an interchange export."""
-    from tomojax.cli.execution import summarise
+    from tomojax.cli.execution import summarize
 
     with ExitStack() as cleanup:
         files = TerminalFiles(path, cleanup)
-        info = summarise(report, externalise=files.diagnostic)
+        info = summarize(report, externalize=files.diagnostic)
         record = Result(2, (*outputs, *files.paths), None, arrays or {}, info)
         _ = cleanup.pop_all()
         return record

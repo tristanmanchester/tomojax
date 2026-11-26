@@ -29,7 +29,7 @@ from tomojax._frame_sources import (
     selected_frames,
     tiff_frames,
 )
-from tomojax._loading_geometry import centre_of, centred, frame_geometry
+from tomojax._loading_geometry import center_of, centered, frame_geometry
 from tomojax._parameters import AnnotationModule
 from tomojax._scan import (
     Scan,
@@ -117,7 +117,7 @@ def load(
     angles_path: str | None = None,
     apply_poses: bool = True,
 ) -> Scan:
-    """Load line integrals from a dataset or recognised raw acquisition.
+    """Load line integrals from a dataset or recognized raw acquisition.
 
     A file of raw detector frames (an NXtomo ``image_key`` marking flats or
     darks, or a Nikon, SkyScan, Zeiss or ESRF acquisition, or a TIFF stack) is
@@ -132,7 +132,7 @@ def load(
     Parameters
     ----------
     path : str or path-like
-        Dataset or recognised acquisition file or directory.
+        Dataset or recognized acquisition file or directory.
     flats, darks, angles, detector, pixel_size, grid, geometry : optional
         As :func:`load_frames`.
     exposure_times, flat_exposure_times : optional
@@ -141,7 +141,7 @@ def load(
         As :func:`load_frames`.
     apply_poses : bool, optional
         Apply the saved per-view pose corrections, and a scanner's own recorded
-        per-view shifts and centre shift (Zeiss); default is True. False gives the
+        per-view shifts and center shift (Zeiss); default is True. False gives the
         nominal geometry; the record names the scanner's corrections either way.
 
     Returns
@@ -196,9 +196,9 @@ def load_scan_with_declaration(
     apply_poses: bool = True,
     **overrides: Any,
 ) -> Scan:
-    centre, overrides["declared"] = centre_of(overrides.get("declared"))
+    center, overrides["declared"] = center_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs:
-        progress.check_cancelled()
+        progress.check_canceled()
         file = Path(path)
         if not file.exists():
             with progress.task("load", file.name, None, "views"):
@@ -215,7 +215,7 @@ def load_scan_with_declaration(
             if found is not None:
                 outputs.own(found[0].projections)
                 scan = _record_scan(file, *found, apply_poses=apply_poses, **overrides)
-                return centred(scan, centre)
+                return centered(scan, center)
         frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
         fields = _with_fields(
             frames,
@@ -226,7 +226,7 @@ def load_scan_with_declaration(
         )
         scan = _corrected_on_load(fields, file)
         outputs.own(scan.projections)
-        return centred(scan, centre)
+        return centered(scan, center)
 
 
 def discover_frames(
@@ -239,7 +239,7 @@ def discover_frames(
     angles_path: str | None = None,
     **overrides: Any,
 ) -> tuple[Frames | None, LocatedFrames | None]:
-    """Discover vendor frames first, then labelled HDF5 frames, before reading pixels."""
+    """Discover vendor frames first, then labeled HDF5 frames, before reading pixels."""
     paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
     frames = acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
     if frames is None and (file.is_dir() or file.suffix.lower() in {".tif", ".tiff"}):
@@ -272,7 +272,7 @@ def projection_frames(
     """Resolve geometry and calibration for a scan without reading its detector pixels."""
     if not file.exists():
         raise FileNotFoundError(f"no such file: {file}")
-    centre, overrides["declared"] = centre_of(overrides.get("declared"))
+    center, overrides["declared"] = center_of(overrides.get("declared"))
     if TYPE_CHECKING:
         settings = _StoredFrameSettings(apply_poses=apply_poses, angles=angles, **overrides)
     else:
@@ -288,7 +288,7 @@ def projection_frames(
     if frames is None:
         frames, raw = stored_frames(file, located, require_raw=require_raw, **settings)
         if not raw:
-            return centred(frames, centre), False
+            return centered(frames, center), False
     fields = _with_fields(
         frames,
         flats=flats,
@@ -300,7 +300,7 @@ def projection_frames(
 
     _require_calibration(fields)
     check_calibration_layout(fields)
-    return centred(fields, centre), True
+    return centered(fields, center), True
 
 
 def stored_frames(
@@ -665,7 +665,7 @@ def corrected_data(
     """Run the shared correction pipeline and retain its original acquisition indices."""
     from tomojax.corrections import correct_frames
 
-    progress.check_cancelled()
+    progress.check_canceled()
     bound = bind_step_geometry(steps, frames.geometry)
     source = frames.source.source_path if frames.source is not None else None
     reading = not isinstance(frames.counts, np.ndarray)
@@ -730,8 +730,8 @@ def load_frames(
     ``flats`` (frames or one level). A parallel-beam file that records no pixel size
     loads in pixel units (a pitch of one; its record says ``length_unit`` "pixel"), and
     ``pixel_size`` gives the physical one; a cone-beam file needs one, since its
-    distances fix the unit. A file that records the pitch but not the rotation centre
-    gives the middle of the detector, and its record says the centre was not recorded.
+    distances fix the unit. A file that records the pitch but not the rotation center
+    gives the middle of the detector, and its record says the center was not recorded.
     Missing dark fields require ``darks=``; use ``darks=0`` only for already
     dark-corrected counts.
 
@@ -754,10 +754,10 @@ def load_frames(
     angles : array-like or None, optional
         Sample-view angles in degrees, replacing file metadata.
     detector : Detector or None, optional
-        Replacement detector dimensions, pixel sizes and physical centre.
+        Replacement detector dimensions, pixel sizes and physical center.
     pixel_size : float, (float, float) or None, optional
         The detector's pixel size (u, v) in the geometry's length unit, when the file
-        records none or another; the shape comes from the frames and the centre from the
+        records none or another; the shape comes from the frames and the center from the
         file or the middle. Not with ``detector`` or ``geometry``.
     grid : Grid or None, optional
         Replacement reconstruction grid.
@@ -775,7 +775,7 @@ def load_frames(
         Explicit HDF5 rotation-angle path; None discovers it.
     apply_poses : bool, optional
         Apply saved per-view pose corrections, and a scanner's own recorded
-        per-view shifts and centre shift (Zeiss); default is True. False gives
+        per-view shifts and center shift (Zeiss); default is True. False gives
         the nominal geometry while keeping vendor shift provenance in metadata.
 
     Returns
@@ -829,7 +829,7 @@ def load_raw_frames_with_declaration(
     apply_poses: bool = True,
     **overrides: Any,
 ) -> Frames:
-    centre, overrides["declared"] = centre_of(overrides.get("declared"))
+    center, overrides["declared"] = center_of(overrides.get("declared"))
     with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
         file = Path(path)
         if not file.exists():
@@ -855,7 +855,7 @@ def load_raw_frames_with_declaration(
             exposure_times=exposure_times,
             flat_exposure_times=flat_exposure_times,
         )
-        return centred(_require_calibration(fields), centre)
+        return centered(_require_calibration(fields), center)
 
 
 def _frames(
@@ -868,7 +868,7 @@ def _frames(
     angles_path: str | None,
     **overrides: Any,
 ) -> Frames:
-    """The file's detector frames: a recognised acquisition's, a TIFF stack's, or HDF5/NPZ."""
+    """The file's detector frames: a recognized acquisition's, a TIFF stack's, or HDF5/NPZ."""
     if discovered is not None:
         return discovered
     suffix = file.suffix.lower()
@@ -1104,18 +1104,18 @@ def _record_frames(
         declared=declared,
     )
 
-    def labelled(label: int) -> np.ndarray | FrameStack | None:
+    def labeled(label: int) -> np.ndarray | FrameStack | None:
         mask = key == label
         if not mask.any():
             return None
         return stack.frames_at(mask) if hasattr(stack, "frames_at") else stack[mask]
 
-    flats = labelled(1)
+    flats = labeled(1)
     return Frames(
         samples,
         resolved,
         flats=flats,
-        darks=labelled(2),
+        darks=labeled(2),
         flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
         name=record.sample_name or "sample",
         source=record,

@@ -4,7 +4,7 @@ Run headless (Blender 4.5 LTS):
 
     blender -b --factory-startup -P bench/phantoms/chip_package_blender.py -- OUT_DIR
 
-Lengths are millimetres (one Blender unit = 1 mm). The package is flat in the
+Lengths are millimeters (one Blender unit = 1 mm). The package is flat in the
 x-y plane and thin along z, the laminography rotation axis:
 
 - substrate: glass-epoxy laminate, cut around the ground plane and vias

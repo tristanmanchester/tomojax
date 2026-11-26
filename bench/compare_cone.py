@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 r"""Compare cone-beam projection and FDK with ASTRA and TIGRE on one circular scan.
 
-The phantom is five ellipsoids voxelised at 2x2x2 sub-samples; errors compare
+The phantom is five ellipsoids voxelized at 2x2x2 sub-samples; errors compare
 forward projections with exact analytic line integrals and FDK volumes with the
-voxelised phantom. TomoJAX and ASTRA run in this process; TIGRE runs in a child
+voxelized phantom. TomoJAX and ASTRA run in this process; TIGRE runs in a child
 process because it refuses a GPU on which JAX holds memory. A second scan with
 the rotation axis tilted by ``--tilt`` times the general-geometry kernels.
 Times are the best of ``--repeats`` warm calls, each library taking and
@@ -26,7 +26,7 @@ from typing import Any
 
 import numpy as np
 
-ELLIPSOIDS = [  # amplitude, centre and radii as fractions of the volume width, z-rotation
+ELLIPSOIDS = [  # amplitude, center and radii as fractions of the volume width, z-rotation
     (1.0, (0.0, 0.0, 0.0), (0.28, 0.26, 0.30), 0.0),
     (-0.55, (-0.10, 0.04, 0.03), (0.09, 0.12, 0.10), 23.0),
     (0.75, (0.12, -0.08, -0.09), (0.065, 0.055, 0.08), -17.0),
@@ -36,7 +36,7 @@ ELLIPSOIDS = [  # amplitude, centre and radii as fractions of the volume width, 
 
 
 def shapes(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
-    """Return (amplitude, centre, metric) ellipsoids scaled to the volume width."""
+    """Return (amplitude, center, metric) ellipsoids scaled to the volume width."""
     out = []
     for amp, center, radii, angle in ELLIPSOIDS:
         c, s = np.cos(np.deg2rad(angle)), np.sin(np.deg2rad(angle))
@@ -62,7 +62,7 @@ def setup(size: int, views: int, tilt: float = 0.5) -> dict[str, Any]:
 
 
 def make_case(case: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    """Return the voxelised phantom and its exact cone-beam line integrals."""
+    """Return the voxelized phantom and its exact cone-beam line integrals."""
     n, nu, nv = case["size"], case["nu"], case["nv"]
     ellipsoids = shapes(float(n))
     origin = -(n - 1) / 2
@@ -207,9 +207,9 @@ def astra_vectors(case: dict[str, Any]) -> np.ndarray:
 
 
 def tigre_geometry(case: dict[str, Any]) -> tuple[Any, np.ndarray]:
-    """Describe the benchmark's centred circular scan analytically in TIGRE.
+    """Describe the benchmark's centered circular scan analytically in TIGRE.
 
-    Exact zero offsets preserve its centred FDK weighting. Recovering this
+    Exact zero offsets preserve its centered FDK weighting. Recovering this
     geometry from rotated vectors introduces roundoff detector offsets, which
     TIGRE interprets as a displaced detector requiring offset weighting.
     """

@@ -194,7 +194,7 @@ fn background_result_does_not_retarget_an_active_interactive_preview() {
         .insert("plane".into(), preview.clone());
     state.ui.display.indices = [7, 8, 9];
     state.ui.display.sinogram_row = 1;
-    state.centre_sinogram = false;
+    state.center_sinogram = false;
     state.applied_window = Some([-3., 8.]);
     state.ui.display.window_low.replace_text("-3");
     state.ui.display.window_high.replace_text("8");
@@ -220,7 +220,7 @@ fn background_result_does_not_retarget_an_active_interactive_preview() {
     );
     assert_eq!(state.ui.display.indices, [7, 8, 9]);
     assert_eq!(state.ui.display.sinogram_row, 1);
-    assert!(!state.centre_sinogram);
+    assert!(!state.center_sinogram);
     assert_eq!(state.applied_window, Some([-3., 8.]));
     assert_eq!(state.ui.display.window_low.text, "-3");
     assert_eq!(
@@ -287,7 +287,7 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     result.kind = "projections".into();
     result.arrays.insert("projections".into(), projections);
     state.project.as_mut().unwrap().document.jobs.push(job);
-    state.centre_sinogram = false;
+    state.center_sinogram = false;
     state.ui.display.sinogram_row = 0;
     state.applied_window = Some([-100., 100.]);
     state.ui.display.window_low.replace_text("-100");

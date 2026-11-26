@@ -92,7 +92,7 @@ def test_a_seed_grows_into_the_block_and_a_band_surrounds_it(session):
         reply = c.call("view", source=source, axis=axis, index=index, features=[block["handle"]])
         assert not reply["isError"], reply
         assert reply["structuredContent"]["features"] == [
-            {"handle": block["handle"], "colour": "cyan"}
+            {"handle": block["handle"], "color": "cyan"}
         ]
         cyan = (images(reply)[0] == CYAN).all(axis=2)
         assert cyan.sum() > 40, (source, axis)

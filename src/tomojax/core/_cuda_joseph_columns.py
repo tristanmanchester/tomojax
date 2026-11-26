@@ -84,7 +84,7 @@ def pose_columns_cuda(
 
     Tangents have shape ``(views, directions, 14)``. The discrete dominant
     axis is held fixed, and derivatives use the current interpolation cell.
-    No ray-by-plane tape or repeated volume is materialised.
+    No ray-by-plane tape or repeated volume is materialized.
     """
     validate_interpolation(interpolation)
     call = buffer_callback(

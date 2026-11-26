@@ -52,16 +52,16 @@ pub fn type_style(size: f32, weight: f32) -> TextStyle {
     TextStyle::new(size, weight).lh(size * 1.35)
 }
 
-pub fn label(value: impl Into<String>, size: f32, colour: Color) -> El {
-    text(value).font(type_style(size, 400.0)).color(colour)
+pub fn label(value: impl Into<String>, size: f32, color: Color) -> El {
+    text(value).font(type_style(size, 400.0)).color(color)
 }
-pub fn strong(value: impl Into<String>, size: f32, colour: Color) -> El {
-    text(value).font(type_style(size, 600.0)).color(colour)
+pub fn strong(value: impl Into<String>, size: f32, color: Color) -> El {
+    text(value).font(type_style(size, 600.0)).color(color)
 }
-pub fn number(value: impl Into<String>, size: f32, colour: Color) -> El {
+pub fn number(value: impl Into<String>, size: f32, color: Color) -> El {
     text(value)
         .font(type_style(size, 450.0).features("'tnum' 1"))
-        .color(colour)
+        .color(color)
 }
 
 #[cfg(test)]
@@ -69,7 +69,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn functional_type_and_muted_colour_meet_the_design_floor() {
+    fn functional_type_and_muted_color_meet_the_design_floor() {
         assert_eq!(muted(), color("#596A5D"));
         for (requested, expected) in [(8.5, 11.), (11., 11.), (24., 24.)] {
             let style = type_style(requested, 450.);

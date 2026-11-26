@@ -43,7 +43,7 @@ pub const GROUPS: &[Group] = &[
             Operation {
                 id: "correct",
                 title: "Corrections",
-                help: "Normalise raw intensity, remove artefacts and retrieve phase",
+                help: "Normalize raw intensity, remove artifacts and retrieve phase",
             },
             Operation {
                 id: "correction_preview",
@@ -87,9 +87,9 @@ pub const GROUPS: &[Group] = &[
                 help: "Estimate physical object bounds",
             },
             Operation {
-                id: "centre_sweep",
-                title: "Centre sweep",
-                help: "Compare signed centre offsets in detector pixels",
+                id: "center_sweep",
+                title: "Center sweep",
+                help: "Compare signed center offsets in detector pixels",
             },
         ],
     },

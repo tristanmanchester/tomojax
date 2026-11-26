@@ -1,8 +1,8 @@
-"""``inspect --preview-dir``: a dataset's central projection, slices and centre sweep as PNGs.
+"""``inspect --preview-dir``: a dataset's central projection, slices and center sweep as PNGs.
 
 A saved reconstruction's planes are read from the file, plane by plane. A scan's
 planes are reconstructed: each plane on its own where axial FBP allows, otherwise
-one full reconstruction cut into every requested plane. A centre sweep runs one
+one full reconstruction cut into every requested plane. A center sweep runs one
 candidate at a time and keeps only small thumbnails for its contact sheet.
 """
 
@@ -52,9 +52,9 @@ def parse_slice(text: str) -> tuple[Axis, int]:
     return cast("Axis", axis), int(index)
 
 
-def parse_centres(text: str) -> tuple[float, ...]:
+def parse_centers(text: str) -> tuple[float, ...]:
     """``START:STOP:STEP`` (STOP included when on the step grid) or a comma list."""
-    if not is_centres_value(text):
+    if not is_centers_value(text):
         raise ValueError(
             f"--centers takes START:STOP:STEP or a comma list of numbers, not {text!r}"
         )
@@ -67,7 +67,7 @@ def parse_centres(text: str) -> tuple[float, ...]:
     return tuple(round(start + i * step, 12) for i in range(count))
 
 
-def is_centres_value(text: str) -> bool:
+def is_centers_value(text: str) -> bool:
     """Whether ``text`` is a ``--centers`` value, so a leading minus is not an option."""
     return _SPEC.match(text) is not None
 
@@ -130,24 +130,24 @@ def saved_plane(path: Path, axis: Axis, index: int) -> np.ndarray:
 
 
 def _picture(image: np.ndarray, label: str) -> Image.Image:
-    """``image`` as it was sampled (capped or enlarged), scaled and labelled."""
+    """``image`` as it was sampled (capped or enlarged), scaled and labeled."""
     shape = (int(image.shape[0]), int(image.shape[1]))
     shown = _images.resample(image, _images.display_shape(shape, _PIXELS, _images.PLANE_SIDE))
-    return _images.labelled(_images.to_uint8(shown, _images.limits(shown)), label)
+    return _images.labeled(_images.to_uint8(shown, _images.limits(shown)), label)
 
 
 def destinations(
     directory: Path,
     wanted: Sequence[tuple[Axis, int]],
-    centres: Sequence[float],
+    centers: Sequence[float],
     *,
     projection: bool,
     listing: bool,
 ) -> list[Path]:
     """The files a preview run will write in ``directory``."""
     names = [slice_name(axis, index) for axis, index in dict.fromkeys(wanted)]
-    names += [centre_name(i, len(centres), c) for i, c in enumerate(centres)]
-    extra = {"center_sweep.png": bool(centres), "projection.png": projection, LISTING: listing}
+    names += [center_name(i, len(centers), c) for i, c in enumerate(centers)]
+    extra = {"center_sweep.png": bool(centers), "projection.png": projection, LISTING: listing}
     return [directory / name for name in [*names, *(n for n, written in extra.items() if written)]]
 
 
@@ -156,10 +156,10 @@ def slice_name(axis: str, index: int) -> str:
     return f"slice_{axis}_{index}.png"
 
 
-def centre_name(ordinal: int, count: int, centre: float) -> str:
-    """The file of sweep candidate ``ordinal``: unique even for repeated centres."""
+def center_name(ordinal: int, count: int, center: float) -> str:
+    """The file of sweep candidate ``ordinal``: unique even for repeated centers."""
     width = max(2, len(str(count - 1)))
-    return f"center_{ordinal:0{width}d}_{centre:+.2f}px.png"
+    return f"center_{ordinal:0{width}d}_{center:+.2f}px.png"
 
 
 def saved_requests(
@@ -209,7 +209,7 @@ def write_scan_slices(
         image = _images.sample_image(sample)
         label = f"{axis} = {index} · fbp reconstruction of the scan"
         _images.save_png(
-            _images.labelled(_images.to_uint8(image, _images.limits(image)), label),
+            _images.labeled(_images.to_uint8(image, _images.limits(image)), label),
             directory / name,
         )
         out.files[name] = str(directory / name)
@@ -223,38 +223,38 @@ def write_sweep(
     scan: tj.Scan,
     source: Path,
     directory: Path,
-    centres: Sequence[float],
+    centers: Sequence[float],
     plane: tuple[Axis, int] | None,
     out: Previews,
 ) -> None:
-    """Reconstruct ``plane`` at each candidate centre: one image each and a contact sheet."""
+    """Reconstruct ``plane`` at each candidate center: one image each and a contact sheet."""
     from tomojax import interactive
     from tomojax.cli._results import unit_of
 
     axis, index = plane or ("z", scan.grid.nz // 2)
-    plans = interactive.resolve_sweep(scan, axis, index, centres, method="fbp")
-    count, du = len(centres), scan.detector.du
+    plans = interactive.resolve_sweep(scan, axis, index, centers, method="fbp")
+    count, du = len(centers), scan.detector.du
     unit = unit_of(scan)
     shown_unit = "scan units" if unit == "scan_length" else unit
     recorded = scan.detector.center[0] / du
-    progress.note("info", f"centre sweep: {count} candidates on the {axis} = {index} plane")
+    progress.note("info", f"center sweep: {count} candidates on the {axis} = {index} plane")
     columns = math.ceil(math.sqrt(count))
     cell = max(32, min(256, _images.SHEET_SIDE // columns))
     thumbs: list[np.ndarray] = []
     bounds: list[tuple[float, float]] = []
-    for ordinal, (centre, pixels) in enumerate(
-        zip(centres, interactive.sweep_planes(plans, axis, index), strict=True)
+    for ordinal, (center, pixels) in enumerate(
+        zip(centers, interactive.sweep_planes(plans, axis, index), strict=True)
     ):
         image = np.asarray(pixels, np.float32)
-        name = centre_name(ordinal, count, centre)
-        label = f"centre {centre:+.2f} px ({centre * du:+.4g} {shown_unit}) · {axis} = {index}"
+        name = center_name(ordinal, count, center)
+        label = f"center {center:+.2f} px ({center * du:+.4g} {shown_unit}) · {axis} = {index}"
         _images.save_png(_picture(image, label), directory / name)
         out.files[name] = str(directory / name)
         out.sweep.append(
             {
                 "ordinal": ordinal,
-                "center_px": centre,
-                "center_length": centre * du,
+                "center_px": center,
+                "center_length": center * du,
                 "path": str(directory / name),
             }
         )
@@ -267,15 +267,15 @@ def write_sweep(
     shared = (min(low for low, _ in bounds), max(high for _, high in bounds))
     panels = []
     for thumb, entry in zip(thumbs, out.sweep, strict=True):
-        centre = cast("float", entry["center_px"])
-        panel = _images.labelled(_images.to_uint8(thumb, shared), f"{centre:+.2f} px")
+        center = cast("float", entry["center_px"])
+        panel = _images.labeled(_images.to_uint8(thumb, shared), f"{center:+.2f} px")
         panels.append(
-            _images.outlined(panel) if math.isclose(centre, recorded, abs_tol=1e-6) else panel
+            _images.outlined(panel) if math.isclose(center, recorded, abs_tol=1e-6) else panel
         )
     sheet = _images.sheet(panels, columns=columns)
-    if not any(math.isclose(c, recorded, abs_tol=1e-6) for c in centres):
-        sheet = _images.labelled(
-            np.asarray(sheet), f"recorded centre {recorded:+.2f} px (not swept)"
+    if not any(math.isclose(c, recorded, abs_tol=1e-6) for c in centers):
+        sheet = _images.labeled(
+            np.asarray(sheet), f"recorded center {recorded:+.2f} px (not swept)"
         )
     _images.save_png(sheet, directory / "center_sweep.png")
     out.files["center_sweep.png"] = str(directory / "center_sweep.png")
@@ -292,11 +292,11 @@ def write_sweep(
 __all__ = [
     "LISTING",
     "Previews",
-    "centre_name",
+    "center_name",
     "destinations",
     "has_saved_volume",
-    "is_centres_value",
-    "parse_centres",
+    "is_centers_value",
+    "parse_centers",
     "parse_slice",
     "projection_image",
     "saved_plane",

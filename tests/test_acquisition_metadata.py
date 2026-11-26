@@ -368,7 +368,7 @@ def test_missing_angles_are_not_replaced_by_zero_views(tmp_path):
 
 
 @pytest.mark.parametrize("raw", [False, True])
-def test_missing_laminography_tilt_requires_geometry_before_materialisation(tmp_path, raw):
+def test_missing_laminography_tilt_requires_geometry_before_materialization(tmp_path, raw):
     path = tmp_path / "scan.nxs"
     (write_raw_nxtomo if raw else write_projection_dataset)(path)
     with h5py.File(path, "a") as handle:

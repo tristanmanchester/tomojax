@@ -19,7 +19,7 @@ pub(super) struct PreviewContext {
 pub(crate) fn kind(operation: &str) -> Option<PreviewKind> {
     match operation {
         "slice" => Some(PreviewKind::Slice),
-        "centre_sweep" => Some(PreviewKind::Centres),
+        "center_sweep" => Some(PreviewKind::Centers),
         "correction_preview" => Some(PreviewKind::Corrections),
         "region_preview" => Some(PreviewKind::Region),
         _ => None,
@@ -227,7 +227,7 @@ impl AppState {
                     self.preview_context.previous = None;
                     self.preview_context.displayed = Some(current.request.clone());
                     self.ui.display.indices = [0; 3];
-                    self.centre_sinogram = true;
+                    self.center_sinogram = true;
                     self.refresh_images();
                     changed = true;
                 }
@@ -263,7 +263,7 @@ impl AppState {
                     has_image: !self.preview_context.arrays.is_empty(),
                     index: parameters["index"].as_u64().unwrap_or(0) as usize,
                     count,
-                    centre: parameters["centres"].as_array().and_then(|values| {
+                    center: parameters["centers"].as_array().and_then(|values| {
                         (values.len() == 1).then(|| values[0].as_f64()).flatten()
                     }),
                     error_path: status.error_path,

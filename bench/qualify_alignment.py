@@ -127,7 +127,7 @@ def _compose(start: np.ndarray, table: np.ndarray) -> np.ndarray:
 def _rebuilt(scan: tj.Scan, kind: str, tilt: float = 0.0) -> Callable[[dict[str, Any]], tj.Scan]:
     """Rebuild a scan from one reported calibration under tj.align's documented conventions.
 
-    Centre is the detector centre in length units, tilt the axis inclination in degrees,
+    Center is the detector center in length units, tilt the axis inclination in degrees,
     and positive roll turns detector u towards v.
     """
 
@@ -212,7 +212,7 @@ def watch_row(case: str) -> Row:
 def plug_row(name: str, fit: tuple[str, ...], center_px: float = 0.0) -> Row:
     """Build a gVXR spark-plug case (parallel, 720 views of 384^2); roll and tilt are in its poses.
 
-    ``center_px`` declares the detector centre that many pixels off the true one.
+    ``center_px`` declares the detector center that many pixels off the true one.
     """
     data = np.load(str(PLUG).format(name))
     meta = json.loads(str(data["geometry_json"]))

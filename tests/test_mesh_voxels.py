@@ -1,4 +1,4 @@
-"""The mesh voxeliser gives each voxel its exact share of a closed mesh."""
+"""The mesh voxelizer gives each voxel its exact share of a closed mesh."""
 
 from pathlib import Path
 import sys

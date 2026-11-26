@@ -149,7 +149,7 @@ class Scan:
         from tomojax import progress
         from tomojax.corrections import correct_projections
 
-        progress.check_cancelled()
+        progress.check_canceled()
 
         bound = bind_step_geometry(steps, self.geometry)
         with registration(self):
@@ -179,7 +179,7 @@ class Scan:
         Returns
         -------
         Scan
-            Cropped projections with the detector centre moved to match.
+            Cropped projections with the detector center moved to match.
 
         Raises
         ------
@@ -417,7 +417,7 @@ class Scan:
         """The scan with ``binning x binning`` detector pixels averaged into one.
 
         Projection cost falls by ``binning**2``. Pixels that do not fill a block
-        at the detector's edges are dropped, and the detector centre moves to
+        at the detector's edges are dropped, and the detector center moves to
         match. A grid the library derived from the detector follows it, as with
         ``Frames.corrected(binning=)``; a grid the file or the caller stated is
         kept. For a fine grid from a binned detector, pass ``grid=`` to
@@ -495,7 +495,7 @@ def combined_geometry(scans: Sequence[Scan]) -> ConeSegments:
 
 
 def detector_window(rows: slice, cols: slice, detector: Detector) -> Callable[[Detector], Detector]:
-    """The map from a detector to its block of ``rows`` and ``cols``, its centre moved to match."""
+    """The map from a detector to its block of ``rows`` and ``cols``, its center moved to match."""
     r0, r1, rstep = rows.indices(detector.nv)
     c0, c1, cstep = cols.indices(detector.nu)
     if rstep != 1 or cstep != 1 or r1 <= r0 or c1 <= c0:
@@ -769,7 +769,7 @@ def rebuild(
 
 
 def _rolled_window(original: Detector, window: Detector, roll_deg: float) -> Detector:
-    """``window`` with its centre shift turned from rolled pixel axes into x/z."""
+    """``window`` with its center shift turned from rolled pixel axes into x/z."""
     angle = np.deg2rad(roll_deg)
     c, s = np.cos(angle), np.sin(angle)
     du = window.center[0] - original.center[0]
@@ -790,7 +790,7 @@ def _windowed_cone_detector(geometry: ConeGeometry, mapped: Detector) -> tuple[D
     _, u_dir, v_dir = beam.detector_frame(detector)
     shift = du * u_dir + dv * v_dir
     # Detector.center stores lab x/z; the distance stores lab y. Moving the
-    # detector centre in its tilted plane leaves the source and object poses fixed.
+    # detector center in its tilted plane leaves the source and object poses fixed.
     return (
         replace(
             mapped,
@@ -883,7 +883,7 @@ def _binned_detector(detector: Detector, factor: int) -> Detector:
     from tomojax.geometry import Detector
 
     nu, nv = detector.nu // factor, detector.nv // factor
-    # Dropped edge pixels move the binned detector's centre (see Scan.binned).
+    # Dropped edge pixels move the binned detector's center (see Scan.binned).
     cu = detector.center[0] + detector.du * (factor * nu - detector.nu) / 2
     cv = detector.center[1] + detector.dv * (factor * nv - detector.nv) / 2
     return Detector(nu, nv, detector.du * factor, detector.dv * factor, (cu, cv))
@@ -902,7 +902,7 @@ class Reconstruction:
 
     ``volume`` is ``(nz, ny, nx)`` on :attr:`grid`, in the reciprocal of the
     geometry's length unit: attenuation per pixel when the scan's record says
-    ``length_unit`` "pixel" (a file without a pixel size), and then poses, the centre
+    ``length_unit`` "pixel" (a file without a pixel size), and then poses, the center
     and the grid are in pixels too (a NumPy or JAX array; ``np.asarray`` gives NumPy).
     ``info`` records the method's settings. ``scan`` is None for a reconstruction
     loaded from a file saved without it; ``info["source"]`` then names the

@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Panel:
-    """A labelled 2D image with its pixel aspect ratio, physical unit and domain."""
+    """A labeled 2D image with its pixel aspect ratio, physical unit and domain."""
 
     title: str
     pixels: np.ndarray
@@ -54,12 +54,12 @@ def raster(panel: Panel, lo: float, hi: float) -> Image.Image:
     """Map panel intensities to the display range before resizing."""
     data = panel.pixels.astype(float)
     scaled = (data - lo) / (hi - lo) if hi > lo else np.zeros_like(data)
-    grey = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
-    return Image.fromarray(grey)
+    gray = np.uint8(np.nan_to_num(np.clip(scaled, 0, 1)) * 255)
+    return Image.fromarray(gray)
 
 
 def thumbnail(image: Image.Image) -> bytes:
-    """Fit an unlabelled image into a single MCP panel."""
+    """Fit an unlabeled image into a single MCP panel."""
     image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
     return png(image)
 
@@ -80,11 +80,11 @@ def compose(
     decorate: Callable[[Image.Image, int, Rect], None] | None = None,
     placed: list[Rect] | None = None,
 ) -> Image.Image:
-    """Draw up to three planes side by side, mapping equal intensities to equal greys.
+    """Draw up to three planes side by side, mapping equal intensities to equal grays.
 
     ``decorate`` draws over each placed plane, given the plane's index and its
     rectangle in the image as (left, top, horizontal scale, vertical scale); each
-    rectangle is also appended to ``placed``. A decorated image is in colour, with
+    rectangle is also appended to ``placed``. A decorated image is in color, with
     room for index ticks and larger planes, and stays within ``MAX_EDGE`` and
     ``MAX_PIXELS``.
     """
@@ -135,14 +135,14 @@ def montage(
     scales: list[tuple[float, float]],
     decorate: Callable[[Image.Image, int, Rect], None] | None = None,
 ) -> bytes:
-    """``compose`` as PNG bytes; a single unlabelled plane becomes a plain thumbnail."""
+    """``compose`` as PNG bytes; a single unlabeled plane becomes a plain thumbnail."""
     if len(panels) == 1 and not panels[0].labels and decorate is None:
         return thumbnail(raster(panels[0], *scales[0]))
     return png(compose(panels, scales, decorate))
 
 
 def pose_plot(values: np.ndarray, columns: list[dict], views: np.ndarray, view_unit: str) -> bytes:
-    """Six acquisition-ordered traces with labelled horizontal and vertical scales."""
+    """Six acquisition-ordered traces with labeled horizontal and vertical scales."""
     image = Image.new("RGB", (840, 438), "white")
     draw = ImageDraw.Draw(image)
     draw.text((12, 8), "Per-view pose corrections", fill="black")

@@ -44,7 +44,7 @@ class Control(Protocol):
         """Cancel and wake the job."""
 
     def checkpoint(self) -> None:
-        """Raise Cancelled or block while paused, otherwise return."""
+        """Raise Canceled or block while paused, otherwise return."""
 
 
 class Readable(Protocol):
@@ -233,7 +233,7 @@ type Adapter[T: ExecutionInput] = Callable[[T, ExecutionContext], Success]
 
 
 def volume_metadata(grid: tj.Grid, *, storage: Storage, dtype: str, length_unit: str) -> Array:
-    """Register a (z, y, x) volume using physical voxel-centre coordinates."""
+    """Register a (z, y, x) volume using physical voxel-center coordinates."""
     from tomojax.core.registration import volume_axes
 
     axes = volume_axes(grid, length_unit)
@@ -287,15 +287,15 @@ def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
     return Success(PlaneResult(plane), Info({}, {}), manifest)
 
 
-def summarise(
+def summarize(
     info: Mapping[str, object],
     *,
-    externalise: Callable[[str, object], Array],
+    externalize: Callable[[str, object], Array],
 ) -> Info:
-    """Externalise array-valued leaves before scalar JSON conversion.
+    """Externalize array-valued leaves before scalar JSON conversion.
 
     Pointers address the original info tree, including lists. The inline position
-    of an externalised array is null. A large numeric sequence is also bulk data.
+    of an externalized array is null. A large numeric sequence is also bulk data.
     """
     import math
 
@@ -307,7 +307,7 @@ def summarise(
         value = _config_value(value)
         if isinstance(value, np.ndarray | jax.Array):
             if value.ndim:
-                arrays[pointer] = externalise(pointer, value)
+                arrays[pointer] = externalize(pointer, value)
                 return None
             value = value.item()
         if isinstance(value, np.generic):
@@ -321,7 +321,7 @@ def summarise(
             }
         if isinstance(value, tuple | list):
             if len(value) > 64 and all(isinstance(item, int | float | np.number) for item in value):
-                arrays[pointer] = externalise(pointer, np.asarray(value))
+                arrays[pointer] = externalize(pointer, np.asarray(value))
                 return None
             return [visit(item, f"{pointer}/{index}") for index, item in enumerate(value)]
         return value if value is None or isinstance(value, str | bool | int | float) else str(value)

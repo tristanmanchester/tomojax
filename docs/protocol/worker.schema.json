@@ -58,7 +58,7 @@
                       "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CentreSweep"
+                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep"
                     },
                     {
                       "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview"
@@ -72,7 +72,7 @@
                     "mapping": {
                       "plane": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane",
                       "slice": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice",
-                      "centre_sweep": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CentreSweep",
+                      "center_sweep": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep",
                       "correction_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview",
                       "region_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
                     }

@@ -109,7 +109,7 @@ class SPDHGConfig:
     regularizer : Regularizer, optional
         Regularization model: "tv" or "huber_tv". Default is 'tv'.
     huber_delta : float, optional
-        Positive dimensionless Huber transition scale when regulariser is "huber_tv". Default is
+        Positive dimensionless Huber transition scale when regularizer is "huber_tv". Default is
         0.01.
     theta : float, optional
         Extrapolation factor for the dual gradient. Default is 1.0.
@@ -901,9 +901,9 @@ def spdhg(
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
         if runtime.config.iterations and progress.for_unit("iterations") is not None:
-            progress.check_cancelled()
+            progress.check_canceled()
             # XLA can use a volume of scratch during compilation. Release it
-            # before materialising the watched primal and dual arrays.
+            # before materializing the watched primal and dual arrays.
             shape = volume_shape(runtime.projector[0], grid)
             with progress.preparing("compile spdhg updates"):
                 state = _initial_spdhg_state.eval_shape(runtime, shape)

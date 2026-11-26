@@ -21,13 +21,13 @@ images (each Gaussian-smoothed by 3 pixels):
   (skipping pores below half the filler's attenuation), relative to its
   median and clipped at 3: cupping, streaks and self-hardening together;
 - ``filler_cupping``: ``r`` of the filler near the wall minus that near the
-  tube's centre, relative to the filler's (``reference_cupping`` is the same
+  tube's center, relative to the filler's (``reference_cupping`` is the same
   profile of the 90 kV image alone, its own hardening);
 - ``wall_sectors``: the spread of the wall ratio over 36 angular sectors,
   relative to its mean, which streaks from dense objects raise.
 
 Single-material corrections cannot be right for the dense objects, whose
-``ratio`` is reported but not summarised.
+``ratio`` is reported but not summarized.
 """
 
 from __future__ import annotations
@@ -123,7 +123,7 @@ def run(
     """Score every method on every slice of the split, or on the ``chosen`` ones.
 
     Each slice's figure shows the images divided by their filler's median,
-    so the 60 and 90 kV scans share a window, with profiles about the tube's centre.
+    so the 60 and 90 kV scans share a window, with profiles about the tube's center.
     """
     records = []
     for slice_id in chosen or d2.slices(split):

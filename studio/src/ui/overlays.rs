@@ -93,7 +93,7 @@ pub fn jobs_workspace(state: &AppState) -> El {
     content
 }
 
-fn job_colour(status: JobStatus) -> rune::Color {
+fn job_color(status: JobStatus) -> rune::Color {
     match status {
         JobStatus::Failed | JobStatus::Interrupted => error(),
         JobStatus::Paused => warning(),
@@ -199,7 +199,7 @@ fn job_actions(job: &JobView, compact: bool) -> El {
                 .h(30.),
             );
         }
-        JobStatus::Failed | JobStatus::Interrupted | JobStatus::Cancelled => {
+        JobStatus::Failed | JobStatus::Interrupted | JobStatus::Canceled => {
             actions = actions.child(
                 action_button(
                     &format!("retry-job-{}", job.id),
@@ -255,7 +255,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 _ => Icon::Jobs,
             },
             18.,
-            job_colour(job.status),
+            job_color(job.status),
         ))
         .child(
             col()
@@ -265,7 +265,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 .child(strong(&job.name, 12., ink()).truncate().help(&job.name))
                 .child(label(&job.operation, 11., muted()).truncate()),
         )
-        .child(label(job.status.title(), 11., job_colour(job.status)));
+        .child(label(job.status.title(), 11., job_color(job.status)));
     if !compact && let Some(elapsed) = &job.elapsed {
         heading = heading.child(number(elapsed, 11., muted()));
     }

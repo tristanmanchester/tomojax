@@ -1,4 +1,4 @@
-"""Selective detector-response correction without erasing a centred feature."""
+"""Selective detector-response correction without erasing a centered feature."""
 
 import jax
 import jax.numpy as jnp

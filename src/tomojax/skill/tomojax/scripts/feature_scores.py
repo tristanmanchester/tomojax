@@ -51,13 +51,13 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
     edges = np.arange(-reach, reach + 0.5, 0.5)
     which = np.digitize(distance[near], edges)
     values, distances = volume[near], distance[near]
-    centres, profile = [], []
+    centers, profile = [], []
     for b in range(1, len(edges)):
         selected = which == b
         if selected.any():
-            centres.append(distances[selected].mean())
+            centers.append(distances[selected].mean())
             profile.append(values[selected].mean())
-    x, y = np.asarray(centres), np.asarray(profile)
+    x, y = np.asarray(centers), np.asarray(profile)
     hi, lo = y[0], y[-1]
     level = (y - lo) / (hi - lo)  # 1 inside, 0 outside
 

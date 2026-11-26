@@ -2,9 +2,9 @@
 
     uv run python examples/gallery/k11_ruby_sphere.py k11-54013.nxs k11-ruby-sphere.png
 
-The 1441 views are aligned with the plain ``tj.align(scan)`` on a 6.48 micrometre
-grid, then reconstructed by FBP at the detector's 2.16 micrometre pitch in three
-orthogonal planes through the ruby sphere's centre. The planes share one grey range.
+The 1441 views are aligned with the plain ``tj.align(scan)`` on a 6.48 micrometer
+grid, then reconstructed by FBP at the detector's 2.16 micrometer pitch in three
+orthogonal planes through the ruby sphere's center. The planes share one gray range.
 """
 
 from __future__ import annotations
@@ -20,12 +20,12 @@ import numpy as np
 
 import tomojax as tj
 
-CENTER_UM = (-345.0, -60.0, 0.0)  # the sphere's centre after alignment, x, y, z
+CENTER_UM = (-345.0, -60.0, 0.0)  # the sphere's center after alignment, x, y, z
 SIDE = 320  # plane pixels, 691 um across
 
 
 def planes(scan: tj.Scan) -> list[tuple[str, np.ndarray]]:
-    """The xy, xz and yz planes through the sphere's centre, each SIDE pixels square."""
+    """The xy, xz and yz planes through the sphere's center, each SIDE pixels square."""
     x, y, z = CENTER_UM
     return [
         (f"xy · z = {z:.0f} µm", plane(scan, CENTER_UM, (SIDE, SIDE, 1))),
@@ -35,7 +35,7 @@ def planes(scan: tj.Scan) -> list[tuple[str, np.ndarray]]:
 
 
 def figure(cuts: list[tuple[str, np.ndarray]], output: Path) -> None:
-    """The three planes with 200 um scale bars, sharing one grey range."""
+    """The three planes with 200 um scale bars, sharing one gray range."""
     low, high = np.percentile(np.concatenate([cut.ravel() for _, cut in cuts]), (1, 99.5))
     style()
     fig, axes = plt.subplots(1, 3, figsize=(10, 3.9), layout="constrained")

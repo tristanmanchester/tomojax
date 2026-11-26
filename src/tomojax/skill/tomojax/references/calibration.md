@@ -28,7 +28,7 @@ float(np.std(exposure.projections - exposure.expected))
 
 Given a measured phase stack and a boolean detector air mask, remove the air
 ramp after unwrapping. For absorption data, inspect a beam-hardening response
-before applying it. Spectrum modelling requires the optional physics libraries.
+before applying it. Spectrum modeling requires the optional physics libraries.
 
 ```python
 from tomojax import corrections

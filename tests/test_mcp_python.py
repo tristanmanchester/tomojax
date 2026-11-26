@@ -195,7 +195,7 @@ state='completed'"""
         assert not c.call("control", action="cancel", target=target)["isError"]
         (tmp_path / "continue").touch()
         terminal = c.receive("id", pending)["result"]
-        assert terminal["isError"] and terminal["structuredContent"]["kind"] == "cancelled"
+        assert terminal["isError"] and terminal["structuredContent"]["kind"] == "canceled"
         assert python(c, "state")["value"] == "before"
         assert not c.call("status")["structuredContent"]["handles"]
 
@@ -230,7 +230,7 @@ np.searchsorted = gated_search
             (target,) = c.call("status")["structuredContent"]["jobs"]
             assert not c.call("control", action="cancel", target=target)["isError"]
         terminal = c.receive("id", request)["result"]
-        assert terminal["isError"] and terminal["structuredContent"]["kind"] == "cancelled"
+        assert terminal["isError"] and terminal["structuredContent"]["kind"] == "canceled"
         assert python(c, "[os.getpid(), len(chunks), len(handles[live].angles)]")["value"] == [
             pid,
             1,

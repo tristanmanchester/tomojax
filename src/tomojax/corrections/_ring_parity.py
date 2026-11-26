@@ -14,7 +14,7 @@ def _plan(size: int) -> tuple[np.ndarray, ...]:
 
     The odd field estimates one real Gaussian mode per frequency. For a filter
     with covariance C, its even coefficient at i has variance
-    (C(0) + C(2*i - size + 1))/2, including correlated mirror neighbours.
+    (C(0) + C(2*i - size + 1))/2, including correlated mirror neighbors.
     DC has no odd observation: extending the first band's PSD to it is a prior.
     """
     from scipy.stats import f as fisher

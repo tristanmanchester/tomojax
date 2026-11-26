@@ -100,7 +100,7 @@ class Stages:
         return stage
 
     def output(self, destination: Path, *, force: bool) -> Path:
-        # Canonicalise parents, but replace a destination symlink itself.
+        # Canonicalize parents, but replace a destination symlink itself.
         if not destination.name or destination.name == "..":
             raise ValueError("expected an output file or directory name")
         dest = destination.parent.resolve() / destination.name

@@ -89,7 +89,7 @@ class WatchDirectory:
                 data = _images.sample_image(sample)
                 kind = "working image" if self._working else "volume"
                 text = f"{key} plane · {label} · {elapsed} · {kind}"
-                image = _images.labelled(_images.to_uint8(data, _images.limits(data)), text)
+                image = _images.labeled(_images.to_uint8(data, _images.limits(data)), text)
             _ = _images.save_png(image, self.path / name)
 
     def __enter__(self) -> WatchDirectory:

@@ -33,7 +33,7 @@ geometry = tj.ParallelGeometry(grid, detector, load_angles("angles.csv"))
 tj.save("corrected.nxs", tj.Scan(projections, geometry))
 ```
 
-Detector and voxel pitches share one physical length unit, and `Detector.center` is in that same unit (a 2-pixel offset at 0.65 pitch is `1.3`). Use `tomojax align --fit center` to refine the rotation centre, and `tomojax reconstruct --grid NX NY NZ` to resample the output grid while preserving physical extent.
+Detector and voxel pitches share one physical length unit, and `Detector.center` is in that same unit (a 2-pixel offset at 0.65 pitch is `1.3`). Use `tomojax align --fit center` to refine the rotation center, and `tomojax reconstruct --grid NX NY NZ` to resample the output grid while preserving physical extent.
 
 ### Raw intensities with flat and dark frames
 
@@ -86,7 +86,7 @@ tomojax inspect recon.nxs --preview-dir previews
 
 On simulated laminography benchmarks, FISTA-TV with its automatic TV weight halves FBP's error on measured frequencies (0.079 vs 0.165 and 0.163) and suppresses missing-cone fog. FISTA's default 50 iterations under-converge on laminography; raise `--iterations` to 100 or more (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.
 
-![Diamond K11 scan 54286 reconstructed by FBP and by FISTA-TV: in-plane slices through a layer of glass spheres, enlarged regions and vertical sections. The FISTA-TV slice has sharper sphere edges and a clean background, and its vertical section is dark around the layer where FBP's is grey.](images/k11-fbp-fista.png)
+![Diamond K11 scan 54286 reconstructed by FBP and by FISTA-TV: in-plane slices through a layer of glass spheres, enlarged regions and vertical sections. The FISTA-TV slice has sharper sphere edges and a clean background, and its vertical section is dark around the layer where FBP's is gray.](images/k11-fbp-fista.png)
 
 Diamond K11 scan 54286, aligned with `tj.align(scan)` and reconstructed on a 704 × 704 × 234 grid (6.48 µm voxels): FBP (top, 7 s) versus 100-iteration nonnegative FISTA-TV (bottom, 651 s). FISTA-TV sharpens the glass spheres and clears the missing-cone haze above and below the layer. Iterative solvers require the whole sample inside the grid (at native 2.16 µm pitch that grid exceeds an 8 GB GPU).
 
@@ -100,7 +100,7 @@ FBP streams projections from host memory and switches automatically to host slab
 
 ## Automatic NeXus laminography
 
-Recognised Diamond/GDA NeXus layouts need no dataset path overrides, though raw frames omit laminography tilt and often pixel pitch. Supply the nominal geometry before aligning, as in [examples/align_laminography.py](../examples/align_laminography.py):
+Recognized Diamond/GDA NeXus layouts need no dataset path overrides, though raw frames omit laminography tilt and often pixel pitch. Supply the nominal geometry before aligning, as in [examples/align_laminography.py](../examples/align_laminography.py):
 
 ```python
 geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt=35)

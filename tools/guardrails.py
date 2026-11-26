@@ -460,8 +460,8 @@ def ratchets() -> dict[str, object]:
         "positional_options": _positional_options(),
         # The internal five-column pose array; public poses have six columns.
         "params5_mentions": _count(r"\bparams5\b"),
-        # Each normalises a user string by hand instead of through one parser.
-        "string_normalisers": _count(r"\.replace\(\"[-_]\", \"[-_]\"\)"),
+        # Each normalizes a user string by hand instead of through one parser.
+        "string_normalizers": _count(r"\.replace\(\"[-_]\", \"[-_]\"\)"),
         # Code assuming one device, now that work can be shared among several.
         "first_device_probes": _count(r"jax\.devices\(\)\[0\]"),
         # jaxlib's private modules: none needed.

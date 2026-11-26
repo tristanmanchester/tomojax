@@ -288,7 +288,7 @@ def _angles_report(file: h5py.File, located: LocatedFrames | None) -> AnglesRepo
 def _angle_summary(
     values: np.ndarray | None, keys: np.ndarray | None, path: str | None, units: str | None
 ) -> AnglesReport:
-    """Summarise sample angles, recorded either for every frame or for sample views only."""
+    """Summarize sample angles, recorded either for every frame or for sample views only."""
     samples = np.asarray([]) if values is None else values
     if keys is not None and samples.size == keys.size:
         samples = samples[keys == 0]
@@ -364,7 +364,7 @@ def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
         "nv": _json_safe(meta.get("nv")),
         "du": _json_safe(meta.get("du")),
         "dv": _json_safe(meta.get("dv")),
-        "center": _json_safe(meta.get("det_center")),  # the file's key for the centre
+        "center": _json_safe(meta.get("det_center")),  # the file's key for the center
     }
 
 

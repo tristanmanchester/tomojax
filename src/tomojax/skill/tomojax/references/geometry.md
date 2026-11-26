@@ -1,6 +1,6 @@
 # Inspect ray geometry
 
-Detector pitch, centre and grid dimensions share the acquisition's length unit.
+Detector pitch, center and grid dimensions share the acquisition's length unit.
 Keep the origin fixed when reproducing a saved grid. Inspect the per-view
 transform and rays to check a declared geometry.
 

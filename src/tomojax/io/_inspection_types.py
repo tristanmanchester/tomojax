@@ -144,7 +144,7 @@ class InspectionReport(TypedDict):
     geometry : dict
         Geometry family and recorded metadata keys.
     detector_metadata : dict
-        Detector dimensions, sampling and centre.
+        Detector dimensions, sampling and center.
     flats_darks : dict
         Calibration frame discovery and frame-label counts.
     corrections : list of str

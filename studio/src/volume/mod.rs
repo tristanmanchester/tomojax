@@ -26,7 +26,7 @@ pub struct VolumeSettings {
     pub zoom: f32,
     pub window: Option<[f32; 2]>,
     pub colormap: ColorMap,
-    /// Reverses the colour ramp; opacity still follows the values, so dense
+    /// Reverses the color ramp; opacity still follows the values, so dense
     /// material stays visible.
     pub invert: bool,
     pub threshold: f32,

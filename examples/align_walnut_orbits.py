@@ -4,7 +4,7 @@ The FIPS walnut collection (Der Sarkissian et al., Scientific Data 6, 215,
 2019; CC BY 4.0; Zenodo record 2686726) scans each walnut on a FleX-ray
 scanner in three circular orbits with the source at three heights. The
 scanner's recorded geometry (``scan_geom_original.geom``) places orbits 2 and
-3 a fraction of a millimetre off, so a reconstruction from all three blurs
+3 a fraction of a millimeter off, so a reconstruction from all three blurs
 and doubles edges. This loads that uncorrected record, lets ``tj.align``
 find each orbit's true height, and reconstructs with the result.
 
@@ -48,7 +48,7 @@ def main() -> None:
     # The data fix the orbits' heights relative to one another, but not the
     # walnut's absolute height: moving the whole object, and every view with it,
     # predicts the same projections. tj.align reports the estimate that moves
-    # the views least, so the volume can sit a fraction of a millimetre from
+    # the views least, so the volume can sit a fraction of a millimeter from
     # where the scanner's record would place it.
     reconstruction = tj.reconstruct(
         result.scan, "fista", iterations=20, tv_weight=0.0, nonnegative=True

@@ -12,7 +12,7 @@ def test_public_discovery_includes_methods_and_jit_functions():
     assert "tomojax.Scan.with_poses" in objects
     assert "tomojax.Scan.grid" in objects
     assert "tomojax.corrections.unwrap_phase" in objects
-    assert "tomojax.datasets.SimulationArtefacts.has_enabled" in objects
+    assert "tomojax.datasets.SimulationArtifacts.has_enabled" in objects
     assert "tomojax.forward.joseph_pose_normal_equations" in objects
     assert "tomojax.forward.api.residual_loss" in objects
     assert set(public_data()) <= PUBLIC_DATA.keys()

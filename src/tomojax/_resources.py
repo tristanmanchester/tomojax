@@ -12,21 +12,21 @@ from tomojax.wire.resources import Placement, Snapshot
 if TYPE_CHECKING:
     from tomojax._planning import ResolvedReconstruction
     from tomojax._scan import Scan
-    from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax._smooth_alignment import CenterSelection, JointSelection
 
 
 def sample(
-    plan: CentreSelection | JointSelection | ResolvedReconstruction | None = None,
+    plan: CenterSelection | JointSelection | ResolvedReconstruction | None = None,
 ) -> tuple[Snapshot, ...]:
     """Sample only on the execution thread. CPU availability is host/cgroup room."""
     from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CentreSelection
+    from tomojax._smooth_alignment import CenterSelection
     from tomojax.backends import device_free_memory_bytes
     from tomojax.core.devices import current_device
     from tomojax.core.host_volume import host_available_memory_bytes
 
     clock = time()
-    if isinstance(plan, CentreSelection):
+    if isinstance(plan, CenterSelection):
         return (Snapshot(clock, "cpu:0", "host", None, None, host_available_memory_bytes()),)
     devices = None
     if isinstance(plan, ResolvedReconstruction):
@@ -82,7 +82,7 @@ def sample(
 
 def estimate(
     scan: Scan,
-    plan: CentreSelection | JointSelection | ResolvedReconstruction,
+    plan: CenterSelection | JointSelection | ResolvedReconstruction,
     snapshot: tuple[Snapshot, ...],
 ) -> Placement:
     """Project logical storage from the resolved work against a fixed sample.
@@ -91,14 +91,14 @@ def estimate(
     transfers. Runtime compilation, allocator fragmentation and external allocations
     can change the eventual strategy and peak.
     """
-    from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax._smooth_alignment import CenterSelection, JointSelection
 
     views, rows, cols = scan.projections.shape
     hosts = views * rows * cols * scan.projections.dtype.itemsize
     devices = tuple(item.device for item in snapshot)
     available = min((s.available for s in snapshot if s.available is not None), default=None)
-    if isinstance(plan, CentreSelection):
-        # Sample up to two interpolation neighbours at either end of every pair, in FP64.
+    if isinstance(plan, CenterSelection):
+        # Sample up to two interpolation neighbors at either end of every pair, in FP64.
         work = 8 * min(views, len(plan.samples) * 4) * min(rows, 64) * cols
         return Placement(devices, "resident", hosts + work, 0, snapshot)
     if isinstance(plan, JointSelection):

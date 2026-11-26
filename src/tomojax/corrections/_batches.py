@@ -84,7 +84,7 @@ def view_batches(counts: Any, views: int, batch: int) -> Generator[tuple[int, in
     with ThreadPoolExecutor(max_workers=1) as reader:
         pending = reader.submit(read, starts[0]) if starts else None
         for k, start in enumerate(starts):
-            progress.check_cancelled()
+            progress.check_canceled()
             assert pending is not None
             frames = pending.result()
             if k + 1 < len(starts):

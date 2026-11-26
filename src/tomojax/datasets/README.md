@@ -5,7 +5,7 @@
 
 ## Public API
 
-- `SimConfig`, `SimulationArtefacts`, `SimulatedData`
+- `SimConfig`, `SimulationArtifacts`, `SimulatedData`
 - `simulate`, `make_phantom`
 - phantoms: `shepp_logan_3d`, `cube`, `sphere`, `blobs`, `random_cubes_spheres`,
   `rotated_centered_cube` and `lamino_disk`

@@ -24,7 +24,7 @@ use sources::{SourceState, Sources};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum PreviewKind {
     Slice,
-    Centres,
+    Centers,
     Corrections,
     Region,
 }
@@ -33,7 +33,7 @@ impl PreviewKind {
     pub fn operation(self) -> &'static str {
         match self {
             Self::Slice => "slice",
-            Self::Centres => "centre_sweep",
+            Self::Centers => "center_sweep",
             Self::Corrections => "correction_preview",
             Self::Region => "region_preview",
         }
@@ -41,7 +41,7 @@ impl PreviewKind {
     pub fn channel(self) -> &'static str {
         match self {
             Self::Slice => "preview.slice",
-            Self::Centres => "preview.centres",
+            Self::Centers => "preview.centers",
             Self::Corrections => "preview.corrections",
             Self::Region => "preview.region",
         }
@@ -50,7 +50,7 @@ impl PreviewKind {
         matches!(
             (self, product),
             (Self::Slice, Product::Plane { .. })
-                | (Self::Centres, Product::Sweep { .. })
+                | (Self::Centers, Product::Sweep { .. })
                 | (Self::Corrections, Product::CorrectionPreview { .. })
                 | (Self::Region, Product::Region { .. })
         )
@@ -68,7 +68,7 @@ pub enum PreviewPhase {
     Paused,
     Ready,
     Failed,
-    Cancelled,
+    Canceled,
 }
 
 impl PreviewPhase {
@@ -424,7 +424,7 @@ impl Previews {
         })
     }
 
-    /// Only explicit UI actions use this control path. Acknowledgement is not a
+    /// Only explicit UI actions use this control path. Acknowledgment is not a
     /// pause/cancel terminal; progress and cached status establish the outcome.
     pub fn control(
         &mut self,
@@ -446,8 +446,8 @@ impl Previews {
         } else if action == "cancel" {
             if let Some(slot) = self.slots.get_mut(&kind) {
                 slot.intent = None;
-                slot.status.phase = PreviewPhase::Cancelled;
-                slot.status.message = "Preview cancelled before admission".into();
+                slot.status.phase = PreviewPhase::Canceled;
+                slot.status.message = "Preview canceled before admission".into();
             }
         } else {
             return Err("This preview has not entered the worker queue".into());
@@ -476,7 +476,7 @@ impl Previews {
     pub fn reset(&mut self) {
         for kind in [
             PreviewKind::Slice,
-            PreviewKind::Centres,
+            PreviewKind::Centers,
             PreviewKind::Corrections,
             PreviewKind::Region,
         ] {

@@ -155,7 +155,7 @@ def test_a_stack_the_device_refuses_goes_to_the_host_with_every_stack_after_it(m
 @pytest.mark.parametrize("where", ["linearize", "schur"])
 def test_running_out_of_device_memory_inside_a_level_names_the_placement(monkeypatch, where):
     # Host stacks keep the level's own allocations bounded, but other work in the process
-    # can still take the room: the linearisation or the matvec then fails with a plain
+    # can still take the room: the linearization or the matvec then fails with a plain
     # error that says what the level had placed where, not a bare allocator message.
     def exhausted(*_args, **_kwargs):
         raise jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: Out of memory (test)")

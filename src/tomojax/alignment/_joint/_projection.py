@@ -246,7 +246,7 @@ def cropped_frames(
 ) -> np.ndarray:
     """Cone frames after removing high-index detector columns/rows.
 
-    Binning the remaining complete blocks keeps this physical centre. A roll
+    Binning the remaining complete blocks keeps this physical center. A roll
     or tilt makes this shift follow the frame's u/v axes, not the lab x/z axes.
     The input frame array is never modified.
     """
@@ -295,7 +295,7 @@ def residual_filter(images: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
 def filtered_precision(precision: np.ndarray | None) -> np.ndarray | None:
     """The precision of K-filtered data: zero wherever a tap of K falls on an unmeasured pixel.
 
-    K mixes each pixel with its neighbours, so a filtered sample is known only where all
+    K mixes each pixel with its neighbors, so a filtered sample is known only where all
     of its taps were measured; elsewhere its precision is zero, the pixel's own otherwise.
     """
     if precision is None:
@@ -304,7 +304,7 @@ def filtered_precision(precision: np.ndarray | None) -> np.ndarray | None:
     padded = np.pad(seen, ((0, 0), (1, 1), (1, 1)), mode="edge")
     nv, nu = seen.shape[1:]
     whole = np.ones_like(seen)
-    for dv in range(3):  # K along u then v reaches the whole 3 x 3 neighbourhood
+    for dv in range(3):  # K along u then v reaches the whole 3 x 3 neighborhood
         for du in range(3):
             whole *= padded[:, dv : dv + nv, du : du + nu]
     return (precision * whole).astype(precision.dtype)
@@ -314,12 +314,12 @@ class Projection:
     """Coefficients, fused pose columns and matched image operators for one geometry.
 
     ``frames`` supplied to ``coefficients`` or ``tangent`` are cone lab frames
-    (views, 4, 3): detector centre, unit u, unit v, source. Parallel calls omit
+    (views, 4, 3): detector center, unit u, unit v, source. Parallel calls omit
     them. A cone's sixth parameter changes magnification by moving the object
     along lab y; discarding it would silently fit only five of its rigid DOFs.
 
-    Each detector pixel is one ray through its centre, at every working scale.
-    A binned pixel is the mean of its finer rays; modelling it by the central
+    Each detector pixel is one ray through its center, at every working scale.
+    A binned pixel is the mean of its finer rays; modeling it by the central
     ray costs little accuracy and keeps every level as cheap as its pixel count.
     """
 

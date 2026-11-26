@@ -2,9 +2,9 @@
 
 `tomojax mcp` runs a [Model Context Protocol](https://modelcontextprotocol.io) server over stdio. An agent connected to it can inspect, load, correct, align, reconstruct, simulate and export scans, look at the results as images, and run Python against the data it has loaded. No tool waits for a person, so an agent can work through a scan unattended.
 
-![Three central planes of FIPS walnut 1 as an agent receives them from the reconstruct tool, each labelled with its handle, plane index, physical extent and display limits.](images/mcp-walnut-panels.png)
+![Three central planes of FIPS walnut 1 as an agent receives them from the reconstruct tool, each labeled with its handle, plane index, physical extent and display limits.](images/mcp-walnut-panels.png)
 
-What the agent sees after `reconstruct` on the FIPS walnut (three orbits, FISTA): the central planes, labelled with the result's handle, the plane, its extent and the display limits, beside a short text summary.
+What the agent sees after `reconstruct` on the FIPS walnut (three orbits, FISTA): the central planes, labeled with the result's handle, the plane, its extent and the display limits, beside a short text summary.
 
 ## Install and connect
 
@@ -81,11 +81,11 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `correct` | Flat/dark correction, zingers, phase retrieval, stripes, rings, beam hardening and binning |
 | `reconstruct` | Reconstruct with an automatic or named method; returns central planes |
 | `reconstruct_slabs` | Reconstruct raw frames slab by slab straight into a file, for volumes too large to hold |
-| `align` | Fit the centre, setup angles or per-view motion; returns a pose plot and slices |
-| `simulate` | Simulate a scan of a phantom, with optional detector artefacts |
+| `align` | Fit the center, setup angles or per-view motion; returns a pose plot and slices |
+| `simulate` | Simulate a scan of a phantom, with optional detector artifacts |
 | `project`, `backproject` | Apply the forward projector or its exact transpose |
 | `edit_scan` | Select views, crop, bin, replace poses or combine scans |
-| `preview` | Single slices, centre sweeps (with optional `roi` zoom), before/after corrections and region estimates |
+| `preview` | Single slices, center sweeps (with optional `roi` zoom), before/after corrections and region estimates |
 | `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots, with marks and feature outlines |
 | `feature` | Make a named mask from a box, sphere, cylinder or prism, a region grown from seed points, or a band around another feature |
 | `evaluate` | Score candidate settings on held-out views |
@@ -109,7 +109,7 @@ Handles last until you close them, the worker restarts, or the server exits. Sav
 
 ## Results, images and long jobs
 
-Every result has a short text summary, the same fields as structured content, and labelled PNG panels where an image helps: three central planes after `reconstruct`, a pose plot and slices after `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a centre sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
+Every result has a short text summary, the same fields as structured content, and labeled PNG panels where an image helps: three central planes after `reconstruct`, a pose plot and slices after `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a center sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
 
 Long jobs send progress with the current stage, its metrics and an estimate of the time left. Clients that support the MCP tasks extension receive long calls as tasks they can poll and cancel; other clients wait for the result. Cancel a job from the client or with `control`; it stops at the next checkpoint.
 
@@ -117,11 +117,11 @@ The server runs one worker process with one queue, so GPU jobs run one after ano
 
 ## Point at a feature
 
-An agent can show you exactly what it means instead of describing it. `view` takes `marks`: points, arrows, boxes, circles, polylines, polygons and text, each with an optional label and colour. A position is either array indices of the source, `[z, y, x]` for a volume or `[view, v, u]` for projections, or a pixel in an image an earlier `view` returned, `{"pixel": [x, y], "image": "render-12"}` with the origin at the top left, which the server converts to indices. Either way a mark lands on the same voxel in every plane, ROI and zoom; a circle is a sphere, and each plane shows its cross-section. Index ticks along the image edges, or a pixel grid with `grid`, help the agent aim. The result reports, for each mark, its positions in array indices and, for each plane, whether it was drawn, its pixel in the image, the value under it, and that value's percentile in the plane and place within the display limits, so a mark on background reads as a miss. A point with `snap` set to `peak`, `trough` or `edge` moves, on each plane, to the brightest or darkest sample or the steepest edge within `within` index units (5 by default), and the report gives where it moved to and how far.
+An agent can show you exactly what it means instead of describing it. `view` takes `marks`: points, arrows, boxes, circles, polylines, polygons and text, each with an optional label and color. A position is either array indices of the source, `[z, y, x]` for a volume or `[view, v, u]` for projections, or a pixel in an image an earlier `view` returned, `{"pixel": [x, y], "image": "render-12"}` with the origin at the top left, which the server converts to indices. Either way a mark lands on the same voxel in every plane, ROI and zoom; a circle is a sphere, and each plane shows its cross-section. Index ticks along the image edges, or a pixel grid with `grid`, help the agent aim. The result reports, for each mark, its positions in array indices and, for each plane, whether it was drawn, its pixel in the image, the value under it, and that value's percentile in the plane and place within the display limits, so a mark on background reads as a miss. A point with `snap` set to `peak`, `trough` or `edge` moves, on each plane, to the brightest or darkest sample or the steepest edge within `within` index units (5 by default), and the report gives where it moved to and how far.
 
 `view` images stay within 1568 pixels on the long edge and 1.15 megapixels, so a model sees them unscaled and its pixel positions match the server's. Give `source` a list to show several candidates side by side on the same planes, with the same marks and outlines, and `limits` to fix the display range.
 
-Once you agree on a structure, the `feature` tool turns it into a named mask held by the server: a box, sphere, cylinder or extruded polygon from the mark, a region grown from a seed point through voxels of similar value, or a band of chosen width around another feature. `view` with `features` outlines up to five features on any volume on the same grid, which is how an agent shows what it will optimise for, and the Skill's `feature_scores.py` scores candidate reconstructions on a feature and its surroundings without ground truth.
+Once you agree on a structure, the `feature` tool turns it into a named mask held by the server: a box, sphere, cylinder or extruded polygon from the mark, a region grown from a seed point through voxels of similar value, or a band of chosen width around another feature. `view` with `features` outlines up to five features on any volume on the same grid, which is how an agent shows what it will optimize for, and the Skill's `feature_scores.py` scores candidate reconstructions on a feature and its surroundings without ground truth.
 
 ## Files
 
@@ -133,11 +133,11 @@ The tools carry MCP annotations for clients that decide what to confirm: `status
 
 `python` runs code in the worker, beside the loaded data, with `tj`, `np` and `handles` in scope. `handles` maps live IDs to their TomoJAX objects, and `ID.member` selects a member as in the typed tools. `register(obj)` publishes a new handle from a `Scan`, `Reconstruction`, array or other result, and `register_feature(mask, like=ID)` a feature on that object's grid. `view(...)` renders planes with the same arguments as the `view` tool, marks and features included, and `show(array, marks=...)` adds an image of a 2D array to the reply. Variables persist between calls until `reset` or a worker restart.
 
-Use it for compound work and for anything the typed tools do not cover: a sweep of reconstruction settings in one call, a custom geometry, a direct solver such as `tomojax.recon.cgls`, `tomojax.forward`, phase unwrapping or your own analysis. The result is the last expression, with arrays of more than 16 values summarised by shape, dtype and range. Errors report the exception and the lines of your code it passed through; set `traceback` for the full trace. Long calls run as tasks and can be cancelled at TomoJAX's checkpoints. The `tomojax://guide/python` resource has worked examples.
+Use it for compound work and for anything the typed tools do not cover: a sweep of reconstruction settings in one call, a custom geometry, a direct solver such as `tomojax.recon.cgls`, `tomojax.forward`, phase unwrapping or your own analysis. The result is the last expression, with arrays of more than 16 values summarized by shape, dtype and range. Errors report the exception and the lines of your code it passed through; set `traceback` for the full trace. Long calls run as tasks and can be canceled at TomoJAX's checkpoints. The `tomojax://guide/python` resource has worked examples.
 
 ## Guides and prompts
 
-The server publishes the Agent Skill's references as resources, and its workflow guides also as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-centre` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry`, `calibration`, `pointing-and-features`, `tuning-without-truth`, `thin-shell`, `large-scans` and `reporting-bugs`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
+The server publishes the Agent Skill's references as resources, and its workflow guides also as prompts, which Claude Code lists as slash commands: `reconstruct-scan`, `lab-ct-start-to-finish`, `find-the-center` and `check-a-reconstruction`. Read them as `tomojax://guide/{topic}`, alongside `python`, `solvers`, `geometry`, `calibration`, `pointing-and-features`, `tuning-without-truth`, `thin-shell`, `large-scans` and `reporting-bugs`. `tomojax://handle/{id}` gives a handle's summary and provenance, and `tomojax://describe/{operation}` its settings.
 
 ## Transport and session lifetime
 

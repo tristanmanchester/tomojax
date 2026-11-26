@@ -3,7 +3,7 @@
 A 1 mm sandstone core (``bench/phantoms/porous_rock.py``) is scanned in
 parallel beam with only 90 views over a half turn, as in fast or dose-limited
 imaging. The sandstone absorbs weakly at 30 keV, so FBP and least squares
-(CGLS) are noisy; total-variation regularisation (FISTA-TV, started from FBP)
+(CGLS) are noisy; total-variation regularization (FISTA-TV, started from FBP)
 removes the noise while keeping grain contacts, the cracks and the pyrite.
 
     uv run python examples/gallery/rock_few_views.py images/gallery/rock-few-views.png

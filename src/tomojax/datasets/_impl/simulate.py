@@ -22,11 +22,11 @@ from tomojax.core.geometry import (
     ParallelGeometry,
 )
 from tomojax.core.geometry.views import stack_view_poses
-from tomojax.datasets._impl.artefacts import (
-    ArtefactMetadata,
-    SimulationArtefacts,
-    apply_simulation_artefacts,
-    normalise_simulation_artefacts,
+from tomojax.datasets._impl.artifacts import (
+    ArtifactMetadata,
+    SimulationArtifacts,
+    apply_simulation_artifacts,
+    normalize_simulation_artifacts,
 )
 from tomojax.datasets._impl.phantoms import (
     blobs,
@@ -48,7 +48,7 @@ class SimMetadata(TypedDict, total=False):
     """Simulation provenance metadata."""
 
     seed: int
-    artefacts: ArtefactMetadata
+    artifacts: ArtifactMetadata
     true_poses: list[list[float]]
 
 
@@ -58,7 +58,7 @@ class SimulatedData(TypedDict):
     Attributes
     ----------
     projections : jax.Array
-        Float32 line integrals of shape (n_views, nv, nu), including artefacts.
+        Float32 line integrals of shape (n_views, nv, nu), including artifacts.
     angles : numpy.ndarray
         Nominal projection angles in degrees, shape (n_views,).
     grid, detector : dict
@@ -70,9 +70,9 @@ class SimulatedData(TypedDict):
     geometry_meta : dict or None
         Additional acquisition geometry, or None for parallel scans.
     meta : dict
-        Simulation seed and artefact provenance.
-    simulation_artefacts : dict or None
-        Applied artefact parameters and affected sample indices, when present.
+        Simulation seed and artifact provenance.
+    simulation_artifacts : dict or None
+        Applied artifact parameters and affected sample indices, when present.
     """
 
     projections: jnp.ndarray
@@ -83,7 +83,7 @@ class SimulatedData(TypedDict):
     volume: jnp.ndarray
     geometry_meta: dict[str, object] | None
     meta: SimMetadata
-    simulation_artefacts: ArtefactMetadata | None
+    simulation_artifacts: ArtifactMetadata | None
 
 
 @dataclass(kw_only=True)
@@ -138,10 +138,10 @@ class SimConfig:
         Bounds on random object intensities; defaults are 0.1 and 1.
     max_rotation : float, optional
         Maximum absolute random cube Euler angle in degrees; default is 180.
-    artefacts : SimulationArtefacts or None, optional
-        Projection-domain artefacts; None disables them.
+    artifacts : SimulationArtifacts or None, optional
+        Projection-domain artifacts; None disables them.
     seed : int, optional
-        Random seed for the phantom, motion and artefacts; default is 0.
+        Random seed for the phantom, motion and artifacts; default is 0.
     lamino_thickness_ratio : float, optional
         Central slab thickness relative to nz for lamino_disk; default is 0.2.
     translation_sigma : float, optional
@@ -179,7 +179,7 @@ class SimConfig:
     min_value: float = 0.1
     max_value: float = 1.0
     max_rotation: float = 180.0
-    artefacts: SimulationArtefacts | None = None
+    artifacts: SimulationArtifacts | None = None
     seed: int = 0
     lamino_thickness_ratio: float = 0.2
     translation_sigma: float = 0.0
@@ -275,7 +275,7 @@ def make_phantom(cfg: SimConfig) -> jnp.ndarray:
 
 
 def _project_phantom(geom: ScanGeometry, vol: jax.Array, beam: ConeBeam | None) -> jax.Array:
-    """Release projection workspaces before the caller allocates artefact buffers."""
+    """Release projection workspaces before the caller allocates artifact buffers."""
     if beam is None:
         return project(geom, vol)
     grid, det, n_views = geom.grid, geom.detector, len(geom.angles)
@@ -299,12 +299,12 @@ def simulate(
     Parameters
     ----------
     cfg : SimConfig
-        Phantom, acquisition geometry and optional line-integral artefacts.
+        Phantom, acquisition geometry and optional line-integral artifacts.
     grid : Grid or None, optional
         Explicit voxel grid preserving ``vol_origin`` or ``vol_center``; None
-        builds a centred grid from ``cfg``.
+        builds a centered grid from ``cfg``.
     detector : Detector or None, optional
-        Explicit detector preserving ``center``; None builds a centred detector
+        Explicit detector preserving ``center``; None builds a centered detector
         from ``cfg``.
 
     Returns
@@ -315,7 +315,7 @@ def simulate(
     Raises
     ------
     ValueError
-        If the phantom, geometry or artefact settings are unsupported.
+        If the phantom, geometry or artifact settings are unsupported.
     """
     grid = Grid(cfg.nx, cfg.ny, cfg.nz, cfg.vx, cfg.vy, cfg.vz) if grid is None else grid
     det = (
@@ -376,17 +376,17 @@ def simulate(
     vol = make_phantom(cfg)
     proj = _project_phantom(geom, vol, beam)
 
-    artefacts = normalise_simulation_artefacts(cfg.artefacts)
-    artefact_metadata: ArtefactMetadata | None = None
-    if artefacts.has_enabled():
-        proj, artefact_metadata = apply_simulation_artefacts(
+    artifacts = normalize_simulation_artifacts(cfg.artifacts)
+    artifact_metadata: ArtifactMetadata | None = None
+    if artifacts.has_enabled():
+        proj, artifact_metadata = apply_simulation_artifacts(
             proj,
-            artefacts,
+            artifacts,
             seed=cfg.seed,
         )
 
-    if artefact_metadata is not None:
-        meta["artefacts"] = artefact_metadata
+    if artifact_metadata is not None:
+        meta["artifacts"] = artifact_metadata
 
     return {
         "projections": proj,
@@ -397,5 +397,5 @@ def simulate(
         "volume": vol,
         "geometry_meta": geometry_meta,
         "meta": meta,
-        "simulation_artefacts": artefact_metadata,
+        "simulation_artifacts": artifact_metadata,
     }

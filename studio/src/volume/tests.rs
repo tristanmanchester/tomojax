@@ -168,7 +168,7 @@ fn ray_integration_preserves_anisotropic_extent_and_step_independent_opacity() {
     };
     let mut rig = Rig::new(item(&settings));
     let fine = rig.draw(item(&settings));
-    // A central ray traverses exactly one physical unit after the longest edge is normalised to two.
+    // A central ray traverses exactly one physical unit after the longest edge is normalized to two.
     let expected = ((1. - (-80f64 * 0.02).exp()) * 255.).round() as u8;
     assert!(
         sample(&fine, 48, 48)[3].abs_diff(expected) <= 3,

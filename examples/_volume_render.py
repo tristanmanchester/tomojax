@@ -1,12 +1,12 @@
 """Direct volume rendering of an attenuation volume by ray casting, in JAX.
 
 Rays from a perspective camera march through the volume in steps of half a
-voxel. A transfer function gives each attenuation an emitted colour and an
-opacity per millimetre, and samples are composited front to back (the
+voxel. A transfer function gives each attenuation an emitted color and an
+opacity per millimeter, and samples are composited front to back (the
 emission-absorption model). Opacity follows the attenuation at each sample;
-colour follows the largest attenuation among its neighbouring voxels, so the
-partial-volume rim of a dense part takes that part's colour rather than the
-colour of a lighter material that shares the rim's value.
+color follows the largest attenuation among its neighboring voxels, so the
+partial-volume rim of a dense part takes that part's color rather than the
+color of a lighter material that shares the rim's value.
 
 Surfaces are lit by a fixed light with Lambert and Blinn-Phong terms from the
 volume's gradient, faded out where the gradient is small so the inside of a
@@ -29,10 +29,10 @@ import numpy as np
 
 @dataclass(frozen=True)
 class Transfer:
-    """Piecewise-linear colour and opacity (per mm) against attenuation (mm^-1)."""
+    """Piecewise-linear color and opacity (per mm) against attenuation (mm^-1)."""
 
     stops: tuple[float, ...]
-    colours: tuple[tuple[float, float, float], ...]
+    colors: tuple[tuple[float, float, float], ...]
     opacity: tuple[float, ...]
 
 
@@ -57,8 +57,8 @@ class Camera:
         return eye, right, np.cross(right, forward), forward
 
 
-def neighbourhood_max(volume: np.ndarray) -> np.ndarray:
-    """The largest value among each voxel and its 26 neighbours."""
+def neighborhood_max(volume: np.ndarray) -> np.ndarray:
+    """The largest value among each voxel and its 26 neighbors."""
     out = volume.copy()
     for axis in range(3):
         padded = np.pad(out, [(1, 1) if a == axis else (0, 0) for a in range(3)], mode="edge")
@@ -73,7 +73,7 @@ def neighbourhood_max(volume: np.ndarray) -> np.ndarray:
 def fields(
     volume: np.ndarray, voxel: float, light: np.ndarray, view: np.ndarray, edge: float
 ) -> dict[str, jax.Array]:
-    """The volumes the rays sample: attenuation, colour key, light factor and boundary.
+    """The volumes the rays sample: attenuation, color key, light factor and boundary.
 
     A voxel is a boundary in proportion to its gradient up to ``edge`` (mm^-2).
     """
@@ -89,7 +89,7 @@ def fields(
     del g, normal
     return {
         "mu": jnp.asarray(volume),
-        "hue": jnp.asarray(neighbourhood_max(volume)),
+        "hue": jnp.asarray(neighborhood_max(volume)),
         "lit": jnp.asarray(lit.astype(np.float32)),
         "boundary": jnp.asarray(boundary.astype(np.float32)),
     }
@@ -103,9 +103,9 @@ def _march(
     grid: tuple[jax.Array, float, float, float],
     steps: int,
 ) -> jax.Array:
-    """Front-to-back composite along ``rays``; returns colour and transmittance."""
+    """Front-to-back composite along ``rays``; returns color and transmittance."""
     origins, directions, near = rays
-    stops, colours, opacity = transfer
+    stops, colors, opacity = transfer
     low, voxel, step, clear = grid
 
     def sample(name: str, points: jax.Array) -> jax.Array:
@@ -115,18 +115,18 @@ def _march(
         )
 
     def body(carry: tuple[jax.Array, jax.Array], k: jax.Array) -> tuple[tuple, None]:
-        colour, through = carry
+        color, through = carry
         points = origins + (near + (k + 0.5) * step)[:, None] * directions
         mu, key = sample("mu", points), sample("hue", points)
-        rgb = jnp.stack([jnp.interp(key, stops, colours[:, c]) for c in range(3)], axis=-1)
+        rgb = jnp.stack([jnp.interp(key, stops, colors[:, c]) for c in range(3)], axis=-1)
         emphasis = jnp.where(key < clear, 0.15 + 0.85 * sample("boundary", points), 1.0)
         alpha = 1 - jnp.exp(-jnp.interp(mu, stops, opacity) * emphasis * step)
         rgb = rgb * sample("lit", points)[:, None]
-        return (colour + (through * alpha)[:, None] * rgb, through * (1 - alpha)), None
+        return (color + (through * alpha)[:, None] * rgb, through * (1 - alpha)), None
 
     start = (jnp.zeros_like(origins), jnp.ones(origins.shape[0]))
-    (colour, through), _ = jax.lax.scan(body, start, jnp.arange(steps, dtype=jnp.float32))
-    return jnp.concatenate([colour, through[:, None]], axis=-1)
+    (color, through), _ = jax.lax.scan(body, start, jnp.arange(steps, dtype=jnp.float32))
+    return jnp.concatenate([color, through[:, None]], axis=-1)
 
 
 def render(
@@ -148,7 +148,7 @@ def render(
 
     ``low`` is the physical xyz lower corner in mm; camera and light use xyz.
 
-    Materials whose neighbourhood stays below ``clear`` (mm^-1) are drawn by
+    Materials whose neighborhood stays below ``clear`` (mm^-1) are drawn by
     their boundaries, their insides nearly transparent.
     """
     eye, right, up, forward = camera.frame()
@@ -158,7 +158,7 @@ def render(
     step = 0.5 * voxel
     steps = int(np.ceil(np.linalg.norm(high - low) / step)) + 2
     tables = tuple(
-        jnp.asarray(t, jnp.float32) for t in (transfer.stops, transfer.colours, transfer.opacity)
+        jnp.asarray(t, jnp.float32) for t in (transfer.stops, transfer.colors, transfer.opacity)
     )
     grid = (jnp.asarray(low, jnp.float32), voxel, step, clear)
     half = math.tan(math.radians(camera.fov_deg) / 2)
@@ -179,6 +179,6 @@ def render(
             jnp.asarray(near, jnp.float32),
         )
         out = np.asarray(_march(data, rays, tables, grid, steps))
-        colour = out[:, :3] + out[:, 3:] * np.asarray(background)
-        image[r0 : r0 + rows] = colour.reshape(len(ys), width, 3)
+        color = out[:, :3] + out[:, 3:] * np.asarray(background)
+        image[r0 : r0 + rows] = color.reshape(len(ys), width, 3)
     return np.clip(image, 0, 1)

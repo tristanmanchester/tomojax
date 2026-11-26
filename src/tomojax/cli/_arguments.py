@@ -122,7 +122,7 @@ def array_layout(data: Any) -> np.ndarray:
 
 
 def scan_layout(frames: tj.Frames, *, raw: bool) -> tj.Scan:
-    """Represent the acquisition geometry without materialising line integrals."""
+    """Represent the acquisition geometry without materializing line integrals."""
     return tj.Scan(
         np.broadcast_to(
             np.zeros((), np.float32 if raw else frames.counts.dtype), frames.counts.shape
@@ -179,7 +179,7 @@ def hdf5_values(data: h5py.Dataset, name: str, *, shape_only: bool) -> np.ndarra
         plane = mask[0:1].nbytes
         batch = max(1, _SUPPORT_BYTES // plane)
         for start in range(0, len(mask), batch):
-            progress.check_cancelled()
+            progress.check_canceled()
             stop = min(len(mask), start + batch)
             selection = slice(start, stop)
             data.read_direct(mask, selection, selection)

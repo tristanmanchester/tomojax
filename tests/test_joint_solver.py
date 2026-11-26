@@ -443,7 +443,7 @@ def test_the_pedestal_costs_nothing_to_the_per_view_profile_and_is_held_by_the_s
 def test_the_shared_terms_and_the_prior_scale_are_formed_one_view_batch_at_a_time(monkeypatch):
     # The shared moments and their Gram matrix are a handful of numbers. Forming them from the
     # whole stack at once made several data-sized float64 arrays: on K11 (1153 views at
-    # 320 x 270) the first linearisation ran out of memory at 765 MiB each. Every array they
+    # 320 x 270) the first linearization ran out of memory at 765 MiB each. Every array they
     # are formed from must span one view batch, never the stack; so must the line search's
     # held value at unchanged poses, and the motion prior's error scale from the views' steps
     # (a stack-wide unit precision ran K11 67208, 4000 views, out of memory at 1.29 GiB).

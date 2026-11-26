@@ -191,7 +191,7 @@ class _VolumeWriter:
             self.pending.result()
             self.pending = None
             progress.step("slabs")
-            progress.check_cancelled()
+            progress.check_canceled()
         self.pending = self.pool.submit(store)
 
     def __exit__(self, *args: object) -> None:
@@ -316,7 +316,7 @@ def fbp_host(
         for start, v_start, phase in axial_row_starts(
             grid.nz, depth, detector.nv, rows, first, step, integer=integer
         ):
-            progress.check_cancelled()
+            progress.check_canceled()
             # Local grid/detector metadata stay identical for every slab. Only the
             # fractional row phase changes, passed as a dynamic pose translation.
             local_poses = host_poses.copy()
@@ -375,7 +375,7 @@ def _general_slabs(
     ox, oy, oz = grid_volume_origin(grid)
     start = 0
     while start < grid.nz:
-        progress.check_cancelled()
+        progress.check_canceled()
         count = min(depth, grid.nz - start)
         # Keep the slab shape fixed at this depth, including the padded tail.
         slab = replace(grid, nz=depth, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None)

@@ -52,7 +52,7 @@ interaction decisions.
 ## Accessibility and Inclusion
 
 The complete workflow needs keyboard navigation, visible focus, discoverable and
-customisable shortcuts, labelled controls and states that do not rely on colour.
+customizable shortcuts, labeled controls and states that do not rely on color.
 Windows should remain useful at the supported minimum size.
 
 ## Evidence on Hand

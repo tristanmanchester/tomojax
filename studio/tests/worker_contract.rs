@@ -321,7 +321,7 @@ fn paused_real_work_holds_queue_and_cancellation_has_a_terminal() {
             client.terminal(target),
             Response::Error {
                 error: tomojax_studio::protocol::WorkerError {
-                    kind: ErrorKind::Cancelled,
+                    kind: ErrorKind::Canceled,
                     ..
                 },
                 ..

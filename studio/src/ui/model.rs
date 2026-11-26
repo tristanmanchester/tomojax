@@ -139,7 +139,7 @@ pub struct UiState {
     /// The shortcut editor is waiting for a key combination.
     pub recording_shortcut: bool,
     pub recipe_name: TextEdit,
-    /// Keys are the schema's parameter names. Root initialises every visible edit.
+    /// Keys are the schema's parameter names. Root initializes every visible edit.
     pub parameter_edits: BTreeMap<String, TextEdit>,
     pub parameter_choices: BTreeMap<String, String>,
     pub parameter_toggles: BTreeMap<String, bool>,
@@ -220,10 +220,10 @@ pub struct DisplayState {
     pub pan: [f32; 2],
     pub azimuth: f32,
     pub elevation: f32,
-    /// Normalised clipping positions in physical x, y, z order.
+    /// Normalized clipping positions in physical x, y, z order.
     pub clip: [f32; 3],
     pub density: f32,
-    /// Opacity cutoff within the display window, normalised to 0–1.
+    /// Opacity cutoff within the display window, normalized to 0–1.
     pub threshold: f32,
     pub lighting: f32,
     pub crosshair: bool,
@@ -391,7 +391,7 @@ pub enum JobStatus {
     Paused,
     Completed,
     Failed,
-    Cancelled,
+    Canceled,
     Interrupted,
 }
 impl JobStatus {
@@ -402,7 +402,7 @@ impl JobStatus {
             Self::Paused => "Paused",
             Self::Completed => "Complete",
             Self::Failed => "Failed",
-            Self::Cancelled => "Cancelled",
+            Self::Canceled => "Canceled",
             Self::Interrupted => "Interrupted",
         }
     }
@@ -433,7 +433,7 @@ pub struct PreviewView {
     pub has_image: bool,
     pub index: usize,
     pub count: Option<usize>,
-    pub centre: Option<f64>,
+    pub center: Option<f64>,
     pub error_path: Option<String>,
 }
 #[derive(Clone, Debug, Default)]
@@ -588,7 +588,7 @@ pub enum UiAction {
     KeepPreview,
     CancelPreview,
     SetPreviewIndex(usize),
-    SetPreviewCentre(f64),
+    SetPreviewCenter(f64),
     SaveRecipe,
     ApplyRecipe(String),
     PauseJob(String),

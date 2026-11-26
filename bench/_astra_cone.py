@@ -14,7 +14,7 @@ import numpy as np
 
 
 def volume_geometry(grid: Any) -> dict[str, Any]:
-    """Return an ASTRA grid with the same physical voxel centres."""
+    """Return an ASTRA grid with the same physical voxel centers."""
     from tomojax.geometry import grid_volume_origin
 
     spacing = np.asarray([grid.vx, grid.vy, grid.vz])

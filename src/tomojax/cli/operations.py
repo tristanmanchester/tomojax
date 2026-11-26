@@ -143,7 +143,7 @@ class Align(AlignSettings, tag="align"):
 
 
 class Interleaved(Record, tag="interleaved"):
-    """Hold out regularly spaced views with optional neighbouring guard views."""
+    """Hold out regularly spaced views with optional neighboring guard views."""
 
     stride: int = 5
     offset: int = 2
@@ -182,7 +182,7 @@ class Simulate(Record, tag="simulate"):
     source_to_detector: float | None = None
     poisson_scale: float = 0.0
     translation_sigma: float = 0.0
-    artefacts: w.SimulationArtefacts | None = None
+    artifacts: w.SimulationArtifacts | None = None
     grid: w.Grid | None = None
     detector: w.Detector | None = None
     seed: int = 0
@@ -378,10 +378,10 @@ class Slice(Reconstruct, tag="slice", kw_only=True):
     index: Count
 
 
-class CentreSweep(Slice, tag="centre_sweep", kw_only=True):
+class CenterSweep(Slice, tag="center_sweep", kw_only=True):
     """Reconstruct at signed horizontal offsets in detector pixels."""
 
-    centres: tuple[float, ...]
+    centers: tuple[float, ...]
 
 
 class CorrectionPreview(Correct, tag="correction_preview", kw_only=True):
@@ -414,7 +414,7 @@ type Workflow = (
     | Combine
     | Feature
 )
-type Interactive = Plane | Slice | CentreSweep | CorrectionPreview | RegionPreview
+type Interactive = Plane | Slice | CenterSweep | CorrectionPreview | RegionPreview
 
 
 class Run(Record, tag="run"):

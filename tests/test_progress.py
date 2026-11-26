@@ -118,7 +118,7 @@ def test_chunk_stops_at_completed_work(other_thread):
     with (
         ThreadPoolExecutor(1) as pool,
         progress.watch(handler, control=token),
-        pytest.raises(progress.Cancelled),
+        pytest.raises(progress.Canceled),
         progress.task("reconstruct", "counter", 20, "updates"),
     ):
         run_chunks(
@@ -131,7 +131,7 @@ def test_chunk_stops_at_completed_work(other_thread):
         )
     validate_tree(events)
     assert [int(s) for s in completed] == [1]
-    assert events[-1].status == "cancelled"
+    assert events[-1].status == "canceled"
 
 
 def test_nested_watches_are_thread_local():
@@ -195,10 +195,10 @@ def test_streamed_cancellation_on_advance(final, previews):
             result = tj.reconstruct(subject, "cgls", config=config)
             assert result.info["effective_iterations"] == 4
         else:
-            with pytest.raises(progress.Cancelled):
+            with pytest.raises(progress.Canceled):
                 tj.reconstruct(subject, "cgls", config=config)
     validate_tree(events)
-    assert events[-1].status == ("done" if final else "cancelled")
+    assert events[-1].status == ("done" if final else "canceled")
 
 
 @pytest.mark.parametrize("cancel", [False, True])
@@ -243,7 +243,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
             record = json.loads(line)
             assert record.pop("schema") == 2
             if record["event"] == "error":
-                assert cancel and record["kind"] == "cancelled"
+                assert cancel and record["kind"] == "canceled"
                 continue
             if record["event"] == "result":
                 assert not cancel and str(output) in record["outputs"]
@@ -263,7 +263,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
     assert [e.name for e in work_events(events) if isinstance(e, progress.Started)] == (
         ["load", "reconstruct"] if cancel else ["load", "reconstruct", "save", "write"]
     )
-    assert events[-1].status == ("cancelled" if cancel else "done")
+    assert events[-1].status == ("canceled" if cancel else "done")
     assert output.exists() != cancel
 
 
@@ -408,7 +408,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
 
     with (
         progress.watch(handler, control=token),
-        pytest.raises(RuntimeError if failure == "handler" else progress.Cancelled) as caught,
+        pytest.raises(RuntimeError if failure == "handler" else progress.Canceled) as caught,
     ):
         tj.reconstruct(
             tj.Scan(data, geometry),
@@ -420,7 +420,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
         assert caught.value is failure_object
         assert isinstance(events[-1], progress.Advanced)
     else:
-        assert events[-1].status == "cancelled"
+        assert events[-1].status == "canceled"
     validate_tree(events, interrupted=failure == "handler")
     assert mapped_files() == before
     assert not (set(threading.enumerate()) - workers)
@@ -466,11 +466,11 @@ def test_slab_advance_observes_successfully_written_output(method):
             assert np.isfinite(out[0]).all()
             stop.cancel()
 
-    with progress.watch(handler, control=stop), pytest.raises(progress.Cancelled):
+    with progress.watch(handler, control=stop), pytest.raises(progress.Canceled):
         solve(geometry, grid, detector, data, config=config, out=out)
     validate_tree(events)
     assert events[0].label == method
-    assert events[-1].status == "cancelled"
+    assert events[-1].status == "canceled"
     assert np.isnan(out[-1]).all()
 
 
@@ -551,7 +551,7 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
     )
     with progress.watch(observe, control=token):
         if end != "complete":
-            with pytest.raises(progress.Cancelled if end == "cancel" else RuntimeError) as caught:
+            with pytest.raises(progress.Canceled if end == "cancel" else RuntimeError) as caught:
                 tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
             validate_tree(events, interrupted=end == "oom")
             assert len([e for e in events if isinstance(e, progress.Advanced)]) == 1
@@ -562,9 +562,9 @@ def test_alignment_reports_the_completed_step_record(alignment_scan, end):
                 assert [
                     e.status for e in work_events(events) if isinstance(e, progress.Finished)
                 ] == [
-                    "cancelled",
-                    "cancelled",
-                    "cancelled",
+                    "canceled",
+                    "canceled",
+                    "canceled",
                 ]
             return
         result = tj.align(alignment_scan, grid=alignment_scan.grid, config=cfg)
@@ -675,7 +675,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
 
     with progress.watch(observe, control=token):
         if interrupt:
-            with pytest.raises(progress.Cancelled):
+            with pytest.raises(progress.Canceled):
                 tj.load(path)
         else:
             result = tj.load(path)
@@ -700,7 +700,7 @@ def test_load_reports_completed_views_and_fused_corrections(tmp_path, monkeypatc
     assert reads == ([(1, 2)] if interrupt else [(1, 2), (2, 2)])
     assert writes == ([] if interrupt else [1, 2])
     assert [e.status for e in work_events(events) if isinstance(e, progress.Finished)] == [
-        "cancelled" if interrupt else "done"
+        "canceled" if interrupt else "done"
     ] * 2
     assert set(threading.enumerate()) <= workers
 
@@ -744,7 +744,7 @@ def test_psi_reads_report_written_batches_and_release_owned_mapping(
             np.testing.assert_array_equal(result.projections, phase)
         else:
             with pytest.raises(
-                KeyError if interrupt == "key error" else progress.Cancelled
+                KeyError if interrupt == "key error" else progress.Canceled
             ) as caught:
                 tj.load(path)
             assert allocated[0].base.closed
@@ -755,7 +755,7 @@ def test_psi_reads_report_written_batches_and_release_owned_mapping(
         [3, 6, 7] if interrupt == "no" else [3]
     )
     if interrupt != "key error":
-        assert events[-1].status == ("done" if interrupt == "no" else "cancelled")
+        assert events[-1].status == ("done" if interrupt == "no" else "canceled")
 
 
 def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
@@ -823,7 +823,7 @@ def test_slab_task_spans_the_open_iterator(end):
                 first, _ = next(slabs)
                 assert first == slice(0, 8)
                 if end == "cancel":
-                    with pytest.raises(progress.Cancelled):
+                    with pytest.raises(progress.Canceled):
                         next(slabs)
                 elif end == "last":
                     assert [part for part, _ in slabs] == [slice(8, 11)]
@@ -835,7 +835,7 @@ def test_slab_task_spans_the_open_iterator(end):
         "last": [1, 2],
         "failed": [],
     }[end]
-    assert events[-1].status == {"cancel": "cancelled", "failed": "failed"}.get(end, "done")
+    assert events[-1].status == {"cancel": "canceled", "failed": "failed"}.get(end, "done")
 
 
 def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys):
@@ -940,7 +940,7 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
 
     with progress.watch(observe, control=token):
         if at == 1:
-            with pytest.raises(progress.Cancelled):
+            with pytest.raises(progress.Canceled):
                 frames.corrected(Stripes(3))
         else:
             result = frames.corrected(Stripes(3))
@@ -953,11 +953,11 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
         4,
     )
     assert [e.done for e in events if isinstance(e, progress.Advanced)] == list(range(1, at + 1))
-    assert events[-1].status == ("cancelled" if at == 1 else "done")
+    assert events[-1].status == ("canceled" if at == 1 else "done")
     assert set(threading.enumerate()) <= workers
 
 
-def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypatch):
+def test_canceling_a_correction_drains_the_already_submitted_host_copy(monkeypatch):
     import importlib
 
     from tomojax.corrections import correct_frames
@@ -990,7 +990,7 @@ def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypa
         if isinstance(event, progress.Advanced):
             token.cancel()
 
-    with progress.watch(observe, control=token), pytest.raises(progress.Cancelled):
+    with progress.watch(observe, control=token), pytest.raises(progress.Canceled):
         correct_frames(
             np.ones((4, 2, 3)),
             flats=None,
@@ -1003,7 +1003,7 @@ def test_cancelling_a_correction_drains_the_already_submitted_host_copy(monkeypa
         )
     validate_tree(events)
     assert received == submitted
-    assert events[-1].status == "cancelled"
+    assert events[-1].status == "canceled"
 
 
 @pytest.mark.parametrize("action", ["resume", "cancel"])
@@ -1028,7 +1028,7 @@ def test_control_blocks_inside_task_and_discount_paused_time(monkeypatch, action
             active.advance(1, {})
             control.pause()
             assert control.state == "pause-requested"
-            progress.check_cancelled()
+            progress.check_canceled()
             clock[0] += 1
             active.advance(2, {})
 
@@ -1041,7 +1041,7 @@ def test_control_blocks_inside_task_and_discount_paused_time(monkeypatch, action
         finally:
             getattr(control, action)()
         if action == "cancel":
-            with pytest.raises(progress.Cancelled):
+            with pytest.raises(progress.Canceled):
                 future.result(timeout=5)
         else:
             future.result(timeout=5)
@@ -1053,7 +1053,7 @@ def test_control_blocks_inside_task_and_discount_paused_time(monkeypatch, action
         if action == "resume"
         else [progress.Paused]
     )
-    assert events[-1].status == ("done" if action == "resume" else "cancelled")
+    assert events[-1].status == ("done" if action == "resume" else "canceled")
 
 
 def test_error_kinds_use_structured_status_and_keep_parameter_path():
@@ -1095,7 +1095,7 @@ def test_device_allocation_failures_reported_as_internal_are_out_of_memory(messa
     assert classify(error).kind == classify(wrapped).kind == "out_of_memory"
 
 
-def test_recognising_a_cupy_allocation_failure_does_not_import_jax():
+def test_recognizing_a_cupy_allocation_failure_does_not_import_jax():
     import subprocess
     import sys
 

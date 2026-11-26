@@ -46,8 +46,8 @@ class Parameters:
     and y for a cone. Rotations are the axis's two wobble components, alpha and
     beta: each view's angle about the rotation axis (phi) is taken as recorded,
     since stage encoders give it and errors in it are rare. Global columns are
-    centre u/v, tilt and roll, restricted
-    to ``fit``. Centre coordinates are native pixels. Global angles use
+    center u/v, tilt and roll, restricted
+    to ``fit``. Center coordinates are native pixels. Global angles use
     ``lever`` pixels per radian, independently of the working resolution.
     """
 
@@ -122,14 +122,14 @@ class Parameters:
 
         Positive tilt leans the rotation axis towards the beam: a lab-frame
         ``Rx(-tilt)`` applied to the nominal orientation. Positive roll rotates
-        detector u towards v. Detector centre increments are lab x/z lengths,
+        detector u towards v. Detector center increments are lab x/z lengths,
         matching ``Detector.center``; they never move a cone's source.
 
         Parallel rays use the inverse detector-frame transform on the poses,
         which is exactly the same ray map as a rolled detector lattice. The
-        pivot is the original detector centre, including when high-side pixels
+        pivot is the original detector center, including when high-side pixels
         were cropped before binning. Cone frames retain their source and move
-        their actual detector centre and pixel directions.
+        their actual detector center and pixel directions.
         """
         full = jnp.zeros((len(rows), self.full_dofs), rows.dtype)
         if self.nlocal:

@@ -2,7 +2,7 @@
 
 Each recipe below loads one detector row from a real beamline export so you can inspect a first slice quickly without allocating a full volume. Except for PSI cSAXS (which stores unwrapped phase), every dataset starts from raw counts.
 
-The pixel sizes and rotation centres below belong to these specific acquisitions; substitute your own scan's calibration when adapting a recipe.
+The pixel sizes and rotation centers below belong to these specific acquisitions; substitute your own scan's calibration when adapting a recipe.
 
 ![Five slices, one from each recipe on this page, each above an enlarged region: ESRF bamboo, a PSI TOMCAT skin sample, an Elettra polystyrene foam, the PSI cSAXS porous glass and the Diamond I13 pellet.](images/beamline-first-slices.png)
 
@@ -22,13 +22,13 @@ import tomojax as tj
 frames = tj.load_frames("bamboo_reduced_bliss.nx")
 ```
 
-The loader locates the `NXtomo` group regardless of entry name and reads angles, image keys, flats, darks, and unit-labelled pixel pitches. When the file omits the rotation centre, loading places it at the detector middle (`detector_center_status="not_recorded"`); supply a calibrated `detector=` or fit it with `tj.align(scan, fit="center")`.
+The loader locates the `NXtomo` group regardless of entry name and reads angles, image keys, flats, darks, and unit-labeled pixel pitches. When the file omits the rotation center, loading places it at the detector middle (`detector_center_status="not_recorded"`); supply a calibrated `detector=` or fit it with `tj.align(scan, fit="center")`.
 
 Continue with [Correct, reconstruct, and inspect](#correct-reconstruct-and-inspect) below. For raw Bliss `.h5` or EDF folders instead of NXtomo exports, see [raw ESRF acquisitions](quickstart.md#raw-esrf-acquisitions).
 
 ## PSI TOMCAT Data Exchange export
 
-From the [TomoBank catalogue](https://tomobank.readthedocs.io/), `tomo_00069.h5` (skin) stores counts, flats, darks, and `/exchange/theta`, but omits the pixel pitch. Supply its accompanying calibration (3.7 µm pixels, rotation axis at column 515.5 on 1024 columns) in millimetres:
+From the [TomoBank catalog](https://tomobank.readthedocs.io/), `tomo_00069.h5` (skin) stores counts, flats, darks, and `/exchange/theta`, but omits the pixel pitch. Supply its accompanying calibration (3.7 µm pixels, rotation axis at column 515.5 on 1024 columns) in millimeters:
 
 ```python
 import tomojax as tj
@@ -78,7 +78,7 @@ recon = tj.reconstruct(scan)
 delta = recon.volume * scan.source.geometry_metadata["wavelength"] / (2 * math.pi)
 ```
 
-The reconstructed volume is phase per millimetre (`2πδ / λ`); multiplying by `λ / 2π` using the recorded wavelength yields the refractive-index decrement `δ`. The sinograms are pre-centred on the detector middle. Files holding only the unaligned complex `stack_object` are rejected (see [examples/align_ptychography.py](../examples/README.md#prepare-and-align-complex-ptychography-projections) for phase preparation).
+The reconstructed volume is phase per millimeter (`2πδ / λ`); multiplying by `λ / 2π` using the recorded wavelength yields the refractive-index decrement `δ`. The sinograms are pre-centered on the detector middle. Files holding only the unaligned complex `stack_object` are rejected (see [examples/align_ptychography.py](../examples/README.md#prepare-and-align-complex-ptychography-projections) for phase preparation).
 
 ## Correct, reconstruct, and inspect
 

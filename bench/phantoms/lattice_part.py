@@ -9,8 +9,8 @@ skin and another the wall. The 12 mm field of view gives 47 µm voxels at
 n = 256, a typical lab micro-CT scan of a part this size.
 
 The octet truss is the set of lines along the six <110> directions through the
-nodes of a face-centred cubic lattice; the distance to each family is the
-distance to the nearest point of a centred rectangular lattice in the plane
+nodes of a face-centered cubic lattice; the distance to each family is the
+distance to the nearest point of a centered rectangular lattice in the plane
 across it. Surfaces carry low-amplitude waviness and partly fused powder
 particles (16 to 50 µm across), four times as dense on down-facing surfaces,
 as LPBF surfaces do.
@@ -40,7 +40,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from _procedural import Grid, WaveNoise, hash_uniform, main, voxelise
+from _procedural import Grid, WaveNoise, hash_uniform, main, voxelize
 import numpy as np
 from scipy.spatial import cKDTree
 
@@ -291,7 +291,7 @@ def lattice_part(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, 
     """
     grid = Grid(n, FOV_MM)
     part = _sampler(seed)
-    volume = voxelise(part, grid, np.array(list(MATERIALS.values())), fine=3)
+    volume = voxelize(part, grid, np.array(list(MATERIALS.values())), fine=3)
     meta = {
         "name": "lattice_part",
         "voxel_mm": grid.voxel,

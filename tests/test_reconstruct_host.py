@@ -157,7 +157,7 @@ def test_out_is_filled_and_returned(tmp_path, kind, storage):
         np.testing.assert_array_equal(backing[:, :, 1::2], -71)
 
 
-def test_out_is_refused_where_it_cannot_be_honoured():
+def test_out_is_refused_where_it_cannot_be_honored():
     scan = _scan("parallel")
     out = np.zeros((19, 7, 9), np.float32)
     from tomojax.recon import CGLSConfig

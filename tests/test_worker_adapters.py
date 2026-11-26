@@ -253,9 +253,9 @@ def test_combined_scan_keeps_repeated_parents_and_alignment_exposes_scan(worker)
     result = output(worker("run", operation=dict(type="combine", sources=[scan, scan])))
     assert result["value"]["projections"]["shape"][0] == 48
     assert result["manifest"]["inputs"] == [cone["manifest"], cone["manifest"]]
-    # An opposite-view centre fit is defined for axial parallel scans.
+    # An opposite-view center fit is defined for axial parallel scans.
     parallel = output(worker("run", operation={**recipe, "geometry": "parallel", "rotation": 360}))
-    # Opposite views fit the centre without being told to.
+    # Opposite views fit the center without being told to.
     fit = dict(type="align", source=parallel["value"]["scan"], method="opposite-views")
     assert output(worker("plan", operation=fit))["value"]["pairs"] > 0
     alignment = output(worker("run", operation=fit))
@@ -276,7 +276,7 @@ def test_combined_scan_keeps_repeated_parents_and_alignment_exposes_scan(worker)
     [
         (dict(type="simulate", size=0), "size"),
         (dict(type="simulate", n_views=-1), "n_views"),
-        (dict(type="simulate", poisson_scale=2, artefacts={"poisson_scale": 3}), "poisson_scale"),
+        (dict(type="simulate", poisson_scale=2, artifacts={"poisson_scale": 3}), "poisson_scale"),
         (dict(type="simulate", detector={"nu": 2, "nv": 1, "du": -0.5, "dv": 1}), "detector.du"),
         (dict(type="simulate", geometry="cone", size=2, source_to_axis=-1), "source_to_axis"),
         (
@@ -432,12 +432,12 @@ def test_slice_and_sweep_publish_fixed_input_registration(worker, tmp_path):
     det = tj.Detector(25, 5, 1, 1)
     geom = tj.ParallelGeometry(grid, det, np.arange(0, 180, 15))
     data = np.random.default_rng(42).uniform(0.2, 1, (12, 5, 25)).astype(np.float32)
-    path = tmp_path / "centre.nxs"
+    path = tmp_path / "center.nxs"
     tj.save(path, tj.Scan(data, geom))
     source = dict(type="path", path=str(path))
     request = dict(source=source, axis="z", index=2, method="fbp", region="bbox")
     offsets = [0, 3, 0]
-    sweep = output(worker("centre_sweep", **request, centres=offsets))["value"]["planes"]
+    sweep = output(worker("center_sweep", **request, centers=offsets))["value"]["planes"]
     plane = output(worker("slice", **request))["value"]["plane"]
     assert (
         sweep["fixed"]
@@ -450,13 +450,13 @@ def test_slice_and_sweep_publish_fixed_input_registration(worker, tmp_path):
         a["coordinates"] == dict(type="uniform", origin=-12, spacing=1) for a in plane["axes"]
     )
     coord = sweep["axes"][0]
-    assert (coord["name"], coord["unit"], coord["frame"]) == ("centre", "pixel", "detector")
+    assert (coord["name"], coord["unit"], coord["frame"]) == ("center", "pixel", "detector")
     np.testing.assert_array_equal(np.load(coord["coordinates"]["values"]["path"]), offsets)
     pixels = np.load(sweep["storage"]["path"])
     np.testing.assert_array_equal(pixels[0], np.load(plane["storage"]["path"]))
     fixed = tj.reconstruct(tj.load(path), "fbp", region="bbox").grid
-    for i, centre in enumerate(offsets):
-        shifted = tj.Scan(data, replace(geom, detector=replace(det, center=(centre, 0))))
+    for i, center in enumerate(offsets):
+        shifted = tj.Scan(data, replace(geom, detector=replace(det, center=(center, 0))))
         np.testing.assert_array_equal(
             pixels[i], tj.reconstruct(shifted, "fbp", grid=fixed).volume[2]
         )
@@ -465,7 +465,7 @@ def test_slice_and_sweep_publish_fixed_input_registration(worker, tmp_path):
         assert not Path(stored["path"]).exists()
 
 
-def test_correction_preview_publishes_native_and_binned_pixel_centres(worker, tmp_path):
+def test_correction_preview_publishes_native_and_binned_pixel_centers(worker, tmp_path):
     n, nv, nu = 13, 9, 11
     angles = np.arange(n, dtype=float) * 13
     detector = dict(nu=nu, nv=nv, du=0.75, dv=1.5, center=[0.6, -1.2])
@@ -768,9 +768,9 @@ def test_full_turn_fdk_requires_axis_on_detector(worker, tmp_path, method, field
         assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", field)
 
 
-@pytest.mark.parametrize(("original", "centres", "invalid"), [(0, [0, 20], 1), (20, [0], None)])
-def test_fdk_sweep_validates_each_requested_detector_centre(
-    worker, tmp_path, original, centres, invalid
+@pytest.mark.parametrize(("original", "centers", "invalid"), [(0, [0, 20], 1), (20, [0], None)])
+def test_fdk_sweep_validates_each_requested_detector_center(
+    worker, tmp_path, original, centers, invalid
 ):
     from dataclasses import replace
 
@@ -781,11 +781,11 @@ def test_fdk_sweep_validates_each_requested_detector_centre(
     path = tmp_path / "full-turn.nxs"
     tj.save(path, tj.Scan(data, geometry))
     args = dict(
-        source=dict(type="path", path=str(path)), method="fbp", axis="z", index=0, centres=centres
+        source=dict(type="path", path=str(path)), method="fbp", axis="z", index=0, centers=centers
     )
-    for command in ("validate", "centre_sweep"):
+    for command in ("validate", "center_sweep"):
         reply = (
-            worker(command, operation=dict(type="centre_sweep", **args))
+            worker(command, operation=dict(type="center_sweep", **args))
             if command == "validate"
             else worker(command, **args)
         )
@@ -793,7 +793,7 @@ def test_fdk_sweep_validates_each_requested_detector_centre(
             assert reply["type"] == "error", reply
             assert (reply["error"]["kind"], reply["error"]["path"]) == (
                 "invalid_parameter",
-                f"centres[{invalid}]",
+                f"centers[{invalid}]",
             )
         elif command == "validate":
             assert reply["type"] == "result", reply
@@ -1113,13 +1113,13 @@ def test_npz_reads_fortran_order_volume_past_tile_budget(tmp_path, compressed):
 
 
 def test_validate_open_only_reads_calibration_metadata(tmp_path, monkeypatch):
-    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_io_workflows import _labeled_dataset
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations
     from tomojax.io import save_dataset
 
     path = tmp_path / "raw.nxs"
-    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    save_dataset(path, _labeled_dataset([4, 8, 2], [0, 1, 2]))
     where = "/entry/instrument/detector/data"
     reads = trace_detector_reads(monkeypatch, where)
     events = []
@@ -1131,7 +1131,7 @@ def test_validate_open_only_reads_calibration_metadata(tmp_path, monkeypatch):
     assert run().details["geometry"]["views"] == 1
     assert reads == []
     assert not any(getattr(e, "name", None) in ("load", "correction") for e in events)
-    save_dataset(path, _labelled_dataset([4, 2], [0, 2]))
+    save_dataset(path, _labeled_dataset([4, 2], [0, 2]))
     with pytest.raises(ValueError, match="No flat"):
         run()
     path.unlink()
@@ -1248,14 +1248,14 @@ def test_compressed_npz_windows_inflate_member_once(tmp_path, monkeypatch, order
 
 @pytest.mark.parametrize("forward", [True, False], ids=["project", "backproject"])
 def test_projection_dry_run_reads_only_layout(tmp_path, monkeypatch, forward):
-    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_io_workflows import _labeled_dataset
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations as op
     from tomojax.io import save_dataset
     from tomojax.wire.arrays import Hdf5
 
     path = tmp_path / "raw.nxs"
-    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    save_dataset(path, _labeled_dataset([4, 8, 2], [0, 1, 2]))
     with h5py.File(path, "a") as file:
         file.create_dataset("operand", shape=(2, 4, 4) if forward else (1, 2, 4), dtype="f")
     geometry_reads = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
@@ -1269,14 +1269,14 @@ def test_projection_dry_run_reads_only_layout(tmp_path, monkeypatch, forward):
 
 
 def test_open_dry_run_omits_unread_angle_range(tmp_path, monkeypatch):
-    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_io_workflows import _labeled_dataset
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations as op
     from tomojax.io import save_dataset
     from tomojax.wire.arrays import Hdf5
 
     path = tmp_path / "raw.nxs"
-    save_dataset(path, _labelled_dataset([4, 8, 2], [0, 1, 2]))
+    save_dataset(path, _labeled_dataset([4, 8, 2], [0, 1, 2]))
     with h5py.File(path, "a") as file:
         file["override"] = [37.0]
     reads = trace_detector_reads(monkeypatch, "/override")

@@ -9,7 +9,7 @@ import msgspec
 from tomojax.wire.arrays import Array, Count, Id, Positive, Record, Seconds
 
 type ErrorKind = Literal[
-    "input", "invalid_parameter", "out_of_memory", "cancelled", "superseded", "internal"
+    "input", "invalid_parameter", "out_of_memory", "canceled", "superseded", "internal"
 ]
 type Scalar = str | int | float | bool | None
 
@@ -69,7 +69,7 @@ class Advanced(Timed, tag="advanced"):
 class Finished(Timed, tag="finished"):
     """End of a task."""
 
-    status: Literal["done", "failed", "cancelled"]
+    status: Literal["done", "failed", "canceled"]
 
 
 type NoteLevel = Literal["debug", "info", "warning", "error", "critical"]

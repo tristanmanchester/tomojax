@@ -34,15 +34,15 @@ class ConeBeam:
     and the detector plane at ``y = source_to_detector - source_to_axis``; the
     rotation axis passes through ``(axis_offset, 0, 0)``, so the magnification
     at the axis is ``source_to_detector / source_to_axis``. ``axis_offset`` is
-    the lab-CT centre-of-rotation offset: the axis's lateral distance from the
-    line through the source and the unshifted detector centre, in physical
+    the lab-CT center-of-rotation offset: the axis's lateral distance from the
+    line through the source and the unshifted detector center, in physical
     units. ``source_height`` is the calibrated lab-frame z position of the source
-    and unshifted detector centre, not an editable per-view object correction.
-    ``Detector.center`` offsets the detector relative to that centre. Roll,
-    pitch and yaw rotate the detector about its centre, right-handed about its
+    and unshifted detector center, not an editable per-view object correction.
+    ``Detector.center`` offsets the detector relative to that center. Roll,
+    pitch and yaw rotate the detector about its center, right-handed about its
     own axes: the normal n = u x v (pointing back towards the source), u and v,
     applied in that order. Positive roll turns u towards v: a point above the
-    detector centre projects towards +u, so the rotation axis leans towards +u
+    detector center projects towards +u, so the rotation axis leans towards +u
     at the top of the image. Positive pitch tilts the +v edge towards the
     source; positive yaw swings the +u edge away from it. Roll is the same
     angle as a parallel detector roll and as ``tj.align`` reports it.
@@ -62,7 +62,7 @@ class ConeBeam:
     axis_offset : float, optional
         Lateral x displacement of the rotation axis, in physical units.
     source_height : float, optional
-        Lab-frame z position of the source and unshifted detector centre, in physical units.
+        Lab-frame z position of the source and unshifted detector center, in physical units.
 
     Raises
     ------
@@ -105,17 +105,17 @@ class ConeBeam:
         return np.array([0.0, -float(self.source_to_axis), float(self.source_height)])
 
     def detector_frame(self, detector: Detector) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Lab position of the detector centre and its unit u and v directions.
+        """Lab position of the detector center and its unit u and v directions.
 
         Parameters
         ----------
         detector : Detector
-            Detector with its physical lab-frame (x, z) centre offset.
+            Detector with its physical lab-frame (x, z) center offset.
 
         Returns
         -------
-        centre : numpy.ndarray
-            Lab-frame detector-centre position in physical units.
+        center : numpy.ndarray
+            Lab-frame detector-center position in physical units.
         u_dir : numpy.ndarray
             Lab-frame unit direction of increasing detector columns.
         v_dir : numpy.ndarray
@@ -211,7 +211,7 @@ class ConeGeometry:
     grid : Grid
         Reconstruction voxel grid.
     detector : Detector
-        Detector dimensions, pitches and physical centre.
+        Detector dimensions, pitches and physical center.
     angles : sequence of float
         View rotation angles in degrees, in acquisition order.
     beam : ConeBeam
@@ -569,7 +569,7 @@ def cone_parts(
     None for parallel beams; ``views`` is None for a single arrangement, which
     serves every view. ``detector`` is the scan's detector, binned perhaps
     (default the geometry's): a segment's detector is it moved by the
-    segment's centre offset from the scan's.
+    segment's center offset from the scan's.
     """
     segments = segments_of(geometry)
     if segments is None:
@@ -603,10 +603,10 @@ def require_parallel_beam(geometry: object, context: str) -> None:
 
 
 def view_frames(geometry: ScanGeometry) -> np.ndarray:
-    """Return source, detector centre and pixel steps for each cone-beam view.
+    """Return source, detector center and pixel steps for each cone-beam view.
 
     Rows are ``[source, center, u * du, v * dv]`` (ASTRA's ``cone_vec`` order):
-    pixel ``(row r, column c)`` of view i lies at ``centre + (c - nu / 2 + 1/2) u
+    pixel ``(row r, column c)`` of view i lies at ``center + (c - nu / 2 + 1/2) u
     + (r - nv / 2 + 1/2) v``. Every segment of a :class:`ConeSegments`, in order,
     with the corrections of any pose wrapper around it.
 
@@ -618,7 +618,7 @@ def view_frames(geometry: ScanGeometry) -> np.ndarray:
     Returns
     -------
     numpy.ndarray
-        Object-frame source, detector centre and pixel vectors, shape (views, 12).
+        Object-frame source, detector center and pixel vectors, shape (views, 12).
 
     Raises
     ------

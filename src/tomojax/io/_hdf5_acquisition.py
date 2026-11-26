@@ -94,7 +94,7 @@ def _contains(file: Any, entry: str, data_path: str) -> bool:
 
 
 def _layout(file: Any, data_path: str | None) -> tuple[str, str, str, str] | None:
-    """Return format, stack, key and angle paths for a recognised acquisition."""
+    """Return format, stack, key and angle paths for a recognized acquisition."""
     if "exchange/data" in file:
         where = data_path or "/exchange/data"
         return "data_exchange", where, "", ""
@@ -165,7 +165,7 @@ def _gda_angles(
     """An NXtomo entry without angles, completed from the same file's GDA rotation command.
 
     GDA writes some files twice over: its own layout, and an NXtomo entry for the same
-    frames that may lack the angles. Only when the file's GDA layout is recognised, both
+    frames that may lack the angles. Only when the file's GDA layout is recognized, both
     describe the same frames dataset (the resolved target, not the shape) and the GDA
     command has one angle per frame of the key do its angles complete the entry; the
     record says the NXtomo entry recorded none. Otherwise the entry stays as it is.
@@ -197,7 +197,7 @@ def read_hdf5_acquisition(
     image_key_path: str | None = None,
     angles_path: str | None = None,
 ) -> RawAcquisition | None:
-    """Recognise NXtomo/Data Exchange by their contents, never the file suffix."""
+    """Recognize NXtomo/Data Exchange by their contents, never the file suffix."""
     if not path.is_file() or not h5py.is_hdf5(path):
         return None
     with h5py.File(path, "r") as handle:

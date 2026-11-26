@@ -62,7 +62,7 @@ inspect with preview=true, or preview with correction_preview for corrected rows
 View and project.volume also accept saved TomoJAX volumes by path in logical (z, y, x) order.
 Workflow source fields accept acquisition paths. Relative paths use the project directory.
 Use ./@name for a literal path starting with @.
-The usual workflow is inspect, open, correct, align the centre, reconstruct, view slices
+The usual workflow is inspect, open, correct, align the center, reconstruct, view slices
 and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector spacings
 share one physical length unit. Check slices before trusting a residual. Use dry_run
 before large jobs on tools that support it. See tools/list for installed workflows.
@@ -202,6 +202,6 @@ async def run() -> None:
         await supervisor.close()
         loop.remove_signal_handler(signal.SIGTERM)
         if terminate.is_set():
-            # The SDK's stdin thread can still be blocked in readline. Honour
+            # The SDK's stdin thread can still be blocked in readline. Honor
             # termination once the worker has been stopped.
             signal.raise_signal(signal.SIGTERM)

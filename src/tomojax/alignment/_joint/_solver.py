@@ -203,7 +203,7 @@ class _Volumes:
     clipped = _into(lambda s, free, x: jnp.maximum(jnp.where(free, x + s, x), 0) - x)
     stepped = _into(lambda _out, x, a, dx: x + _barrier(a * dx))
     # The shared rows' image gradient B^T G^-1 b (m = G^-1 b) and their part of the image
-    # Jacobi diagonal, diag(B^T G^-1 B), added to the linearisation's (``_common``).
+    # Jacobi diagonal, diag(B^T G^-1 B), added to the linearization's (``_common``).
     plus_image = _by_slice(
         lambda v, b, m: v
         + _barrier((_barrier(m[0] * b[0]) + _barrier(m[1] * b[1])).astype(jnp.float32))
@@ -232,7 +232,7 @@ def level_volumes(
     """The arrays a level holds through its steps, as shapes: allocated once, at its setup.
 
     The volume ``x`` and ``other`` (the line search's trial; once a step is accepted, the
-    previous volume), the linearisation's gradient ``gx0`` and diagonal ``dd``, the shared
+    previous volume), the linearization's gradient ``gx0`` and diagonal ``dd``, the shared
     images (``_common``), the free-voxel mask, the Schur preconditioner and ``step``
     (right-hand side, then solution, then clipped step), with TV the
     stepped gradient ``gx`` and conductance ``d``, and the motion prior's ``factor``.
@@ -282,7 +282,7 @@ def _line_search[Image, Pose](
 
 
 class _StepContext(NamedTuple):
-    """What every step from one linearisation shares, whatever its damping.
+    """What every step from one linearization shares, whatever its damping.
 
     The LM damping diagonal is max(dd, damping_floor), recovered from dd at its two uses.
     """
@@ -594,7 +594,7 @@ class _Level:
             progress.preview(
                 lambda state=state: planes(state[0], self.ops.grid), final=high == iterations
             )
-            progress.check_cancelled()
+            progress.check_canceled()
         return self.stacks["x"]
 
     def start(self, c: jax.Array, x0: jax.Array | np.ndarray | None, iterations: int) -> jax.Array:
@@ -698,7 +698,7 @@ class _Level:
     def _context(
         self, x: jax.Array, c: jax.Array, linear: _Linearization, pose_weight: PoseWeight
     ) -> _StepContext:
-        """What every step from this linearisation shares, whatever its damping."""
+        """What every step from this linearization shares, whatever its damping."""
         ops, prior = self.ops, self.prior
         gx0, dd, sw, j, gr, gram, residual, common = linear
         d = self._write("d", self.conduct, x) if self.lam else None
@@ -767,7 +767,7 @@ class _Level:
     def proposal(
         self, x: jax.Array, c: jax.Array, linear: _Linearization, lm: float, pose_weight: PoseWeight
     ) -> float | None:
-        """The RMS pose change one step from this linearisation proposes at damping lm, or None."""
+        """The RMS pose change one step from this linearization proposes at damping lm, or None."""
         step = self._propose(x, self._context(x, c, linear, pose_weight), lm)
         if step is None:
             return None
@@ -882,7 +882,7 @@ def _undamped_proposal(
     if more image iterations could still reduce the residual. A proposal damped
     harder than the initial damping is no such evidence: damping can suppress
     any step. So a small damped proposal is checked again at the initial
-    damping, from the same linearisation, and that proposal decides. The
+    damping, from the same linearization, and that proposal decides. The
     damping itself does not: clipping the image step at x >= 0 can keep it high
     long after the poses have settled.
     """
@@ -896,7 +896,7 @@ def _undamped_proposal(
 def _pose_weight(
     level: _Level, linear: _Linearization, sigma: float
 ) -> tuple[PoseWeight, float | None, float]:
-    """The motion prior's weight from one linearisation, with the error scale it used.
+    """The motion prior's weight from one linearization, with the error scale it used.
 
     The weight is a threshold: the views' median Fisher information F, times the
     standard error of one view's step, times sqrt(2 log n). For the rotation

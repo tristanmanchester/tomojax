@@ -1,4 +1,4 @@
-"""Serialised worker admission and publication. Only the adapter runs outside the monitor."""
+"""Serialized worker admission and publication. Only the adapter runs outside the monitor."""
 
 from __future__ import annotations
 
@@ -249,7 +249,7 @@ class Session:
         job.control.cancel()
         if job in self.queue:
             self.queue.remove(job)
-            kind = "superseded" if superseded else "cancelled"
+            kind = "superseded" if superseded else "canceled"
             self._finish(job, e.ErrorReply(job.id, job.channel, w.Error(2, kind, kind)))
 
     def stop(self) -> None:
@@ -312,8 +312,8 @@ class Session:
         with self.changed:
             if self._stale(job):
                 error = w.Error(2, "superseded", "superseded")
-            elif job.control.cancelled:
-                error = w.Error(2, "cancelled", "cancelled")
+            elif job.control.canceled:
+                error = w.Error(2, "canceled", "canceled")
             elif failure is not None:
                 error = classify(failure)
             else:
@@ -416,7 +416,7 @@ class Session:
             if job.id not in self.jobs or self._stale(job):
                 return
             if isinstance(event, w.Preview):
-                if job.control.cancelled:
+                if job.control.canceled:
                     return
                 # Preview files are reusable before the adapter returns its final manifest.
                 command = job.command.operation if isinstance(job.command, op.Run) else job.command

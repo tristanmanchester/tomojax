@@ -160,7 +160,7 @@ class Control:
     def checkpoint(self):
         self.checks += 1
         if self.checks == self.stop:
-            raise progress.Cancelled
+            raise progress.Canceled
 
 
 def stub(operation, context):
@@ -211,7 +211,7 @@ def test_adapter_contract(tmp_path, adapter, stop):
     registry.clear()
     op = operations.Plane(ref, "y", 2)
     if stop:
-        with pytest.raises(progress.Cancelled):
+        with pytest.raises(progress.Canceled):
             adapter(op, context)
         assert stage.private.exists() == (stop == 2)
     else:
@@ -232,7 +232,7 @@ def test_adapter_contract(tmp_path, adapter, stop):
     assert all(isinstance(s, products.Snapshot) for s in snapshots)
 
 
-def test_summary_externalises_before_json_conversion():
+def test_summary_externalizes_before_json_conversion():
     numbers = np.arange(1000000)
     seen = []
 
@@ -247,8 +247,8 @@ def test_summary_externalises_before_json_conversion():
             "history",
         )
 
-    info = execution.summarise(
-        {"automatic": {"method": "fbp"}, "a/b": [{"~": numbers}]}, externalise=stage
+    info = execution.summarize(
+        {"automatic": {"method": "fbp"}, "a/b": [{"~": numbers}]}, externalize=stage
     )
     assert info.summary == {"automatic": {"method": "fbp"}, "a/b": [{"~": None}]}
     assert list(info.arrays) == ["/a~1b/0/~0"]
@@ -425,9 +425,9 @@ def test_cli_streams_one_terminal_per_command(tmp_path):
 
 
 def test_result_summary_keeps_selection_when_solver_history_exceeds_budget():
-    record = execution.summarise(
+    record = execution.summarize(
         {"history": [{"detail": "x" * 500} for _ in range(1000)], "automatic": {"method": "cgls"}},
-        externalise=lambda *_: pytest.fail("structured records are not numeric arrays"),
+        externalize=lambda *_: pytest.fail("structured records are not numeric arrays"),
     )
     assert len(msgspec.json.encode(record)) <= 65536
     assert record.summary == {"automatic": {"method": "cgls"}, "_omitted_fields": 1}

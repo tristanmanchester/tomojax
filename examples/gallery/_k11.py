@@ -1,7 +1,7 @@
-"""Diamond K11 laminography scans at the detector's 2.16 micrometre pitch.
+"""Diamond K11 laminography scans at the detector's 2.16 micrometer pitch.
 
 The raw NeXus files record the rotation angles but not the tilt, so each
-script passes the tilt it was scanned at. Alignment runs on a 6.48 micrometre
+script passes the tilt it was scanned at. Alignment runs on a 6.48 micrometer
 grid; reconstructions for the figures are single planes at the detector pitch.
 """
 

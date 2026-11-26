@@ -318,7 +318,7 @@ fn multi_input_jobs_take_inputs_in_project_order_not_id_order() {
 }
 
 #[test]
-fn region_statistics_use_only_samples_whose_centres_are_inside_the_box() {
+fn region_statistics_use_only_samples_whose_centers_are_inside_the_box() {
     let directory = tempfile::tempdir().unwrap();
     let volume = ramp_volume(directory.path(), "volume", 3);
     let mut state = AppState::init();
@@ -329,7 +329,7 @@ fn region_statistics_use_only_samples_whose_centres_are_inside_the_box() {
     state.refresh_images();
     drive(&mut state, |state| state.imaging.plane(1).is_some());
     state.ui.inspect_tool = InspectTool::Region;
-    // Samples 0.2–1.8 on a 4 × 4 slice hold one sample centre, (1, 1).
+    // Samples 0.2–1.8 on a 4 × 4 slice hold one sample center, (1, 1).
     let uv = |pixel: f32| (pixel + 0.5) / 4.;
     state
         .measure(PlaneKind::Axial, [uv(0.2); 2], [uv(1.8); 2], true)
@@ -341,7 +341,7 @@ fn region_statistics_use_only_samples_whose_centres_are_inside_the_box() {
             .measure(PlaneKind::Axial, [uv(0.2); 2], [uv(0.8); 2], true)
             .is_err()
     );
-    // A box in the outer half of the first sample holds no sample centre.
+    // A box in the outer half of the first sample holds no sample center.
     assert!(
         state
             .measure(PlaneKind::Axial, [uv(-0.45); 2], [uv(-0.1); 2], true)
@@ -1004,8 +1004,8 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     for (operation, parameters) in [
         ("slice", json!({"axis":"y","index":8,"method":"fourier"})),
         (
-            "centre_sweep",
-            json!({"axis":"z","index":8,"centres":[-1.0,0.0,1.0],"method":"fourier"}),
+            "center_sweep",
+            json!({"axis":"z","index":8,"centers":[-1.0,0.0,1.0],"method":"fourier"}),
         ),
         ("region_preview", json!({})),
     ] {
@@ -1085,7 +1085,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         };
         assert_eq!(state.ui.main_view, expected);
         drive(&mut state, |s| s.imaging.plane(expected.mark()).is_some());
-        if operation == "centre_sweep" {
+        if operation == "center_sweep" {
             assert_eq!(state.slice_count(0), 3);
             state.ui.display.indices[0] = 2;
             state.refresh_images();
@@ -1099,7 +1099,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
                     .unwrap()
                     .fixed
                     .iter()
-                    .any(|fixed| fixed.name == "centre" && fixed.coordinate == 1.0)
+                    .any(|fixed| fixed.name == "center" && fixed.coordinate == 1.0)
             );
             let input = state
                 .project
@@ -1241,15 +1241,15 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
             && state.imaging.plane(1).is_some()
     });
     state.set_operation(
-        "centre_sweep",
-        Some(&json!({"axis":"z","index":32,"centres":[0.0],"method":"fourier"})),
+        "center_sweep",
+        Some(&json!({"axis":"z","index":32,"centers":[0.0],"method":"fourier"})),
     );
     drive(&mut state, |state| {
         state
             .model
             .preview
             .as_ref()
-            .is_some_and(|preview| preview.can_keep && preview.operation == "centre_sweep")
+            .is_some_and(|preview| preview.can_keep && preview.operation == "center_sweep")
     });
     state.set_operation(
         "slice",
@@ -1403,19 +1403,19 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
 
 #[test]
 fn source_copy_never_recurses_into_its_project_or_overwrites_existing_data() {
-    let cancelled = std::sync::atomic::AtomicBool::new(false);
+    let canceled = std::sync::atomic::AtomicBool::new(false);
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("acquisition");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(source.join("view.tif"), b"pixels").unwrap();
-    assert!(stage_copy_input(&source, &source.join("project").join("copied"), &cancelled).is_err());
+    assert!(stage_copy_input(&source, &source.join("project").join("copied"), &canceled).is_err());
     let destination = directory.path().join("managed");
-    stage_copy_input(&source, &destination, &cancelled).unwrap();
+    stage_copy_input(&source, &destination, &canceled).unwrap();
     assert_eq!(
         std::fs::read(destination.join("view.tif")).unwrap(),
         b"pixels"
     );
-    assert!(stage_copy_input(&source, &destination, &cancelled).is_err());
+    assert!(stage_copy_input(&source, &destination, &canceled).is_err());
     assert_eq!(std::fs::read(source.join("view.tif")).unwrap(), b"pixels");
 }
 
@@ -1541,7 +1541,7 @@ fn npz_is_rejected_before_a_worker_or_copy_task_is_started() {
 }
 
 #[test]
-fn reopening_uses_the_saved_view_or_centres_the_newest_result() {
+fn reopening_uses_the_saved_view_or_centers_the_newest_result() {
     let (directory, mut original) = registered_projection_fixture();
     let document = &mut original.project.as_mut().unwrap().document;
     let scan = document.assets[0].clone();

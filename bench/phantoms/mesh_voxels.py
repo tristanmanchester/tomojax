@@ -1,7 +1,7 @@
-"""Read binary STL meshes, check they are closed, and voxelise them exactly.
+"""Read binary STL meshes, check they are closed, and voxelize them exactly.
 
 Only NumPy is required. Occupancy is computed from the signed surface
-crossings of vertical rays through a supersampled grid of voxel sub-centres, so
+crossings of vertical rays through a supersampled grid of voxel sub-centers, so
 each voxel stores the fraction of its volume inside the mesh: exact along z, to
 the supersampling resolution across.
 """
@@ -44,7 +44,7 @@ def occupancy(
     """Return the fraction of each voxel inside the mesh.
 
     ``shape`` is `(nz, ny, nx)`; ``spacing`` and ``origin`` are physical xyz.
-    ``origin`` is the centre of voxel (0, 0, 0). Vertical rays through
+    ``origin`` is the center of voxel (0, 0, 0). Vertical rays through
     ``supersample`` x ``supersample`` sub-columns of each voxel cross the
     surface; a crossing where the outward normal points down enters the mesh,
     one where it points up leaves it. Each crossing adds (or removes) the part

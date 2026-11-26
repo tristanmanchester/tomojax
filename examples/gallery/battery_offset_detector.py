@@ -9,7 +9,7 @@ reconstructs the whole cross-section: a field of view nearly twice the
 detector's width.
 
 The top row draws each setup from above (not to scale) beside the cell's
-cross-section coloured by the share of the turn in which the detector sees
+cross-section colored by the share of the turn in which the detector sees
 each point.
 
     uv run python examples/gallery/battery_offset_detector.py images/gallery/battery-offset.png
@@ -42,7 +42,7 @@ SHARE = Normalize(0.55, 1.0)  # of the turn
 def scan(
     truth: np.ndarray, fov: float, columns: int, offset_mm: float, rng: np.random.Generator
 ) -> tj.Scan:
-    """Scan ``truth`` with ``columns`` detector pixels, centred ``offset_mm`` off the axis."""
+    """Scan ``truth`` with ``columns`` detector pixels, centered ``offset_mm`` off the axis."""
     voxel = fov / N
     grid = tj.Grid(N, N, N, voxel, voxel, voxel)
     fine = tj.Grid(TRUTH_N, TRUTH_N, TRUTH_N, *(3 * (fov / TRUTH_N,)))
@@ -147,13 +147,13 @@ def draw_setup(ax: plt.Axes, cell: np.ndarray, geometry: tj.ConeGeometry, fov: f
 
 
 def draw_share(ax: plt.Axes, cell: np.ndarray, share: np.ndarray, fov: float) -> None:
-    """The cell's cross-section coloured by ``share``, the share of the turn in view."""
+    """The cell's cross-section colored by ``share``, the share of the turn in view."""
     centers = (np.arange(N) - N / 2 + 0.5) * fov / N
     radius = np.hypot(*np.meshgrid(centers, centers, indexing="ij"))
-    colours = IN_VIEW(SHARE(share))
-    colours[..., :3] *= (0.35 + 0.65 * np.clip(cell / 0.3, 0, 1))[..., None]
-    colours[..., 3] = radius <= CELL_RADIUS + 0.05
-    ax.imshow(colours, origin="lower")
+    colors = IN_VIEW(SHARE(share))
+    colors[..., :3] *= (0.35 + 0.65 * np.clip(cell / 0.3, 0, 1))[..., None]
+    colors[..., 3] = radius <= CELL_RADIUS + 0.05
+    ax.imshow(colors, origin="lower")
     ax.plot(N / 2 - 0.5, N / 2 - 0.5, "o", color="#d1495b", ms=2.6)
     rim = share[np.abs(radius - CELL_RADIUS) < fov / N].mean()
     if rim < 0.99:
@@ -197,7 +197,7 @@ def main() -> None:
     mask = np.broadcast_to((np.hypot(x, y) < 4.3)[None], truth.shape)
     z, top = N // 2 - N // 8, 0.3
     # Fixed positions, in inches: a top row of two drawings 1.6 times as wide as tall, each
-    # beside a square map; the colour bar; then two rows of three square slices.
+    # beside a square map; the color bar; then two rows of three square slices.
     width, gap = 7.2, 0.05
     row, side = (width - 5 * gap) / 5.2, (width - 4 * gap) / 3
     slices_top = 0.55 + row + 0.8

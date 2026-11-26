@@ -9,8 +9,8 @@
 #define VOXEL(T, ix, iy, iz) (((T)(iz) * ny + (iy)) * nx + (ix))
 #define Z_STRIDE ((long)nx * ny)
 #endif
-// A transpose thread owns a run of R voxels along z. Neighbouring threads take neighbouring
-// runs of one column in either storage: their gathers read neighbouring detector rows, which
+// A transpose thread owns a run of R voxels along z. Neighboring threads take neighboring
+// runs of one column in either storage: their gathers read neighboring detector rows, which
 // matters more than coalescing the single final store.
 #define FIRST_VOXEL(run, R, ix, iy, iz0) { int runs_z_ = (nz + (R) - 1) / (R); \
     ix = (int)((run) / ((long)ny * runs_z_)); iy = (int)(((run) / runs_z_) % ny); \

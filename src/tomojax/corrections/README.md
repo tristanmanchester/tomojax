@@ -36,13 +36,13 @@ Steps, each a frozen dataclass of its settings:
 
 | Step | Acts on | Settings | `tomojax correct` option |
 | --- | --- | --- | --- |
-| `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbours' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
-| `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalised transmission before the log | Python only |
-| `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in metres, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
+| `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbors' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
+| `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalized transmission before the log | Python only |
+| `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in meters, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
 | `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
 | `RejectViews(z=6.0)` | line integrals | drops the views between an abrupt step in the mean line integral and the step back (a beam loss, a missed frame), and their geometry; smooth changes of the object are kept | `--reject-views [Z]` |
-| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearisation, see below | Python only |
+| `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearization, see below | Python only |
 
 Also exported:
 
@@ -62,13 +62,13 @@ about twice the widest rings. A wide window can leave a faint ring or dot on
 the rotation axis of a compact sample.
 
 `Stripes(..., varying=True)` fits gain and offset only at pixels whose
-view-to-view differences are anomalous. Unselected centred features are
+view-to-view differences are anomalous. Unselected centered features are
 preserved, but their constant-offset stripes are left too; sparse views or
 sharp moving edges can cause false detections. Selected dead pixels receive
-only the neighbouring mean; their missing angular information is not recovered.
+only the neighboring mean; their missing angular information is not recovered.
 
 `Rings` models each detector column as reporting `q + a + b (1 - exp(-q))`
-and fits `a` and `b` against a reference built from the neighbouring columns,
+and fits `a` and `b` against a reference built from the neighboring columns,
 then inverts the model (two passes). Given the scan's geometry, it checks for
 a stationary parallel-beam scan over one evenly sampled full turn. There each
 unsorted view is compared with a local quadratic through 30 columns either side,
@@ -81,8 +81,8 @@ last sorted fit) are corrected too, each kept only as far as that odd part
 supports. Interpolating over bad pixels belongs to calibration. The record says
 which axis was used, if any. The CLI binds `--rings` to the selected and cropped
 acquisition geometry and applies it before view rejection and detector binning.
-Otherwise it uses unsorted local quadratics, independent neighbouring-view
-instruments and spectral regularisation by angular covariance and object power.
+Otherwise it uses unsorted local quadratics, independent neighboring-view
+instruments and spectral regularization by angular covariance and object power.
 Built-in angular geometries supply the view ordering and angular interpolation
 weights within each trajectory; cone segments stay separate. Without such
 geometry, supply views in continuous acquisition order. At least two views per
@@ -116,7 +116,7 @@ in `scan.source.geometry_metadata["beam_hardening"]`, alongside tube settings.
 Their vendor intensity domains and scaling conventions are not established.
 
 - `BeamHardening.from_polynomial(coefficients, upto=q_max)` turns an explicit
-  polynomial linearisation `p = c0 + c1 q + c2 q^2 + ...` into the closest
+  polynomial linearization `p = c0 + c1 q + c2 q^2 + ...` into the closest
   physical curve over `0 <= q <= upto`.
 - `BeamHardening.from_spectrum(energies, weights, material)` builds the curve of
   a sample material (a chemical formula or NIST name) seen by a detected

@@ -19,7 +19,7 @@ python bench/beam_hardening/run.py mono --methods none
 Each writes a JSON report (`--output`, by default `beam_hardening.json` in
 `$LAB_ARTIFACTS` or the current directory) with every case's metrics and a
 summary per method, and one figure per case in `<output>-figures/`: every
-method beside the reference on the reference's grey window, with radial
+method beside the reference on the reference's gray window, with radial
 profiles (walnut: each image times its best scale; mono: each curve's
 deviation from a straight line).
 
@@ -31,7 +31,7 @@ perhaps a void; a tube wall around a filling with one dense rod. Tube voltage
 40-225 kV from a tungsten anode (SpekPy or xpecgen), window, filters,
 scintillator (CsI, Gd2O2S, CdWO4), dose and detector blur are drawn at
 random, and so are three settings the scanner does not record: the effective
-anode angle, extra aluminium filtration and the scintillator's thickness.
+anode angle, extra aluminum filtration and the scintillator's thickness.
 `simulate.py` renders each case with gVXR in its own environment (set
 `GVXR_PYTHON`; default `~/Projects/tomojax/.artifacts/gvxr-env/bin/python`),
 checks gVXR's path lengths against exact ray-cylinder chords and its spectral

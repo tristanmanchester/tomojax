@@ -1,7 +1,7 @@
 //! Asynchronous client for the official TomoJAX worker.
 //!
 //! The worker owns numerical state and commits. The UI owns this connection and
-//! applies correlated replies; cancellation acknowledgement is never a terminal
+//! applies correlated replies; cancellation acknowledgment is never a terminal
 //! for the target job. Normal shutdown keeps draining through process exit.
 
 use std::collections::{BTreeMap, HashMap};

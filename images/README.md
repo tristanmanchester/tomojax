@@ -1,7 +1,7 @@
 # Image provenance
 
 The README's three figures are reproducible simulations of one object, a 29 mm
-mechanical watch movement modelled in Blender
+mechanical watch movement modeled in Blender
 ([watch_blender.py](../bench/phantoms/watch_blender.py)) and scanned with gVXR
 at 120 keV, so no projection is made by TomoJAX's projector. Each figure has a
 JSON record beside it with its settings, errors, run times and versions; the
@@ -17,7 +17,7 @@ loaded automatically on the project page.
 [watch-render.png](watch-render.png) comes from
 [render_watch.py](../examples/render_watch.py): a FISTA-TV reconstruction (weight
 1e-5) of 600 noisy views on 38.5 µm voxels, drawn by ray casting through the volume with
-a transfer function of the reconstructed attenuation. Colour and opacity are
+a transfer function of the reconstructed attenuation. Color and opacity are
 display choices recorded in [watch-render.json](watch-render.json); the shapes
 are the reconstruction's.
 
@@ -28,7 +28,7 @@ are the reconstruction's.
 [reconstruction-example.png](reconstruction-example.png) comes from
 [reconstruct_watch.py](../examples/reconstruct_watch.py): 200 views with
 10⁴ photons per pixel, a 32-slice slab on 38.5 µm voxels, FBP with a Hann
-filter and FISTA-TV (weight 1e-5). Every panel shares one grey scale, 0 to 0.36 mm⁻¹, so
+filter and FISTA-TV (weight 1e-5). Every panel shares one gray scale, 0 to 0.36 mm⁻¹, so
 steel and brass saturate. Errors are relative L2 over the whole slab against
 the exact voxel average of the meshes, recorded in
 [reconstruction-example.json](reconstruction-example.json).
@@ -39,10 +39,10 @@ the exact voxel average of the meshes, recorded in
 
 [alignment-example.png](alignment-example.png) comes from
 [align_watch.py](../examples/align_watch.py): 400 views on 77 µm voxels with
-the axis 5.3 px off centre and per-view wobble and jitter, aligned with
+the axis 5.3 px off center and per-view wobble and jitter, aligned with
 `tj.align(scan, fit=("center", "translations", "rotations"))`. Both volumes are
-FISTA-TV reconstructions with TV weight 1e-5, which keeps the hairspring, and every panel shares one grey scale.
-The truth, its poses and its centre are compared in the least-motion frame
+FISTA-TV reconstructions with TV weight 1e-5, which keeps the hairspring, and every panel shares one gray scale.
+The truth, its poses and its center are compared in the least-motion frame
 `tj.align` reports; [alignment-example.json](alignment-example.json) records
 the gauge removed and every error.
 

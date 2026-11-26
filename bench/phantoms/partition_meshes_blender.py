@@ -1,9 +1,9 @@
 r"""Partition closed material meshes at a physical reconstruction box using Blender.
 
     blender -b --factory-startup -P bench/phantoms/partition_meshes_blender.py -- \\
-        MESH_DIR OUTPUT_DIR --centre 0 0 3 --extent 6 6 6
+        MESH_DIR OUTPUT_DIR --center 0 0 3 --extent 6 6 6
 
-Lengths and STL coordinates are millimetres, vectors are xyz. Each material is
+Lengths and STL coordinates are millimeters, vectors are xyz. Each material is
 intersected with the box and subtracted from it independently, leaving closed
 ``interior/NAME.stl`` and ``exterior/NAME.stl`` surfaces. Empty materials are
 omitted. This partitions the simulator's continuous object, not solver voxels.

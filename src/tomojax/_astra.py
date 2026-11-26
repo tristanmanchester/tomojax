@@ -1,7 +1,7 @@
 """Convert scans to and from ASTRA Toolbox geometries.
 
 ASTRA keeps the object fixed and moves a source and detector around it, view
-by view (``cone_vec``: source, detector centre and the detector's pixel
+by view (``cone_vec``: source, detector center and the detector's pixel
 vectors ``u`` and ``v``). TomoJAX fixes the source and detector (a
 :class:`~tomojax.geometry.ConeBeam`) and moves the object. The two describe
 the same scans whenever the source and detector move together, as on a

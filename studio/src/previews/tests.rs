@@ -86,7 +86,7 @@ fn a_stale_admitted_revision_is_retired_without_becoming_keepable() {
     assert!(previews.current(PreviewKind::Slice).is_none());
     assert_eq!(
         previews.status(PreviewKind::Slice).phase,
-        PreviewPhase::Cancelled
+        PreviewPhase::Canceled
     );
     assert!(previews.take_for_keep(PreviewKind::Slice).is_err());
     assert!(previews.retired[0].artifacts.contains("artifact-stale"));

@@ -318,7 +318,7 @@ def _sphere_bounds_1d(center: float, radius: float, limit: int) -> tuple[int, in
 
 
 def _rasterize_spheres_python_roi(vol: np.ndarray, params: np.ndarray) -> None:
-    """ROI-bounded exact reference implementation for sphere rasterisation."""
+    """ROI-bounded exact reference implementation for sphere rasterization."""
     if params.size == 0:
         return
 

@@ -12,7 +12,7 @@ from tests.test_mcp_stdio import connection
 
 pytestmark = pytest.mark.surface
 
-# The documented mark colours.
+# The documented mark colors.
 PALETTE = {
     "yellow": (255, 214, 0),
     "cyan": (0, 229, 255),
@@ -33,18 +33,18 @@ def images(reply):
     ]
 
 
-def white_centre(picture):
-    """Centre of the saturated pixels: the only full-scale sample in the plane."""
+def white_center(picture):
+    """Center of the saturated pixels: the only full-scale sample in the plane."""
     rows, cols = np.nonzero((picture == 255).all(axis=2))
     assert rows.size, "no saturated sample in the rendered plane"
     return (cols.min() + cols.max() + 1) / 2, (rows.min() + rows.max() + 1) / 2
 
 
-def coloured_near(picture, pixel, colour, reach=7):
+def colored_near(picture, pixel, color, reach=7):
     x, y = (round(v) for v in pixel)
     patch = picture[max(y - reach, 0) : y + reach, max(x - reach, 0) : x + reach]
-    # Text is antialiased, so accept close shades of the mark's colour.
-    return (np.abs(patch.astype(int) - colour).max(axis=2) <= 40).any()
+    # Text is antialiased, so accept close shades of the mark's color.
+    return (np.abs(patch.astype(int) - color).max(axis=2) <= 40).any()
 
 
 @pytest.fixture(scope="module")
@@ -73,7 +73,7 @@ def test_a_point_lands_on_its_voxel_in_each_plane_with_roi_and_stride(session, a
     )
     plain = c.call("view", ticks=True, **window)
     assert not plain["isError"], plain
-    expected = white_centre(images(plain)[0])
+    expected = white_center(images(plain)[0])
 
     marks = [
         {"type": "point", "at": list(VOXEL), "label": "voxel"},
@@ -85,7 +85,7 @@ def test_a_point_lands_on_its_voxel_in_each_plane_with_roi_and_stride(session, a
     on, off, outside = (m["panels"][0] for m in reply["structuredContent"]["marks"])
     assert on["drawn"] and on["value"] == 5
     assert abs(on["pixel"][0] - expected[0]) <= 1.5 and abs(on["pixel"][1] - expected[1]) <= 1.5
-    assert coloured_near(images(reply)[0], on["pixel"], PALETTE["yellow"])
+    assert colored_near(images(reply)[0], on["pixel"], PALETTE["yellow"])
     assert off == {"panel": 0, "drawn": False, "reason": "off_plane", "distance": 4}
     assert outside == {"panel": 0, "drawn": False, "reason": "outside_roi"}
 
@@ -93,13 +93,13 @@ def test_a_point_lands_on_its_voxel_in_each_plane_with_roi_and_stride(session, a
 def test_shapes_report_means_and_follow_into_orthogonal_planes(session):
     c, (volume, _, _) = session
     (z0, z1), (y0, y1), (x0, x1) = BLOCK
-    centre = [(z0 + z1 - 1) / 2, (y0 + y1 - 1) / 2, (x0 + x1 - 1) / 2]
+    center = [(z0 + z1 - 1) / 2, (y0 + y1 - 1) / 2, (x0 + x1 - 1) / 2]
     marks = [
-        {"type": "box", "corners": [[z0, y0, x0], [z1 - 1, y1 - 1, x1 - 1]], "colour": "magenta"},
-        {"type": "circle", "at": centre, "radius": 1.5, "colour": "cyan"},
-        {"type": "arrow", "from": [5, 2, 2], "to": [5, 20, 6], "colour": "orange"},
-        {"type": "polygon", "points": [[5, 20, 6], [5, 25, 6], [5, 25, 13]], "colour": "green"},
-        {"type": "text", "at": [5, 28, 28], "label": "note", "colour": "red"},
+        {"type": "box", "corners": [[z0, y0, x0], [z1 - 1, y1 - 1, x1 - 1]], "color": "magenta"},
+        {"type": "circle", "at": center, "radius": 1.5, "color": "cyan"},
+        {"type": "arrow", "from": [5, 2, 2], "to": [5, 20, 6], "color": "orange"},
+        {"type": "polygon", "points": [[5, 20, 6], [5, 25, 6], [5, 25, 13]], "color": "green"},
+        {"type": "text", "at": [5, 28, 28], "label": "note", "color": "red"},
     ]
     reply = c.call("view", source=volume, axis="z", index=5, marks=marks)
     assert not reply["isError"], reply
@@ -107,12 +107,12 @@ def test_shapes_report_means_and_follow_into_orthogonal_planes(session):
     found = [m["panels"][0] for m in reply["structuredContent"]["marks"]]
     assert all(f["drawn"] for f in found), found
     for f, spec in zip(found, marks, strict=True):
-        assert coloured_near(picture, f["pixel"], PALETTE[spec["colour"]], reach=70), spec
+        assert colored_near(picture, f["pixel"], PALETTE[spec["color"]], reach=70), spec
     box, circle, arrow, polygon, _ = found
     assert box["mean"] == circle["mean"] == polygon["mean"] == 2
     assert arrow["value"] == 2  # the head sits on the block's corner
     # The same box and sphere through a vertical plane across the block, and a plane past it.
-    vertical = c.call("view", source=volume, axis="x", index=round(centre[2]), marks=marks[:2])
+    vertical = c.call("view", source=volume, axis="x", index=round(center[2]), marks=marks[:2])
     box, circle = (m["panels"][0] for m in vertical["structuredContent"]["marks"])
     assert box["drawn"] and box["mean"] == 2 and circle["drawn"] and circle["mean"] == 2
     past = c.call("view", source=volume, axis="y", index=16, marks=marks[:1])
@@ -131,7 +131,7 @@ def test_marks_on_projection_planes(session, mode, extra):
     if mode == "sinogram":
         window["index"] = 9
     window.update(extra)
-    expected = white_centre(images(c.call("view", ticks=True, **window))[0])
+    expected = white_center(images(c.call("view", ticks=True, **window))[0])
     reply = c.call("view", marks=[{"type": "point", "at": [5, 9, 20]}], **window)
     (found,) = reply["structuredContent"]["marks"][0]["panels"]
     assert found["drawn"] and found["value"] == 3
@@ -155,7 +155,7 @@ def test_a_pixel_in_a_returned_image_becomes_array_indices(session):
         # Find the bright voxel in a plain or ticked axial render, as a model would by eye.
         shown = c.call("view", source=volume, axis="z", index=VOXEL[0], ticks=decorated or None)
         render = shown["structuredContent"]["images"][0]["image"]
-        x, y = white_centre(images(shown)[0])
+        x, y = white_center(images(shown)[0])
         mark = {"type": "point", "at": {"pixel": [x, y], "image": render}}
         # Shown on the vertical plane through it, it lands on the same voxel.
         across = c.call("view", source=volume, axis="x", index=VOXEL[2], marks=[mark])
@@ -231,7 +231,7 @@ def test_images_fit_the_model_budget_and_take_limits_sources_and_a_grid(session)
     c, (volume, _, _) = session
     twice = f"r = handles[{volume!r}]\nregister(tj.Reconstruction(r.volume * 2, r.geometry, 'fbp', {{}}))"
     other = python(c, twice)["value"]
-    marks = [{"type": "box", "corners": [[5, 20, 6], [5, 25, 13]], "colour": "magenta"}]
+    marks = [{"type": "box", "corners": [[5, 20, 6], [5, 25, 13]], "color": "magenta"}]
     for count, sources in ((1, volume), (2, [volume, other]), (3, [volume, other, volume])):
         reply = c.call(
             "view", source=sources, axis="z", index=5, marks=marks, limits=[0, 4], grid=True

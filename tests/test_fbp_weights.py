@@ -151,7 +151,7 @@ def test_repeated_directions_share_weights_without_changing_the_acquired_arc(
 
 @pytest.mark.parametrize("start", [0.0, 150.0])
 def test_whole_turn_repeats_share_cells_despite_pose_rounding(start: float) -> None:
-    """Views labelled theta and theta + 360 differ only by rounding; they are one direction."""
+    """Views labeled theta and theta + 360 differ only by rounding; they are one direction."""
     angles = start + np.linspace(0, 180, 90, endpoint=False)
     weights = fbp_weights(parallel(np.concatenate([angles, angles + 360.0])))
     np.testing.assert_allclose(weights.view_scale, np.pi / 180, rtol=1e-5)
@@ -199,7 +199,7 @@ def test_degenerate_scans_are_rejected() -> None:
 
 
 def gaussian_case(span: float, n_views: int, start: float = 0.0) -> tuple:
-    """Analytic projections of an off-centre Gaussian in a 30-degree laminography scan."""
+    """Analytic projections of an off-center Gaussian in a 30-degree laminography scan."""
     n, sigma, center = 40, 3.0, np.array([2.0, -3.0, 1.5])
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     detector = Detector(64, 64, 1.0, 1.0)

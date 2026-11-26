@@ -116,7 +116,7 @@ def prepare(path: Path, *, binning: int, every: int, center_px: float | None) ->
         detector = replace(scan.detector, center=(center, scan.detector.center[1]))
         scan = replace(scan, geometry=replace(scan.geometry, detector=detector))
     det = scan.detector
-    # Include the off-centre detector's complete lateral field, with voxel
+    # Include the off-center detector's complete lateral field, with voxel
     # spacing matched to binned pixels. Binning does not change physical units.
     side = int(np.ceil(det.nu + 2 * abs(det.center[0]) / det.du))
     grid = tj.Grid(
@@ -226,7 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("input", type=Path)
     parser.add_argument(
-        "--center-px", type=float, help="calibrated detector-u centre, in native detector pixels"
+        "--center-px", type=float, help="calibrated detector-u center, in native detector pixels"
     )
     parser.add_argument("--binning", type=int, default=8)
     parser.add_argument("--every", type=int, default=1, help="use every Nth view")

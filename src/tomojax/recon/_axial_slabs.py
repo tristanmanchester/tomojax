@@ -102,7 +102,7 @@ def axial_slabs(
     from ._chunks import partial_sweep
 
     for start in range(0, grid.nz, depth):
-        progress.check_cancelled()
+        progress.check_canceled()
         stop = min(start + depth, grid.nz)
         nz = stop - start
         # Translate detector and volume together: every equal-sized slab has

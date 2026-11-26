@@ -89,7 +89,7 @@ def test_roi_keeps_placement_only_when_shape_is_unchanged():
     grid = Grid(9, 9, 9, 0.5, 0.5, 0.5, vol_origin=(2.0, 3.0, -2.0))
     assert region_grid(_scan(grid, Detector(31, 31, 0.5, 0.5)), "bbox")[0] is grid
     cropped, _ = region_grid(_scan(grid, Detector(21, 21, 0.5, 0.5)), "bbox")
-    # Voxel centres keep their positions: the crop is a window of the grid.
+    # Voxel centers keep their positions: the crop is a window of the grid.
     offsets = (np.asarray(grid_volume_origin(cropped)) - grid_volume_origin(grid)) / 0.5
     np.testing.assert_allclose(offsets, np.round(offsets), atol=1e-9)
     assert cropped.nx < grid.nx

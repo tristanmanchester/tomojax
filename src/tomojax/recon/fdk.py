@@ -1,7 +1,7 @@
 """Feldkamp-Davis-Kress (FDK) reconstruction for cone-beam scans.
 
 Each projection is cosine-weighted, ramp-filtered along detector rows on the
-isocentre plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
+isocenter plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
 distance weight, where U is the voxel's distance from the source along the
 detector normal. Full turns share angular measure across conjugate views;
 shorter arcs of at least a half turn plus the fan angle use Parker weights
@@ -10,8 +10,8 @@ On an offset detector, a ray whose conjugate falls off the panel keeps the
 whole weight of its line.
 
 FDK is exact only in the plane through the source orbit; away from it the
-reconstruction carries the usual cone-beam artefacts, growing with the cone
-angle. It is a fast first reconstruction and initialiser for the iterative
+reconstruction carries the usual cone-beam artifacts, growing with the cone
+angle. It is a fast first reconstruction and initializer for the iterative
 solvers, which model the cone geometry exactly.
 """
 
@@ -131,7 +131,7 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     """Return ``(views, nu)`` FDK angular weights.
 
     Full turns share each ray's angular measure with its conjugate view's
-    detector coverage; short scans use Parker weights, normalised over the
+    detector coverage; short scans use Parker weights, normalized over the
     conjugate rays the panel actually measured. Views repeating
     an angle (several turns, at several heights say) share its measure, so a
     scan of several turns averages their reconstructions. Angle labels may
@@ -211,7 +211,7 @@ def _distinct_view_weights(
     n_views = len(order)
     step, gamma, delta = short_scan_fan(beam, detector, sorted_angles)
     pixel = float(detector.du) / float(beam.source_to_detector)
-    # Angular measure of each view: half the gap to each neighbour.
+    # Angular measure of each view: half the gap to each neighbor.
     measure = np.empty(n_views)
     padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
     measure[order] = 0.5 * (padded[2:] - padded[:-2])
@@ -537,7 +537,7 @@ def fdk(
 
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
-    on an offset detector (the axis projecting off its centre) get Wang's
+    on an offset detector (the axis projecting off its center) get Wang's
     weights from the conjugate views and reconstruct the field the detector's long side covers.
     Each view retains its own calibrated source/detector arrangement; angular
     quadrature covers the whole scan, independently of segment boundaries.
@@ -929,14 +929,14 @@ class _Slabs:
             ]
             written = []
             for first in range(0, len(slabs), len(devices)):
-                progress.check_cancelled()
+                progress.check_canceled()
                 jobs = [pool.submit(next, worker) for worker in workers[: len(slabs) - first]]
                 for previous in written:
                     previous.result()
                 written = [job.result() for job in jobs]
                 if progress.for_unit("slabs") is not None:
                     for finished in written:
-                        progress.check_cancelled()
+                        progress.check_canceled()
                         finished.result()
                         progress.step("slabs")
                     written.clear()

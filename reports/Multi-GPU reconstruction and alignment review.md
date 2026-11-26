@@ -18,7 +18,7 @@ the volume.
 Split the **volume into slabs** later, and only for volumes that do not fit on one
 GPU. That is TIGRE's and MBIRJAX's design. It costs more: cone-beam slabs read
 overlapping detector row bands, the forward projection must merge them, and TV needs
-a one-voxel overlap ("halo") between neighbouring slabs. That cost is worth paying
+a one-voxel overlap ("halo") between neighboring slabs. That cost is worth paying
 only for memory.
 
 Nobody has published multi-GPU joint 6-DOF pose alignment, or multi-orbit cone
@@ -98,7 +98,7 @@ alignment. TomoJAX would be the first to report scaling there.
 - **Avoid for now**, because each trades exactness or reproducibility for speed:
   - consensus methods that solve inner problems per node (MACE, arXiv:1911.09278:
     4.55× on 1200 nodes);
-  - quantised exchange (arXiv:2410.06106);
+  - quantized exchange (arXiv:2410.06106);
   - mixed-precision communication;
   - pipelined CG (arXiv:1905.06850), which reorders floating-point work and loses
     accuracy.
@@ -111,10 +111,10 @@ alignment. TomoJAX would be the first to report scaling there.
     slice, on 4 P100s.
   - 4 GPUs gave at most 2× over one, because host–device transfers dominated.
   - Their schedule stops at 2×2 binning. That matches our walnut result on an L40S: the
-    full-resolution level moved no orbit's height by more than a micrometre and cost 5×
+    full-resolution level moved no orbit's height by more than a micrometer and cost 5×
     the time.
 - **PtyGer** (Yu et al., arXiv:2106.07575) runs CG for ptychography split by scan
-  position across 8 GPUs. It exchanges halos with neighbours and all-reduces only for
+  position across 8 GPUs. It exchanges halos with neighbors and all-reduces only for
   the line search, and gets up to 1.7× per doubling. It is a template for a CG solver
   that needs only small all-reduces.
 - **MegBA** (Ren et al., arXiv:2112.01349, ECCV 2022) is distributed bundle adjustment.
@@ -155,9 +155,9 @@ and runs on 4 simulated CPU devices and the RTX 4070.
   - Drop the `jax.devices()[0]` checks in the kernel-availability gating.
   - Key per-device state by ordinal: the FDK cuBLAS handle and the texture objects.
     CuPy already caches compiled modules per device.
-- **Python holds the GIL through each callback.** Launches are serialised across GPUs.
+- **Python holds the GIL through each callback.** Launches are serialized across GPUs.
   That is harmless while callbacks only enqueue asynchronous work, but any
-  synchronisation inside one stalls every GPU.
+  synchronization inside one stalls every GPU.
 - Put `custom_vjp` outside the `shard_map`, so the backward pass is our explicit
   adjoint `shard_map` rather than collectives JAX derives itself (untested).
 - **Interconnect cost.** An all-reduce moves about 2V per GPU for a V-byte volume. My
@@ -165,7 +165,7 @@ and runs on 4 simulated CPU devices and the RTX 4070.
   That is roughly 80 ms on PCIe at 12 GB/s, and a few ms on NVLink. The
   single-GPU binned transpose takes about 3 s, or about 0.8 s split four ways. PCIe
   would add about 10%, and the sum is cheap on NVLink. GeForce cards have direct
-  GPU-to-GPU copies disabled in recent drivers, so rent datacentre cards.
+  GPU-to-GPU copies disabled in recent drivers, so rent datacenter cards.
 - **Reproducibility.** NCCL's ring order is fixed by topology, so results repeat run
   to run on the same machine (from a search result, not checked in the NCCL source).
   They will differ at round-off between GPU counts, unless we sum in a fixed tree
@@ -210,7 +210,7 @@ and runs on 4 simulated CPU devices and the RTX 4070.
 - Does XLA set the CUDA current device on the callback thread? If so, entering the
   device context is only a safeguard.
 - Do the per-device launches actually run concurrently at 4–8 GPUs, given that the GIL
-  serialises them?
+  serializes them?
 - Is MBIRJAX's L40S problem real, and does it affect buffer callbacks?
 - Laminography slabs do not map to detector row bands (`fbp_host` uses x-slabs there).
   Is their forward-projection overlap acceptable?

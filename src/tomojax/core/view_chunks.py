@@ -1,7 +1,7 @@
 """Fixed-size view chunks for scanning a projection stack inside a JAX loop.
 
 Every chunk has ``chunk_size`` views so the loop body compiles once; the last
-chunk is shifted back to end at the final view, and ``valid_mask`` zeroes the
+chunk is shifted back to end at the final view, and ``valid_mask`` zeros the
 views it repeats from the chunk before.
 """
 

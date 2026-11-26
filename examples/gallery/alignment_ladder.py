@@ -12,7 +12,7 @@ the data never come from TomoJAX's projector:
 - the spark plug of ``bench/phantoms/spark_plug.py`` in parallel beam, 720 views on
   384 x 384 pixels of 0.135 mm, on a 384³ grid.
 
-The errors are a 6-pixel error in the declared rotation centre; drift and five slips,
+The errors are a 6-pixel error in the declared rotation center; drift and five slips,
 random per-view rotations of 0.37° RMS, a 0.75° roll of the rotation axis about the
 beam, and a 3° tilt of the axis towards the beam with the plug 9 mm off the axis, each
 rendered into the data. Every arm is reconstructed by FBP. The lower row of a figure is
@@ -73,8 +73,8 @@ def landmarks(grid: tj.Grid) -> np.ndarray:
     """27 points over the central +-30% of the grid box."""
     unit = np.stack(np.meshgrid(*[np.linspace(-0.3, 0.3, 3)] * 3, indexing="ij"), -1)
     size = np.array((grid.nx * grid.vx, grid.ny * grid.vy, grid.nz * grid.vz))
-    centre = np.asarray(grid.vol_center if grid.vol_center is not None else (0, 0, 0))
-    return unit.reshape(-1, 3) * size + centre
+    center = np.asarray(grid.vol_center if grid.vol_center is not None else (0, 0, 0))
+    return unit.reshape(-1, 3) * size + center
 
 
 def pixels(
@@ -82,7 +82,7 @@ def pixels(
 ) -> np.ndarray:
     """Detector (u, v) of ``points`` in each view, in pixels; the beam is along y.
 
-    ``roll`` turns the pixel lattice about the detector centre from u towards v, in degrees.
+    ``roll`` turns the pixel lattice about the detector center from u towards v, in degrees.
     """
     lab = np.einsum("nij,kj->nki", poses[:, :3, :3], points) + poses[:, None, :3, 3]
     x, z = (lab[..., [0, 2]] - np.asarray(detector.center)).transpose(2, 0, 1)
@@ -148,12 +148,12 @@ def arm(case: Case, label: str, fit: str | tuple[str, ...] | None = None) -> dic
     }
 
 
-def watch_case(true_table: np.ndarray, *, centre_px: float = 0.0, seed: int) -> Case:
-    """The watch rendered with ``true_table`` and declared with a centre ``centre_px`` off."""
+def watch_case(true_table: np.ndarray, *, center_px: float = 0.0, seed: int) -> Case:
+    """The watch rendered with ``true_table`` and declared with a center ``center_px`` off."""
     grid = tj.Grid(N, N, N, *(3 * (WATCH_PITCH,)), vol_center=(0.0, 0.0, WATCH_Z))
     v = WATCH_Z * np.cos(np.radians(WATCH_TILT))
     detector = tj.Detector(N, N, WATCH_PITCH, WATCH_PITCH, center=(0.0, v))
-    declared = dataclasses.replace(detector, center=(centre_px * WATCH_PITCH, v))
+    declared = dataclasses.replace(detector, center=(center_px * WATCH_PITCH, v))
     angles = np.linspace(0.0, 360.0, VIEWS, endpoint=False)
     geometry = tj.LaminographyGeometry(grid, declared, angles, tilt=WATCH_TILT)
     blank = tj.Scan(np.zeros((VIEWS, N, N), np.float32), geometry)
@@ -241,7 +241,7 @@ def ladder(
     """Each arm's image over its difference from the reference, then the true-geometry image."""
     reference = truth[cut]
     low, high = np.percentile(reference, (0.5, 99.8))
-    span *= high - low  # the difference row's range, a share of the grey range
+    span *= high - low  # the difference row's range, a share of the gray range
     style()
     columns = len(arms) + 1
     aspect = reference.shape[0] / reference.shape[1]
@@ -310,12 +310,12 @@ def main() -> None:
 
     screws = SCREWS
     clean = np.zeros((VIEWS, 6))
-    case = watch_case(clean, centre_px=6.0, seed=2)
+    case = watch_case(clean, center_px=6.0, seed=2)
     truth = np.asarray(tj.reconstruct(case.truth_scan(), "fbp").volume, np.float32)
     arms = [arm(case, "With the error"), arm(case, 'fit="center"', "center")]
-    ladder(arms, truth, screws, "The watch's balance wheel, a 6-pixel error in the rotation centre",
-           args.out / "alignment-ladder-centre.png")  # fmt: skip
-    record("centre", arms)
+    ladder(arms, truth, screws, "The watch's balance wheel, a 6-pixel error in the rotation center",
+           args.out / "alignment-ladder-center.png")  # fmt: skip
+    record("center", arms)
 
     case = watch_case(drift_table(), seed=3)
     truth = np.asarray(tj.reconstruct(case.truth_scan(), "fbp").volume, np.float32)
@@ -340,8 +340,8 @@ def main() -> None:
 
     meta = json.loads((args.plug_meshes / "spark_plug.json").read_text())
     middle = 0.5 * sum(meta["height_mm"])
-    centre = N // 2
-    across = np.s_[centre - PLUG_HALF : centre + PLUG_HALF]
+    center = N // 2
+    across = np.s_[center - PLUG_HALF : center + PLUG_HALF]
 
     def level(mm: float) -> int:
         return round((middle + mm - (middle - (N / 2 - 0.5) * PLUG_PITCH)) / PLUG_PITCH)
@@ -353,7 +353,7 @@ def main() -> None:
         arm(case, 'fit="translations"', "translations"),
         arm(case, 'fit=("translations",\n"roll")', ("translations", "roll")),
     ]
-    section = (np.s_[:], centre, across)
+    section = (np.s_[:], center, across)
     ladder(arms, truth, section, "Spark plug, rotation axis rolled 0.75° about the beam",
            args.out / "alignment-ladder-roll-vertical.png")  # fmt: skip
     cuts = [(f"{mm:+g} mm", (level(mm), across, across)) for mm in (19.0, 0.0, -11.0, -22.0)]
@@ -369,8 +369,8 @@ def main() -> None:
     case = plug_case(args.plug_meshes, tilt=3.0, offset=9.0)
     truth = np.asarray(tj.reconstruct(case.truth_scan(), "fbp").volume, np.float32)
     arms = [arm(case, "With the error"), arm(case, 'fit="translations"', "translations")]
-    off = centre + round(9.0 / PLUG_PITCH)
-    section = (np.s_[:], centre, np.s_[off - PLUG_HALF : off + PLUG_HALF])
+    off = center + round(9.0 / PLUG_PITCH)
+    section = (np.s_[:], center, np.s_[off - PLUG_HALF : off + PLUG_HALF])
     ladder(arms, truth, section, "Spark plug 9 mm off the axis, axis tilted 3° towards the beam",
            args.out / "alignment-ladder-tilt.png")  # fmt: skip
     record(

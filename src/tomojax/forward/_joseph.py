@@ -52,7 +52,7 @@ def project_joseph(
     backend: Literal["jax", "cuda"] = "jax",
     interpolation: Literal["linear", "cubic"] = "linear",
 ) -> jax.Array:
-    """Project physical voxel-centre planes with zero-padded linear or cubic samples.
+    """Project physical voxel-center planes with zero-padded linear or cubic samples.
 
     Parameters
     ----------
@@ -64,7 +64,7 @@ def project_joseph(
         and translations. Shapes and static metadata are validated; array values
         must satisfy this contract, including under JIT.
     grid : Grid
-        Physical voxel grid; its origin locates voxel (0, 0, 0)'s centre.
+        Physical voxel grid; its origin locates voxel (0, 0, 0)'s center.
     detector : Detector
         Canonical physical detector grid, including detector offsets.
     backend : {'jax', 'cuda'}

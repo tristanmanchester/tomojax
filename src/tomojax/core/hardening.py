@@ -40,7 +40,7 @@ _CHUNK = 1 << 22
 _FASTEST = 3.0
 
 
-def normalise(
+def normalize(
     rates: tuple[float, ...], weights: tuple[float, ...], *, unit_slope: bool
 ) -> tuple[tuple[float, ...], tuple[float, ...]]:
     """Weights summing to one, components with no weight dropped, sorted by rate.
@@ -179,7 +179,7 @@ def _nnls(
     w, _ = nnls(design, target, maxiter=50 * rates.size)
     if w.sum() <= 0:
         raise ValueError("the beam hardening fit found no positive mixture")
-    return normalise(tuple(rates), tuple(w), unit_slope=False)
+    return normalize(tuple(rates), tuple(w), unit_slope=False)
 
 
 def fit(

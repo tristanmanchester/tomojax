@@ -4,7 +4,7 @@ There is no reliable cheap signal that an alignment helped, so the report makes
 no verdict: it records how each level ended, the size of the corrections split
 into smooth and view-to-view parts, the fitted offsets, and two kinds of view
 that stand out. A pose flag marks a view whose correction leaves both
-neighbours' in the same direction (an isolated jump, not a slip, which is a
+neighbors' in the same direction (an isolated jump, not a slip, which is a
 step); a photometric flag marks a view the fitted image explains unusually
 badly (a broken frame, diffraction), which need not move its pose at all.
 """
@@ -46,10 +46,10 @@ type AlignmentReport = dict[
     | list[str],
 ]
 
-# An isolated view leaves both neighbours by this many robust standard deviations
+# An isolated view leaves both neighbors by this many robust standard deviations
 # of the scan's view-to-view change.
 _OUTLIER_SIGMAS = 5.0
-# An unusual view's residual RMS is at least this multiple of its neighbours'.
+# An unusual view's residual RMS is at least this multiple of its neighbors'.
 _UNUSUAL_RMS_FACTOR = 3.0
 
 
@@ -79,11 +79,11 @@ def axial(nominal: ArrayLike, beam: ArrayLike) -> bool:
 
 
 def isolated_views(steps: ArrayLike, order: ViewOrder | None = None) -> list[int]:
-    """Views whose (views, k) value leaves both neighbours' in the same direction.
+    """Views whose (views, k) value leaves both neighbors' in the same direction.
 
-    The departure from each neighbour must exceed both ``_OUTLIER_SIGMAS``
+    The departure from each neighbor must exceed both ``_OUTLIER_SIGMAS``
     robust standard deviations of the view-to-view change and
-    ``_ISOLATED_MIN_WORKING_PX``, in any one column. Neighbours are the
+    ``_ISOLATED_MIN_WORKING_PX``, in any one column. Neighbors are the
     adjacent views in acquisition order (``order``); a view at the edge of a
     gap is compared over it, with the limit widened as for that many steps,
     and a view next to a break between acquisitions is not judged.
@@ -108,7 +108,7 @@ def isolated_views(steps: ArrayLike, order: ViewOrder | None = None) -> list[int
 
 
 def unusual_views(energy: ArrayLike, order: ViewOrder | None = None) -> list[int]:
-    """Views whose residual RMS is ``_UNUSUAL_RMS_FACTOR`` times their neighbours'.
+    """Views whose residual RMS is ``_UNUSUAL_RMS_FACTOR`` times their neighbors'.
 
     A view's residual varies smoothly with angle, as the object presents more or
     less structure, so each view is compared with the median energy of the two

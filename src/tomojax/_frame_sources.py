@@ -1,4 +1,4 @@
-"""Construct lazy detector frames from saved scans, recognised acquisitions or TIFF stacks."""
+"""Construct lazy detector frames from saved scans, recognized acquisitions or TIFF stacks."""
 
 from __future__ import annotations
 

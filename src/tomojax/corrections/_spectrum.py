@@ -84,7 +84,7 @@ def tube_spectrum(
     Bremsstrahlung follows Kramers' thin-target law, with each photon
     absorbed on its way out of the target from the depth where the electron
     made it (Thomson-Whiddington slowing, Kanaya-Okayama range, leaving the
-    target at ``target_angle`` degrees). Tungsten's K lines are not modelled;
+    target at ``target_angle`` degrees). Tungsten's K lines are not modeled;
     above 70 kV they add a few percent of the photons near 60 keV. The beam is
     then filtered by ``filters`` and detected by ``detector``, a scintillator
     whose signal is the energy it absorbs; ``None`` counts each photon's full
@@ -108,7 +108,7 @@ def tube_spectrum(
     Returns
     -------
     energies : numpy.ndarray
-        Bin centres in keV.
+        Bin centers in keV.
     weights : numpy.ndarray
         Detected signal in each bin, summing to one.
 

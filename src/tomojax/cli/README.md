@@ -46,8 +46,8 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   `slice_<axis>_<index>.png`. A saved reconstruction's slices are read from the file
   (its three central planes by default); a scan's are reconstructed (its central z
   plane by default). `--slice AXIS=INDEX` chooses planes and can be repeated.
-  `--centers SPEC` sweeps the detector centre on a scan: it reconstructs the plane of
-  the first `--slice` (or the central z plane) at each centre of `START:STOP:STEP`
+  `--centers SPEC` sweeps the detector center on a scan: it reconstructs the plane of
+  the first `--slice` (or the central z plane) at each center of `START:STOP:STEP`
   or a comma list, in pixels from the detector middle, and writes one image per
   candidate and a contact sheet, `center_sweep.png`. The report lists each candidate
   with the `U` to pass to `tomojax correct --detector-center U V`.
@@ -56,7 +56,7 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   and cone parameters), and apply optional corrections (`--zingers`, `--paganin`,
   `--stripes`, `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`.
   On raw frames every step runs; on a dataset of line integrals only the steps that
-  act on them do. `--detector-center U V` sets the first detector's centre, in the
+  act on them do. `--detector-center U V` sets the first detector's center, in the
   pixel size's unit, after everything else has loaded, and moves every segment of a
   segmented scan by the same amount. `--preview PNG` draws a band of output rows as
   sinograms before and after the steps and their difference (the expert
@@ -68,16 +68,16 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   configuration class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`,
   `FISTAConfig`, `SPDHGConfig`, `SIRTConfig` or `MLEMConfig`), each replacing that
   field of the class's defaults, as `tj.reconstruct(config=...)` takes them;
-  `--region cyl` zeroes the volume outside the cylinder every view sees. The output
+  `--region cyl` zeros the volume outside the cylinder every view sees. The output
   holds the volume, its geometry and record, and names the input projections;
   `--include-scan` keeps them too. `--dry-run` prints the plan: the method and why,
   the grid, and the estimated memory against the memory available.
 - `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
-  top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared centre
+  top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared center
   (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
   `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`
   are `tj.align`'s keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
-  `--method opposite-views` estimates the centre from near-opposite views without an image.
+  `--method opposite-views` estimates the center from near-opposite views without an image.
   `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
   `--dry-run` prints the plan: each level's grid and budget, and the estimated memory.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
@@ -109,9 +109,9 @@ tomojax inspect recon.nxs --preview-dir previews
 tomojax export recon.nxs -o slices/
 ```
 
-A file that records the pixel size but not the rotation centre (external
-NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the centre at the middle
-of the detector, and `reconstruct` reports that status. Fit the centre first:
+A file that records the pixel size but not the rotation center (external
+NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the center at the middle
+of the detector, and `reconstruct` reports that status. Fit the center first:
 
 ```bash
 tomojax align scan.h5 -o aligned.nxs --fit center
@@ -120,11 +120,11 @@ tomojax reconstruct aligned.nxs -o recon.nxs
 
 Nikon scans record no dark field: `--darks` takes a dark image or one level,
 and `--darks 0` suits only counts that are already dark-corrected.
-`align --fit center roll` estimates the cone detector's centre and roll,
+`align --fit center roll` estimates the cone detector's center and roll,
 and `reconstruct` uses them. `previews/` then holds the three central slices, such
 as `slice_z_256.png`. See the [lab cone-beam CT guide](../../../docs/lab-ct.md).
 
-To judge the centre by eye instead, sweep it and look at the contact sheet:
+To judge the center by eye instead, sweep it and look at the contact sheet:
 
 ```bash
 tomojax inspect scan.h5 --preview-dir sweep --centers -20:20:2
@@ -163,7 +163,7 @@ The [v2 JSON schema](../../../docs/protocol/progress.schema.json) defines the re
 
 A successful command exits 0. Operational failures emit an `error` with a
 machine-readable kind and exit 1. Cancellation closes active tasks, emits a
-`cancelled` error and exits 130. An internal exception emits an `internal` error,
+`canceled` error and exits 130. An internal exception emits an `internal` error,
 prints its traceback on stderr with where to report the bug, and exits 1.
 Unexpected EOF before completion can indicate external process termination.
 Argument errors exit 2. A dry run with `--progress json` ends with a `result`

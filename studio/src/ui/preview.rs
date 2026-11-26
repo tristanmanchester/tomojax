@@ -14,7 +14,7 @@ pub fn controls(state: &AppState) -> El {
         .w_full()
         .child(separator())
         .child(strong("Interactive preview", 13., ink()));
-    if matches!(preview.operation.as_str(), "slice" | "centre_sweep") {
+    if matches!(preview.operation.as_str(), "slice" | "center_sweep") {
         let count = preview.count.unwrap_or(1);
         body = body.child(slider(
             "preview-index",
@@ -34,7 +34,7 @@ pub fn controls(state: &AppState) -> El {
             },
         ));
     }
-    if preview.operation == "centre_sweep" {
+    if preview.operation == "center_sweep" {
         let span = state
             .ui
             .preview_span
@@ -43,16 +43,16 @@ pub fn controls(state: &AppState) -> El {
             .ok()
             .filter(|v| v.is_finite() && *v > 0.);
         let width = span.unwrap_or(8.);
-        let centre = preview.centre.unwrap_or(0.);
+        let center = preview.center.unwrap_or(0.);
         body = body
             .child(slider(
-                "preview-centre",
-                "Single centre offset",
-                ((centre + width) / (2. * width)) as f32,
-                &format!("{centre:+.3} input px"),
+                "preview-center",
+                "Single center offset",
+                ((center + width) / (2. * width)) as f32,
+                &format!("{center:+.3} input px"),
                 state.model.backend.ready && span.is_some(),
                 move |value| {
-                    UiAction::SetPreviewCentre(
+                    UiAction::SetPreviewCenter(
                         ((f64::from(value) * 2. - 1.) * width * 1000.).round() / 1000.,
                     )
                 },
@@ -66,7 +66,7 @@ pub fn controls(state: &AppState) -> El {
                         input(
                             "preview-span",
                             &state.ui.preview_span,
-                            "Centre slider half-range in input detector pixels",
+                            "Center slider half-range in input detector pixels",
                             "",
                             |state| &mut state.ui.preview_span,
                         )

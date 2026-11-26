@@ -2,8 +2,8 @@
 
 Positions and sizes are in output pixels from the top left. Images are
 resampled to their panel size here (area averaging to shrink, nearest
-neighbours to enlarge by whole factors) and drawn one pixel to one pixel, so
-matplotlib never interpolates them; one grey scale is shared by every panel.
+neighbors to enlarge by whole factors) and drawn one pixel to one pixel, so
+matplotlib never interpolates them; one gray scale is shared by every panel.
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ class Card:
         )
 
     def scale_bar(self, x: float, y: float, pixels: float, label: str) -> None:
-        """A bar ``pixels`` long, its left end at ``(x, y)``, labelled above."""
+        """A bar ``pixels`` long, its left end at ``(x, y)``, labeled above."""
         self.line([x, x + pixels], [y, y], TEXT, 3.0)
         self.text(x + pixels / 2, y - 9, label, 19, TEXT, ha="center")
 
@@ -164,8 +164,8 @@ class Card:
         ax.tick_params(colors=MUTED, labelsize=15 * 72 / self.dpi, length=4, width=0.8)
         return ax
 
-    def save(self, path: Path, colours: int | None = 256) -> None:
-        """Write a PNG of ``colours`` palette entries, or full colour for ``None``."""
+    def save(self, path: Path, colors: int | None = 256) -> None:
+        """Write a PNG of ``colors`` palette entries, or full color for ``None``."""
         from PIL import Image
 
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -173,6 +173,6 @@ class Card:
         plt.close(self.fig)
         with Image.open(path) as image:
             picture = image.convert("RGB")
-        if colours is not None:
-            picture = picture.quantize(colours, dither=Image.Dither.NONE)
+        if colors is not None:
+            picture = picture.quantize(colors, dither=Image.Dither.NONE)
         picture.save(path, optimize=True)

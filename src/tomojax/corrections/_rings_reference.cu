@@ -130,7 +130,7 @@ extern "C" __global__ void sigma_floor(const float *sigma, float *floor) {
 }
 
 // The halo serves every support, including repeated detector-edge samples.
-// The excluded centre and its immediate neighbours never enter a fit.
+// The excluded center and its immediate neighbors never enter a fit.
 extern "C" __global__ void weighted_tiles(const float *values, const float *residual,
                                           const float *sigma, const float *floor, float *fits,
                                           float *r) {
@@ -179,7 +179,7 @@ extern "C" __global__ void weighted_tiles(const float *values, const float *resi
         b2 += yl * ql + yr * qr;
         if (j == 6 || j == 9 || j == 14 || j == 20 || j == 30) {
             // Rescale columns to this support, eliminate the intercept, then solve
-            // the centred two-by-two system and evaluate the polynomial at x=0.
+            // the centered two-by-two system and evaluate the polynomial at x=0.
             float scale = 6.0f / float(j), scale2 = scale * scale, a1 = g01 * scale,
                   a2 = g02 * scale2;
             float a11 = g11 * scale2, a12 = g12 * scale2 * scale, a22 = g22 * scale2 * scale2;

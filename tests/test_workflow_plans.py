@@ -115,13 +115,13 @@ def test_alignment_plan_budgets_and_padded_levels_match_run(tmp_path, capsys):
         assert actual["iterations"] == planned["iterations"]
         assert actual["image_iterations"] == planned["image_iterations"]
     assert result.info["placement"]["devices"]
-    # A centre fit calibrates the geometry; it publishes no per-view table.
+    # A center fit calibrates the geometry; it publishes no per-view table.
     assert result.scan.poses is None and type(result.scan.geometry) is tj.ParallelGeometry
-    centre_args = ["align", str(path), "--method", "opposite-views", "--fit", "center"]
-    assert main([*centre_args, "--dry-run", "--progress", "json"]) == 0
-    centre = _summary(capsys)
-    assert centre["type"] == "opposite_views_plan" and centre["pairs"] == 4
-    assert centre["placement"]["devices"] == ["cpu:0"]
+    center_args = ["align", str(path), "--method", "opposite-views", "--fit", "center"]
+    assert main([*center_args, "--dry-run", "--progress", "json"]) == 0
+    center = _summary(capsys)
+    assert center["type"] == "opposite_views_plan" and center["pairs"] == 4
+    assert center["placement"]["devices"] == ["cpu:0"]
 
 
 @pytest.mark.parametrize("method", ["fbp", "fourier", "cgls", "sirt", "mlem", "spdhg", "fista"])

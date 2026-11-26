@@ -32,8 +32,8 @@ def sampled(steps: np.ndarray, spacing: int) -> sparse.csr_array:
     last = math.ceil(end / spacing)
     degree = min(3, last)
     # Keep both complete cubic stencils even next to the omitted end sites.
-    centres = (steps // spacing).astype(int)
-    runs = np.split(centres, np.flatnonzero(np.diff(centres) > 12) + 1)
+    centers = (steps // spacing).astype(int)
+    runs = np.split(centers, np.flatnonzero(np.diff(centers) > 12) + 1)
     inner = spacing * np.concatenate(
         [np.arange(max(2, r[0] - 5), min(last - 1, r[-1] + 7)) for r in runs]
     )
@@ -57,7 +57,7 @@ def sampled(steps: np.ndarray, spacing: int) -> sparse.csr_array:
 
 def design_shape(design: sparse.csr_array | sparse.csr_matrix) -> tuple[int, int]:
     """The views by modes shape of a SciPy sparse spline design."""
-    # SciPy sets the final shape in its sparse constructors, after base initialisation.
+    # SciPy sets the final shape in its sparse constructors, after base initialization.
     shape: object = getattr(design, "shape", None)
     if not isinstance(shape, tuple) or len(shape) != 2:
         raise ValueError("expected a two-dimensional sparse spline design")
@@ -82,7 +82,7 @@ def _split(
         return u[:, :rank], u[:, rank:]
 
     # A confined spline can be declared free here. In its complement the
-    # crossing splines identify exactly what still needs neighbouring views.
+    # crossing splines identify exactly what still needs neighboring views.
     drift, rest = basis(matrix[:, inside])
     across = matrix[:, ~inside]
     pending, rough = basis(rest.T @ across)

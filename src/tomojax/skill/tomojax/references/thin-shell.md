@@ -14,7 +14,7 @@ Take the index of the peak as the shell's position on that row, and read the cor
 
 ## 2. Segment by threshold, and check it is stable
 
-Set `recon_id` to the volume, `shell_at` to the confirmed shell position (the profile's peak), and `core_at` and `air_at` to positions well inside the core and in the air. The core and air levels are medians of a small neighbourhood; the shell level is the peak value itself, since a neighbourhood around a shell one or two voxels thick is mostly core and air. The block keeps the bright voxels connected to the shell above a threshold between the core and shell levels, and checks the mask hardly changes when the threshold moves:
+Set `recon_id` to the volume, `shell_at` to the confirmed shell position (the profile's peak), and `core_at` and `air_at` to positions well inside the core and in the air. The core and air levels are medians of a small neighborhood; the shell level is the peak value itself, since a neighborhood around a shell one or two voxels thick is mostly core and air. The block keeps the bright voxels connected to the shell above a threshold between the core and shell levels, and checks the mask hardly changes when the threshold moves:
 
 ```python
 from scipy import ndimage
@@ -23,7 +23,7 @@ volume = np.asarray(handles[recon_id].volume)
 
 
 def level(at):
-    """The median of the 3 x 3 x 3 neighbourhood around a position."""
+    """The median of the 3 x 3 x 3 neighborhood around a position."""
     z, y, x = (round(v) for v in at)
     return float(np.median(volume[z - 1 : z + 2, y - 1 : y + 2, x - 1 : x + 2]))
 
@@ -75,4 +75,4 @@ air_side = around & ~core_side
 
 ## 4. Tune and check
 
-Sweep candidates as in [tuning-without-truth.md](tuning-without-truth.md), scoring each against the core side (usually the harder contrast) on these masks, check the leaders with `evaluate`, and show the best two side by side with the shell outlined: `view` with `source` as a list, the same `limits` and `features=[shell_id]`. A mask cut from one reconstruction favours that reconstruction when you score others on it (in one test, the first look scored above a candidate that fitted the held-out projections twice as well), so let `evaluate` decide between close candidates, and recompute the threshold mask on the chosen reconstruction before you report its size or export it.
+Sweep candidates as in [tuning-without-truth.md](tuning-without-truth.md), scoring each against the core side (usually the harder contrast) on these masks, check the leaders with `evaluate`, and show the best two side by side with the shell outlined: `view` with `source` as a list, the same `limits` and `features=[shell_id]`. A mask cut from one reconstruction favors that reconstruction when you score others on it (in one test, the first look scored above a candidate that fitted the held-out projections twice as well), so let `evaluate` decide between close candidates, and recompute the threshold mask on the chosen reconstruction before you report its size or export it.

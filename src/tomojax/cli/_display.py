@@ -95,7 +95,7 @@ class Display:
         self._lines: list[Text] = []
         self._devices: tuple[str, ...] = ()
         self._clock: float | None = None  # monotonic() minus the watch's time
-        self._cancelling = False
+        self._canceling = False
         self._stop = Event()
 
         def draw_until_stopped() -> None:
@@ -190,10 +190,10 @@ class Display:
                 )
                 for key, task in self._tasks.items()
             ]
-            if self._token.cancelled and not self._cancelling:
-                self._cancelling = True
+            if self._token.canceled and not self._canceling:
+                self._canceling = True
                 lines.append(
-                    Text("cancelling at the next checkpoint (Ctrl-C again to stop now)", "yellow")
+                    Text("canceling at the next checkpoint (Ctrl-C again to stop now)", "yellow")
                 )
             return lines, rows[-_DEPTH_SHOWN:]
 

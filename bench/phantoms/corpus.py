@@ -10,7 +10,7 @@ CONFIG supplies geometry (kind, grid, detector, angles_deg, tilt/beam), full,
 interior and exterior mesh directories, material names and reference mu_mm,
 reference_energy_keV, and seed. Optional mu_spectrum/energies_keV/photon_fractions
 select a photon-counting spectrum. Grid lengths and mesh coordinates are mm.
-Material truth is voxelised directly from closed meshes, never projected by
+Material truth is voxelized directly from closed meshes, never projected by
 TomoJAX. The mesh partition must match the grid's physical box.
 
 Prepare runs on CPU; only the external renderer requires the GPU. Pack writes
@@ -62,7 +62,7 @@ def moved_poses(nominal: np.ndarray, pixel: float) -> np.ndarray:
 
 
 def prepare(config: dict, out: Path) -> None:
-    """Voxelise physical truth and write six independent-simulator plans on CPU."""
+    """Voxelize physical truth and write six independent-simulator plans on CPU."""
     import tomojax as tj
     from tomojax.geometry import grid_volume_origin, stack_view_poses
 
@@ -77,7 +77,7 @@ def prepare(config: dict, out: Path) -> None:
     if geometry["kind"] == "cone":
         unsupported = set(geometry["beam"]) - {"source_to_axis", "source_to_detector"}
         if any(geometry["beam"][key] != 0 for key in unsupported):
-            raise ValueError("the corpus renderer requires an untilted, centred cone camera")
+            raise ValueError("the corpus renderer requires an untilted, centered cone camera")
         geo = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(**geometry["beam"]), **options)
         beam = {
             "source_to_axis_mm": geo.beam.source_to_axis,

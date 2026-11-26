@@ -19,7 +19,7 @@ import h5py
 import numpy as np
 
 import tomojax as tj
-from tomojax import datasets, recon
+from tomojax import datasets, interactive, progress, recon
 from tomojax.cli.api import PRODUCT_COMMANDS
 from tomojax.cli.main import main as cli
 
@@ -38,6 +38,14 @@ BRITISH = {
     "optimis": "optimiz",
     "initialis": "initializ",
     "analys": "analyz",
+    "artefact": "artifact",
+    "cancelled": "canceled",
+    "cancelling": "canceling",
+    "neighbour": "neighbor",
+    "behaviour": "behavior",
+    "labelled": "labeled",
+    "modelled": "modeled",
+    "grey": "gray",
 }
 # Unit words, anywhere in a name: angles are in degrees and lengths in the geometry's unit.
 UNITS = {"deg", "degree", "degrees", "rad", "radian", "radians", "px"}
@@ -57,7 +65,7 @@ MIRRORS = {
     "correct": ("load", {"path", "detector", "grid", "exposure_times", "flat_exposure_times"}),
     "export": ("export", {"path", "reconstruction"}),
     "inspect": ("inspect", {"path"}),
-    "simulate": ("simulate", {"artefacts"}),
+    "simulate": ("simulate", {"artifacts"}),
 }
 
 
@@ -107,13 +115,18 @@ def api_sites() -> Iterator[Site]:
         value = getattr(recon, name)
         if inspect.isclass(value) and name.endswith("Config"):
             yield from _class(f"recon.{name}", value)
-    for name in datasets.__all__:
-        yield Site("tomojax.datasets", name)
-        value = getattr(datasets, name)
-        if inspect.isclass(value):
-            yield from _class(f"datasets.{name}", value)
-        elif callable(value):
-            yield from _parameters(f"datasets.{name}", value)
+    for mod_name, mod in (
+        ("datasets", datasets),
+        ("interactive", interactive),
+        ("progress", progress),
+    ):
+        for name in mod.__all__:
+            yield Site(f"tomojax.{mod_name}", name)
+            value = getattr(mod, name)
+            if inspect.isclass(value):
+                yield from _class(f"{mod_name}.{name}", value)
+            elif callable(value):
+                yield from _parameters(f"{mod_name}.{name}", value)
 
 
 class _Parsed(Exception):

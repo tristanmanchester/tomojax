@@ -448,7 +448,7 @@ fn projection_arrays(
         },
     };
     let detector = &report["detector_metadata"];
-    let centre = detector["center"].as_array();
+    let center = detector["center"].as_array();
     let mut axes = vec![view];
     for (name, index, pitch) in [("v", 1, "dv"), ("u", 0, "du")] {
         let dimension = if name == "v" { shape[1] } else { shape[2] };
@@ -456,15 +456,15 @@ fn projection_arrays(
             .as_f64()
             .filter(|v| v.is_finite() && *v > 0.0)
             .zip(
-                centre
+                center
                     .and_then(|c| c.get(index))
                     .and_then(Value::as_f64)
                     .filter(|v| v.is_finite()),
             );
         let (unit, origin, spacing) = match calibrated {
-            Some((spacing, centre)) => (
+            Some((spacing, center)) => (
                 "scan_length",
-                centre - (dimension - 1) as f64 * spacing / 2.0,
+                center - (dimension - 1) as f64 * spacing / 2.0,
                 spacing,
             ),
             None => ("pixel", 0.0, 1.0),
@@ -597,9 +597,9 @@ fn stored_volume(
         if sizes.contains(&0) || spacing.iter().any(|v| !v.is_finite() || *v <= 0.) {
             return Err("Stored voxel counts and pitches must be finite and positive".into());
         }
-        let centre = grid.vol_center.unwrap_or([0.; 3]);
+        let center = grid.vol_center.unwrap_or([0.; 3]);
         let origin = grid.vol_origin.unwrap_or_else(|| {
-            std::array::from_fn(|i| centre[i] - (sizes[i] - 1) as f64 * spacing[i] / 2.)
+            std::array::from_fn(|i| center[i] - (sizes[i] - 1) as f64 * spacing[i] / 2.)
         });
         if origin.iter().any(|v| !v.is_finite()) {
             return Err("Stored voxel origin must be finite".into());
@@ -979,7 +979,7 @@ mod tests {
             .unwrap();
         file.new_dataset_builder()
             .with_data(&[0.0f32, 0.5, 1.0])
-            .create("unlabelled")
+            .create("unlabeled")
             .unwrap();
         file.new_dataset::<u16>()
             .shape((3, 4))
@@ -1009,8 +1009,8 @@ mod tests {
             projection_arrays(&line, &path).unwrap()["projections"].shape,
             [3, 1, 4]
         );
-        let unlabelled = projection_arrays(&report("/raw", "/unlabelled"), &path).unwrap();
-        assert_eq!(unlabelled["projections"].axes[0].unit, "index");
+        let unlabeled = projection_arrays(&report("/raw", "/unlabeled"), &path).unwrap();
+        assert_eq!(unlabeled["projections"].axes[0].unit, "index");
         let arrays = projection_arrays(&report("/raw", "/theta"), &path).unwrap();
         let array = &arrays["projections"];
         assert_eq!(array.domain, "stored_measurements");

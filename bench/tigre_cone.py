@@ -4,7 +4,7 @@ TIGRE rotates its +x source and detector y/z axes by intrinsic ZYZ angles,
 then subtracts ``offOrigin`` in the fixed object frame. Choosing that rotation
 from the detector axes makes arbitrary rigid arrangements representable without
 estimating an orbit or resampling measurements. Volume arrays remain (z, y, x),
-projections (view, v, u), as in the existing centred cone comparison.
+projections (view, v, u), as in the existing centered cone comparison.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def geometry(vectors: np.ndarray, *, grid: Grid, detector: Detector) -> tuple[Any, np.ndarray]:
-    """TIGRE geometry and angles for ASTRA-order source, centre, pixel-u, pixel-v rows."""
+    """TIGRE geometry and angles for ASTRA-order source, center, pixel-u, pixel-v rows."""
     import tigre
 
     from tomojax.geometry import grid_volume_origin

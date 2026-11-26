@@ -323,7 +323,7 @@ def read_zeiss_images(path: Path) -> _ZeissFrames | None:
 
 
 def _offsets(container: Any, count: int) -> tuple[np.ndarray | None, float | None]:
-    """Recorded per-view image shifts in detector pixels, and the centre shift if calibrated.
+    """Recorded per-view image shifts in detector pixels, and the center shift if calibrated.
 
     ``AutoRecon/CenterShift`` adds to the horizontal image shifts. Its sign was
     checked against the vendor's own reconstruction of a scan that records it:
@@ -434,7 +434,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         sample_name=path.stem,
     )
     if pitch is not None and shifts is not None and cone is not None:
-        # The shifts are measured from the recorded centre; a raw scan with no
+        # The shifts are measured from the recorded center; a raw scan with no
         # reconstruction setup records none, and its shifts are measured from the middle.
         center = (-pitch * (center_shift or 0.0), 0.0)
         record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=center))
@@ -446,7 +446,7 @@ def _record(container: Any, path: Path, shape: tuple[int, int, int]) -> Projecti
         record.geometry_metadata["detector_pixel_size"] = [pitch, pitch]
     if shifts is None or cone is None:
         # Without the shifts or the beam type a detector alone cannot fix the views;
-        # with them, detector= supplies the centre the shifts are measured from.
+        # with them, detector= supplies the center the shifts are measured from.
         record.geometry_metadata["axis_status"] = "not_recorded"
     return record
 
@@ -455,7 +455,7 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     """Read an Xradia acquisition by its OLE content, regardless of its filename.
 
     Xradia stores angles in degrees, distances in mm, and ``pixelsize`` as
-    object-plane micrometres. Counts and the independently typed embedded
+    object-plane micrometers. Counts and the independently typed embedded
     reference remain lazy. Reconstructed TXM volumes are not projection scans.
     """
     from ._acquisition import RawAcquisition

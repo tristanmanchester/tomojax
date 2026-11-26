@@ -1,6 +1,6 @@
 """Independent FP64 line integrals of a zero-extended trilinear voxel field.
 
-Split rays at every voxel-centre plane. Within each resulting cell the field
+Split rays at every voxel-center plane. Within each resulting cell the field
 along a ray is cubic, so two-point Gauss-Legendre integration is exact apart
 from floating-point arithmetic. No TomoJAX projector or CUDA runtime is used.
 """

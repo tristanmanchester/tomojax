@@ -9,26 +9,26 @@ upper 5.8 mm of the winding and the header; the cell axis is z.
 The jelly roll is an Archimedean spiral, ``r = r0 + p theta / 2 pi`` with a
 pitch of 325 µm, of one bundle of four strips: a graphite anode (70 µm
 coatings on both sides of 10 µm copper foil), a 20 µm separator, an NMC811
-cathode (60 µm coatings on 15 µm aluminium foil) and a second separator. The
+cathode (60 µm coatings on 15 µm aluminum foil) and a second separator. The
 separators wrap most of a turn round the hollow core before the anode starts,
 the cathode starts a quarter turn later and ends before the anode (anode
 overhang), the anode is taller than the cathode and the separators taller than
 both, and polyimide tape closes the outer turn. Cathode coatings hold NMC811
 secondary particles (6 to 12.6 µm across, 39% by volume) in a carbon-binder
-and electrolyte matrix; the anode is homogenised graphite, binder and
-electrolyte. An uncoated window midway along the cathode carries the aluminium
+and electrolyte matrix; the anode is homogenized graphite, binder and
+electrolyte. An uncoated window midway along the cathode carries the aluminum
 tab, which rises through a slot in the polyimide insulator and folds over to
 weld to the underside of the vent disc; a nickel tab sits on the outer end of
 the anode.
 
-The core holds a split stainless-steel centre pin. The nickel-plated steel can
+The core holds a split stainless-steel center pin. The nickel-plated steel can
 has a rolled bead above the winding; the header is a polypropylene gasket
-clamping an aluminium vent disc with a central dimple and a steel top cap with
+clamping an aluminum vent disc with a central dimple and a steel top cap with
 a raised terminal and three vent holes, under the crimped lip of the can. Two
 defects are present near z = 0: a stainless-steel particle of about 120 µm
 lodged across the separator of the seventh turn, and a delamination on the
 sixth turn, where the outer cathode coating has lifted up to 80 µm off its
-aluminium foil over about 1.9 mm of arc and 1.8 mm of height, pressing into
+aluminum foil over about 1.9 mm of arc and 1.8 mm of height, pressing into
 the separator and the next anode.
 
 Layers are integrated exactly across their thickness (the voxel's projected
@@ -56,7 +56,7 @@ from _procedural import (
     WaveNoise,
     box_cdf,
     main,
-    voxelise,
+    voxelize,
     workers,
 )
 import numpy as np
@@ -77,13 +77,13 @@ MATERIALS = {
     "separator (PE + electrolyte)": 0.0195,
     "cathode matrix (carbon-binder + electrolyte)": 0.0238,
     "NMC811 particles": 0.2310,
-    "aluminium (foil, tab, vent)": 0.0545,
+    "aluminum (foil, tab, vent)": 0.0545,
     "nickel tab": 0.6502,
     "polyimide (tape, insulator)": 0.0237,
     "steel (can, cap)": 0.4685,
     "stainless steel (pin, particle)": 0.4690,
     "polypropylene (gasket)": 0.0164,
-    "cathode coating, homogenised (39% NMC)": 0.1046,
+    "cathode coating, homogenized (39% NMC)": 0.1046,
 }
 (
     GAS,
@@ -92,7 +92,7 @@ MATERIALS = {
     SEPARATOR,
     CATHODE,
     NMC,
-    ALUMINIUM,
+    ALUMINUM,
     NICKEL,
     POLYIMIDE,
     STEEL,
@@ -139,10 +139,10 @@ LAYERS = (
     Layer(ANODE, 0.080, 0.150, _coating(0.8, ANODE_END, NI_WINDOW), Z_ANODE),
     Layer(SEPARATOR, 0.150, 0.170, ((0.0, 9.2),), Z_SEPARATOR),
     Layer(CATHODE, 0.170, 0.230, _coating(1.05, 8.35, TAB_WINDOW), Z_CATHODE),
-    Layer(ALUMINIUM, 0.230, 0.245, ((1.05, 8.35),), Z_CATHODE),
+    Layer(ALUMINUM, 0.230, 0.245, ((1.05, 8.35),), Z_CATHODE),
     Layer(CATHODE, 0.245, 0.305, _coating(1.05, 8.35, TAB_WINDOW), Z_CATHODE),
     Layer(SEPARATOR, 0.305, 0.325, ((0.0, 9.2),), Z_SEPARATOR),
-    Layer(ALUMINIUM, 0.245, 0.305, ((TAB_TURN - TAB_HALF, TAB_TURN + TAB_HALF),), Z_TAB),
+    Layer(ALUMINUM, 0.245, 0.305, ((TAB_TURN - TAB_HALF, TAB_TURN + TAB_HALF),), Z_TAB),
     Layer(NICKEL, 0.080, 0.150, ((ANODE_END - NI_TAB, ANODE_END),), Z_ANODE),
     Layer(POLYIMIDE, 0.325, 0.355, ((8.55, 9.2),), Z_SEPARATOR),
 )
@@ -306,7 +306,7 @@ CAN_TOP = 3.42
 
 
 def hardware(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Can, header, insulator, centre pin and tab fold; KEEP elsewhere."""
+    """Can, header, insulator, center pin and tab fold; KEEP elsewhere."""
     r, phi = _polar(x, y)
     labels = np.full(x.shape, KEEP, np.int16)
     parts: list[tuple[int, np.ndarray]] = []
@@ -332,7 +332,7 @@ def hardware(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, n
     dimple = 0.32 * np.clip(1 - (r / 1.15) ** 2, 0, 1) ** 2
     dimple_slope = 0.32 * 2 * np.clip(1 - (r / 1.15) ** 2, 0, 1) * 2 * r / 1.15**2
     vent = np.maximum(_shell(z, 2.32 - dimple, dimple_slope, 0.1), r - 3.62)
-    parts.append((ALUMINIUM, vent))
+    parts.append((ALUMINUM, vent))
 
     # Gasket: a C-section ring holding the cap and vent edges.
     outer = _box_sdf(r, z, 3.3, 4.10, 2.12, CAN_TOP - 0.18)
@@ -344,14 +344,14 @@ def hardware(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray, n
     tab_slot = np.maximum(np.abs(y) - 1.05, np.maximum(1.85 - x, x - 2.55))
     parts.append((POLYIMIDE, np.maximum(washer, -tab_slot)))
 
-    # Split centre pin.
+    # Split center pin.
     pin = np.maximum(np.maximum(0.43 - r, r - 0.55), z - 1.1)
     split = np.abs(np.mod(phi - 2.4 + np.pi, 2 * np.pi) - np.pi) * r - 0.06
     parts.append((STAINLESS, np.maximum(pin, -split)))
 
     # Tab fold: from the top of the riser across to the dimple of the vent disc.
     fold = np.maximum.reduce([np.abs(z - 1.98) - 0.03, np.abs(y) - 0.95, -0.1 - x, x - 2.2])
-    parts.append((ALUMINIUM, fold))
+    parts.append((ALUMINUM, fold))
 
     margin = np.full(x.shape, np.inf)
     for material, sdf in reversed(parts):
@@ -438,10 +438,10 @@ def battery(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, Any]]
     coating = coating * _z_fraction(grid, Z_CATHODE)[:, None, None]
     volume += ((mu[NMC] - mu[CATHODE]) * coating * particle_fraction(grid, seed)).astype(np.float32)
 
-    voxelise(hardware, grid, mu, fine=4, under=volume)
+    voxelize(hardware, grid, mu, fine=4, under=volume)
     c = _inclusion_center()
     defects = Defects(seed)
-    voxelise(
+    voxelize(
         defects,
         grid,
         mu,
@@ -453,7 +453,7 @@ def battery(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, Any]]
     phi = 2 * np.pi * (d["turn"] % 1)
     r = R0 + PITCH * d["turn"] + 0.25
     span = 2 * np.pi * r * d["half_turns"] + 0.1
-    voxelise(
+    voxelize(
         defects,
         grid,
         mu,

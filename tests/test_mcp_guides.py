@@ -24,7 +24,7 @@ def test_workflow_prompts_and_live_resources(tmp_path):
     topics = {
         "reconstruct-scan",
         "lab-ct-start-to-finish",
-        "find-the-centre",
+        "find-the-center",
         "check-a-reconstruction",
     }
     with connection(tmp_path) as c:

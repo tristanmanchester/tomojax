@@ -13,7 +13,7 @@ from tomojax.io.api import read_tiff_frames
 
 @pytest.mark.parametrize("bigtiff", [False, True])
 @pytest.mark.parametrize("columns", [3, 4, 7])
-def test_grayscale_pages_are_views_not_colour_channels(
+def test_grayscale_pages_are_views_not_color_channels(
     tmp_path: Path, *, bigtiff: bool, columns: int
 ) -> None:
     expected = np.arange(3 * 5 * columns, dtype=np.uint16).reshape(3, 5, columns)
@@ -46,8 +46,8 @@ def test_every_series_is_read_in_file_and_page_order(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("channels", [3, 4])
-def test_colour_pages_are_not_detector_views(tmp_path: Path, channels: int) -> None:
-    path = tmp_path / "colour.tif"
+def test_color_pages_are_not_detector_views(tmp_path: Path, channels: int) -> None:
+    path = tmp_path / "color.tif"
     tifffile.imwrite(path, np.ones((5, 7, channels), np.uint8), photometric="rgb")
 
     for reader in (read_tiff_frames, lambda p: load_tiff_stack(p, angles=[0.0])):
@@ -123,12 +123,12 @@ def test_finite_explicit_angles_keep_their_original_representation_and_order(
     np.testing.assert_array_equal(actual.projections, projections)
 
 
-@pytest.mark.parametrize("colour", [False, True])
+@pytest.mark.parametrize("color", [False, True])
 def test_invalid_detector_page_metadata_is_checked_before_decoding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, colour: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, color: bool
 ) -> None:
     path = tmp_path / "invalid.tif"
-    if colour:
+    if color:
         tifffile.imwrite(path, np.ones((5, 7, 3), np.uint8), photometric="rgb")
     else:
         with tifffile.TiffWriter(path) as writer:

@@ -5,7 +5,7 @@ sample at 54 keV, full-resolution detector rows. A miscalibrated detector
 column whose response varies with intensity leaves a large ring, and pixels
 near the rotation axis with small constant offsets leave tight rings round it.
 ``Stripes()`` subtracts the constant offsets and ``Stripes(51, varying=True)``
-fits the intensity-dependent pixels to their neighbours. The authors' own
+fits the intensity-dependent pixels to their neighbors. The authors' own
 reconstruction (Savu) is shown at the same slice, with each slice's
 correlation with it inside the sample.
 
@@ -60,7 +60,7 @@ def main() -> None:
     slices["authors' reconstruction (Savu)"] = reference
 
     style()
-    # The volume is centred on the rotation axis, where the tight rings are.
+    # The volume is centered on the rotation axis, where the tight rings are.
     half = 160
     zoom = (slice(n // 2 - half, n // 2 + half),) * 2
     fig, axes = plt.subplots(2, 3, figsize=(9.0, 6.5), gridspec_kw={"height_ratios": (1, 1)})
@@ -83,7 +83,7 @@ def main() -> None:
             ax.set_axis_off()
     fig.suptitle(
         f"Diamond I12, raw counts to slice: {frames.counts.shape[0]} views, "
-        f"{n} x {n} pixels, centre found by tj.align(method='opposite-views')",
+        f"{n} x {n} pixels, center found by tj.align(method='opposite-views')",
         y=0.995,
     )
     fig.tight_layout()

@@ -58,7 +58,7 @@ def run_chunks[S](
     length = 1
     compiled = False
     while done < end and not stopped:
-        progress.check_cancelled()
+        progress.check_canceled()
         start = monotonic()
         with progress.preparing("first update", int(compiled)):
             state = jax.block_until_ready(advance(state, min(end, done + length)))
@@ -76,7 +76,7 @@ def run_chunks[S](
 
 
 class Chunked[R]:
-    """Fuse all phases when unwatched. Only watched solves materialise chunk state."""
+    """Fuse all phases when unwatched. Only watched solves materialize chunk state."""
 
     def __init__(self, program: Callable[..., R], *, static_argnames: tuple[str, ...]) -> None:
         self.program = program
@@ -88,9 +88,9 @@ class Chunked[R]:
         task = progress.for_unit("iterations")
         if task is None:
             return self.unwatched(*args, **kwargs)
-        progress.check_cancelled()
+        progress.check_canceled()
         with ExitStack() as setup:
-            setup.enter_context(progress.preparing("initialise solver"))
+            setup.enter_context(progress.preparing("initialize solver"))
 
             def drive[S](
                 state: S,

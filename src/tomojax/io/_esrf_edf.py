@@ -119,7 +119,7 @@ def _acquisition(owner: Path, fields: dict[str, str]) -> RawAcquisition:
             f"{owner}: stored EDF images are {(rows, cols)}, but scan metadata records {recorded}; "
             "cropped or resized images need updated geometry metadata"
         )
-    # SPEC records effective pixels in micrometres, propagation distance in mm.
+    # SPEC records effective pixels in micrometers, propagation distance in mm.
     pixel = float(fields["pixelsize"]) * 1e-3 if "pixelsize" in fields else None
     flats, darks, positions = _calibrations(owner, fields)
     acquisition: dict[str, object] = {

@@ -32,7 +32,7 @@ def scale_grid(grid: Grid, factor: int) -> Grid:
 
     Ceil division retains at least one voxel per axis. The spacing scales by
     the actual count ratio, including odd dimensions. Since ``vol_origin`` is
-    a voxel centre, it must move by half the spacing change to retain the same
+    a voxel center, it must move by half the spacing change to retain the same
     lower face; keeping it unchanged would translate an explicitly placed grid.
     """
     f = validate_scale_factor(factor)
@@ -73,7 +73,7 @@ def scale_detector(det: Detector, factor: int) -> Detector:
     """Scale detector for a coarser multires level.
 
     Keep exactly the rays selected by ``bin_projections``. Spacing increases by
-    ``factor`` and the centre follows the selected first/last pixels. No edge
+    ``factor`` and the center follows the selected first/last pixels. No edge
     samples are duplicated or assigned fictitious uniformly spaced coordinates.
     """
     f = validate_scale_factor(factor)

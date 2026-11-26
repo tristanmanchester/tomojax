@@ -332,7 +332,7 @@
   ],
   "narrative": {
     "northStar": "Terrarium",
-    "overview": "Terrarium is a light desktop workspace for sustained scientific work. Warm surfaces and restrained greens give the project and controls a consistent identity. Scientific images occupy dark, neutral canvases with their own clear labels and interaction hints.\n\nThe image remains the visual centre of the application. The project navigator explains where it came from; the inspector exposes the next useful operation. Keep controls compact enough for an expert workflow and separate groups with space, alignment and quiet seams.",
+    "overview": "Terrarium is a light desktop workspace for sustained scientific work. Warm surfaces and restrained greens give the project and controls a consistent identity. Scientific images occupy dark, neutral canvases with their own clear labels and interaction hints.\n\nThe image remains the visual center of the application. The project navigator explains where it came from; the inspector exposes the next useful operation. Keep controls compact enough for an expert workflow and separate groups with space, alignment and quiet seams.",
     "keyCharacteristics": [
       "Warm white chrome with forest actions and sage selections.",
       "Large scientific canvases surrounded by stable project context.",

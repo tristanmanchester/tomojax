@@ -100,7 +100,7 @@ def test_region_from_independent_layers_retains_object_and_context(
 
 @pytest.mark.numerical
 def test_uninformative_region_is_broad_and_does_not_recalibrate() -> None:
-    """Uninformative data keeps roll, centre and poses while reporting uncertainty."""
+    """Uninformative data keeps roll, center and poses while reporting uncertainty."""
     scan, _ = _layer_scan((4.0,))
     poses = np.zeros((len(scan.angles), 6), np.float32)
     poses[:, 0] = 0.003 * np.sin(np.deg2rad(scan.angles))

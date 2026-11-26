@@ -68,7 +68,7 @@ impl Previews {
                 }
                 if current && terminal && !valid {
                     let slot = self.slots.get_mut(&kind).unwrap();
-                    slot.status.phase = PreviewPhase::Cancelled;
+                    slot.status.phase = PreviewPhase::Canceled;
                     slot.status.message = "Preview superseded before publication".into();
                 }
                 if valid && let Response::Progress { record, .. } = &response {
@@ -216,9 +216,9 @@ impl Previews {
                 let slot = self.slots.get_mut(&kind).unwrap();
                 slot.status.phase = if matches!(
                     error.kind,
-                    crate::protocol::ErrorKind::Cancelled | crate::protocol::ErrorKind::Superseded
+                    crate::protocol::ErrorKind::Canceled | crate::protocol::ErrorKind::Superseded
                 ) {
-                    PreviewPhase::Cancelled
+                    PreviewPhase::Canceled
                 } else {
                     PreviewPhase::Failed
                 };

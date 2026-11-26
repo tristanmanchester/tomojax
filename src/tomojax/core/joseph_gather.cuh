@@ -2,7 +2,7 @@
 __device__ __forceinline__ float joseph_pixel(const float* image,int nu,int u,int v) {
     return image[(long)v*nu+u];
 }
-// Adjacent gather threads follow z, hence neighbouring detector rows. Keep
+// Adjacent gather threads follow z, hence neighboring detector rows. Keep
 // v contiguous inside these kernels; public and region sinograms remain VU.
 struct DetectorColumns { const float* data; int nv; };
 __device__ __forceinline__ float joseph_pixel(DetectorColumns image,int,int u,int v) {

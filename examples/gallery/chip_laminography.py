@@ -2,12 +2,12 @@
 
 The chip package (``bench/phantoms/chip_package.py``: substrate, copper
 ground plane and vias, a silicon die, gold bond wires, solder balls with voids
-and a mould cap, as STL meshes) is rendered by gVXR as a DIAD-like scan at
+and a mold cap, as STL meshes) is rendered by gVXR as a DIAD-like scan at
 25 keV with a 30° tilt: materials from xraylib, propagation phase contrast, a
 detector blur, Poisson noise and flat fields. The detector is 3.2 pixels off
 the rotation axis and the sample wobbles and jitters by about two pixels and
 0.1° from view to view. ``tj.align`` with ``fit=("center", "translations", "rotations")`` finds the
-centre, then each view's pose with the volume.
+center, then each view's pose with the volume.
 
     uv run python bench/phantoms/chip_package.py build DATA
     uv run python examples/gallery/chip_laminography.py DATA images/gallery/chip-laminography.png
@@ -68,7 +68,7 @@ def main() -> None:
         ("die and traces", lambda v: v[50]),
     )
     columns = (
-        ("Phantom (voxelised meshes)", truth),
+        ("Phantom (voxelized meshes)", truth),
         ("Nominal geometry", nominal),
         (f"Aligned, {seconds:.0f} s", aligned),
     )
@@ -84,24 +84,24 @@ def main() -> None:
     motion = grid[2, :].subgridspec(1, 3, width_ratios=(1, 1, 2.3), wspace=0.4)
     limit = 1.5
     errors = {}
-    for k, (column, name, colour) in enumerate(((3, "dx", "tab:blue"), (4, "dz", "tab:orange"))):
+    for k, (column, name, color) in enumerate(((3, "dx", "tab:blue"), (4, "dz", "tab:orange"))):
         true = without_rigid_motion(true_params[:, column], angles) / pixel
         estimate = without_rigid_motion(poses[:, column], angles) / pixel
-        errors[name] = (estimate - true, colour)
+        errors[name] = (estimate - true, color)
         ax = fig.add_subplot(motion[0, k])
         ax.plot([-limit, limit], [-limit, limit], color="0.6", lw=0.6)
-        ax.plot(true, estimate, ".", ms=2, color=colour, alpha=0.6)
+        ax.plot(true, estimate, ".", ms=2, color=color, alpha=0.6)
         ax.set(xlim=(-limit, limit), ylim=(-limit, limit), aspect="equal")
         ax.set_xlabel(f"true {name} (px)")
         ax.set_ylabel("recovered (px)" if k == 0 else "")
         ax.set_title(f"{name}, {np.sqrt(np.mean((estimate - true) ** 2)):.2f} px RMS")
     ax = fig.add_subplot(motion[0, 2])
-    for name, (error, colour) in errors.items():
-        ax.plot(angles, error, ".", ms=1.5, color=colour, label=name)
+    for name, (error, color) in errors.items():
+        ax.plot(angles, error, ".", ms=1.5, color=color, label=name)
     ax.set(xlim=(0, 360), ylim=(-limit, limit), xticks=range(0, 361, 90))
     ax.set_xlabel("rotation angle (°)")
     ax.set_ylabel("recovered \N{MINUS SIGN} true (px)")
-    ax.set_title(f"Error per view; centre {found:.2f} px, true {cor_mm / pixel:.2f}")
+    ax.set_title(f"Error per view; center {found:.2f} px, true {cor_mm / pixel:.2f}")
     ax.legend(frameon=False, fontsize=7, markerscale=4, loc="upper right", ncols=2)
     for ax in fig.axes[-3:]:
         ax.spines[["top", "right"]].set_visible(False)

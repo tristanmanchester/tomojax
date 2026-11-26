@@ -39,7 +39,7 @@ PYTHONPATH=src OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 timeout 300s \
 ```
 
 `--case setup` fits translations, tilt and roll together. `--case center --geometry cone`
-checks both cone detector-centre coordinates. `--fit translations` on a roll or tilt case gives a
+checks both cone detector-center coordinates. `--fit translations` on a roll or tilt case gives a
 comparison with a model that cannot represent the injected angle. `--case clean` checks false
 motion. `--size 64 --views 90 --grid-size 32` is a somewhat finer small check; the working grid
 can be set independently of detector sampling. `--output bench/results/NAME.json` retains the
@@ -47,7 +47,7 @@ record and refuses an existing path.
 
 The record reports the cold public-call time, detector-space RMS and worst-view landmark error
 after one common rigid gauge, fitted calibration, and image relative error against the analytic
-phantom. The detector-space score includes centre offsets and roll; subtracting pose tables alone
+phantom. The detector-space score includes center offsets and roll; subtracting pose tables alone
 would miss them. Image comparison evaluates the continuous density in the fitted rigid gauge,
 without rescaling its amplitude. The analytic object is smooth, so this is a focused model check,
 not qualification on sharp objects, Poisson data, periodic structure or truncated real scans.
@@ -62,7 +62,7 @@ or from forward/transpose component timing.
 and from the true geometry, which must be a fixed point. Rows are the seven analytic cases in
 parallel, laminography and cone beam at two sizes (60 views of 48² on 24³, 180 views of 96² on
 48³), the two run-17 watch laminography cases (scored in native pixels), and the gVXR spark plug
-with roll, tilt and a 2-pixel centre offset. Each record holds the nominal error, the fitted error,
+with roll, tilt and a 2-pixel center offset. Each record holds the nominal error, the fitted error,
 the pose error after every outer step (local-only fits outside cone beam), cold seconds, peak GPU
 memory, level statuses, the largest CG relative residual per level, the first proposed pose step
 and the fitted calibration. Truth only renders and scores: the true
@@ -162,9 +162,9 @@ alignment or iterative reconstruction.
 
 ASTRA uses `parallel3d_vec`: ray, detector origin, and detector basis vectors are
 transformed from each TomoJAX pose. Volume bounds describe the same physical voxel
-centres. Its native array orders are handled explicitly. TIGRE uses parallel
+centers. Its native array orders are handled explicitly. TIGRE uses parallel
 geometry, interpolated integration with `accuracy=1`, and Siddon integration.
-The TIGRE adapter currently validates only centred isotropic parallel scans;
+The TIGRE adapter currently validates only centered isotropic parallel scans;
 other cases are recorded as `unsupported_comparison`. This is an adapter limit,
 not a statement about TIGRE's capabilities. The projectors use different
 discretizations, so agreement with the analytic reference matters more than
@@ -305,7 +305,7 @@ uv run --no-sync python bench/compare_reconstructions.py \
 
 These suites use analytic chord lengths through five fixed ellipsoids. The noisy
 version adds reproducible 1%-RMS Gaussian measurement noise. Quality is measured
-against voxel-centre density, with thresholds frozen in the goal document.
+against voxel-center density, with thresholds frozen in the goal document.
 Budget selection still consults the truth: it is an offline time-to-quality
 experiment, not a deployable stopping rule. The doubling grid also quantizes the
 crossing iteration; results cannot establish an exact first-crossing speedup.
@@ -324,7 +324,7 @@ baselines and interleaved comparisons remain required for broad claims.
 
 ## Plane-sampled CGLS model
 
-CGLS samples voxel-centre planes with bilinear interpolation and a matched
+CGLS samples voxel-center planes with bilinear interpolation and a matched
 transpose. The CUDA transpose gathers contributions into each voxel without
 atomic writes. Compare analytic accuracy and complete reconstruction quality,
 not just kernel throughput:
@@ -359,7 +359,7 @@ Headless EGL rendering was verified on the NVIDIA test machine. gVXR is used
 only by the generator. Its [official tutorials](https://github.com/TomographicImaging/gVXR-Tutorials)
 cover the simulator API and additional mesh/material options.
 
-`gvxr-materials-v1` contains three disjoint water, aluminium and PMMA cuboids,
+`gvxr-materials-v1` contains three disjoint water, aluminum and PMMA cuboids,
 physical detector offsets, translated rigid poses and optional 30-degree tilt.
 The NPZ stores poses, material attenuation truth at 80 keV, raw expected photon
 counts, normalized mono/poly projections, and a reproducible noisy poly channel.
@@ -381,9 +381,9 @@ lengths and the supplied material coefficients within `1e-4` relative L2.
 This verifies units, ray geometry, orientation and spectral summation; it does
 not independently verify the attenuation database. Native-resolution raster
 interpolation failed this check at small tilted sizes. Rendering at five times
-the detector resolution and selecting the original pixel centres reduced that
+the detector resolution and selecting the original pixel centers reduced that
 error without changing the measurement model or loosening the check. This is
-centre selection, not detector-area averaging.
+center selection, not detector-area averaging.
 
 The reconstruction script uses the exact saved poses and runs both TomoJAX
 models and ASTRA CGLS for a fixed budget. It reports physical-scale volume error
@@ -412,7 +412,7 @@ uv run --no-sync python bench/beam_hardening/run.py simulation --split dev --met
 [`compare_cone.py`](compare_cone.py) times TomoJAX's cone-beam projector, its
 exact transpose and FDK against ASTRA (`cone_vec`, `FDK_CUDA`) and TIGRE (`Ax`,
 `Atb`, `fdk`) on one circular scan of five ellipsoids, with errors against
-exact analytic line integrals and the voxelised phantom, and times both
+exact analytic line integrals and the voxelized phantom, and times both
 projectors again with the rotation axis tilted by `--tilt` (default 0.5°),
 which TomoJAX handles with its general-geometry kernels. TIGRE runs in a child
 process, since it refuses a GPU on which JAX holds memory.
@@ -577,10 +577,10 @@ these into 25 keV measurements with xraylib attenuation and refraction
 coefficients, Fresnel propagation over 50 mm, a 0.7 px Gaussian detector blur,
 3× supersampled pixel integration, Poisson noise at 20,000 flat-field counts,
 a 1% fixed-pattern gain and 20 noisy flats. It writes static and moving scans
-(720 views at 30° tilt, 344×264 px at 8 µm, a 3.2 px centre-of-rotation offset,
+(720 views at 30° tilt, 344×264 px at 8 µm, a 3.2 px center-of-rotation offset,
 about 2 px of per-view shift and 0.1° of tilt), each as exact line integrals
 (`-ideal`) and as measured data (`-realistic`). The truth volume, 240×240×88 at
-8 µm, comes from an exact voxeliser that integrates each voxel's z overlap
+8 µm, comes from an exact voxelizer that integrates each voxel's z overlap
 along vertical rays; its material masses match the meshes within 0.03–0.9%.
 
 ```bash
@@ -600,11 +600,11 @@ error of 20–25 µm copper and gold features on 8 µm voxels.
 At these settings the phase-contrast fringe width, √(λz) ≈ 1.6 µm, is a fifth
 of a pixel, so pixel integration and blur average the fringes away; smaller
 pixels or longer distances make them visible. Scattering, harmonics, beam
-drift and partial coherence are not modelled. The laminography missing cone
+drift and partial coherence are not modeled. The laminography missing cone
 removes structure such as the thin ground plane parallel to the plate, so even
 an inverse-crime reconstruction stays about 0.5 relative L2 from the truth;
 score alignment against a reconstruction of the same data with the true
-geometry instead. On the moving realistic scan, the earlier centre-then-pose route
+geometry instead. On the moving realistic scan, the earlier center-then-pose route
 recovered the offset to 3.18 px (3.178 px is identifiable from
 the motion), rotations to 0.073° and shifts to 0.087 px RMS in 127 s; its
 volume differs from the true-geometry reconstruction by 0.048 relative L2,
@@ -623,7 +623,7 @@ phase and blur that the projector does not model, not photon noise.
 object in Blender: a 29 mm hand-wound Swiss-lever movement at 18,000
 vibrations an hour. A titanium skeleton main plate, carried up into a casing
 ring, and four titanium bridges carry a brass barrel with an 84-tooth drum and
-a 16-coil Nivaflex mainspring; brass centre, third and fourth wheels with
+a 16-coil Nivaflex mainspring; brass center, third and fourth wheels with
 filleted crossings and watch tooth forms on steel pinions; a silicon club-tooth
 escape wheel and pallet lever with ruby stones; and a Glucydur balance with
 twelve gold timing screws, a 12.5-turn Nivarox hairspring, its collet, stud and
@@ -631,7 +631,7 @@ regulator. Every pivot runs in a ruby jewel with an oil sink, and slotted steel
 screws hold the bridges to titanium posts. The plate and bridges are outlined by
 smooth unions of two-dimensional distance fields. Parts are closed meshes,
 fused per material with Blender's Manifold booleans, and every hole shares the
-vertices of the part that fills it, so materials never overlap: voxelised with
+vertices of the part that fills it, so materials never overlap: voxelized with
 every attenuation set to one, the movement reaches at most 1.00005 on a
 768 × 768 × 161 grid. The build takes about 40 s.
 
@@ -649,9 +649,9 @@ gVXR environment and returns the meshes' pixel-averaged transmission for any
 TomoJAX poses and detector: gVXR traces each mesh's path length on a detector
 supersampled 2 × 2, and the attenuations are applied before the sub-pixels are
 averaged. The [README figures](../examples/README.md#reproduce-the-readme-figures)
-drive both scripts and voxelise their truth with
+drive both scripts and voxelize their truth with
 [`phantoms/mesh_voxels.py`](phantoms/mesh_voxels.py), which adds each surface
-crossing's share of every voxel in vectorised form: the whole movement takes
+crossing's share of every voxel in vectorized form: the whole movement takes
 about 4 s on a 512 × 512 × 107 grid. On 48 nominal views, TomoJAX's Joseph
 projection of a 77 µm voxel truth differs from gVXR's line integrals by 0.099
 relative L2, least at zero detector offset, from the partial volume of thin
@@ -659,7 +659,7 @@ steel and gold parts and from averaging transmission over each pixel.
 
 ## Procedural documentation phantoms
 
-Three NumPy/SciPy phantoms in [`phantoms/`](phantoms) are recognisable
+Three NumPy/SciPy phantoms in [`phantoms/`](phantoms) are recognizable
 samples with sharp edges, fine features and several materials. Each function
 returns an `(n, n, n)` volume of attenuation in mm^-1 in `(z, y, x)` order and
 a metadata dict with the voxel size, field of view, energy, materials and
@@ -678,7 +678,7 @@ are integrated analytically. Attenuation coefficients come from xraylib 4.3
 - `battery.battery`: a scaled 18650 cell, 8.5 mm across, at 80 keV, 35 µm
   voxels (lab cone-beam or high-energy synchrotron). A nine-turn Archimedean
   jelly roll of graphite on copper, separators and particulate NMC811 on
-  aluminium, with aluminium and nickel tabs, a split centre pin, a beaded can
+  aluminum, with aluminum and nickel tabs, a split center pin, a beaded can
   and a crimped header; a stainless-steel particle across a separator and a
   delaminated cathode coating near z = 0.
 - `lattice_part.lattice_part`: a 10 mm Ti-6Al-4V powder-bed part at 100 keV,
@@ -727,8 +727,8 @@ the memory sampler includes their process allocations.
 
 `astra_fbp2d` runs native `FBP_CUDA` on individual axial slices. `tigre_fbp`
 calls CERN TIGRE's public `fbp` with its default Ram-Lak filter. These two
-adapters currently support centred isotropic parallel fixtures only. Their
-orientation and physical scaling are checked using an off-centre Gaussian on
+adapters currently support centered isotropic parallel fixtures only. Their
+orientation and physical scaling are checked using an off-center Gaussian on
 non-square axial slices. The TomoJAX CUDA FBP API also handles the shifted,
 anisotropic parallel fixture, but does not expose a tilted voxel-driven FBP.
 The filtered ASTRA BP can run tilted scans, where it is an approximate
@@ -891,7 +891,7 @@ generation remains outside the timed reconstruction/recovery interval.
 ### Independent mesh corpus
 
 `phantoms/corpus.py` separates CPU preparation/packaging from gVXR rendering.
-`prepare CONFIG.json CASE_DIR` voxelises closed material meshes on the stated
+`prepare CONFIG.json CASE_DIR` voxelizes closed material meshes on the stated
 physical grid and writes six renderer plans: contained, contained motion, exterior, known motion,
 and the exterior alone at nominal and moving poses. `pack CASE_DIR` applies
 Poisson counts at four incident photon levels and writes self-contained NPZs
@@ -909,7 +909,7 @@ Optional `save_energy_transmission` retains per-energy pixel transmissions for
 CPU spectral recombination without repeating GPU path-length rendering.
 Geometry dictionaries follow `Grid.to_dict()` and `Detector.to_dict()`.
 Lengths are mm, volumes ZYX, projections view-v-u. The renderer supports square
-pixels and a centred, untilted cone camera; sample laminography tilt is allowed.
+pixels and a centered, untilted cone camera; sample laminography tilt is allowed.
 Run preparation with `JAX_PLATFORMS=cpu`; run the separate renderer in the gVXR
 installation, then package on CPU. The module docstring lists the commands.
 
@@ -942,7 +942,7 @@ uv pip install --python .artifacts/rock-env/bin/python numpy scipy trimesh
 Every cube uses the same six-tetrahedron partition for all materials. Its
 linearly interpolated one-hot fields are contoured just above half occupancy,
 so material interiors cannot overlap. Unlike the procedural voxel phantom,
-this mesh object is discretised at the chosen build resolution and omits the
+this mesh object is discretized at the chosen build resolution and omits the
 separately applied subvoxel cracks. Keep the meshes fixed across reconstruction
 resolutions; obtain truth from `mesh_voxels.occupancy`, not by sampling the
 original procedural object again. The meshes can be rendered with

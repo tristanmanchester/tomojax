@@ -212,8 +212,8 @@ def load_detector_metadata(
             path=path,
             context="detector metadata",
         )
-    # A default numerical zero is not evidence of a recorded/calibrated centre.
-    # Keep saved provenance, including an earlier inferred or still absent centre.
+    # A default numerical zero is not evidence of a recorded/calibrated center.
+    # Keep saved provenance, including an earlier inferred or still absent center.
     geometry_meta = dict(cast("JsonObject", out.get("geometry_meta") or {}))
     geometry_meta.setdefault(
         "detector_center_status",
@@ -224,7 +224,7 @@ def load_detector_metadata(
     out["geometry_meta"] = geometry_meta
     if detector_dict is None or not {"du", "dv", "det_center"} <= detector_dict.keys():
         # A partial calibration cannot construct a Detector. Retain recorded
-        # pixel pitches for inspection, without fabricating the absent centre.
+        # pixel pitches for inspection, without fabricating the absent center.
         sizes = [_pixel_size(det_grp, name) for name in ("x_pixel_size", "y_pixel_size")]
         geometry_meta["detector_pixel_size"] = list(sizes)
         detector_dict = None
@@ -266,7 +266,7 @@ _PROCESSING_JSON_SECTIONS = (
     ("align", "gauge_fix_json", "align_gauge", "alignment gauge fix"),
     ("align", "misalign_spec_json", "misalign_spec", "misalignment spec"),
     ("calibration", "geometry_calibration_json", "geometry_calibration", "geometry calibration"),
-    ("simulation", "artefacts_json", "simulation_artefacts", "simulation artefacts"),
+    ("simulation", "artifacts_json", "simulation_artifacts", "simulation artifacts"),
 )
 
 

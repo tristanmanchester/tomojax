@@ -51,7 +51,7 @@ def test_a_projection_alternating_pixel_to_pixel_costs_nothing_and_a_smooth_one_
 
 
 def test_filtered_data_are_unknown_wherever_a_tap_was_not_measured():
-    # A filtered sample mixes its 3 x 3 neighbourhood, so one unmeasured pixel removes
+    # A filtered sample mixes its 3 x 3 neighborhood, so one unmeasured pixel removes
     # the nine samples around it; partial precision elsewhere is kept as it was.
     precision = np.full((2, 6, 7), 0.75, np.float32)
     precision[0, 2, 3] = 0.0

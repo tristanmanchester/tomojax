@@ -11,7 +11,7 @@ from tomojax.io import ProjectionDataset, save_dataset
 
 
 def _pitchless_data_exchange(path: Path) -> np.ndarray:
-    """A Data Exchange scan of an off-centre Gaussian with flats and darks and no pixel size."""
+    """A Data Exchange scan of an off-center Gaussian with flats and darks and no pixel size."""
     n, views = 16, 64
     angles = np.linspace(0, 180, views, endpoint=False)
     geometry = tj.ParallelGeometry(tj.Grid(n, n, 4, 1, 1, 1), tj.Detector(n, 4, 1, 1), angles)

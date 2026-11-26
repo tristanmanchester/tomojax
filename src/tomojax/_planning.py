@@ -116,7 +116,7 @@ def resolve_reconstruction(
             "center_status": center_status,
             "geometry": "preserved",
             "warning": (
-                "Method selection does not validate geometry, support or detector artefacts."
+                "Method selection does not validate geometry, support or detector artifacts."
             ),
         }
         reasons.insert(0, reason)
@@ -233,7 +233,7 @@ def _coverage_advice(scan: Scan) -> str | None:
 
 
 def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) -> str | None:
-    """The centre the scan's file recorded, and unresolved raw-workflow limitations."""
+    """The center the scan's file recorded, and unresolved raw-workflow limitations."""
     status = (
         None if scan.source is None else scan.source.geometry_metadata.get("detector_center_status")
     )

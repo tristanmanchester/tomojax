@@ -94,8 +94,8 @@ def test_fista_contrast_matches_profiled_gradient_and_offset_invariance(batch):
     # From zero, one step of 1/L moves along A^T of the data less each view's mean.
     poses = jnp.asarray([geometry.pose_matrix(i) for i in range(7)])
     _, transpose = jax.vjp(lambda v: project_joseph(v, poses, grid, detector), jnp.zeros_like(x))
-    centred = y - y.mean(axis=(1, 2), keepdims=True)
-    np.testing.assert_allclose(x, transpose(jnp.asarray(centred))[0] / 100, rtol=1e-5, atol=2e-8)
+    centered = y - y.mean(axis=(1, 2), keepdims=True)
+    np.testing.assert_allclose(x, transpose(jnp.asarray(centered))[0] / 100, rtol=1e-5, atol=2e-8)
     streamed, _ = fista(geometry, grid, detector, y, config=replace(cfg, stream=True))
     np.testing.assert_allclose(x, streamed, rtol=1e-6, atol=2e-8)
 

@@ -98,7 +98,7 @@ def validate_regularizer(
     *,
     context: str,
 ) -> Regularizer:
-    """Validate a regulariser config and return its normalized name."""
+    """Validate a regularizer config and return its normalized name."""
     reg = str(regularizer).lower()
     if reg not in ("tv", "huber_tv"):
         raise InvalidParameter(

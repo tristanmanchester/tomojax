@@ -7,7 +7,7 @@ smooth photometric changes, which do not. Only the part of the correction
 orthogonal to the prior's spline space and the common gauge may change, so the
 broad trajectory of the joint fit is kept and every view's residual motion,
 steps included, stays free. A continuous per-view anchor trusts the joint fit
-where a view's non-geometric residual energy is ordinary for its neighbours,
+where a view's non-geometric residual energy is ordinary for its neighbors,
 and lets an inconsistent view move.
 """
 
@@ -132,18 +132,18 @@ class EdgeFilter:
 def relative_precision(
     energy: jax.Array, sigma: float | jax.Array, neighbors: int = 5
 ) -> jax.Array:
-    """2 (B + s^2) / (B + E + 2 s^2), B the median energy of the neighbouring views.
+    """2 (B + s^2) / (B + E + 2 s^2), B the median energy of the neighboring views.
 
     ``neighbors`` views on each side make B.
     """
     n = len(energy)
-    neighbours = []
+    shifted = []
     for offset in range(-neighbors, neighbors + 1):
         if offset:
             index = jnp.arange(n) + offset
             inside = (index >= 0) & (index < n)
-            neighbours.append(jnp.where(inside, energy[jnp.clip(index, 0, n - 1)], jnp.nan))
-    reference = jnp.maximum(jnp.nanmedian(jnp.stack(neighbours), axis=0), 0)
+            shifted.append(jnp.where(inside, energy[jnp.clip(index, 0, n - 1)], jnp.nan))
+    reference = jnp.maximum(jnp.nanmedian(jnp.stack(shifted), axis=0), 0)
     variance = jnp.maximum(jnp.asarray(sigma) ** 2, 1e-20)
     return 2 * (reference + variance) / (reference + jnp.maximum(energy, 0) + 2 * variance)
 
@@ -469,7 +469,7 @@ def _refine(
         [],
     )
     for it in range(iterations):
-        progress.check_cancelled()
+        progress.check_canceled()
         if it:
             stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
         result = problem.step(c, stats, f, lm)

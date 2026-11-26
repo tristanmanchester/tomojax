@@ -8,7 +8,7 @@ import pytest
 import tomojax as tj
 from tomojax.corrections import BeamHardening, RadialDistortion, RejectViews, Stripes, Zingers
 from tomojax.geometry import ConeBeam, ConeGeometry
-from tomojax.interactive import centre_sweep, correction_preview, reconstruct_slice
+from tomojax.interactive import center_sweep, correction_preview, reconstruct_slice
 from tomojax.recon import CGLSConfig, FBPConfig
 
 
@@ -73,7 +73,7 @@ def test_sweep_fixes_input_region_for_every_signed_offset_and_duplicate():
         if c:
             assert tj.reconstruct(shifted, "fbp", region="bbox").grid.shape == (5, 22, 21)
         expected.append(tj.reconstruct(shifted, "fbp", grid=fixed).volume[2])
-    result = centre_sweep(scan, "z", 2, [0, 3, 0], method="fbp", region="bbox")
+    result = center_sweep(scan, "z", 2, [0, 3, 0], method="fbp", region="bbox")
     assert result.shape == (3, 25, 25) and not np.array_equal(expected[0], expected[1])
     np.testing.assert_array_equal(result, np.stack(expected))
 
@@ -134,7 +134,7 @@ def test_fdk_preview_inherits_full_filtered_batch_peak():
     )
 
 
-def test_region_overlay_registers_estimated_voxel_centres_and_edges():
+def test_region_overlay_registers_estimated_voxel_centers_and_edges():
     from tomojax.interactive import region_preview
 
     grid = tj.Grid(11, 9, 5, 1, 1, 1)
@@ -173,9 +173,9 @@ def test_sweep_preserves_calibration_and_view_poses():
     poses = np.zeros((12, 6))
     poses[:, 4] = np.linspace(-0.7, 0.8, 12)
     scan = tj.Scan(rows, geom).with_poses(poses)
-    centres = [-2.5, 1.5]
-    actual = centre_sweep(scan, "x", 2, centres, method="fbp")
-    for i, c in enumerate(centres):
+    centers = [-2.5, 1.5]
+    actual = center_sweep(scan, "x", 2, centers, method="fbp")
+    for i, c in enumerate(centers):
         shifted = replace(geom, detector=replace(det, center=(c * det.du, 0.8)))
         ref = tj.reconstruct(tj.Scan(rows, shifted).with_poses(poses), "fbp", grid=grid)
         np.testing.assert_array_equal(actual[i], ref.volume[:, :, 2])
@@ -244,7 +244,7 @@ def test_sweep_keeps_input_cylinder_support():
     cyl = tj.reconstruct(scan, "fbp", region="cyl")
     support = np.asarray(cyl.volume)[1] != 0
     assert support.any() and not support.all()
-    result = centre_sweep(scan, "z", 1, [0, 3], method="fbp", region="cyl")
+    result = center_sweep(scan, "z", 1, [0, 3], method="fbp", region="cyl")
     shifted = replace(scan, geometry=replace(geom, detector=replace(det, center=(3, 0))))
     full = tj.reconstruct(shifted, "fbp", grid=cyl.grid)
     # One plane and the whole volume are compiled apart, and round apart on some CPUs.
@@ -311,7 +311,7 @@ def test_axial_host_plane_checks_only_its_selected_slab(monkeypatch, sweep):
 
     def plane(index):
         return (
-            centre_sweep(source, "z", index, [0], method="fbp")[0]
+            center_sweep(source, "z", index, [0], method="fbp")[0]
             if sweep
             else reconstruct_slice(source, "z", index, method="fbp")
         )

@@ -151,7 +151,7 @@ def _rotation_series(data: Any, n: int) -> np.ndarray | None:
         return None
     unit = _text(data.attrs.get("unit", data.attrs.get("units", ""))).lower()
     if unit in ("", "channel"):
-        # Encoder channels and unlabelled motors have no established degree
+        # Encoder channels and unlabeled motors have no established degree
         # scale; leave angles incomplete for a caller override.
         return None
     if unit in ("rad", "radian", "radians"):

@@ -222,7 +222,7 @@ def validate_reconstruction(
     config : MethodConfig
         Settings for the resolved method; its class names the method.
     warm_start : bool, optional
-        Initialise an iterative solve with filtered backprojection.
+        Initialize an iterative solve with filtered backprojection.
     axial_index : int or None, optional
         Requested axial plane when validating a slice or sweep.
     projections : array-like or None, optional
@@ -469,7 +469,7 @@ def _coupled_detector_volume[T](
     *,
     warm_start: bool,
 ) -> Generator[ReconstructionSlab[T], None, None]:
-    """An oblique ramp uses the 2D spectrum; Joseph updates couple neighbouring voxel planes."""
+    """An oblique ramp uses the 2D spectrum; Joseph updates couple neighboring voxel planes."""
     import numpy as np
 
     from .types import ReconstructionSlab
@@ -740,7 +740,7 @@ def axial_fbp_plane(
             )
         return volume[index - first].copy()
     # Compilers can fuse the z multiply-add and replace division by a reciprocal.
-    # Prove each operation exact in FP32 before removing interpolation neighbours.
+    # Prove each operation exact in FP32 before removing interpolation neighbors.
     pitch = float(np.float32(detector.dv))
     z = index * pitch + float(np.float32(grid_volume_origin(grid)[2]))
     centered = z - float(np.float32(detector.center[1]))

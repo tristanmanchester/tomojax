@@ -7,7 +7,7 @@ of 640 columns) is shown three times, with the observations each
 ``tomojax.evaluation.Split`` holds out: every sixth view
 (``Split.interleaved``), a 30° block of angles with 5° guards
 (``Split.angular``), and 32-column blocks with 8-column guards in every view
-(``Split.detector``). Held-out observations are orange, guards grey, and
+(``Split.detector``). Held-out observations are orange, guards gray, and
 the training observations keep their values.
 """
 
@@ -48,13 +48,13 @@ def main() -> None:
         ),
     }
     low, high = np.percentile(sinogram, (1, 99))
-    grey = np.clip((sinogram - low) / (high - low), 0, 1)
+    gray = np.clip((sinogram - low) / (high - low), 0, 1)
     style()
     fig, axes = plt.subplots(1, 3, figsize=(10, 5.6), sharey=True)
     for ax, (title, split) in zip(axes, splits.items(), strict=True):
         train = np.broadcast_to(split.train, shape)[:, 0]
         test = np.broadcast_to(split.test, shape)[:, 0]
-        rgb = np.repeat(grey[..., None], 3, axis=-1)
+        rgb = np.repeat(gray[..., None], 3, axis=-1)
         rgb[test] = 0.55 * rgb[test] + 0.45 * np.array((1.0, 0.5, 0.05))
         rgb[~train & ~test] = 0.6
         ax.imshow(rgb, aspect="auto", interpolation="nearest",

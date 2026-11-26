@@ -2,7 +2,7 @@
 
 A plane whose two axes are spatial and share a unit is resampled to square
 physical pixels; any other image (a sinogram's view axis, say) keeps its samples.
-Sizes are capped before anything is allocated. Grey levels come from explicit
+Sizes are capped before anything is allocated. Gray levels come from explicit
 limits, which several panels can share. Files are written to a fixed temporary
 name beside the target and moved onto it once whole.
 """
@@ -43,7 +43,7 @@ def _font(size: int = 14) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 
 def limits(*images: np.ndarray, lower: float = 0.5, upper: float = 99.5) -> Limits:
-    """Grey-level limits shared by ``images``: percentiles of their finite values."""
+    """Gray-level limits shared by ``images``: percentiles of their finite values."""
     values = [np.asarray(image, np.float32) for image in images]
     finite = np.concatenate([v[np.isfinite(v)] for v in values]) if values else np.empty(0)
     if finite.size == 0:
@@ -117,8 +117,8 @@ def sample_image(sample: Sample, *, side: int = PLANE_SIDE) -> np.ndarray:
     return resample(data, display_shape(shape, sample.axes, side))
 
 
-def labelled(image: np.ndarray, label: str) -> Image.Image:
-    """A greyscale ``image`` (uint8) under a strip of white ``label`` text."""
+def labeled(image: np.ndarray, label: str) -> Image.Image:
+    """A grayscale ``image`` (uint8) under a strip of white ``label`` text."""
     picture = Image.fromarray(np.asarray(image, np.uint8))
     width = max(picture.width, math.ceil(_font().getlength(label)) + 8)
     canvas = Image.new("L", (width, picture.height + _STRIP), 0)
@@ -194,12 +194,12 @@ def save_png(image: Image.Image, path: Path) -> Path:
 
 
 def save_volume_plane(path: Path, volume: ArrayLike, grid: Grid, axis: str, label: str) -> Path:
-    """Write the central ``axis`` plane of a reconstructed volume, labelled."""
+    """Write the central ``axis`` plane of a reconstructed volume, labeled."""
     from tomojax.core.registration import planes
 
     sample = planes(np.asarray(volume), grid)[axis]
     image = sample_image(sample)
-    return save_png(labelled(to_uint8(image, limits(image)), label), path)
+    return save_png(labeled(to_uint8(image, limits(image)), label), path)
 
 
 __all__ = [
@@ -207,7 +207,7 @@ __all__ = [
     "SHEET_SIDE",
     "Limits",
     "display_shape",
-    "labelled",
+    "labeled",
     "limits",
     "outlined",
     "pose_plot",

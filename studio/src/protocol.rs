@@ -469,7 +469,7 @@ pub enum ErrorKind {
     Input,
     InvalidParameter,
     OutOfMemory,
-    Cancelled,
+    Canceled,
     Superseded,
     Internal,
 }

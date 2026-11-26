@@ -24,7 +24,7 @@ class ParallelGeometry:
     grid : Grid
         Reconstruction voxel grid.
     detector : Detector
-        Detector dimensions, pitches and physical centre.
+        Detector dimensions, pitches and physical center.
     angles : sequence of float
         View rotation angles in degrees, in acquisition order.
     detector_roll : float, optional

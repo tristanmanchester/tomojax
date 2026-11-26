@@ -15,7 +15,7 @@ The same position names the same voxel in every plane, ROI, stride and zoom, so 
 
 ## Marks on `view`
 
-Pass `marks` to `view` in the `planes`, `projection`, `sinogram` or `difference` modes. Each mark has a `type`, an optional short `label` and an optional `colour` (`yellow`, the default, `cyan`, `magenta`, `orange`, `green`, `red`).
+Pass `marks` to `view` in the `planes`, `projection`, `sinogram` or `difference` modes. Each mark has a `type`, an optional short `label` and an optional `color` (`yellow`, the default, `cyan`, `magenta`, `orange`, `green`, `red`).
 
 | `type` | Fields | Shown on a plane when |
 | --- | --- | --- |
@@ -29,7 +29,7 @@ Pass `marks` to `view` in the `planes`, `projection`, `sinogram` or `difference`
 ```json
 {"source": "@recon-1a2b3c4d", "axis": "z", "index": 120,
  "marks": [{"type": "point", "at": [120, 210.5, 388], "label": "shell?"},
-           {"type": "circle", "at": [120, 260, 300], "radius": 15, "colour": "cyan"}]}
+           {"type": "circle", "at": [120, 260, 300], "radius": 15, "color": "cyan"}]}
 ```
 
 The structured result has a `marks` list in the same order. Each entry gives the mark's `positions` in array indices and lists every rendered plane (`panel`, the index into `panels`) with `drawn`, the mark's `pixel` `[x, y]` in the returned image `image`, and the `value` under a point-like mark or the `mean` inside a box, circle or polygon, from the displayed samples. `percentile` is the share of the plane's samples below that value and `display` its place between the display limits (0 the lower, 1 the upper). A mark not drawn has `reason`: `off_plane` (with its `distance`) or `outside_roi`. Check this before showing the user: a value at a low percentile, or near 0 on the display scale, under a mark meant for a bright structure means you missed.
@@ -40,7 +40,7 @@ Ticks are on by default when marks or features are given; pass `ticks=false` to 
 
 ## Ask, then make a feature
 
-Show the marked image and ask a direct question: "Is the shell you mean the ring under the yellow point?" When you are unsure, mark two candidates in different colours and ask which one. After the user confirms, make a feature with the `feature` tool:
+Show the marked image and ask a direct question: "Is the shell you mean the ring under the yellow point?" When you are unsure, mark two candidates in different colors and ask which one. After the user confirms, make a feature with the `feature` tool:
 
 | `recipe.type` | Fields | Makes |
 | --- | --- | --- |
@@ -53,7 +53,7 @@ Show the marked image and ask a direct question: "Is the shell you mean the ring
 
 A confirmed mark converts directly: a box mark's corners make a `box`, a circle mark's `at` and `radius` a `sphere`, a polygon mark's points a `prism`, and a point mark's `at` the seed of a `seeded` region.
 
-- **Seeded.** The level is the median around each seed. `tolerance` (default 3) is in units of the noise measured near the seeds, or of the volume's values with `tolerance_unit="value"`; the result's `recipe` reports the `level`, `noise` and `band` it used. Place seeds well inside the feature. If the region leaks into a neighbour, lower `tolerance` or set `max_radius`; if it is patchy, raise `tolerance` or add `smoothing` (a Gaussian sigma in voxels, which pulls edges in). A structure one or two voxels thick is better made as a `band` inside a larger grown region.
+- **Seeded.** The level is the median around each seed. `tolerance` (default 3) is in units of the noise measured near the seeds, or of the volume's values with `tolerance_unit="value"`; the result's `recipe` reports the `level`, `noise` and `band` it used. Place seeds well inside the feature. If the region leaks into a neighbor, lower `tolerance` or set `max_radius`; if it is patchy, raise `tolerance` or add `smoothing` (a Gaussian sigma in voxels, which pulls edges in). A structure one or two voxels thick is better made as a `band` inside a larger grown region.
 - **Band.** The feature's own boundary voxels are at distance 0 and distances fall inward: `inner=0, outer=3` is a three-voxel shell outside it and `inner=-3, outer=0` the three-voxel rim inside it. `inner=1, outer=4` leaves one voxel between a feature and its surroundings, which keeps partial-volume edge voxels out of both when you compare them.
 
 Name features after what they are (`name="shell"`). The result gives the voxel count, `bounds` (half-open per axis) and the mean and standard deviation of the source inside the mask.
@@ -64,4 +64,4 @@ Name features after what they are (`name="shell"`). The result gives the voxel c
 - In `python`, `handles["@feature-…"].mask` is the whole boolean mask. A feature stores only its bounding box: `.box` (a slice per axis) and `.inside` (the mask over that box). On a large volume use those, for example `volume[f.box][f.inside]`, instead of building `.mask`, which takes one byte per voxel of the grid. `register_feature(mask, like="@recon-…", name="…")` registers a mask you computed yourself on that object's grid; `like` also takes a member such as `"@recon-….volume"`.
 - `save` writes a feature to an HDF5 file (`.h5`, `.hdf5` or `.nxs`) with its grid, name and recipe; `open` with `kind="feature"` reloads it, and `export` writes the mask as 0/1 TIFF slices or a raw file for other software.
 - Features work at any volume size: each recipe works on the feature's own box plus its band or growth margin and reads the source in windows.
-- Show the user what you will optimise for before you optimise it: one `view` with the feature outlined.
+- Show the user what you will optimize for before you optimize it: one `view` with the feature outlined.

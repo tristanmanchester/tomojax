@@ -44,7 +44,7 @@ pub enum TaskState {
     Paused,
     Done,
     Failed,
-    Cancelled,
+    Canceled,
 }
 impl TaskState {
     pub fn active(self) -> bool {
@@ -230,7 +230,7 @@ impl JobProgress {
                     task.eta = None;
                     task.state = match status.as_str() {
                         "done" => TaskState::Done,
-                        "cancelled" => TaskState::Cancelled,
+                        "canceled" => TaskState::Canceled,
                         _ => TaskState::Failed,
                     };
                 }

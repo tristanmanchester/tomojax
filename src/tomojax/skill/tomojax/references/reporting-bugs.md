@@ -1,6 +1,6 @@
 # Report a TomoJAX bug
 
-Report an internal error (`kind` `internal` in a tool error), a result that is clearly wrong, or documentation that disagrees with what TomoJAX does. A bad reconstruction of bad data is not a bug: check the centre, the corrections and the geometry first.
+Report an internal error (`kind` `internal` in a tool error), a result that is clearly wrong, or documentation that disagrees with what TomoJAX does. A bad reconstruction of bad data is not a bug: check the center, the corrections and the geometry first.
 
 ## What to collect
 

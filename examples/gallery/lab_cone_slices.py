@@ -5,12 +5,12 @@
 The scans are a Zeiss Xradia acquisition (CuO_2 tomo-B, a copper oxide
 specimen), a Nikon X-Tek scan of seeds in a box and a Bruker SkyScan 1172 scan of
 grains (996 views over 199°, the axis at the detector middle), each read by
-``tj.load_frames`` from the vendor's own files with the centre and shifts those
+``tj.load_frames`` from the vendor's own files with the center and shifts those
 files record: the Zeiss scan's ``AutoRecon/CenterShift`` and per-view image
-shifts, and for Nikon the ``_recon.xtekct`` that holds the centre Nikon's
+shifts, and for Nikon the ``_recon.xtekct`` that holds the center Nikon's
 reconstructor found. No alignment is run. Each is reconstructed by FDK in its
 central plane, one voxel per detector pixel at the rotation axis, from the 64
-detector rows around the centre, which cover the plane's rays in every view
+detector rows around the center, which cover the plane's rays in every view
 whatever its recorded vertical shift. Each slice is shown whole and with one
 enlarged region.
 """
@@ -46,10 +46,10 @@ def central_slice(frames: tj.Frames) -> tuple[np.ndarray, float]:
 
 
 def skyscan(log: Path) -> tj.Frames:
-    """A SkyScan scan; its log gives no horizontal centre, so the axis is the detector middle.
+    """A SkyScan scan; its log gives no horizontal center, so the axis is the detector middle.
 
     The log's camera pixel and binning give the detector pitch and its optical-axis
-    line the vertical centre; the TIFFs are already flat-field corrected to 65535.
+    line the vertical center; the TIFFs are already flat-field corrected to 65535.
     """
     import configparser
 

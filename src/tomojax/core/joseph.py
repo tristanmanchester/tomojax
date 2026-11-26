@@ -1,6 +1,6 @@
 """Plane-sampled parallel-ray model and a JAX reference implementation.
 
-Choose the fastest ray direction in voxel coordinates. Sample its voxel-centre
+Choose the fastest ray direction in voxel coordinates. Sample its voxel-center
 planes, interpolating the other two coordinates with zero padding. Bilinear
 interpolation is the default; cubic convolution is an explicit alternative.
 Multiply by the physical distance between planes.

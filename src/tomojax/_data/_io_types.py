@@ -93,7 +93,7 @@ class NXTomoMetadata:
     grid : Grid, dict or None, optional
         Reconstruction voxel grid in physical units.
     detector : Detector, dict or None, optional
-        Detector dimensions, pitches and physical centre.
+        Detector dimensions, pitches and physical center.
     geometry_type : str, optional
         Geometry family; defaults to parallel.
     geometry_meta : dict or None, optional
@@ -110,8 +110,8 @@ class NXTomoMetadata:
         Saved per-view angle corrections in degrees.
     misalign_spec : dict or None, optional
         Simulation misalignment metadata.
-    simulation_artefacts : dict or None, optional
-        Simulation artefact settings and provenance.
+    simulation_artifacts : dict or None, optional
+        Simulation artifact settings and provenance.
     frame : str or None, optional
         Coordinate-frame label.
     sample_name : str or None, optional
@@ -136,7 +136,7 @@ class NXTomoMetadata:
     geometry_calibration: JsonObject | None = None
     angle_offset: np.ndarray | None = None
     misalign_spec: JsonObject | None = None
-    simulation_artefacts: JsonObject | None = None
+    simulation_artifacts: JsonObject | None = None
     frame: str | None = None
     sample_name: str | None = "sample"
     source_name: str | None = "TomoJAX source"
@@ -184,7 +184,7 @@ class NXTomoMetadata:
             geometry_calibration=_json_object(data, "geometry_calibration"),
             angle_offset=_copy_array_metadata(data.get("angle_offset")),
             misalign_spec=_json_object(data, "misalign_spec"),
-            simulation_artefacts=_json_object(data, "simulation_artefacts"),
+            simulation_artifacts=_json_object(data, "simulation_artifacts"),
             frame=None if data.get("frame") is None else str(data.get("frame")),
             sample_name=(None if data.get("sample_name") is None else str(data.get("sample_name"))),
             source_name=None if source_name is None else str(source_name),

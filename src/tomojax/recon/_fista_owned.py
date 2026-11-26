@@ -185,7 +185,7 @@ def _zero_start(
         # The step-safe Collatz bound, once it meets the power estimate (see
         # tomojax.core.operator_norm.normal_upper_bound).
         while not bounds_settled(k, iterations, power, upper):
-            progress.check_cancelled()
+            progress.check_canceled()
             projected = _norm_forward(grid, detector, vector, runtime)
             projected.block_until_ready()
             # Hold the iterate on the host while the transpose needs the device.
@@ -199,7 +199,7 @@ def _zero_start(
             power, k = float(norm), k + 1
         vector.delete()
         limit = jnp.float32(upper * (1 + 8 * np.finfo(np.float32).eps) or 1e-6)
-    progress.check_cancelled()
+    progress.check_canceled()
     x = _first_step(gradient, limit)
     x.block_until_ready()
     return x, value, limit
@@ -228,7 +228,7 @@ def _refine(
         task.advance(1, {Metric.loss.name: float(first_value)})
         progress.preview(lambda x=x: preview_planes(x, runtime.projector[0], grid))
     for _step in range(len(losses), cfg.iterations):
-        progress.check_cancelled()
+        progress.check_canceled()
         with progress.preparing("first fista update", _step - (first_value is not None)):
             residual = _residual(grid, detector, data, z, runtime)
             value = 0.5 * jnp.vdot(residual, residual).real
@@ -267,7 +267,7 @@ def run_owned_fista(
 ) -> tuple[FistaResult, jax.Array, TVMetric | None]:
     """Run nonnegative least squares with owned, reusable volume buffers."""
     data = jnp.asarray(projections)
-    with progress.preparing("initialise fista"):
+    with progress.preparing("initialize fista"):
         x, first_value, limit = _zero_start(grid, detector, data, runtime)
     state, limit = _refine(grid, detector, data, runtime, x, limit, first_value)
     return state, limit, runtime.metric

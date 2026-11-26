@@ -96,7 +96,7 @@ def test_masked_whitening_does_not_hide_unmasked_invalid_data(bad: float) -> Non
 )
 def test_masked_loss_matches_independent_arithmetic(mode: str, delta: float) -> None:
     # The two available whitened residuals are 0.5 and 0.25 (mask weight 0.5),
-    # normalised by the mask's sum, 1.5.
+    # normalized by the mask's sum, 1.5.
     predicted, observed, mask, sigma = _masked_inputs()
     actual = residual_loss(predicted, observed, mask=mask, sigma=sigma, mode=mode, delta=delta)
     r = np.array([0.5, 0.25])

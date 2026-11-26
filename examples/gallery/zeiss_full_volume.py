@@ -1,9 +1,9 @@
-"""A volume larger than the GPU: the full Zeiss CuO_2 tomo-B scan at 1.13 micrometres.
+"""A volume larger than the GPU: the full Zeiss CuO_2 tomo-B scan at 1.13 micrometers.
 
     uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 
 The scan is 3201 views of 2028 x 2028 pixels; its native grid is 2028³ voxels
-of 1.13 micrometres, 31 GiB in FP32. It is loaded with the centre and per-view
+of 1.13 micrometers, 31 GiB in FP32. It is loaded with the center and per-view
 image shifts the file records, and no alignment is run. ``tj.reconstruct_slabs(frames, "fbp")``
 corrects only the detector rows each slab of the volume needs and the blocks
 are written to a memmap ``VOLUME.npy`` on disk, so neither the corrected
@@ -54,7 +54,7 @@ def main() -> None:
     volume = np.load(args.volume, mmap_mode="r")
     n = volume.shape[0]
     slices = (
-        ("Axial slice, centre", np.asarray(volume[n // 2])),
+        ("Axial slice, center", np.asarray(volume[n // 2])),
         ("Vertical slice through the axis", np.asarray(volume[:, n // 2])),
     )
     style()

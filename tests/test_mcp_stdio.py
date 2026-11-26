@@ -161,13 +161,13 @@ def registry(core):
     async def probe(args):
         base = core.supervisor.base
         if args.mode in ("wait", "finishing"):
-            activity.get().record(dict(event="started", task=1, name="fit", label="centre"))
+            activity.get().record(dict(event="started", task=1, name="fit", label="center"))
             if args.mode == "finishing":
                 activity.get().record(dict(event="advanced", done=1, total=100, metrics={}, eta=90))
             (base / "entered").touch()
             while not (base / "finish").exists():
                 if activity.get().requested and args.mode == "wait":
-                    return result({"kind":"cancelled"},error=True)
+                    return result({"kind":"canceled"},error=True)
                 await asyncio.sleep(.005)
         if args.mode == "error":
             raise ValueError("bad specimen")
@@ -344,7 +344,7 @@ def test_task_progress_outlives_handoff_and_completion_wins_cancel(tmp_path):
             event = c.receive("method", "notifications/progress")
             assert event["params"]["progressToken"] == "blocking"
         working = c.task("get", tid)
-        assert working["statusMessage"] == "fit centre 1/100 · eta 90 s"
+        assert working["statusMessage"] == "fit center 1/100 · eta 90 s"
         assert working["pollIntervalMs"] == 10_000
         assert working["lastUpdatedAt"] > task["createdAt"]
         assert "result" not in working
@@ -382,7 +382,7 @@ def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
         assert c.terminal(job["taskId"])["status"] == "cancelled"
 
 
-def test_directory_inspection_and_unrecognised_hdf5(tmp_path):
+def test_directory_inspection_and_unrecognized_hdf5(tmp_path):
     with h5py.File(tmp_path / "unknown.h5", "w") as file:
         file["a/b::c"] = [1, 2, 3]
     with connection(tmp_path) as c:
@@ -678,10 +678,10 @@ def check_sweep_and_difference(c, data, scan, volume):
     sweep = c.call(
         "preview",
         operation=dict(
-            type="centre_sweep",
+            type="center_sweep",
             axis="z",
             index=8,
-            centres=[-1, 0, 1],
+            centers=[-1, 0, 1],
             roi=[[8, 9], [1, 7], [5, 10]],
             source=scan,
             method="fbp",
@@ -810,11 +810,11 @@ def test_projection_preview_keeps_requested_stride(tmp_path):
 def test_view_acquisition_requires_opened_member(tmp_path):
     import numpy as np
 
-    from tests.test_io_workflows import _labelled_dataset
+    from tests.test_io_workflows import _labeled_dataset
     from tomojax.io import save_dataset
 
     path = tmp_path / "raw.nxs"
-    save_dataset(path, _labelled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
+    save_dataset(path, _labeled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
     with connection(tmp_path) as c:
         scan = c.call("open", kind="scan", path=path.name)["structuredContent"]["handle"]
         for name, args in (
@@ -856,7 +856,7 @@ def _preview(reply):
 
 
 def _shows(image, pixels):
-    """The grey image is ``pixels`` on a linear scale (clipped at its extremes)."""
+    """The gray image is ``pixels`` on a linear scale (clipped at its extremes)."""
     import numpy as np
 
     assert image.shape == pixels.shape

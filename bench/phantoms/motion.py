@@ -3,14 +3,14 @@
 The taxonomy follows ANSI/ASME B89.3.4M, Axes of Rotation, as Aerotech's Engineering
 Reference presents it. A rotary stage has radial, axial and tilt error motion. Each has a
 synchronous part, at integer multiples of the rotation frequency and repeatable with angle,
-and a smaller asynchronous part that does not repeat. Centring and squareness are setup,
+and a smaller asynchronous part that does not repeat. Centering and squareness are setup,
 constant for a scan, not error motion. An angular error at an offset is a displacement, so a
 stage tilt reaches the sample mostly as translation, tilt times the sample's height above the
 bearing.
 
 The stage moves smoothly. The sample may slip: a rigid step in the object frame, a shift with
-or without a tip, which persists. Every component is drawn in micrometres, microradians or arc
-seconds from stated ranges and recorded separately. Output lengths are millimetres, matching
+or without a tip, which persists. Every component is drawn in micrometers, microradians or arc
+seconds from stated ranges and recorded separately. Output lengths are millimeters, matching
 TomoJAX grids. Nothing is specified in detector pixels.
 
 A view's world-from-object pose is
@@ -19,9 +19,9 @@ A view's world-from-object pose is
 
 - N is the nominal pose; object z is the rotation axis.
 - S is the product of the sample's slips so far, in the object frame, each about the sample
-  centre.
+  center.
 - A is the lab-frame transform: setup axis tilt and roll, the stage's tilt error about the
-  bearing (the sample height below the object origin), then centre offset, drift, and
+  bearing (the sample height below the object origin), then center offset, drift, and
   synchronous and asynchronous radial and axial error.
 """
 
@@ -32,7 +32,7 @@ import json
 
 import numpy as np
 
-_UM = 1e-3  # millimetres per micrometre
+_UM = 1e-3  # millimeters per micrometer
 _ARCSEC = np.pi / (180 * 3600)
 
 
@@ -68,7 +68,7 @@ class Slip:
     """A rigid step of the sample in the object frame at ``view``, persisting afterwards.
 
     ``shift_um`` is the object-frame displacement. ``tip_rad`` turns the sample about the
-    horizontal object-frame axis ``tip_axis`` through the sample centre; zero for a slip that
+    horizontal object-frame axis ``tip_axis`` through the sample center; zero for a slip that
     only shifts.
     """
 
@@ -78,7 +78,7 @@ class Slip:
     tip_axis: tuple[float, float, float] = (1.0, 0.0, 0.0)
 
     def transform(self, center_mm: np.ndarray) -> np.ndarray:
-        """The 4x4 object-frame transform: tip about the centre, then shift."""
+        """The 4x4 object-frame transform: tip about the center, then shift."""
         out = np.eye(4)
         rotation = _axis_angle(np.asarray(self.tip_axis), self.tip_rad)
         out[:3, :3] = rotation
@@ -175,7 +175,7 @@ def poses(
 ) -> dict[str, np.ndarray]:
     """True world-from-object poses and the stage and sample parts that compose them.
 
-    ``center_mm`` is the sample centre in the object frame: the point slips tip about.
+    ``center_mm`` is the sample center in the object frame: the point slips tip about.
     Returns ``poses`` and ``stage`` (the lab-frame transforms A), ``sample`` (the slip
     products S) and ``encoder_rad``, plus every entry of :func:`components`.
     """

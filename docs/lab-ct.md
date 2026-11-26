@@ -6,7 +6,7 @@ TomoJAX reconstructs and aligns lab cone-beam CT scans (point source, flat detec
 
 ### Nikon (X-Tek)
 
-A Nikon scan consists of an `.xtekct` parameter file alongside projection TIFFs. `tomojax correct` reads source and detector distances, pixel pitch and offsets, calibrated rotation axis (`ObjectOffsetX`, `ObjectRoll`, `ObjectTilt`, or legacy `CentreOfRotationTop/Bottom`), white level, and nominal angles (`InitialAngle` and `AngularStep`; `.ang` and `_ctdata.txt` sidecars are ignored). Only numbered projection TIFFs matching `<Name>` are loaded, skipping flat fields, thumbnails, and reconstructions. If a folder holds multiple `.xtekct` files, pass the calibrated one (typically `<name>_recon.xtekct`; an acquisition file with `AutomaticCentreOfRotation=1` has no centre and loads at the detector middle).
+A Nikon scan consists of an `.xtekct` parameter file alongside projection TIFFs. `tomojax correct` reads source and detector distances, pixel pitch and offsets, calibrated rotation axis (`ObjectOffsetX`, `ObjectRoll`, `ObjectTilt`, or legacy `CentreOfRotationTop/Bottom`), white level, and nominal angles (`InitialAngle` and `AngularStep`; `.ang` and `_ctdata.txt` sidecars are ignored). Only numbered projection TIFFs matching `<Name>` are loaded, skipping flat fields, thumbnails, and reconstructions. If a folder holds multiple `.xtekct` files, pass the calibrated one (typically `<name>_recon.xtekct`; an acquisition file with `AutomaticCentreOfRotation=1` has no center and loads at the detector middle).
 
 Nikon files do not store dark frames; supply measured darks with `--darks`, or `--darks 0` if counts are already dark-subtracted:
 
@@ -15,7 +15,7 @@ tomojax correct scan/part.xtekct --darks 0 -o scan.nxs
 tomojax inspect scan.nxs
 ```
 
-TomoJAX reverses Nikon's top-right panel origin and converts angles and offsets into its own frame while keeping lengths in millimetres. Any extra closing frame on a full turn is excluded with a warning. To override angles with a measured schedule, pass `angles=` (or `--angles`) in TomoJAX's object-angle frame.
+TomoJAX reverses Nikon's top-right panel origin and converts angles and offsets into its own frame while keeping lengths in millimeters. Any extra closing frame on a full turn is excluded with a warning. To override angles with a measured schedule, pass `angles=` (or `--angles`) in TomoJAX's object-angle frame.
 
 ### Generic TIFF cone scans
 
@@ -34,7 +34,7 @@ Optional detector orientation flags (`--axis-offset`, `--detector-roll`, `--dete
 
 Without a recorded grid, cone scans default to one voxel per detector pixel at the rotation axis (`pixel_size / magnification`). Use `--grid NX NY NZ` on the CLI or `scan.grid.resampled(shape=(64, 64, 64))` in Python to resample the grid while preserving physical extent.
 
-### Artefact corrections
+### Artifact corrections
 
 Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stripes`, `Rings`, `Zingers`, `BeamHardening` to `frames.corrected(...)` in Python). To try settings before correcting the whole scan, add `--dry-run --preview band.png`: it corrects a band of rows, writes their sinograms before and after the steps and the difference, and writes no scan.
 
@@ -42,13 +42,13 @@ Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stri
 tomojax correct scan/scan.xtekct --darks 0 --stripes 9 --rings --dry-run --preview band.png
 ```
 
-For beam-hardening linearisation with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
+For beam-hardening linearization with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.
 
 ### Zeiss Xradia preview
 
-Load the **projection acquisition** (`.txrm`), not a reconstructed `.txm` volume or scout image. TomoJAX reads embedded reference images, timestamps, exposure times, angles, distances, and per-view shifts (`alignment/x-shifts`, `y-shifts`), storing those shifts in per-view detector centres so measured pixels are never resampled.
+Load the **projection acquisition** (`.txrm`), not a reconstructed `.txm` volume or scout image. TomoJAX reads embedded reference images, timestamps, exposure times, angles, distances, and per-view shifts (`alignment/x-shifts`, `y-shifts`), storing those shifts in per-view detector centers so measured pixels are never resampled.
 
-- **Centre:** shifts are relative to `AutoRecon/CenterShift`. Without it, loading puts the centre at the detector middle (`detector_center_status="not_recorded"`); fit `"center"` with `tj.align` or supply `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` (where `pitch` is recorded object-plane pixel size × magnification). Passing a full `geometry=` uses it verbatim and drops embedded shifts with a warning.
+- **Center:** shifts are relative to `AutoRecon/CenterShift`. Without it, loading puts the center at the detector middle (`detector_center_status="not_recorded"`); fit `"center"` with `tj.align` or supply `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` (where `pitch` is recorded object-plane pixel size × magnification). Passing a full `geometry=` uses it verbatim and drops embedded shifts with a warning.
 - **Orientation:** a volume comes out in the orientation of Xradia's own reconstruction of the same scan, so its slices compare with the vendor's `.txm` directly.
 - **References and darks:** pass a separate flat with `--flats reference_Front.xrm` (or `flats=` + `flat_exposure_times=` in seconds for raw arrays). Files with `AcquisitionSettings/CameraStaticBackground = 1` need no darks; otherwise supply `--darks` / `darks=`.
 - **Detector saturation:** Zeiss records the camera's linear ceiling in `MaxLinearRange` (45 000 counts on typical scans). Long exposures can push air pixels past that ceiling; `tj.load` warns when counts exceed it and records the affected fraction and `linear_limit_line_integral` in the `flat_dark` record. Saturated air reads as artificial absorption (e.g. ~0.33 instead of 0 on CuO_2) and appears as a bright background around the sample.
@@ -74,15 +74,15 @@ tj.save("preview.nxs", recon)
 
 Per-view detector shifts produce a `ConeSegments` geometry, for which automatic reconstruction selects matched CGLS rather than single-arrangement FDK.
 
-## Calibrate the detector centre and setup angles
+## Calibrate the detector center and setup angles
 
-A wrong detector centre doubles features, while detector roll introduces height-dependent blur. Fit both shared parameters together:
+A wrong detector center doubles features, while detector roll introduces height-dependent blur. Fit both shared parameters together:
 
 ```bash
 tomojax align scan.nxs -o calibrated.nxs --fit center roll
 ```
 
-For cone data, `"center"` fits detector-u and detector-v offsets in the detector frame (distinct from `ConeBeam.axis_offset`), `"roll"` fits detector roll, and adding `"tilt"` fits the rotation-axis tilt. Source distances, pitch, and yaw stay fixed. Compare slices across several heights against an unaligned reconstruction, or sweep the centre and choose it by eye (see [check the centre by eye](align-a-scan.md#check-the-centre-by-eye)).
+For cone data, `"center"` fits detector-u and detector-v offsets in the detector frame (distinct from `ConeBeam.axis_offset`), `"roll"` fits detector roll, and adding `"tilt"` fits the rotation-axis tilt. Source distances, pitch, and yaw stay fixed. Compare slices across several heights against an unaligned reconstruction, or sweep the center and choose it by eye (see [check the center by eye](align-a-scan.md#check-the-center-by-eye)).
 
 ## Reconstruct
 
@@ -92,11 +92,11 @@ For a single cone-beam arrangement, `--method auto` selects FDK (`--method fbp` 
 tomojax reconstruct calibrated.nxs -o fdk.nxs
 ```
 
-FDK handles full turns, offset-detector (half-fan) full turns, and Parker-weighted short scans (≥ 180° + fan angle). Like any circular-orbit FDK, it is exact in the orbit plane and develops cone artefacts away from it.
+FDK handles full turns, offset-detector (half-fan) full turns, and Parker-weighted short scans (≥ 180° + fan angle). Like any circular-orbit FDK, it is exact in the orbit plane and develops cone artifacts away from it.
 
 ![FDK central slices of three lab scans, each above an enlarged region: a copper oxide specimen from a Zeiss Xradia at 1.13 µm, a box of seeds from a Nikon X-Tek at 94 µm and grains in a SkyScan 1172 at 14.1 µm.](images/lab-cone-slices.png)
 
-Orbit-plane FDK slices of three lab scans loaded directly from vendor files at native axis-plane resolution without alignment: Zeiss Xradia CuO_2 tomo-B (3201 views, recorded centre and shifts), Nikon X-Tek seeds (1571 views, `_recon.xtekct`), and SkyScan 1172 grains (996 views over 199°, nominal detector middle):
+Orbit-plane FDK slices of three lab scans loaded directly from vendor files at native axis-plane resolution without alignment: Zeiss Xradia CuO_2 tomo-B (3201 views, recorded center and shifts), Nikon X-Tek seeds (1571 views, `_recon.xtekct`), and SkyScan 1172 grains (996 views over 199°, nominal detector middle):
 
 ```bash
 uv run python examples/gallery/lab_cone_slices.py CuO_2_tomo-B.txrm \
@@ -188,7 +188,7 @@ cgls = tj.reconstruct(scan, "cgls", iterations=20)
 tj.save("walnut-cgls.nxs", cgls)
 ```
 
-Pass `--orbit 1` or `--orbit 3` for the other orbits, or reduce `--every` and `--binning` and raise `--size` for higher resolution. Open all three slice planes to inspect cone artefacts away from the midplane. For all three orbits together, use the multi-orbit workflow below.
+Pass `--orbit 1` or `--orbit 3` for the other orbits, or reduce `--every` and `--binning` and raise `--size` for higher resolution. Open all three slice planes to inspect cone artifacts away from the midplane. For all three orbits together, use the multi-orbit workflow below.
 
 ## Multi-orbit scans
 

@@ -8,7 +8,7 @@ Full documentation is at [tomojax.dev](https://tomojax.dev).
 
 A 29 mm mechanical watch movement simulated with 600 views of a 120 keV parallel beam in gVXR (independent of TomoJAX's projector), reconstructed with FISTA-TV on 38.5 µm voxels in 50 s on a laptop GPU, and rendered directly in JAX. [Reproduce it](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#volume-render-a-reconstruction).
 
-![Truth, filtered backprojection and FISTA-TV slices through the hairspring of the watch movement, with close-ups of the balance on one grey scale.](https://github.com/tristanmanchester/tomojax/raw/main/images/reconstruction-example.png)
+![Truth, filtered backprojection and FISTA-TV slices through the hairspring of the watch movement, with close-ups of the balance on one gray scale.](https://github.com/tristanmanchester/tomojax/raw/main/images/reconstruction-example.png)
 
 From 200 views at 10⁴ photons per pixel, filtered backprojection through the hairspring has relative error 0.357 against the exact voxel average of the meshes; FISTA-TV reaches 0.124 in 17 s. [Reproduce the figure](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md#reconstruct-a-few-view-noisy-scan).
 
@@ -61,7 +61,7 @@ See the [Studio guide](https://github.com/tristanmanchester/tomojax/blob/main/st
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real scan guide](https://tomojax.dev/real-laminography/) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](https://tomojax.dev/lab-ct/) |
 | Simulate data or script the Python API | [Synthetic tomography](https://tomojax.dev/synthetic-tomography/), [examples](https://github.com/tristanmanchester/tomojax/blob/main/examples/README.md) |
-| Correct per-view motion, setup angles, or the centre of rotation | [Align a scan](https://tomojax.dev/align-a-scan/) |
+| Correct per-view motion, setup angles, or the center of rotation | [Align a scan](https://tomojax.dev/align-a-scan/) |
 | Reconstruct volumes larger than GPU memory, or use several GPUs | [Large scans and several GPUs](https://tomojax.dev/large-scans/) |
 | Let an AI agent such as Claude Code drive TomoJAX through MCP | [Use TomoJAX from an AI agent](https://tomojax.dev/mcp/) |
 | Check supported formats, models, and limitations | [Support matrix](https://tomojax.dev/support-matrix/), [known limitations](https://tomojax.dev/known-limitations/) |
@@ -98,7 +98,7 @@ Warm times on one 8 GB laptop GPU (measured 2026-11-21), with every tool given t
 
 Volumes larger than GPU memory stream automatically in slabs: SIRT of a whole Diamond I12 scan (1801 views of 2160 × 2560 pixels into a 56.6 GB volume) ran on an 8 GB laptop GPU using 1.4 GB of VRAM at 1.13× the per-voxel time of an in-core scan ([large scans](https://tomojax.dev/large-scans/)).
 
-## Development and licence
+## Development and license
 
 See [CONTRIBUTING.md](https://github.com/tristanmanchester/tomojax/blob/main/CONTRIBUTING.md) for development setup, conventions, and test commands, and [CHANGELOG.md](https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md) for release notes.
 

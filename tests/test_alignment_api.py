@@ -91,7 +91,7 @@ def test_global_fits_publish_the_named_calibration_and_hold_local_poses(monkeypa
         assert result.scan.detector.center == scan.detector.center
 
 
-def test_a_centre_and_roll_fit_keeps_fourier_as_the_automatic_method(monkeypatch):
+def test_a_center_and_roll_fit_keeps_fourier_as_the_automatic_method(monkeypatch):
     scan = _scan()
     _fitter(monkeypatch, changes={"center": 1.25, "roll": 0.75})
     result = tj.align(scan, fit=("center", "roll"))

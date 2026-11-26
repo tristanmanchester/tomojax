@@ -1,4 +1,4 @@
-"""Registered slices, centre sweeps, detector bands and region overlays for interactive clients."""
+"""Registered slices, center sweeps, detector bands and region overlays for interactive clients."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 __all__ = [
     "CorrectionBand",
     "RegionOverlay",
-    "centre_sweep",
+    "center_sweep",
     "correction_preview",
     "reconstruct_slice",
     "reconstruct_slices",
@@ -146,11 +146,11 @@ def reconstruct_slice(
     return resolved_slice(plan, axis, index)
 
 
-def centre_sweep(
+def center_sweep(
     scan: Scan,
     axis: Axis,
     index: int,
-    centres: Sequence[float],
+    centers: Sequence[float],
     *,
     method: Method = "auto",
     **options: Any,
@@ -159,7 +159,7 @@ def centre_sweep(
 
     Resolve the requested region once on the input scan. Every offset uses that fixed
     grid, support and plane index. A full reconstruction oracle shifts the detector and
-    passes this resolved grid explicitly at each centre. Repeated offsets retain their order.
+    passes this resolved grid explicitly at each center. Repeated offsets retain their order.
 
     Parameters
     ----------
@@ -169,7 +169,7 @@ def centre_sweep(
         Dimension held fixed in the returned plane.
     index : int
         Zero-based plane index on the resolved grid.
-    centres : sequence of float
+    centers : sequence of float
         Signed detector offsets relative to the central column, in input pixels.
     method : str, optional
         Public reconstruction method.
@@ -179,9 +179,9 @@ def centre_sweep(
     Returns
     -------
     numpy.ndarray or jax.Array
-        Float32 attenuation with a leading centre coordinate, in the supplied order.
+        Float32 attenuation with a leading center coordinate, in the supplied order.
     """
-    plans = resolve_sweep(scan, axis, index, centres, method=method, **options)
+    plans = resolve_sweep(scan, axis, index, centers, method=method, **options)
     return resolved_sweep(plans, axis, index)
 
 
@@ -189,7 +189,7 @@ def resolve_sweep(
     scan: Scan,
     axis: Axis,
     index: int,
-    centres: Sequence[float],
+    centers: Sequence[float],
     *,
     method: Method = "auto",
     grid: Grid | None = None,
@@ -197,22 +197,22 @@ def resolve_sweep(
     **options: Any,
 ) -> tuple[ResolvedReconstruction, ...]:
     """Resolve support on the input and validate the actual acquisition for each candidate."""
-    if len(centres) == 0 or not np.isfinite(centres).all():
+    if len(centers) == 0 or not np.isfinite(centers).all():
         raise InvalidParameter(
-            "centres", "centres must be a nonempty sequence of finite detector offsets"
+            "centers", "centers must be a nonempty sequence of finite detector offsets"
         )
     fixed_grid, cylinder, info = resolve_grid(scan, grid, region)
     plans = []
-    for i, centre in enumerate(centres):
-        progress.check_cancelled()
-        shift = float(centre) * scan.detector.du - scan.detector.center[0]
+    for i, center in enumerate(centers):
+        progress.check_canceled()
+        shift = float(center) * scan.detector.du - scan.detector.center[0]
         shifted = replace(scan, geometry=shifted_center(scan.geometry, shift))
         try:
             plan = resolve_reconstruction(
                 shifted, method, grid=fixed_grid, plane=(axis, index), **options
             )
         except AngularCoverageError as err:
-            raise InvalidParameter(f"centres[{i}]", str(err)) from err
+            raise InvalidParameter(f"centers[{i}]", str(err)) from err
         plans.append(replace(plan, cylinder=cylinder, info={**plan.info, **info}))
     return tuple(plans)
 
@@ -220,7 +220,7 @@ def resolve_sweep(
 def sweep_planes(plans: Sequence[ResolvedReconstruction], axis: Axis, index: int) -> Iterator[Any]:
     """Each candidate's plane in order, one candidate in memory at a time."""
     for plan in plans:
-        progress.check_cancelled()
+        progress.check_canceled()
         yield resolved_slice(plan, axis, index)
 
 

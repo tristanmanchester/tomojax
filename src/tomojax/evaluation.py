@@ -1,8 +1,8 @@
 """Frozen observation splits and additive, matched-prediction held-out scores.
 
 This module neither fits a model nor chooses a projector. Predictions must use
-exactly the fit's discretisation, geometry and intensity convention. Exclude test
-and guard observations from *all* fitted stages, including initialisation and
+exactly the fit's discretization, geometry and intensity convention. Exclude test
+and guard observations from *all* fitted stages, including initialization and
 corrections; a mask on the final loss alone does not establish independence.
 """
 

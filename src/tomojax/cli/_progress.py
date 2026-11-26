@@ -204,8 +204,8 @@ def _failed(error: Exception, mode: str, prog: str) -> int:
         print(json.dumps(record), flush=True)
     if kind == "internal":
         raise error
-    if kind == "cancelled":
-        _console.report_cancelled(prog)
+    if kind == "canceled":
+        _console.report_canceled(prog)
         return 130
     if kind == "out_of_memory":
         _console.report_error(prog, str(error), hint=memory_hint.get())
@@ -234,7 +234,7 @@ def run_command(
     prog = f"tomojax {command}"
 
     def interrupt(_signum: int, _frame: FrameType | None) -> None:
-        if token.cancelled:
+        if token.canceled:
             raise KeyboardInterrupt
         token.cancel()
 

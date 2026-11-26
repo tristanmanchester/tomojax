@@ -93,12 +93,12 @@ SCINTILLATOR_DENSITY = {"CsI": 4.51, "Gd2O2S": 7.34, "CdWO4": 7.9}
 
 
 def spectrum(frames: Any, metadata: dict, truth: dict | None = None) -> Result:  # noqa: ARG001
-    """``BeamHardening.from_spectrum`` of the sample's material and the modelled tube.
+    """``BeamHardening.from_spectrum`` of the sample's material and the modeled tube.
 
     The tube spectrum comes from the recorded voltage, window, filters and
     scintillator (0.5 mm if its thickness is not recorded); the material is
     what the user names as the sample's. The image is attenuation at the
-    modelled spectrum's mean detected energy.
+    modeled spectrum's mean detected energy.
     """
     from tomojax.corrections import BeamHardening, tube_spectrum
 

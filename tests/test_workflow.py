@@ -146,7 +146,7 @@ def test_reconstruct_takes_the_methods_configuration_under_its_keywords() -> Non
 
 
 @pytest.mark.parametrize("method", ["fista", "spdhg"])
-def test_nonnegative_is_honoured(method: str) -> None:
+def test_nonnegative_is_honored(method: str) -> None:
     geometry = _geometries(16)["parallel"]
     negative = -np.asarray(tj.project(geometry, _phantom(16)))  # a negative object's data
     scan = tj.Scan(negative, geometry)
@@ -241,7 +241,7 @@ def test_binning_averages_pixels_and_keeps_the_detector_in_place():
 
     binned = scan.binned(2)
 
-    # The odd last column and row are dropped, shifting the centre by half a pixel.
+    # The odd last column and row are dropped, shifting the center by half a pixel.
     assert binned.projections.shape == (24, 16, 20)
     assert binned.detector.du == binned.detector.dv == 1.0
     assert binned.detector.center == pytest.approx((0.05, -0.45))
@@ -360,7 +360,7 @@ def test_reconstruction_preserves_region_evidence_and_rejects_mismatched_scan(cy
         tj.reconstruct(other_scan, region=estimate)
 
 
-def test_opposite_views_fits_the_centre_and_rejects_other_fits_and_joint_options(cylinder_scan):
+def test_opposite_views_fits_the_center_and_rejects_other_fits_and_joint_options(cylinder_scan):
     with pytest.raises(ValueError, match="opposite-views.*iterations"):
         tj.align(cylinder_scan, method="opposite-views", iterations=3)
     for fit in ("translations", ("center", "tilt")):
@@ -407,7 +407,7 @@ def test_single_slice_operator_output_feeds_scan_and_reconstruction():
     assert np.linalg.norm(np.asarray(actual)[0] - truth) / np.linalg.norm(truth) < 0.06
 
 
-def test_a_saved_alignment_is_not_labelled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
+def test_a_saved_alignment_is_not_labeled_with_an_earlier_reconstruction(tmp_path: Path) -> None:
     geometry = _geometries(8)["parallel"]
     scan = tj.Scan(np.asarray(tj.project(geometry, _phantom(8))), geometry)
     tj.save(tmp_path / "cgls.nxs", tj.reconstruct(scan, "cgls", iterations=2), include_scan=True)
@@ -653,7 +653,7 @@ def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path
     assert a.grid == b.grid == tj.Grid(4, 4, 2, 1.0, 1.0, 1.0, vol_center=(0.0, 0.0, 0.0))
 
 
-def test_load_frames_honours_apply_poses_false(tmp_path: Path) -> None:
+def test_load_frames_honors_apply_poses_false(tmp_path: Path) -> None:
     grid = tj.Grid(6, 6, 4, 1.0, 1.0, 1.0)
     detector = tj.Detector(6, 4, 1.0, 1.0)
     geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])

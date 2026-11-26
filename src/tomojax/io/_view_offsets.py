@@ -1,10 +1,10 @@
 """Recorded per-view detector offsets, applied on top of whichever detector is resolved.
 
 A scanner may record each view's image shift in detector pixels while the
-detector centre they are measured from is calibrated separately, or not at all.
+detector center they are measured from is calibrated separately, or not at all.
 The record keeps the shifts as ``detector_view_offsets_pixels`` (and, for cone
 data, each view's ``cone_view_distances``) so the same per-view geometry is
-built from the file's centre or from a caller's ``detector=``.
+built from the file's center or from a caller's ``detector=``.
 """
 
 from __future__ import annotations
@@ -24,10 +24,10 @@ DISTANCES_KEY = "cone_view_distances"
 
 
 def with_view_offsets(record: ProjectionDataset, detector: Detector) -> ProjectionDataset:
-    """``record`` on ``detector``, each view's centre moved by its recorded offset.
+    """``record`` on ``detector``, each view's center moved by its recorded offset.
 
     The offsets are recorded detector pixels (u, v), scaled by ``detector``'s
-    pitches and added to its centre. Cone views become one ``cone_segments``
+    pitches and added to its center. Cone views become one ``cone_segments``
     entry per run of identical arrangements, since a detector-image shift is not
     a rigid object translation in cone geometry; parallel views keep one
     detector and carry the shift as a detector-frame pose. A record without
@@ -79,20 +79,20 @@ def with_view_offsets(record: ProjectionDataset, detector: Detector) -> Projecti
 
 
 def without_view_offsets(record: ProjectionDataset) -> ProjectionDataset:
-    """``record`` with its recorded per-view offsets and centre left out: the nominal geometry.
+    """``record`` with its recorded per-view offsets and center left out: the nominal geometry.
 
     The offsets are zeroed rather than removed, so a cone record's single arrangement is
-    rebuilt from its recorded distances; the detector keeps its pitch, centred.
+    rebuilt from its recorded distances; the detector keeps its pitch, centered.
 
     Parameters
     ----------
     record : ProjectionDataset
-        Loaded record, possibly carrying per-view detector offsets and a recorded centre.
+        Loaded record, possibly carrying per-view detector offsets and a recorded center.
 
     Returns
     -------
     ProjectionDataset
-        The record on its detector's nominal centre, with no per-view offsets.
+        The record on its detector's nominal center, with no per-view offsets.
     """
     from ._datasets import replace_dataset
 

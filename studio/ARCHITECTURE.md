@@ -44,18 +44,18 @@ in the project. Session handles are not persisted as reusable identifiers.
 
 The bridge tracks observed channel admissions, not speculative revisions. A
 rejected replacement cannot invalidate a prior admitted request. Stale terminals
-still resolve request bookkeeping. Control acknowledgement is distinct from the
+still resolve request bookkeeping. Control acknowledgment is distinct from the
 target request's terminal result. Shutdown drains worker output before process
 reaping, with a bounded forced-exit fallback and owned temporary directory cleanup.
 
-Pause/resume acknowledgement triggers an authoritative status check. This also
+Pause/resume acknowledgment triggers an authoritative status check. This also
 covers a pause reached before a numerical task exists and therefore before the
 worker can emit a progress event. The application polls only while that control
 transition is unresolved, and a terminal result retires its control watch.
 
 ### Interactive requests
 
-`slice`, `centre_sweep`, `correction_preview` and `region_preview` have separate
+`slice`, `center_sweep`, `correction_preview` and `region_preview` have separate
 worker channels. The preview controller debounces edits for 35 ms, shares warm
 source handles with form preflight, and admits replacements independently of the
 durable scheduler and autosave. A local intent generation invalidates an older
@@ -107,7 +107,7 @@ reused task IDs. Each task keeps its own count, ETA, placement and metric sample
 come from the worker-generated metric registry in `docs/progress-metrics.md`.
 The job retains notes and all metric samples, including null gaps and categories.
 Plot rendering selects at most 600 original extrema per history and never joins
-across a null sample. Pose rows are virtualised.
+across a null sample. Pose rows are virtualized.
 
 ## Storage and recovery
 
@@ -117,7 +117,7 @@ operation and input. Job inputs and worker provenance retain their original valu
 Studio restores the active asset and view on reopen. Without a valid active asset
 it selects the newest result, or the newest acquisition in a project without results.
 
-Studio serialises a snapshot. A coalescing background writer atomically replaces the manifest. Acknowledgements
+Studio serializes a snapshot. A coalescing background writer atomically replaces the manifest. Acknowledgments
 carry generations so an older save cannot clear a newer dirty state. The writer
 holds an OS lock for its lifetime. An unsupported manifest version is rejected
 without rewriting it. Both reading and writing enforce the existing 32 MiB
@@ -157,12 +157,12 @@ reads from the old source. Ordinary navigation does not stat source files.
 Replacing an asset's data or calibration clears its saved measurements.
 
 The compositor uses Rune's actual wgpu device and painter order. Plane textures
-retain float scalar samples; windowing and colour maps are GPU uniforms. The
-volume texture is a normalised half-float display representation with a retained
+retain float scalar samples; windowing and color maps are GPU uniforms. The
+volume texture is a normalized half-float display representation with a retained
 scalar range. The ray marcher accounts for physical anisotropy, integrates
 front-to-back opacity and supports transfer functions, lighting and clipping.
 Quantitative measurements use the original float plane samples, not rendered
-colour or the half-float volume texture.
+color or the half-float volume texture.
 
 Display-window text is a draft until **Apply window** succeeds. The renderer uses
 the committed range; invalid edits remain editable and persist without changing
@@ -170,9 +170,9 @@ the image. Untouched window fields follow the actual displayed automatic range.
 View undo/redo restores display state without rewinding parameter forms
 or scientific jobs.
 
-Slice and centre-sweep previews retain their fixed spatial axis. Sweep navigation
-indexes the explicit centre-coordinate vector. Region products retain three fixed
-planes and physical bounds without being relabelled as a volume. Correction
+Slice and center-sweep previews retain their fixed spatial axis. Sweep navigation
+indexes the explicit center-coordinate vector. Region products retain three fixed
+planes and physical bounds without being relabeled as a volume. Correction
 previews retain independently registered before/after arrays and their different
 units and domains; selecting the other array resets the display window.
 During a temporary preview, the source asset remains selected. Completion of an

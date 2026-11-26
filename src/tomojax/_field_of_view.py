@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from tomojax._scan import Scan
 
 # The regions by name: the box every view sees ("auto", "bbox"), its largest cube or
-# cylinder about the axis ("cube", "cyl", which also zeroes outside it).
+# cylinder about the axis ("cube", "cyl", which also zeros outside it).
 REGIONS = get_args(RegionName.__value__)
 REGION_CHOICES = REGIONS
 REGION_HELP = (
@@ -48,9 +48,9 @@ class Cylinder:
 def region_grid(
     scan: Scan, region: str | RegionEstimate | None, *, shape: tuple[int, int, int] | None = None
 ) -> tuple[Grid, Cylinder | None]:
-    """The grid ``region`` chooses of ``scan``'s, and the cylinder ``"cyl"`` zeroes outside.
+    """The grid ``region`` chooses of ``scan``'s, and the cylinder ``"cyl"`` zeros outside.
 
-    The field of view is where the scan's own rays fall: voxel centres that
+    The field of view is where the scan's own rays fall: voxel centers that
     every view projects onto the detector, with cone magnification, poses, a
     tilted axis and detector roll. None keeps the scan's grid, and a
     :class:`RegionEstimate` gives its own. ``"auto"`` falls back to the scan's
@@ -82,7 +82,7 @@ def region_grid(
             axes = (0, 1, 2) if region == "cube" else (0, 1)
             side = int(min(last[a] - first[a] + 1 for a in axes))
             for a in axes:
-                # Centre the shared side in the seen interval, keeping whole voxels.
+                # Center the shared side in the seen interval, keeping whole voxels.
                 first[a] += (last[a] - first[a] + 1 - side) // 2
                 last[a] = first[a] + side - 1
         chosen = _window(scan.grid, first, last)
@@ -167,7 +167,7 @@ def _window(grid: Grid, first: np.ndarray, last: np.ndarray) -> Grid:
 def _seen_voxels(scan: Scan) -> tuple[np.ndarray, np.ndarray, Cylinder]:
     """Voxels every view projects onto the detector: index bounds per axis and their cylinder.
 
-    A lattice of at most ``_SAMPLES`` voxel centres per axis is tested against
+    A lattice of at most ``_SAMPLES`` voxel centers per axis is tested against
     up to ``_VIEWS`` evenly spaced views. Bounds extend to the voxel before the
     next unseen sample, and the cylinder reaches the nearest unseen sample, so
     no measured voxel between samples is cropped or masked.
@@ -184,7 +184,7 @@ def _seen_voxels(scan: Scan) -> tuple[np.ndarray, np.ndarray, Cylinder]:
     n_views = len(cast("Any", scan.geometry).angles)
     views = np.unique(np.linspace(0, n_views - 1, min(n_views, _VIEWS)).round().astype(int))
     seen = np.ones(len(points), bool)
-    slack = 1e-6  # pixels: a voxel centre on the outermost pixel centre is seen
+    slack = 1e-6  # pixels: a voxel center on the outermost pixel center is seen
     for column, row in _pixel_coordinates(scan, views, points):
         seen &= (column >= -slack) & (column <= detector.nu - 1 + slack)
         seen &= (row >= -slack) & (row <= detector.nv - 1 + slack)
@@ -235,7 +235,7 @@ def _pixel_coordinates(
         pose = np.asarray(cast("Any", geometry).pose_matrix(int(view)), np.float64)
         lab = points @ pose[:3, :3].T + pose[:3, 3]
         x, z = lab[:, 0] - detector.center[0], lab[:, 2] - detector.center[1]
-        # The rolled lattice sits at R(roll) @ (x', z') from the detector centre.
+        # The rolled lattice sits at R(roll) @ (x', z') from the detector center.
         yield (
             (c * x + s * z) / detector.du + (detector.nu - 1) / 2,
             (-s * x + c * z) / detector.dv + (detector.nv - 1) / 2,

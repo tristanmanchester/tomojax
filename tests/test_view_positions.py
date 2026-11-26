@@ -2,7 +2,7 @@
 
 A gap left by rejected or unselected views is charged as the steps it hides, and a
 restart (a combined scan) breaks the chain. The oracle for the gap is
-marginalisation: a random walk observed at fewer times has, at those times, the
+marginalization: a random walk observed at fewer times has, at those times, the
 precision of the full chain with the missing times integrated out.
 """
 

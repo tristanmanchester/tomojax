@@ -233,7 +233,7 @@ def test_pyhst_file_owns_geometry_calibrations_and_projection_sampling(tmp_path)
 
 
 def _edf_scan(path: Path) -> Path:
-    """A four-view SPEC EDF scan whose metadata record the pixel size and no centre."""
+    """A four-view SPEC EDF scan whose metadata record the pixel size and no center."""
     dark = np.full((3, 5), 20.25, np.float32)
     for i in range(4):
         _edf(path / f"sample{i:04}.edf", dark + (100 + 5 * (i + 0.5)) * np.exp(-0.2))
@@ -249,12 +249,12 @@ def _edf_scan(path: Path) -> Path:
 
 @pytest.mark.parametrize("kind", ["bliss", "edf"])
 def test_a_file_without_a_recorded_center_loads_it_at_the_middle(kind, tmp_path, monkeypatch):
-    # Recorded pixel sizes and no centre: the scan loads with the centre at the middle of
+    # Recorded pixel sizes and no center: the scan loads with the center at the middle of
     # the detector and says the file recorded none; nothing estimates it.
     from tomojax.alignment import api as alignment
 
     def no_estimate(*_args, **_kwargs):
-        raise AssertionError("loading estimated a centre")
+        raise AssertionError("loading estimated a center")
 
     monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
     if kind == "bliss":

@@ -160,7 +160,7 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
         if key in ("alignment/y-shifts", "ImageInfo/XrayGeometry"):  # no axis without them
             with pytest.raises(ValueError, match="geometry="):
                 tj.load_frames(path, darks=0)
-        else:  # the middle centre, said; and pixel units only without the pixel size
+        else:  # the middle center, said; and pixel units only without the pixel size
             meta = tj.load_frames(path, darks=0).source.geometry_metadata
             assert meta["detector_center_status"] == "not_recorded"
             assert (meta.get("length_unit") == "pixel") == (key == "ImageInfo/pixelsize")
@@ -178,7 +178,7 @@ def _check_missing_zeiss_inputs(path, streams, frames, counts):
 
 
 def _streams(counts: np.ndarray, reference: np.ndarray, declared_count: int = 3) -> dict:
-    """A cone Zeiss scan of three views with its vendor shifts and centre shift."""
+    """A cone Zeiss scan of three views with its vendor shifts and center shift."""
     fields = {
         "ImageInfo/NoOfImages": ("<u4", [declared_count]),
         "ImageInfo/ImageWidth": ("<u4", [12]),
@@ -223,7 +223,7 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     np.testing.assert_array_equal(scan.angles, [180, 90, 0])
     assert scan.grid.vx == pytest.approx(0.01)
     assert scan.detector.du == pytest.approx(0.015)
-    # The view's centre is -pitch x (x-shift + CenterShift) along u: -0.015 x (0.25 + 0.125).
+    # The view's center is -pitch x (x-shift + CenterShift) along u: -0.015 x (0.25 + 0.125).
     np.testing.assert_allclose(scan.detector.center, [-0.005625, -0.0075])
     assert scan.geometry.beam.source_to_axis == 40
     assert scan.geometry.beam.source_to_detector == 60
@@ -239,7 +239,7 @@ def test_zeiss_content_geometry_and_raw_calibration(tmp_path, declared_count):
     write_ole(path, streams)
     parallel = tj.load_frames(path, darks=0).corrected()
     transforms = np.asarray(stack_view_poses(parallel.geometry, 3))
-    # The recorded centre stays on the detector and each view's shift is a pose:
+    # The recorded center stays on the detector and each view's shift is a pose:
     # together they move the image by (x-shift + CenterShift) pixels along u, as for cone.
     assert parallel.detector.center[0] == pytest.approx(-0.00125)
     np.testing.assert_allclose(transforms[:, 0, 3], [0.0025, 0.005, -0.0025], atol=1e-8)
@@ -424,7 +424,7 @@ def test_multireferences_use_recorded_times_and_exposures(tmp_path):
 @pytest.mark.parametrize("cone", [True, False])
 def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_path, cone):
     # A raw scan has per-view shifts but no CenterShift (only a reconstruction setup
-    # writes it). detector= supplies the centre the shifts are measured from:
+    # writes it). detector= supplies the center the shifts are measured from:
     # pitch x CenterShift for the file that records it.
     counts = (500 + np.arange(4 * 8 * 12)).astype("<u2").reshape(4, 8, 12)
     fields = {
@@ -469,7 +469,7 @@ def test_a_supplied_center_keeps_the_recorded_shifts_as_a_written_one_does(tmp_p
 
 @pytest.mark.parametrize("cone", [True, False])
 def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
-    # The file's per-view shifts and centre shift are the vendor's corrections: applied by
+    # The file's per-view shifts and center shift are the vendor's corrections: applied by
     # default, left out by apply_poses=False, and named in the record either way.
     path = tmp_path / "scan.txrm"
     counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
@@ -501,7 +501,7 @@ def test_zeiss_vendor_shifts_follow_the_poses_switch(tmp_path, cone):
 def test_a_cone_scan_without_a_center_shift_loads_with_the_middle_as_its_center(tmp_path):
     # Only a reconstruction setup writes AutoRecon/CenterShift, so a raw scan (CuO_2 tomo-A)
     # lacks it; the detector was then never built and tj.load asked for the pixel size the
-    # file records. As for every format: the middle is the centre, said, nothing estimated.
+    # file records. As for every format: the middle is the center, said, nothing estimated.
     counts = (500 + np.arange(3 * 8 * 12)).astype("<u2").reshape(3, 8, 12)
     streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
     write_ole(tmp_path / "with.txrm", streams)
@@ -515,7 +515,7 @@ def test_a_cone_scan_without_a_center_shift_loads_with_the_middle_as_its_center(
     assert scan.detector.du == pytest.approx(0.015)  # 10 um at the sample, magnified 1.5
     # The recorded shifts (0.25, -0.5 px) are applied from the middle: -0.25 x 0.015 mm along u.
     np.testing.assert_allclose(scan.detector.center, [-0.00375, -0.0075])
-    # The centre shift (0.125 px) moves the centre by its pitch and changes nothing else.
+    # The center shift (0.125 px) moves the center by its pitch and changes nothing else.
     np.testing.assert_allclose(
         np.subtract(recorded.detector.center, scan.detector.center), [-0.125 * 0.015, 0]
     )

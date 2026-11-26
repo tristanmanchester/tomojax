@@ -1,4 +1,4 @@
-"""Build a skeletonised mechanical watch movement in Blender; export an STL per material.
+"""Build a skeletonized mechanical watch movement in Blender; export an STL per material.
 
 Run headless (Blender 4.5 LTS):
 
@@ -6,7 +6,7 @@ Run headless (Blender 4.5 LTS):
 
 A 29 mm (13 ligne) hand-wound Swiss-lever movement at 18,000 vibrations an
 hour, seen from the bridge side: z is the movement's axis, z = 0 the dial side
-of the main plate, lengths are millimetres. Every part is a closed mesh; parts
+of the main plate, lengths are millimeters. Every part is a closed mesh; parts
 of one material are fused into one mesh and different materials never overlap,
 so a ray's path length through each STL is that material's share of it.
 
@@ -15,7 +15,7 @@ so a ray's path length through each STL is that material's share of it.
   bridge, pallet bridge, balance cock) on titanium posts, their edges chamfered.
 - Barrel: brass drum with 84 teeth and a lid, a steel arbor, and a 0.1 mm
   Nivaflex mainspring in 16 coils, packed at the arbor and the wall.
-- Going train: brass centre (80 teeth), third (75) and fourth (75) wheels with
+- Going train: brass center (80 teeth), third (75) and fourth (75) wheels with
   filleted crossings, on steel arbors with 12-, 10- and 10-leaf pinions; watch
   (ogival) tooth forms after NIHS 20-25. Pivots turn in ruby jewels with oil sinks.
 - Escapement: a silicon escape wheel with 20 club teeth on a 10-leaf steel
@@ -24,7 +24,7 @@ so a ray's path length through each STL is that material's share of it.
 - Balance: a three-armed Glucydur wheel with twelve 18-carat gold timing
   screws, a steel staff, a roller with a ruby impulse pin, a 35 µm Nivarox
   hairspring of 12.5 turns in a steel collet and stud, and regulator curb pins.
-- Keyless top: a skeletonised steel ratchet wheel on the barrel arbor's square,
+- Keyless top: a skeletonized steel ratchet wheel on the barrel arbor's square,
   a crown wheel, a click with its spring, and slotted steel screws throughout.
 
 The materials and their names are listed in ``MATERIALS``; the hero planes
@@ -94,7 +94,7 @@ def arc(c: np.ndarray, r: float, a0: float, a1: float, n: int | None = None) -> 
 
 
 def ccw(outline: np.ndarray) -> np.ndarray:
-    """``outline`` ordered anticlockwise."""
+    """``outline`` ordered counterclockwise."""
     x, y = outline[:, 0], outline[:, 1]
     area = 0.5 * np.sum(x * np.roll(y, -1) - np.roll(x, -1) * y)
     return outline if area > 0 else outline[::-1]
@@ -140,11 +140,11 @@ def _fillet_line_circle(
 
     The fillet lies on the side ``n @ p > c`` of the line and inside (``inside``)
     or outside the circle; of the two solutions the one nearest ``near`` is kept.
-    Returns the fillet centre and its tangent points on the line and the circle.
+    Returns the fillet center and its tangent points on the line and the circle.
     """
     offset = line_c + rho
     reach = radius - rho if inside else radius + rho
-    # Points on the offset line n @ p = offset at distance ``reach`` from centre.
+    # Points on the offset line n @ p = offset at distance ``reach`` from center.
     foot = center + (offset - line_n @ center) * line_n
     along = np.array([-line_n[1], line_n[0]])
     half = math.sqrt(max(reach**2 - np.sum((foot - center) ** 2), 0.0))
@@ -261,7 +261,7 @@ def watch_teeth(teeth: int, module: float, *, wheel: bool = True, per_side: int 
 
 
 def club_teeth(teeth: int, tip: float, base: float) -> np.ndarray:
-    """A Swiss lever escape wheel outline with club teeth leaning anticlockwise."""
+    """A Swiss lever escape wheel outline with club teeth leaning counterclockwise."""
     pitch = TAU / teeth
     points = []
     for k in range(teeth):
@@ -290,7 +290,7 @@ def club_teeth(teeth: int, tip: float, base: float) -> np.ndarray:
 
 
 def ratchet_teeth(teeth: int, tip: float, root: float) -> np.ndarray:
-    """A sawtooth ratchet outline: steep faces anticlockwise."""
+    """A sawtooth ratchet outline: steep faces counterclockwise."""
     pitch = TAU / teeth
     points = []
     for k in range(teeth):
@@ -374,7 +374,7 @@ class Field:
             ]
             if len(edges) == 2:
                 link(*edges)
-            elif len(edges) == 4:  # saddle: decide by the cell centre
+            elif len(edges) == 4:  # saddle: decide by the cell center
                 center = f[j, i] + f[j, i + 1] + f[j + 1, i] + f[j + 1, i + 1]
                 b0 = inside[j, i]
                 if (center < 0) == b0:
@@ -655,15 +655,15 @@ BRIDGES = (4.15, 5.25)
 COCK = (3.45, 4.45)
 PALLET_BRIDGE = (2.10, 2.38)
 
-BARREL = d(math.pi / 2) * 5.76  # barrel 84 teeth, m 0.12, drives the 12-leaf centre pinion
+BARREL = d(math.pi / 2) * 5.76  # barrel 84 teeth, m 0.12, drives the 12-leaf center pinion
 CENTER = np.zeros(2)
-THIRD = CENTER + 4.05 * d(math.radians(-45))  # centre 80 teeth, m 0.09; third pinion 10
+THIRD = CENTER + 4.05 * d(math.radians(-45))  # center 80 teeth, m 0.09; third pinion 10
 FOURTH = THIRD + 3.40 * d(math.radians(-75))  # third 75 teeth, m 0.08; fourth pinion 10
 ESCAPE = FOURTH + 2.975 * d(math.radians(-165))  # fourth 75 teeth, m 0.07; escape pinion 10
 PALLET = ESCAPE + 2.55 * d(math.pi)
 BALANCE = PALLET + 3.30 * d(math.pi)  # straight-line lever
 ESCAPE_TIP = 2.25
-STONE_ANGLE = math.radians(30)  # entry and exit stones either side of the line of centres
+STONE_ANGLE = math.radians(30)  # entry and exit stones either side of the line of centers
 LEVER = math.pi  # direction from the pallet arbor to the balance staff
 
 BARREL_POSTS = [BARREL + 5.8 * d(math.radians(a)) for a in (20, 160, 215)]
@@ -786,17 +786,17 @@ def gear(
 def pinion(
     name: str, xy: np.ndarray, z: tuple[float, float], leaves: int, module: float, angle: float
 ) -> None:
-    """A steel pinion's leaves (the arbor fills its centre)."""
+    """A steel pinion's leaves (the arbor fills its center)."""
     part(name, "steel", at(prism(watch_teeth(leaves, module, wheel=False), *z), xy, angle))
 
 
 def mesh_angle(wheel: np.ndarray, pinion_xy: np.ndarray) -> float:
-    """Rotation putting a wheel tooth on the line of centres."""
+    """Rotation putting a wheel tooth on the line of centers."""
     return towards(wheel, pinion_xy)
 
 
 def gap_angle(pinion_xy: np.ndarray, wheel: np.ndarray, leaves: int) -> float:
-    """Rotation putting a pinion's gap on the line of centres."""
+    """Rotation putting a pinion's gap on the line of centers."""
     return towards(pinion_xy, wheel) + math.pi / leaves
 
 
@@ -947,7 +947,7 @@ def barrel_bridge() -> Obj:
 
 
 def train_bridge() -> Obj:
-    """Curved arms joining the centre, third, fourth and escape bearings to four posts."""
+    """Curved arms joining the center, third, fourth and escape bearings to four posts."""
     field = Field((-1.6, -11.4), (9.0, 3.5))
     shape = np.full(field.X.shape, 1e3)
     bosses = [(CENTER, 1.05), (THIRD, 0.95), (FOURTH, 0.9), (ESCAPE, 0.85)]
@@ -1102,9 +1102,9 @@ def barrel() -> None:
 
 
 def going_train() -> None:
-    """Centre, third and fourth wheels with their pinions and arbors."""
+    """Center, third and fourth wheels with their pinions and arbors."""
     shaft(
-        "centre arbor",
+        "center arbor",
         CENTER,
         [
             (1.10, 0.10),
@@ -1119,9 +1119,9 @@ def going_train() -> None:
             (4.46, 0.12),
         ],
     )
-    pinion("centre pinion", CENTER, (3.00, 3.55), 12, 0.12, gap_angle(CENTER, BARREL, 12))
+    pinion("center pinion", CENTER, (3.00, 3.55), 12, 0.12, gap_angle(CENTER, BARREL, 12))
     gear(
-        "centre wheel",
+        "center wheel",
         "brass",
         CENTER,
         (3.75, 3.95),

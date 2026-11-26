@@ -19,7 +19,7 @@ def read_calibration_frames(path: str | Path, *, like: object = None) -> FrameSt
     ----------
     path : str or pathlib.Path
         HDF5 stack, TIFF file or folder, or Zeiss image container. Zeiss content
-        is recognised independently of the filename.
+        is recognized independently of the filename.
     like : frame stack or None, optional
         Sample frames whose vendor TIFF panel orientation (Nikon, SkyScan) a
         TIFF calibration stack takes too.

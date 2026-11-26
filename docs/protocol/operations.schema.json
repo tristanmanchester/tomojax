@@ -11,7 +11,7 @@
           "$ref": "#/$defs/Slice"
         },
         {
-          "$ref": "#/$defs/CentreSweep"
+          "$ref": "#/$defs/CenterSweep"
         },
         {
           "$ref": "#/$defs/CorrectionPreview"
@@ -25,7 +25,7 @@
         "mapping": {
           "plane": "#/$defs/Plane",
           "slice": "#/$defs/Slice",
-          "centre_sweep": "#/$defs/CentreSweep",
+          "center_sweep": "#/$defs/CenterSweep",
           "correction_preview": "#/$defs/CorrectionPreview",
           "region_preview": "#/$defs/RegionPreview"
         }
@@ -2154,7 +2154,7 @@
     },
     "Interleaved": {
       "title": "Interleaved",
-      "description": "Hold out regularly spaced views with optional neighbouring guard views.",
+      "description": "Hold out regularly spaced views with optional neighboring guard views.",
       "type": "object",
       "properties": {
         "type": {
@@ -2849,10 +2849,10 @@
           "type": "number",
           "default": 0.0
         },
-        "artefacts": {
+        "artifacts": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SimulationArtefacts"
+              "$ref": "#/$defs/SimulationArtifacts"
             },
             {
               "type": "null"
@@ -2892,9 +2892,9 @@
       ],
       "additionalProperties": false
     },
-    "SimulationArtefacts": {
-      "title": "SimulationArtefacts",
-      "description": "Wire fields of SimulationArtefacts.",
+    "SimulationArtifacts": {
+      "title": "SimulationArtifacts",
+      "description": "Wire fields of SimulationArtifacts.",
       "type": "object",
       "properties": {
         "poisson_scale": {
@@ -4121,14 +4121,14 @@
       ],
       "additionalProperties": false
     },
-    "CentreSweep": {
-      "title": "CentreSweep",
+    "CenterSweep": {
+      "title": "CenterSweep",
       "description": "Reconstruct at signed horizontal offsets in detector pixels.",
       "type": "object",
       "properties": {
         "type": {
           "enum": [
-            "centre_sweep"
+            "center_sweep"
           ]
         },
         "source": {
@@ -4332,7 +4332,7 @@
           "type": "integer",
           "minimum": 0
         },
-        "centres": {
+        "centers": {
           "type": "array",
           "items": {
             "type": "number"
@@ -4344,7 +4344,7 @@
         "source",
         "axis",
         "index",
-        "centres"
+        "centers"
       ],
       "additionalProperties": false
     },
@@ -5025,7 +5025,7 @@
                   "$ref": "#/$defs/Slice"
                 },
                 {
-                  "$ref": "#/$defs/CentreSweep"
+                  "$ref": "#/$defs/CenterSweep"
                 },
                 {
                   "$ref": "#/$defs/CorrectionPreview"
@@ -5039,7 +5039,7 @@
                 "mapping": {
                   "plane": "#/$defs/Plane",
                   "slice": "#/$defs/Slice",
-                  "centre_sweep": "#/$defs/CentreSweep",
+                  "center_sweep": "#/$defs/CenterSweep",
                   "correction_preview": "#/$defs/CorrectionPreview",
                   "region_preview": "#/$defs/RegionPreview"
                 }

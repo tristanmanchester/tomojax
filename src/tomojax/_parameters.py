@@ -22,7 +22,7 @@ type ProjectorBackend = Literal["auto", "jax", "cuda"]
 def method_fit(method: str | None, fit: str | tuple[str, ...] | None) -> tuple[str, ...]:
     """The fit selection as a tuple of names; None selects the method's own fit.
 
-    Opposite views fit the centre alone; the joint fit (the default method) fits
+    Opposite views fit the center alone; the joint fit (the default method) fits
     per-view translations.
     """
     if fit is None:

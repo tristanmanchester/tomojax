@@ -205,7 +205,7 @@ class FISTAConfig:
         Regularization model: "tv" or "huber_tv". Both use a constrained proximal
         solve after each data-gradient step. Default is 'tv'.
     huber_delta : float, optional
-        Positive dimensionless Huber transition scale when regulariser is
+        Positive dimensionless Huber transition scale when regularizer is
         "huber_tv". Default is 0.01.
     lipschitz : float | None, optional
         Positive data-gradient Lipschitz constant, or None to estimate it by power

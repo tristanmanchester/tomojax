@@ -222,7 +222,7 @@ def preview_panels(value: Object, roi: tuple[tuple[int, int], ...] | None = None
         a = value["planes"]
         pixels = load(a)
         return [
-            plane(a, pixels, "Centre sweep", dim=0, index=i, roi=roi) for i in range(len(pixels))
+            plane(a, pixels, "Center sweep", dim=0, index=i, roi=roi) for i in range(len(pixels))
         ]
     if kind == "correction_preview":
         views = load(value["views"])
@@ -247,7 +247,7 @@ def reference(tools: Tools, name: str, mode: str) -> Object:
     return src
 
 
-FEATURE_COLOURS: tuple[_marks.Colour, ...] = ("cyan", "magenta", "green", "orange", "red")
+FEATURE_COLORS: tuple[_marks.Color, ...] = ("cyan", "magenta", "green", "orange", "red")
 
 
 def flat(item: Object) -> np.ndarray:
@@ -270,16 +270,16 @@ async def outlines(
     reads: list[tuple[Object, int | None]],
     shape: list[int],
     names: tuple[str, ...],
-) -> list[list[tuple[np.ndarray, _marks.Colour]]]:
+) -> list[list[tuple[np.ndarray, _marks.Color]]]:
     """Read each feature's mask on the same planes as the source, in palette order.
 
     ``reads`` holds the source's requests: a read with a mode returns its planes, a
     plain read one plane with the given fixed dimension.
     """
-    if len(names) > len(FEATURE_COLOURS):
-        raise ValueError(f"outline at most {len(FEATURE_COLOURS)} features in one view")
-    found: list[list[tuple[np.ndarray, _marks.Colour]]] = []
-    for colour, name in zip(FEATURE_COLOURS, names, strict=False):
+    if len(names) > len(FEATURE_COLORS):
+        raise ValueError(f"outline at most {len(FEATURE_COLORS)} features in one view")
+    found: list[list[tuple[np.ndarray, _marks.Color]]] = []
+    for color, name in zip(FEATURE_COLORS, names, strict=False):
         if tools.ledger.lookup(name.partition(".")[0])["kind"] != "feature":
             raise ValueError(f"{name} is not a feature handle")
         ref = resolve(name, base=tools.supervisor.base, ledger=tools.ledger)
@@ -297,7 +297,7 @@ async def outlines(
             )
         found.extend([] for _ in range(len(planes) - len(found)))
         for k, item in enumerate(planes):
-            found[k].append((np.asarray(flat(item), dtype=bool), colour))
+            found[k].append((np.asarray(flat(item), dtype=bool), color))
     return found
 
 
@@ -349,7 +349,7 @@ async def view(tools: Tools, args: View) -> CallToolResult:
             panels += new_panels
             frames += new_frames
         assert first is not None
-        masks: list[list[tuple[np.ndarray, _marks.Colour]]] = [[] for _ in frames]
+        masks: list[list[tuple[np.ndarray, _marks.Color]]] = [[] for _ in frames]
         if args.features:
             planes = await outlines(tools, g, stack, first[0], first[1], args.features)
             masks = planes * len(names)
@@ -390,7 +390,7 @@ def finish(
     args: View,
     panels: list[Panel],
     frames: list[_marks.Frame],
-    masks: list[list[tuple[np.ndarray, _marks.Colour]]],
+    masks: list[list[tuple[np.ndarray, _marks.Color]]],
 ) -> CallToolResult:
     """Render the planes, keep where each landed for pixel marks, and report the marks."""
     from tomojax.cli.mcp.tools import result
@@ -461,8 +461,8 @@ def finish(
         data["marks"] = reports
     if args.features:
         data["features"] = [
-            {"handle": name, "colour": colour}
-            for name, colour in zip(args.features, FEATURE_COLOURS, strict=False)
+            {"handle": name, "color": color}
+            for name, color in zip(args.features, FEATURE_COLORS, strict=False)
         ]
     reply = result(data)
     reply.content.extend(image(picture) for picture in pictures)

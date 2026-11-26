@@ -391,7 +391,7 @@ def _moving_scan(slip=0.0, wobble_deg=0.0, jitter=0.0):
     phase = np.deg2rad(angles)
     table[:, 0] = wobble_deg * np.sin(3 * phase)  # the public table is in degrees
     table[:, 1] = wobble_deg * np.cos(2 * phase + 0.5)
-    if jitter:  # each view's own shift, independent of its neighbours'
+    if jitter:  # each view's own shift, independent of its neighbors'
         table[:, 3:5] += np.random.default_rng(11).uniform(-jitter, jitter, (views, 2))
     empty = tj.Scan(np.zeros((views, 32, 40), np.float32), geometry)
     projections = np.array(tj.project(empty.with_poses(table).geometry, volume))

@@ -18,7 +18,7 @@ import sys
 import bpy  # pyright: ignore[reportMissingImports]
 from mathutils import Vector  # pyright: ignore[reportMissingImports]
 
-LOOK = {  # base colour, metallic, roughness, transmission, IOR, emission strength
+LOOK = {  # base color, metallic, roughness, transmission, IOR, emission strength
     "steel316": ((0.80, 0.80, 0.81), 1.0, 0.16, 0.0, 1.5, 0.0),
     "steel": ((0.10, 0.16, 0.55), 1.0, 0.22, 0.0, 1.5, 0.0),
     "brass": ((0.86, 0.66, 0.36), 1.0, 0.28, 0.0, 1.5, 0.0),
@@ -51,11 +51,11 @@ VIEWS = {  # camera position, target, lens (mm)
 
 def material(name: str) -> object:
     """A Principled material for the STL called ``name``."""
-    colour, metallic, roughness, transmission, ior, glow = LOOK[name]
+    color, metallic, roughness, transmission, ior, glow = LOOK[name]
     mat = bpy.data.materials.new(name)
     mat.use_nodes = True
     bsdf = mat.node_tree.nodes["Principled BSDF"]
-    bsdf.inputs["Base Color"].default_value = (*colour, 1.0)
+    bsdf.inputs["Base Color"].default_value = (*color, 1.0)
     bsdf.inputs["Metallic"].default_value = metallic
     bsdf.inputs["Roughness"].default_value = roughness
     bsdf.inputs["Transmission Weight"].default_value = transmission
