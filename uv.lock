@@ -2795,7 +2795,7 @@ wheels = [
 
 [[package]]
 name = "tomojax"
-version = "1.0.0rc5"
+version = "1.0.0rc6"
 source = { editable = "." }
 dependencies = [
     { name = "h5py" },

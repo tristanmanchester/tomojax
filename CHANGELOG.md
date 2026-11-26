@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc6 (2026-11-26)
 
 - Spelling is US English everywhere, with no aliases for the old names. Renamed:
   `tj.simulate(artifacts=)`, `SimConfig.artifacts` and `datasets.SimulationArtifacts`
