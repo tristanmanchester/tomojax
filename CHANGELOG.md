@@ -15,6 +15,10 @@
   user, and reporting bugs, with the workflow guides as its references and a
   `feature_scores.py` script. `tomojax skill` prints where it is; `tomojax skill -o DIR`
   installs it for an agent.
+- Automatic reconstruction of a cone-beam arc shorter than 180° plus the fan angle uses
+  CGLS: it used to select FDK, which refuses such arcs, so `tj.reconstruct(scan)` failed.
+- `method="opposite-views"` on a scan without an unposed axial parallel beam is refused
+  as an invalid `method`, so the worker and MCP report the parameter.
 - `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
   `tomojax align --method opposite-views` and the worker's `align` operation fit the centre
   without `fit="center"`; joint alignment still defaults to `"translations"`.

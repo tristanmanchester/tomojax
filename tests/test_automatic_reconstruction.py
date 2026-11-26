@@ -159,6 +159,24 @@ def test_automatic_route_reconstructs_a_plain_cone_scan():
     assert _error(result, volume) < 0.08  # FDK at 0.038 measured
 
 
+def test_a_cone_arc_too_short_for_fdk_reconstructs_with_cgls():
+    # FDK weights a full turn or a short scan of 180 degrees plus the fan angle; the
+    # automatic route used to send shorter arcs to FDK, which refused them.
+    volume = _phantom()
+    detector, beam = tj.Detector(24, 24, 1.5, 1.5), tj.ConeBeam(192, 288)
+    short = tj.ConeGeometry(_GRID, detector, np.linspace(0, 120, 48), beam)
+    scan = tj.Scan(np.asarray(tj.project(short, volume)), short)
+    result = tj.reconstruct(scan)
+    assert result.method == "cgls"
+    assert "180 degrees plus the fan angle" in result.info["automatic"]["reason"]
+    np.testing.assert_array_equal(result.volume, tj.reconstruct(scan, "cgls").volume)
+    assert _error(result, volume) < 0.15  # 0.067 measured on this 120-degree arc
+    # A short scan FDK can weight still goes to FDK.
+    parker = tj.ConeGeometry(_GRID, detector, np.linspace(0, 200, 80), beam)
+    blank = tj.Scan(np.zeros((80, 24, 24), np.float32), parker)
+    assert tj.reconstruct(blank).method == "fbp"
+
+
 @pytest.mark.parametrize(
     ("kind", "method", "geometry", "bound"),
     [
