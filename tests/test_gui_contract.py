@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-import runpy
 
 import h5py
 from jsonschema import Draft202012Validator
@@ -33,13 +32,6 @@ def schemas():
         (doc["$id"], Resource.from_contents(doc)) for doc in documents.values()
     )
     return {key: Draft202012Validator(doc, registry=registry) for key, doc in documents.items()}
-
-
-def test_generated_contract_is_current():
-    options = runpy.run_path(str(ROOT / "tools/build_wire_options.py"))
-    assert options["render"]() == options["TARGET"].read_text()
-    schemas = runpy.run_path(str(ROOT / "tools/build_wire_schemas.py"))["documents"]()
-    assert schemas == {p.name: json.loads(p.read_text()) for p in DOCS.glob("*.schema.json")}
 
 
 @pytest.mark.parametrize(

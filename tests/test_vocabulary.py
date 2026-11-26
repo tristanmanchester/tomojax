@@ -8,8 +8,9 @@ names the replacement when it fails.
 """
 
 import argparse
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 import dataclasses
+import importlib
 import inspect
 import json
 from pathlib import Path
@@ -17,6 +18,7 @@ import re
 
 import h5py
 import numpy as np
+from tools.guardrails import EXPERT_MODULES, PUBLIC_PACKAGES
 
 import tomojax as tj
 from tomojax import datasets, interactive, progress, recon
@@ -242,13 +244,38 @@ def docs_sites() -> Iterator[Site]:
             yield Site(place, f"tomojax {command}")
 
 
+def exported_sites() -> Iterator[Site]:
+    """Every exported name of every package, with its members and parameters."""
+    packages = {
+        f"tomojax.{path.parent.name}"
+        for path in (ROOT / "src/tomojax").glob("*/__init__.py")
+        if not path.parent.name.startswith("_")
+    }
+    for module_name in sorted(packages.union(PUBLIC_PACKAGES, EXPERT_MODULES)):
+        module = importlib.import_module(module_name)
+        for name in getattr(module, "__all__", ()):
+            yield Site(module_name, name)
+            value = getattr(module, name)
+            if inspect.isclass(value):
+                yield from _class(f"{module_name}.{name}", value)
+            elif callable(value):
+                yield from _parameters(f"{module_name}.{name}", value)
+
+
+def misspelled(sites: Iterable[Site]) -> dict[tuple[str, str], str]:
+    return {
+        (site.place, site.name): f"American spelling: {american}"
+        for site in sites
+        for british, american in BRITISH.items()
+        if british in site.name.lower()
+    }
+
+
 def violations(sites) -> dict[tuple[str, str], str]:
-    found = {}
+    sites = list(sites)
+    found = misspelled(sites)
     for site in sites:
         name, key = site.name, (site.place, site.name)
-        for british, american in BRITISH.items():
-            if british in name.lower():
-                found[key] = f"American spelling: {american}"
         # A ``units`` value names the unit a file records; it is meant to be one.
         if UNITS & set(name.lower().split("_")) and not site.place.endswith("[units]"):
             found[key] = "no unit in a name: angles are in degrees, said once in the docs"
@@ -284,6 +311,11 @@ def _check(found: dict[tuple[str, str], str]) -> None:
 
 def test_the_api_and_cli_use_one_vocabulary(monkeypatch):
     _check(violations([*api_sites(), *cli_sites(monkeypatch)]))
+
+
+def test_every_exported_name_uses_american_spelling():
+    assert misspelled([Site("x", "centre_sweep")])
+    _check(misspelled(exported_sites()))
 
 
 def test_results_and_saved_files_use_one_vocabulary(tmp_path):
