@@ -73,11 +73,11 @@ _FP32_STEP_PX = 1e-4
 _LM_INITIAL = 0.01
 
 
-def _kernel(sigma: float) -> jax.Array:
+def _kernel(sigma: float) -> list[float]:
     radius = max(1, int(np.ceil(3.0 * float(sigma))))
     t = np.arange(-radius, radius + 1, dtype=np.float64)
     k = np.exp(-0.5 * (t / float(sigma)) ** 2)
-    return jnp.asarray(k / k.sum(), jnp.float32)
+    return np.asarray(k / k.sum(), dtype=np.float32).tolist()
 
 
 class EdgeFilter:
@@ -98,14 +98,13 @@ class EdgeFilter:
             radius = len(kernel) // 2
             width = a.shape[axis]
             reach = min(radius, width - 1)
-            padding = [(0, 0, 0)] * a.ndim
-            padding[axis] = (reach, reach, 0)
-            padded = jax.lax.pad(a, np.float32(0), padding)
+            padding = [(0, 0)] * a.ndim
+            padding[axis] = (reach, reach)
+            padded = jnp.pad(a, padding)
             a = jax.lax.full_like(a, 0)
-            for offset in range(-reach, reach + 1):
-                start = offset + reach
+            for start, weight in enumerate(kernel[radius - reach : radius + reach + 1]):
                 neighbor = jax.lax.slice_in_dim(padded, start, start + width, axis=axis)
-                a = a + kernel[radius + offset] * neighbor
+                a = a + neighbor * weight
         return a
 
     def forward(self, a: jax.Array, precision: jax.Array | np.ndarray) -> jax.Array:
