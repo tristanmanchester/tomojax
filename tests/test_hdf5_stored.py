@@ -107,3 +107,19 @@ def test_filtered_frames_are_decoded_by_hdf5(tmp_path, bytes_read):
     stack = _stack(tmp_path / "scan.h5")
     np.testing.assert_array_equal(stack.window(slice(1, 4), slice(2, 7))[:], values[:, 1:4, 2:7])
     assert bytes_read[0] == 0
+
+
+def test_a_file_rewritten_in_place_is_read_at_its_new_chunk_offsets(tmp_path):
+    path = tmp_path / "scan.h5"
+    first = np.arange(8 * 4 * 5, dtype=np.uint16).reshape(8, 4, 5)
+    with h5py.File(path, "w") as file:
+        file.create_dataset("data", data=first, chunks=(1, 4, 5))
+    np.testing.assert_array_equal(_stack(path)[:], first)
+    # The same path and dataset, the chunks written in another order at other offsets.
+    second = first[::-1] + 1000
+    with h5py.File(path, "w") as file:
+        file.create_dataset("pad", data=np.zeros(977, np.uint8))
+        data = file.create_dataset("data", (8, 4, 5), np.uint16, chunks=(1, 4, 5))
+        for frame in (5, 0, 7, 2, 6, 1, 4, 3):
+            data[frame] = second[frame]
+    np.testing.assert_array_equal(_stack(path)[:], second)

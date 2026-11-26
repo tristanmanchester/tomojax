@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import math
 import os
+from pathlib import Path
+import threading
 
 import h5py
 import numpy as np
@@ -12,6 +15,10 @@ import numpy as np
 # Parallel file systems (GPFS, Lustre) need many requests in flight; local disks
 # saturate with fewer, and the extra threads only wait.
 _READERS = 32
+# Chunk offsets are listed once per file state for datasets of up to this many chunks.
+_LISTED_CHUNKS = 1 << 18
+_listed: dict[tuple[str, str, int, int], dict[tuple[int, ...], int]] = {}
+_listing = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -117,8 +124,10 @@ def _runs(
     """The stored byte runs that fill ``out`` with ``frames`` in a window of ``rows``, ``cols``."""
     item = data.dtype.itemsize
     starts: dict[tuple[int, int, int], int | None] = {}
+    listed = None
     if data.chunks is not None:
         chunk = (data.chunks[0], 1, data.chunks[1]) if data.ndim == 2 else data.chunks
+        listed = _chunk_offsets(data)
     else:  # one frame after another: address each frame as a chunk
         chunk = (1, 1, data.shape[1]) if data.ndim == 2 else (1, *data.shape[1:])
         base = data.id.get_offset()  # None until the data are first written
@@ -135,7 +144,11 @@ def _runs(
                 origin = (f0, top, left)
                 if origin not in starts:
                     coord = (f0, left) if data.ndim == 2 else origin
-                    starts[origin] = data.id.get_chunk_info_by_coord(coord).byte_offset
+                    starts[origin] = (
+                        data.id.get_chunk_info_by_coord(coord).byte_offset
+                        if listed is None
+                        else listed.get(coord)
+                    )
                 lr0, lr1 = max(r0, top) - top, min(r1, top + chunk[1]) - top
                 lc0, lc1 = max(c0, left) - left, min(c1, left + chunk[2]) - left
                 first = ((frame - f0) * chunk[1] + lr0) * chunk[2] + lc0
@@ -146,6 +159,31 @@ def _runs(
                     _Run(position, (lr1 - lr0 - 1) * chunk[2] + lc1 - lc0, chunk[2], target)
                 )
     return runs
+
+
+def _chunk_offsets(data: h5py.Dataset) -> dict[tuple[int, ...], int] | None:
+    """Byte offset of every written chunk of ``data`` by its origin, or None if too many to list.
+
+    Asking HDF5 for one chunk walks its chunk index; for the thousands of frames of a
+    scan that takes seconds on a network file system, at every read. One pass over the
+    index lists them all, and the list is kept while the file's size and modification
+    time stay the same.
+    """
+    assert data.chunks is not None
+    if math.prod(-(-n // c) for n, c in zip(data.shape, data.chunks, strict=True)) > _LISTED_CHUNKS:
+        return None
+    status = Path(data.file.filename).stat()
+    key = (data.file.filename, str(data.name), status.st_size, status.st_mtime_ns)
+    with _listing:
+        offsets = _listed.get(key)
+        if offsets is None:
+            found: dict[tuple[int, ...], int] = {}
+            data.id.chunk_iter(lambda chunk: found.update({chunk.chunk_offset: chunk.byte_offset}))
+            offsets = found
+            while len(_listed) >= 8:
+                del _listed[next(iter(_listed))]
+            _listed[key] = offsets
+    return offsets
 
 
 def _read_run(descriptor: int, run: _Run, where: str) -> None:
