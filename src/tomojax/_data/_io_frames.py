@@ -14,6 +14,7 @@ import numpy as np
 from tomojax.core.files import validate_virtual_pixels
 
 from ._frame_stack import FrameStack
+from ._hdf5_stored import read_stored
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 
 
@@ -23,10 +24,11 @@ class Hdf5Frames(FrameStack):
 
     It holds no open file: each read opens the file, reads the frames asked for
     and closes it, so it outlives the call that made it and is safe to read
-    from several threads. Indexing by a slice or index array selects frames
-    (``stack[a:b]`` reads frames a to b of this stack) and returns NumPy arrays
-    in the file's dtype; :meth:`frames_at` and :meth:`window` narrow the stack
-    without reading.
+    from several threads. Unfiltered data are read at their stored byte
+    offsets, many reads at once, rather than through HDF5. Indexing by a
+    slice or index array selects frames (``stack[a:b]`` reads frames a to b of
+    this stack) and returns NumPy arrays in the file's dtype; :meth:`frames_at`
+    and :meth:`window` narrow the stack without reading.
     A stored sinogram ``(view, u)`` has one detector row: reads expose the
     same ``(view, v, u)`` shape as a three-dimensional stack.
     """
@@ -72,6 +74,9 @@ class Hdf5Frames(FrameStack):
                 raise ValueError(f"{self.path}:{self.dataset} no longer holds a detector stack")
             if indices.size == 0:
                 return np.empty((0, self.rows, self.cols), self.dtype)
+            stored = read_stored(data, indices, rows, cols)
+            if stored is not None:
+                return stored
             detector = (cols,) if data.ndim == 2 else (rows, cols)
             first, last = int(indices[0]), int(indices[-1]) + 1
             if last - first == indices.size:  # contiguous: one hyperslab

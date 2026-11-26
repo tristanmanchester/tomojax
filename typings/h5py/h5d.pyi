@@ -1,0 +1,4 @@
+COMPACT: int
+CONTIGUOUS: int
+CHUNKED: int
+VIRTUAL: int

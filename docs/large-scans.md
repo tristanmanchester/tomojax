@@ -84,6 +84,8 @@ Geometry-specific slab behavior:
 
 `Frames.corrected()` produces a complete corrected stack in host memory (or `TMPDIR`). `tj.reconstruct_slabs` uses the following storage strategies.
 
+Uncompressed HDF5 frames, chunked or contiguous and also behind an external link, are read with many positional reads at once, as parallel file systems need, and a band of detector rows reads only those rows of each frame.
+
 - **Cone-beam FDK:** `tj.reconstruct_slabs(frames, "fbp")` keeps full-scan angular weights while correcting one row band at a time.
 - **Unposed axial parallel with an unrolled detector:** supports `"fbp"`, `"fourier"`, `"sirt"`, and `"mlem"` (with optional `config=` and `warm_start=True`). A full Diamond I12 scan (56.6 GB SIRT volume) ran in 24 minutes using [1.4 GB of VRAM](measurements.md#scans-larger-than-the-gpu).
 - **Rolled parallel detector.** FBP, SIRT and MLEM require the full corrected projection stack in host memory and a resident volume on the compute device. The raw slab iterator returns the whole volume in one block. Fourier reads bounded bands of rotated detector rows and returns axial slabs.
