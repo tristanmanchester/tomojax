@@ -174,7 +174,7 @@ fn array_source(products: &[&Product], key: &str) -> Option<ArraySource> {
     })
 }
 
-/// The grid of a volume registered with uniform (z, y, x) voxel-centre axes.
+/// The grid of a volume registered with uniform (z, y, x) voxel-center axes.
 fn registered_grid(volume: &ArrayDescriptor) -> Option<Value> {
     let names: Vec<_> = volume.axes.iter().map(|axis| axis.name.as_str()).collect();
     if names != ["z", "y", "x"] || volume.shape.len() != 3 {

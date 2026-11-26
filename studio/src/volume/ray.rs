@@ -88,7 +88,7 @@ impl VolumeGpu {
         data: Arc<VolumeData>,
     ) -> Resident {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Normalised scalar volume"),
+            label: Some("Normalized scalar volume"),
             size: wgpu::Extent3d {
                 width: data.shape[2] as u32,
                 height: data.shape[1] as u32,
@@ -373,7 +373,7 @@ mod invert_tests {
     use super::*;
 
     #[test]
-    fn inverting_reverses_the_colours_but_keeps_dense_material_opaque() {
+    fn inverting_reverses_the_colors_but_keeps_dense_material_opaque() {
         let plain = transfer_table(&VolumeSettings::default());
         let inverted = transfer_table(&VolumeSettings {
             invert: true,
@@ -382,7 +382,7 @@ mod invert_tests {
         let texel = |table: &[u16], i: usize| -> [f32; 4] {
             std::array::from_fn(|c| half::f16::from_bits(table[i * 4 + c]).to_f32())
         };
-        // The densest value's colour is the plain table's lowest colour...
+        // The densest value's color is the plain table's lowest color...
         assert_eq!(texel(&inverted, 255)[..3], texel(&plain, 0)[..3]);
         // ...and every value keeps its opacity.
         for i in [0, 128, 255] {

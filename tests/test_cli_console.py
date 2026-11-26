@@ -36,7 +36,7 @@ def test_an_existing_output_names_force_and_the_one_line_usage(tmp_path, capsys)
         "  hint: pass --force to replace it",
         "usage: tomojax reconstruct INPUT -o OUTPUT [options]   (tomojax reconstruct --help)",
     ]
-    assert "\x1b[" not in err  # no colour off a terminal
+    assert "\x1b[" not in err  # no color off a terminal
     # JSON gets the message alone; the hint is for people.
     captured = _usage_error(
         capsys, ["reconstruct", str(scan), "-o", str(out), "--progress", "json"]
@@ -144,7 +144,7 @@ def test_every_warning_and_log_record_appears_once(monkeypatch, tmp_path, capsys
             "tomojax says check this",
             "jax says watch out",
             "other package warns",
-            "records no rotation centre",
+            "records no rotation center",
         ):
             assert text.count(message) == 1, (mode, message, text)
         # Info lines are shown only with live rows on a terminal, and as JSON records.

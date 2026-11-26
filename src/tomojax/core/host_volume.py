@@ -144,7 +144,7 @@ class HostOutputs:
 
     def allocate(self, shape: tuple[int, ...]) -> np.ndarray:
         """Allocate and register an output before filling it."""
-        progress.check_cancelled()
+        progress.check_canceled()
         array = host_array(shape)
         self.own(array)
         return array
@@ -373,7 +373,7 @@ def check_rows(data: np.ndarray, context: str, *, nonnegative: bool = False) -> 
     from tomojax.errors import InvalidParameter
 
     for first in range(0, data.shape[0], 16):
-        progress.check_cancelled()
+        progress.check_canceled()
         block = np.asarray(data[first : first + 16], np.float32)
         if not np.isfinite(block).all() or (nonnegative and block.min() < 0):
             kind = "finite and nonnegative" if nonnegative else "finite in FP32"

@@ -89,7 +89,7 @@ def test_parameter_defaults_reconstruct_the_owning_objects(description):
     owners = [
         tj.Grid,
         tj.Detector,
-        datasets.SimulationArtefacts,
+        datasets.SimulationArtifacts,
         alignment.AlignConfig,
         *get_args(MethodConfig.__value__),
         *(
@@ -181,7 +181,7 @@ def test_each_method_config_names_its_method():
 
 def test_parameter_help_is_plain_text(description):
     props = description["Simulate"]["properties"]
-    assert "tomojax.datasets.SimulationArtefacts" in props["artefacts"]["description"]
+    assert "tomojax.datasets.SimulationArtifacts" in props["artifacts"]["description"]
     assert "grid" in props["size"]["description"]
     for model in description.values():
         for prop in model.get("properties", {}).values():

@@ -30,7 +30,7 @@ def _box_means(values: np.ndarray, scale: int) -> tuple[np.ndarray, np.ndarray]:
     columns = values.shape[-1]
     middle = (columns - 1) / 2
     reach = -(-int(np.ceil(middle)) // scale)
-    centres = middle + scale * np.arange(-reach, reach + 1)
+    centers = middle + scale * np.arange(-reach, reach + 1)
     pad = scale * (reach + 2)
     extended = np.pad(values.astype(np.float64), ((0, 0), (0, 0), (pad, pad)), mode="edge")
     edges = np.arange(-pad, columns + pad + 1) - 0.5
@@ -39,7 +39,7 @@ def _box_means(values: np.ndarray, scale: int) -> tuple[np.ndarray, np.ndarray]:
     def at(points: np.ndarray) -> np.ndarray:
         return np.apply_along_axis(lambda row: np.interp(points, edges, row), -1, integral)
 
-    return centres, (at(centres + scale / 2) - at(centres - scale / 2)) / scale
+    return centers, (at(centers + scale / 2) - at(centers - scale / 2)) / scale
 
 
 def _stripes(values: np.ndarray, width: int) -> np.ndarray:
@@ -56,9 +56,9 @@ def _stripes(values: np.ndarray, width: int) -> np.ndarray:
         if scale == 1:
             offsets += np.median(rest - _window_median(rest, window), axis=0)
             continue
-        centres, blocks = _box_means(rest, scale)
+        centers, blocks = _box_means(rest, scale)
         found = np.median(blocks - _window_median(blocks, window), axis=0)
-        offsets += np.stack([np.interp(np.arange(columns), centres, f) for f in found])
+        offsets += np.stack([np.interp(np.arange(columns), centers, f) for f in found])
     return values - offsets[None]
 
 
@@ -163,7 +163,7 @@ def test_zinger_binary_windows_match_majority(size: int) -> None:
     values = np.random.default_rng(size).integers(0, 2, (64, size, size)).astype(np.float32)
     values[:, size // 2, size // 2] = 1.0
     actual = jax.jit(Zingers(size=size).apply)(jnp.asarray(values))
-    # With a bright centre, it is retained precisely when a strict majority
+    # With a bright center, it is retained precisely when a strict majority
     # of the window is bright; otherwise the zero median replaces it.
     reference = (values.sum(axis=(1, 2)) > size * size // 2).astype(np.float32)
     np.testing.assert_array_equal(actual[:, size // 2, size // 2], reference)
@@ -217,8 +217,8 @@ def test_wide_windows_remove_a_broad_offset_under_moving_features() -> None:
     clean = np.clip((450 - np.abs(u)) / 50, 0, 1) * 2.0 * np.ones((views, 1))
     features = ((40, 300, 0.3, -0.004), (25, 200, 2.0, 0.006), (60, 100, 4.0, -0.003))
     for radius, distance, phase, density in features:
-        centre = distance * np.cos(angles + phase)
-        clean += 2 * density * np.sqrt(np.clip(radius**2 - (u - centre) ** 2, 0, None))
+        center = distance * np.cos(angles + phase)
+        clean += 2 * density * np.sqrt(np.clip(radius**2 - (u - center) ** 2, 0, None))
     offset = np.where((np.arange(columns) >= 700) & (np.arange(columns) < 780), 0.05, 0.0)
     noise = np.random.default_rng(93).normal(0, 0.002, clean.shape)
     measured = (clean + offset + noise).astype(np.float32)[:, None]

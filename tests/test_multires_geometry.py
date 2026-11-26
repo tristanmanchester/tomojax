@@ -81,8 +81,8 @@ def test_volume_resize_preserves_constant_density_and_world_linear_interior():
         return 0.2 * x - 0.4 * y + 0.6 * z
 
     upsampled = upsample_volume(jnp.asarray(affine_volume(coarse)), 3, (13, 15, 17))
-    # Resize uses half-pixel centres and extends the nearest value outside the
-    # coarse centres; only the interior is expected to reproduce affine data.
+    # Resize uses half-pixel centers and extends the nearest value outside the
+    # coarse centers; only the interior is expected to reproduce affine data.
     np.testing.assert_allclose(
         upsampled[2:-2, 2:-2, 2:-2], affine_volume(grid)[2:-2, 2:-2, 2:-2], rtol=2e-6, atol=2e-6
     )

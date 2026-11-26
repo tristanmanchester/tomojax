@@ -42,7 +42,7 @@ type Storage = Npy | Hdf5 | Member
 
 
 class Uniform(Record, tag="uniform"):
-    """Centre coordinate of element zero and signed step in axis units."""
+    """Center coordinate of element zero and signed step in axis units."""
 
     origin: float
     spacing: float

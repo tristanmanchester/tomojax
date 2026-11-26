@@ -1,4 +1,4 @@
-"""JSON normalisation shared by metadata, manifests and calibration records."""
+"""JSON normalization shared by metadata, manifests and calibration records."""
 
 from __future__ import annotations
 

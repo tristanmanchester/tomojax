@@ -13,11 +13,11 @@ from tomojax.cli._results import unit_of
 if TYPE_CHECKING:
     import tomojax as tj
     from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax._smooth_alignment import CenterSelection, JointSelection
     from tomojax.geometry import Grid
     from tomojax.wire.resources import Placement
 
-    type Work = ResolvedReconstruction | JointSelection | CentreSelection
+    type Work = ResolvedReconstruction | JointSelection | CenterSelection
 
 
 def size(count: float) -> str:
@@ -73,12 +73,12 @@ def placement_text(placement: Placement) -> str:
 def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[str, str]]:
     """The plan as (heading, text) rows."""
     from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CentreSelection
+    from tomojax._smooth_alignment import CenterSelection
 
     unit = unit_of(scan)
-    if isinstance(work, CentreSelection):
+    if isinstance(work, CenterSelection):
         return [
-            ("method", f"opposite views: the centre from {_pairs(len(work.samples))}"),
+            ("method", f"opposite views: the center from {_pairs(len(work.samples))}"),
             ("placement", placement_text(placement)),
         ]
     if isinstance(work, ResolvedReconstruction):
@@ -126,10 +126,10 @@ def plan_text(scan: tj.Scan, work: Work, placement: Placement) -> str:
 def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -> str:
     """One line saying what a run is about to do."""
     from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CentreSelection
+    from tomojax._smooth_alignment import CenterSelection
 
     unit = unit_of(scan)
-    if isinstance(work, CentreSelection):
+    if isinstance(work, CenterSelection):
         what = f"opposite views, {_pairs(len(work.samples))}"
     elif isinstance(work, ResolvedReconstruction):
         what = method_name(work)

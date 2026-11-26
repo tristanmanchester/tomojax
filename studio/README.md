@@ -44,7 +44,7 @@ Five top-bar workspaces cover the full tomography loop, while the left sidebar k
 
 | Workspace | Purpose |
 | --- | --- |
-| **Prepare** | Import acquisitions, calibrate raw frames, run corrections, crop/bin/select views, align geometry, and preview slices or centre sweeps |
+| **Prepare** | Import acquisitions, calibrate raw frames, run corrections, crop/bin/select views, align geometry, and preview slices or center sweeps |
 | **Reconstruct** | Configure analytical, iterative, or slab reconstructions with live parameter validation and memory plans, then queue jobs |
 | **Explore** | Inspect 3D GPU volume renders and linked axial, coronal, sagittal, projection, and sinogram views; take physical distance and ROI measurements; export volumes |
 | **Compare** | Compare two reconstructions side by side, with a draggable split curtain, or as a difference map on a shared display window |
@@ -63,14 +63,14 @@ To try Studio without scan files on disk, choose **Try a demo project** on the s
 
 ## Prepare, preview, and reconstruct
 
-**Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artefact corrections, joint alignment, simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
+**Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artifact corrections, joint alignment, simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
 
 ### Live interactive previews
 
 Four interactive previews update automatically as you adjust settings, without adding jobs to the project history:
 
 - **Slice preview:** reconstructs a single plane at its physical orientation.
-- **Centre sweep:** evaluates one offset with the centre slider, or an ordered list of signed detector offsets in pixels in **Centres**, so you can step through candidates and pick the sharpest rotation centre.
+- **Center sweep:** evaluates one offset with the center slider, or an ordered list of signed detector offsets in pixels in **Centers**, so you can step through candidates and pick the sharpest rotation center.
 - **Correction preview:** switches between **Before correction** and **After correction** sinograms on a row band, keeping native count and corrected line-integral registrations separate.
 - **Estimate support:** runs TomoJAX's calibrated laminography region estimator and displays its three orthogonal overlays and physical bounds.
 
@@ -89,7 +89,7 @@ The worker executes one GPU job at a time. You can reorder waiting jobs, browse 
 
 **Explore** pairs a main viewport (**3D** volume render or **Slice** view) with a linked thumbnail strip showing **Axial**, **Coronal**, **Sagittal**, **Projection**, and **Sinogram** views whenever those arrays are present.
 
-![Axial slice through the hairspring and balance wheel of the aligned watch movement in Explore, showing physical distance and region attenuation measurements in millimetres and inverse millimetres alongside the display window histogram.](../docs/images/studio-explore-slice.png)
+![Axial slice through the hairspring and balance wheel of the aligned watch movement in Explore, showing physical distance and region attenuation measurements in millimeters and inverse millimeters alongside the display window histogram.](../docs/images/studio-explore-slice.png)
 
 | Interaction | Action |
 | --- | --- |
@@ -99,10 +99,10 @@ The worker executes one GPU job at a time. You can reorder waiting jobs, browse 
 | Middle-button drag over a slice | Pan |
 | Click or drag in **Navigate** mode | Move linked crosshairs across all orthogonal views |
 | Double-click or **Fit image** | Reset zoom and pan |
-| **Distance**, then drag on a slice | Measure physical distance between sample centres |
+| **Distance**, then drag on a slice | Measure physical distance between sample centers |
 | **Region**, then drag a box on a slice | Compute mean, standard deviation, and range of finite samples |
 
-- **Display controls:** adjust the greyscale window (**Apply window** commits typed bounds; **Auto** resets from the image), choose a colour map (**Gray**, **Bone**, **Viridis**, **Magma**), or invert display contrast. Display settings change rendering on the GPU without altering stored float values.
+- **Display controls:** adjust the grayscale window (**Apply window** commits typed bounds; **Auto** resets from the image), choose a color map (**Gray**, **Bone**, **Viridis**, **Magma**), or invert display contrast. Display settings change rendering on the GPU without altering stored float values.
 - **3D volume rendering:** tune **Opacity threshold**, **Density**, **Lighting**, and **X / Y / Z extent** clipping planes. Studio loads slices progressively up to 1,024 samples per edge and renders interactive 3D previews at up to 192³ voxels while keeping full-resolution floating-point arrays on disk for measurements and exports.
 - **Measurements:** saved distance and ROI measurements stay tied to their asset, slice index, and physical coordinate frame, and reappear whenever you return to that slice.
 
@@ -114,7 +114,7 @@ Open **Compare** and pick a **Left** and **Right** result in the inspector (or s
 | --- | --- |
 | **Side by side** | Both results locked to the same slice, zoom, and pan |
 | **Split** | Left result on one side of a draggable curtain, right result on the other |
-| **Difference** | Left minus right on a greyscale window symmetric around zero |
+| **Difference** | Left minus right on a grayscale window symmetric around zero |
 
 **Split** and **Difference** compare results on matching grids. Enable **Share display window** to lock both sides to one intensity range, or disable it to scale each side independently.
 
@@ -140,7 +140,7 @@ cache/                 # local viewer cache
 ```
 
 - **Autosave and locking:** workspace state—active asset, slice indices, display window, 3D camera, clipping, comparison pair, measurements, and parameter drafts—saves atomically in the background. An OS file lock ensures only one Studio window writes to a project at a time. The manifest holds up to 32 MiB; if a write fails, the previous manifest stays intact and the status bar reports the error.
-- **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is cancelled.
+- **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is canceled.
 - **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly.
 - **Export:** export derived results from **Explore** as NXtomo (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
 

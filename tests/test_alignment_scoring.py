@@ -1,4 +1,4 @@
-"""The migrated watch example scores physical detector rays, including the centre."""
+"""The migrated watch example scores physical detector rays, including the center."""
 
 from __future__ import annotations
 

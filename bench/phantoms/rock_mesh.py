@@ -4,11 +4,11 @@ Run with NumPy, SciPy and trimesh installed::
 
     python bench/phantoms/rock_mesh.py OUTPUT --n 192 --seed 0
 
-The fixed 1.1 mm cube is sampled at ``n`` centres per side. Each cube is split into
+The fixed 1.1 mm cube is sampled at ``n`` centers per side. Each cube is split into
 six tetrahedra shared by every mineral. Within each tetrahedron, one-hot
 material fields are interpolated linearly and contoured at 0.501. Since these
 fields sum to one, the resulting material interiors cannot overlap. The zero-padded
-labels close the finite core at both ends. This is a discretised mesh phantom,
+labels close the finite core at both ends. This is a discretized mesh phantom,
 not exact geometry of the procedural sampler: the mesh itself is the corpus
 truth, and reconstruction-grid truth must be integrated from these meshes.
 The separately applied subvoxel cracks in ``porous_rock()`` are not included.
@@ -125,7 +125,7 @@ def build(output: Path, *, n: int = 192, seed: int = 0) -> dict:
         "fov_mm": FOV_MM,
         "energy_keV": ENERGY_KEV,
         "materials": materials,
-        "truth": "closed mineral meshes; voxelise meshes, not the original sampler",
+        "truth": "closed mineral meshes; voxelize meshes, not the original sampler",
         "limitations": "subvoxel cracks omitted; unresolved mineral detail follows mesh sampling",
     }
     (output / "rock.json").write_text(json.dumps(meta, indent=2) + "\n")

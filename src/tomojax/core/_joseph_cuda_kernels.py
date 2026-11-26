@@ -10,12 +10,12 @@ THREADS = 128
 
 _GATHER_SOURCE = r"""
 // A unit tent on the two plane coordinates maps to a fixed parallelogram
-// on the detector. Its centre moves affinely along a z run. Translate this
+// on the detector. Its center moves affinely along a z run. Translate this
 // per-view bounding box to the first voxel instead of inverting every voxel.
 __device__ float2 footprint_axis(float ib, float ic, float db, float dc, float eb, float ec) {
     float end = (RUN - 1) * (ib * db + ic * dc);
     float radius = fabsf(ib) + fabsf(ic);
-    // Enclose both the rounded forward samples and the rounded inverse centre.
+    // Enclose both the rounded forward samples and the rounded inverse center.
     radius += 16 * 1.1920928955078125e-7f * (fabsf(ib)*eb + fabsf(ic)*ec + radius + 1);
     return make_float2(fminf(end, 0.f) - radius, fmaxf(end, 0.f) + radius);
 }

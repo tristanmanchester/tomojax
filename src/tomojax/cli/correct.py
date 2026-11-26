@@ -56,11 +56,11 @@ def _settings() -> dict[str, object]:
     """Expert TOML keys for ``tomojax correct --config``."""
     return {
         "paganin_delta_beta": (None, "Paganin delta/beta ratio (requires all four paganin_* keys)"),
-        "paganin_distance": (None, "Paganin effective propagation distance in metres"),
+        "paganin_distance": (None, "Paganin effective propagation distance in meters"),
         "paganin_energy_kev": (None, "Paganin X-ray energy in keV"),
-        "paganin_pixel": (None, "Paganin effective pixel size at the sample in metres"),
+        "paganin_pixel": (None, "Paganin effective pixel size at the sample in meters"),
         "stripes_varying": (False, "Use slow-varying stripe removal with --stripes"),
-        "zingers_size": (3, "Median-filter neighbourhood size for --zingers (odd int >= 3)"),
+        "zingers_size": (3, "Median-filter neighborhood size for --zingers (odd int >= 3)"),
     }
 
 
@@ -125,7 +125,7 @@ def build_parser() -> ProgressParser:
         nargs="?",
         const=0.1,
         metavar="THRESHOLD",
-        help="Replace specks brighter than their neighbours' median by THRESHOLD "
+        help="Replace specks brighter than their neighbors' median by THRESHOLD "
         "(a fraction of the open beam; 0.1)",
     )
     _ = parser.add_argument(
@@ -348,19 +348,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             outputs=[None if dry else output, preview],
             force=cast("bool", args.force),
         )
-        progress.check_cancelled()
+        progress.check_canceled()
         prepared = _prepared(source, args, declared, steps, crop_slices)
         band = _preview_band(parser, prepared, rows, cast("int", args.binning))
         if dry:
             return _dry_run(args, prepared, band, preview)
         assert output is not None
         scan = _applied(prepared, args)
-        progress.check_cancelled()
+        progress.check_canceled()
         import tomojax as tj
 
         tj.save(output, scan)
         if preview is not None:
-            progress.check_cancelled()
+            progress.check_canceled()
             write_band_preview(Path(preview), prepared, band, args)
         if args.progress == "json":
             from tomojax.cli._results import saved_result
@@ -400,7 +400,7 @@ def _prepared(
 
     select = cast("str | None", args.views)
     keywords = load_keywords(args)
-    progress.check_cancelled()
+    progress.check_canceled()
     raw = is_raw_input(
         source,
         flats=keywords["flats"],
@@ -409,7 +409,7 @@ def _prepared(
         image_key_path=keywords["image_key_path"],
         angles_path=keywords["angles_path"],
     )
-    progress.check_cancelled()
+    progress.check_canceled()
     if not raw and any(s.domain == "transmission" for s in steps):
         step = next(type(s).__name__.lower() for s in steps if s.domain == "transmission")
         raise ValueError(
@@ -421,7 +421,7 @@ def _prepared(
         if raw
         else load_scan_with_declaration(source, declared=declared, **keywords)
     )
-    progress.check_cancelled()
+    progress.check_canceled()
     total = int(item.views) if raw else len(item.angles)
     selection = np.arange(total)
     if select is not None:
@@ -445,7 +445,7 @@ def _applied(prepared: _Prepared, args: argparse.Namespace) -> Any:
             *prepared.steps, epsilon=cast("float", args.epsilon), binning=binning
         )
     scan = prepared.item.corrected(*prepared.steps) if prepared.steps else prepared.item
-    progress.check_cancelled()
+    progress.check_canceled()
     return scan.binned(binning)
 
 
@@ -575,7 +575,7 @@ def write_band_preview(
         (difference, (-(spread or 1.0), spread or 1.0), "after - before"),
     ):
         shown = _images.resample(image, shape, nearest=True)
-        pictures.append(_images.labelled(_images.to_uint8(shown, limits), label))
+        pictures.append(_images.labeled(_images.to_uint8(shown, limits), label))
     height = max(p.height for p in pictures)
     canvas = Image.new("L", (sum(p.width for p in pictures) + 8 * len(pictures), height), 0)
     x = 0
@@ -591,7 +591,7 @@ def write_band_preview(
         f"output rows {band[0]}:{band[1]}, row {band[0] + middle} shown; {chosen}, downwards; "
         f"white left strip: {int(rejected.sum())} dropped by --reject-views"
     )
-    _ = _images.save_png(_images.labelled(np.asarray(canvas), legend), path)
+    _ = _images.save_png(_images.labeled(np.asarray(canvas), legend), path)
 
 
 __all__ = ["build_parser", "detector_block", "main", "view_ranges"]

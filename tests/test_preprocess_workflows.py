@@ -64,7 +64,7 @@ def test_a_raw_nxtomo_file_becomes_a_scan_that_records_its_corrections(tmp_path,
     assert scan.detector.nu == 2 // binning and scan.detector.nv == 2 // binning
 
 
-# The detector of a file that records none: unit pixels, centred.
+# The detector of a file that records none: unit pixels, centered.
 DETECTOR = ("--pixel-size", 1, "--detector-center", 0, 0)
 
 

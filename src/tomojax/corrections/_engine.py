@@ -7,7 +7,7 @@ transmission, not line integrals, when the pipeline needs both kinds of batch.
 
 A row-efficient source can fuse calibration, row corrections and log without
 an intermediate host stack. Detector binning always averages the corrected
-line integrals. Both paths materialise the final corrected host stack.
+line integrals. Both paths materialize the final corrected host stack.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ def correct_frames(
     >>> result.projections.shape
     (2, 3, 4)
     """
-    progress.check_cancelled()
+    progress.check_canceled()
     views_per_batch = validated_views_per_batch(views_per_batch)
     epsilon = positive_finite(epsilon, "epsilon")
     views, rows, cols = (int(s) for s in counts.shape)
@@ -305,7 +305,7 @@ def correct_projections(
     >>> result.projections.shape
     (2, 3, 4)
     """
-    progress.check_cancelled()
+    progress.check_canceled()
     views_per_batch = validated_views_per_batch(views_per_batch)
     ordered = ordered_steps(steps)
     check_scan_steps(steps)
@@ -461,7 +461,7 @@ def _log_transmission(
 
 
 def _interpolate_unmeasured(transmission: jax.Array, usable: jax.Array) -> jax.Array:
-    """Fill bracketed calibration gaps from the same view's measured neighbours.
+    """Fill bracketed calibration gaps from the same view's measured neighbors.
 
     Only columns between two measured pixels are interpolated. A row with no
     measured pixels, and the unilluminated margins of any row, retain the neutral
@@ -498,7 +498,7 @@ def correct_view_batches(
     fill_gaps = not bool(fields.usable.all())
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        progress.check_cancelled()
+        progress.check_canceled()
         out[start:stop] = copies.result(result)
         release_planes(out, start, stop)
         tally[:] += [int(b) for b in bad]
@@ -524,7 +524,7 @@ def correct_view_batches(
         for start, stop, raw in batches:
             if load is not None:
                 load.advance(stop, {})
-            progress.check_cancelled()
+            progress.check_canceled()
             with progress.preparing("correct view batch", start):
                 flats, a, b = batch_fields(fields, resident, lo[start:stop], hi[start:stop])
                 done = first_pass(
@@ -597,7 +597,7 @@ def log_batches(
     starts = range(0, views, batch)
     with correction_group(("log", *steps), starts, "view batches"):
         for first in starts:
-            progress.check_cancelled()
+            progress.check_canceled()
             done, nonpositive, bad = _log_transmission(
                 jnp.asarray(out[first : first + batch]), epsilon=epsilon, line_steps=steps
             )
@@ -666,7 +666,7 @@ def _correct_row_slabs(
     tally = np.zeros(3, np.int64)
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
-        progress.check_cancelled()
+        progress.check_canceled()
         out[:, start // factor : stop // factor] = copies.result(result)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]), 0, views)
@@ -721,13 +721,13 @@ def _correct_row_slabs(
     ):
         submit = now if pool is None else pool.submit
         for start in starts:
-            progress.check_cancelled()
+            progress.check_canceled()
             stop = min(start + slab, rows - rows % factor)
             # Lazy sources may share caches: read serially, with at most two bands live.
             raw = read(start, stop)
             if load is not None and stop == rows - rows % factor:
                 load.advance(views, {})
-                progress.check_cancelled()
+                progress.check_canceled()
             with progress.preparing("correct detector rows", start):
                 done = submit(run, start, stop, raw)
 
@@ -753,7 +753,7 @@ def _binned(
     with progress.task("correction", "binned", len(starts), "view batches"):
         progress.placed(("cpu:0",))
         for start in starts:
-            progress.check_cancelled()
+            progress.check_canceled()
             binned[start : start + batch] = mean_detector_pixels(out[start : start + batch], factor)
             progress.step("view batches")
     return binned
@@ -791,7 +791,7 @@ def apply_steps(
             with correction_group((step,), starts, "view batches"):
                 stats = []
                 for v0 in starts:
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     stats.append(np.asarray(_statistic(step, jnp.asarray(out[v0 : v0 + batch]))))
                     progress.step("view batches")
                 keep, found = step.select(np.concatenate(stats), kept)
@@ -813,7 +813,7 @@ def apply_steps(
             starts = range(0, views, batch)
             with correction_group(run, starts, "view batches"):
                 for v0 in starts:
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     out[v0 : v0 + batch] = np.asarray(
                         _apply(run, jnp.asarray(out[v0 : v0 + batch]))
                     )
@@ -844,21 +844,21 @@ def _whole_rows(out: np.ndarray, step: Step) -> None:
             with ThreadPoolExecutor(max_workers=2) as pool:
                 pending = None
                 for r0 in starts:
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     launched = pool.submit(run, r0)
                     if pending is not None:
                         pending.result()
                         progress.step("row batches")
                     pending = launched
                 if pending is not None:
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     pending.result()
                     progress.step("row batches")
             return
         # Keep accelerator work asynchronous: workers add workspace, not useful parallelism.
         pending = None
         for r0 in starts:
-            progress.check_cancelled()
+            progress.check_canceled()
             done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
             copies.start(done)
             if pending is not None:
@@ -866,7 +866,7 @@ def _whole_rows(out: np.ndarray, step: Step) -> None:
                 progress.step("row batches")
             pending = (r0, done)
         if pending is not None:
-            progress.check_cancelled()
+            progress.check_canceled()
             out[:, pending[0] : pending[0] + slab] = copies.result(pending[1])
             progress.step("row batches")
 

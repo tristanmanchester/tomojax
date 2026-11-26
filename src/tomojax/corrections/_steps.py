@@ -164,14 +164,14 @@ class Stripes(Step):
     A pixel whose gain or offset the flat field does not describe adds the same
     absorption to every view, a stripe in the sinogram and a ring in the
     volume. Each detector row's values are sorted over views, column by column
-    (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of neighbouring
+    (as in Vo, Atwood and Drakopoulos, 2018), so equal ranks of neighboring
     columns compare like with like; a pixel's offset is the median over ranks
     of its sorted values minus their median over the window. Only that
     constant is subtracted, preserving differences between views. Widen
     ``width`` to about twice the widest stripe. A window of up to nine columns
     is a sliding median over them. A wider one is taken coarse to fine: at
     each scale the sorted values are averaged over blocks of columns and
-    compared with the median of nine neighbouring blocks, from a window of
+    compared with the median of nine neighboring blocks, from a window of
     blocks that spans ``width`` columns down to nine single columns, so a wide
     window costs the time and memory of a narrow one.
 
@@ -182,24 +182,24 @@ class Stripes(Step):
     rotation axis is also stationary in the sinogram, and one narrower than
     ``width`` can be altered: at the peak of a compact sample's profile, on the
     axis, a wide window leaves a faint ring or dot. An even ``width`` of up to
-    nine averages the two windows centred half a pixel either side, and wider
-    blocks are centred on the detector's middle, so reversing the detector
+    nine averages the two windows centered half a pixel either side, and wider
+    blocks are centered on the detector's middle, so reversing the detector
     does not change the correction.
 
     ``varying=True`` instead detects pixels with an anomalous view-to-view
-    response and fits a gain and offset to their neighbouring sorted values.
-    It leaves unselected pixels unchanged, including stationary centred
+    response and fits a gain and offset to their neighboring sorted values.
+    It leaves unselected pixels unchanged, including stationary centered
     features, but does not remove ordinary constant-offset stripes there.
-    Detection compares adjacent-view differences with neighbouring columns;
+    Detection compares adjacent-view differences with neighboring columns;
     it needs sufficiently sampled, noisy views, and sharp moving edges can
     cause false detections. Selected unresponsive pixels receive only the
-    neighbouring mean: their missing angular information is not recovered.
+    neighboring mean: their missing angular information is not recovered.
     It cannot distinguish a real feature from a defect at a selected pixel.
 
     Parameters
     ----------
     width : int, optional
-        Neighbourhood width in detector columns, at least 3. Default is 9.
+        Neighborhood width in detector columns, at least 3. Default is 9.
     varying : bool, optional
         Fit gain and offset at anomalous pixels instead of subtracting constant
         offsets at all pixels. Default is False.
@@ -275,7 +275,7 @@ class RejectViews(Step):
     turning edge-on raises the mean over many views without a step. Each
     view-to-view change of the mean is predicted by the median of its eight
     nearest changes that are not steps, and is a step when it departs from that
-    by more than ``z`` robust standard deviations, of those neighbours and of
+    by more than ``z`` robust standard deviations, of those neighbors and of
     the whole scan (each taken from its quietest quarter, so events may be
     most of them), and by more than a tenth of the robust spread of the means
     themselves (for noise-free scans). The views between a step and a step
@@ -289,7 +289,7 @@ class RejectViews(Step):
     attenuation per pixel, so an empty or uniform part of the detector neither
     dominates nor flips it.
 
-    Known behaviour: a flat, real flux change that steps back (a 0.5% step held
+    Known behavior: a flat, real flux change that steps back (a 0.5% step held
     for 50 views, say) is an event, and its views are rejected although an
     alignment's per-view offset would absorb it. A beam loss that starts at the
     second view reads as a failed first view; the first view is rejected and
@@ -386,7 +386,7 @@ _NEAREST_CHANGES = 8
 
 
 def _steps(means: np.ndarray, z: float) -> tuple[np.ndarray, np.ndarray, float]:
-    """Each change's departure from its neighbourhood, which departures are steps, the floor."""
+    """Each change's departure from its neighborhood, which departures are steps, the floor."""
     change = np.diff(means)
     index = np.arange(len(change))
     # float32 statistics resolve about 1e-6 of the largest mean, whatever the spreads.
@@ -474,10 +474,10 @@ class Zingers(Step):
     Parameters
     ----------
     threshold : float, optional
-        Positive excess over the neighbourhood median, as a fraction of the
+        Positive excess over the neighborhood median, as a fraction of the
         open beam. Default is 0.1.
     size : int, optional
-        Odd side length of the square neighbourhood, at least 3 pixels.
+        Odd side length of the square neighborhood, at least 3 pixels.
         Default is 3.
 
     Raises
@@ -533,9 +533,9 @@ class RadialDistortion(Step):
 
     ``center`` is ``(column, row)`` in zero-based pixel coordinates of the frames
     (not the rotation axis), and ``coefficients`` are ``(c0, c1, ...)``: an
-    undistorted pixel at radius ``r`` from the centre samples the measured image
+    undistorted pixel at radius ``r`` from the center samples the measured image
     at radius ``r * (c0 + c1 r + ...)``, the convention of Algotom and Discorpy
-    (``(1.0,)`` is the identity). Bilinear interpolation acts on the normalised
+    (``(1.0,)`` is the identity). Bilinear interpolation acts on the normalized
     transmission before the log, repeating the nearest edge pixel beyond the
     detector; the shape is kept and no Jacobian factor is applied.
 
@@ -547,7 +547,7 @@ class RadialDistortion(Step):
     Parameters
     ----------
     center : tuple of float
-        Distortion centre ``(column, row)`` in zero-based frame pixels.
+        Distortion center ``(column, row)`` in zero-based frame pixels.
     coefficients : tuple of float
         Backward radial-polynomial coefficients ``(c0, c1, ...)`` in frame-pixel
         coordinates; ``(1.0,)`` is the identity.
@@ -624,7 +624,7 @@ def radial_coordinates(
 
 
 def apply_radial_window(step: RadialDistortion, batch: jax.Array, first: int) -> jax.Array:
-    """Sample a cropped buffer with the same native map and bilinear neighbours."""
+    """Sample a cropped buffer with the same native map and bilinear neighbors."""
     _, rows, cols = batch.shape
     y, x = radial_coordinates(step, first, first + rows, cols)
     # Round in the native frame before translation, as on the full detector.
@@ -652,11 +652,11 @@ class Paganin(Step):
     delta_beta : float
         Positive ratio of the material's refractive-index decrement to absorption.
     distance : float
-        Positive effective propagation distance at the sample, in metres.
+        Positive effective propagation distance at the sample, in meters.
     energy_kev : float
         Positive X-ray energy in keV.
     pixel_size : float
-        Positive detector-pixel size at the sample, in metres.
+        Positive detector-pixel size at the sample, in meters.
 
     Raises
     ------
@@ -700,11 +700,11 @@ class Paganin(Step):
         return 4 * (rows + rows_before + rows_after) * (cols + cols_before + cols_after)
 
     def _scale(self) -> float:
-        wavelength = 12.398419843320026e-10 / self.energy_kev  # metres
+        wavelength = 12.398419843320026e-10 / self.energy_kev  # meters
         return self.distance * wavelength * self.delta_beta / (4 * np.pi)
 
     def _padding(self, rows: int, cols: int) -> tuple[tuple[int, int], tuple[int, int]]:
-        # The filter's point response decays over sqrt(scale) metres. Half a view
+        # The filter's point response decays over sqrt(scale) meters. Half a view
         # is too little for a narrow crop and wasteful for a large detector.
         decay = 16 * np.sqrt(self._scale()) / self.pixel_size
 
@@ -749,7 +749,7 @@ def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
     """Each column's offset in one detector row, ``(views, columns)``.
 
     Coarse to fine: at scale ``f`` the ranked row is averaged over blocks of
-    ``f`` columns, the median of :data:`_STRIPE_WINDOW` neighbouring blocks is
+    ``f`` columns, the median of :data:`_STRIPE_WINDOW` neighboring blocks is
     its stripe-free level, and the offsets found are interpolated back to the
     columns and removed before the next finer scale. The coarsest scale spans
     ``width`` columns and the finest is the columns themselves, so stripes of
@@ -769,9 +769,9 @@ def _stripe_offsets(row: jax.Array, width: int) -> jax.Array:
         if scale == 1:
             offsets = offsets + jnp.median(rest - _sliding_median(rest, window), axis=0)
             continue
-        centres, blocks = _block_means(rest, scale)
+        centers, blocks = _block_means(rest, scale)
         found = jnp.median(blocks - _sliding_median(blocks, window), axis=0)
-        offsets = offsets + jnp.interp(jnp.arange(columns, dtype=ranked.dtype), centres, found)
+        offsets = offsets + jnp.interp(jnp.arange(columns, dtype=ranked.dtype), centers, found)
     return offsets
 
 
@@ -780,18 +780,18 @@ _STRIPE_WINDOW = 9
 
 
 def _block_means(values: jax.Array, scale: int) -> tuple[jax.Array, jax.Array]:
-    """Means over ``scale``-column blocks centred on the detector middle, edges repeated.
+    """Means over ``scale``-column blocks centered on the detector middle, edges repeated.
 
     Block ``j`` covers ``[m + j scale - scale/2, m + j scale + scale/2]`` with
     ``m`` the middle column, so the blocks, and the correction, are symmetric
     under reversal of the detector. A boundary through a column's middle takes
-    half of it. Returns the block centres in columns and the means,
+    half of it. Returns the block centers in columns and the means,
     ``(rows, blocks)``.
     """
     columns = values.shape[1]
     middle = (columns - 1) / 2
     reach = -(-int(np.ceil(middle)) // scale)
-    centres = middle + scale * np.arange(-reach, reach + 1)
+    centers = middle + scale * np.arange(-reach, reach + 1)
     # Columns are [i - 1/2, i + 1/2]: blocks end on column edges for an even
     # count and on column middles for an odd one.
     halves = columns % 2
@@ -799,15 +799,15 @@ def _block_means(values: jax.Array, scale: int) -> tuple[jax.Array, jax.Array]:
     weights = np.ones(taps)
     if halves:
         weights[[0, -1]] = 0.5
-    first = round(centres[0] - scale / 2 + (0.5 if not halves else 0.0))
-    pad = max(0, -first, first + (len(centres) - 1) * scale + taps - columns)
+    first = round(centers[0] - scale / 2 + (0.5 if not halves else 0.0))
+    pad = max(0, -first, first + (len(centers) - 1) * scale + taps - columns)
     padded = jnp.pad(values, ((0, 0), (pad, pad)), mode="edge")
     start = first + pad
-    stop = start + (len(centres) - 1) * scale + 1
+    stop = start + (len(centers) - 1) * scale + 1
     total = weights[0] * padded[:, start:stop:scale]
     for k in range(1, taps):
         total = total + weights[k] * padded[:, start + k : stop + k : scale]
-    return jnp.asarray(centres, values.dtype), total / scale
+    return jnp.asarray(centers, values.dtype), total / scale
 
 
 def _stripe_response(row: jax.Array, width: int) -> jax.Array:
@@ -901,11 +901,11 @@ def _fit_stripe_response(row: jax.Array, width: int, noise: jax.Array, bad: jax.
 
 
 def _sliding_median(values: jax.Array, width: int) -> jax.Array:
-    """The median over ``width`` neighbouring columns, edges repeated.
+    """The median over ``width`` neighboring columns, edges repeated.
 
     Sorting networks of shifted copies use elementwise minima and maxima,
     which fuse into one pass. Wide odd windows retain only comparisons that
-    reach the median; even windows also need its neighbouring rank. Each row
+    reach the median; even windows also need its neighboring rank. Each row
     is independent, so rows are taken in blocks small enough that the window's
     copies of a block stay within a fixed working size, whatever the width.
     """
@@ -931,8 +931,8 @@ def _window_median(values: jax.Array, width: int) -> jax.Array:
     half, columns = width // 2, values.shape[1]
     even = width % 2 == 0
     padded = jnp.pad(values, ((0, 0), (half, half)), mode="edge")
-    # An even window is centred between pixels: take one more window and
-    # average neighbours onto the pixels, so reversing the detector does not
+    # An even window is centered between pixels: take one more window and
+    # average neighbors onto the pixels, so reversing the detector does not
     # change the correction.
     window = [padded[:, k : k + columns + even] for k in range(width)]
     # Wide stripe windows otherwise trace a quadratic sorting network. Reuse

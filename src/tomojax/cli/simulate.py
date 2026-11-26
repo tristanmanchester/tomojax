@@ -10,7 +10,7 @@ from tomojax._parameters import GeometryName, Phantom
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
-from tomojax.datasets import SimConfig, SimulationArtefacts
+from tomojax.datasets import SimConfig, SimulationArtifacts
 
 from ._runtime import transfer_guard_context
 
@@ -135,7 +135,7 @@ def _build_parser() -> ProgressParser:
         nargs=2,
         metavar=("NU", "NV"),
         default=None,
-        help="Unit-spaced centred detector shape (pixel pitch 1; default from --size)",
+        help="Unit-spaced centered detector shape (pixel pitch 1; default from --size)",
     )
     _ = parser.add_argument(
         "--seed", type=int, default=0, metavar="N", help="Random seed (phantom, motion and noise)"
@@ -153,7 +153,7 @@ def _build_parser() -> ProgressParser:
     return parser
 
 
-# Phantom details a config file may set; the detector artefacts besides
+# Phantom details a config file may set; the detector artifacts besides
 # --poisson-scale are config settings too.
 _PHANTOM_SETTINGS = (
     "tilt_about",
@@ -169,15 +169,15 @@ _PHANTOM_SETTINGS = (
     "max_rotation",
     "lamino_thickness_ratio",
 )
-_ARTEFACT_SETTINGS = tuple(f.name for f in fields(SimulationArtefacts) if f.name != "poisson_scale")
+_ARTIFACT_SETTINGS = tuple(f.name for f in fields(SimulationArtifacts) if f.name != "poisson_scale")
 
 
 def _settings() -> dict[str, object]:
-    """A config file's expert settings: phantom details and detector artefacts."""
+    """A config file's expert settings: phantom details and detector artifacts."""
     phantom = SimConfig(nx=1, ny=1, nz=1, nu=1, nv=1, n_views=1)
-    artefacts = SimulationArtefacts()
+    artifacts = SimulationArtifacts()
     return {name: getattr(phantom, name) for name in _PHANTOM_SETTINGS} | {
-        name: getattr(artefacts, name) for name in _ARTEFACT_SETTINGS
+        name: getattr(artifacts, name) for name in _ARTIFACT_SETTINGS
     }
 
 
@@ -208,8 +208,8 @@ def _validate_args(
         parser.error("--tilt applies to --geometry lamino or cone, not parallel")
     try:
         _ = replace(
-            SimulationArtefacts(),
-            **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
+            SimulationArtifacts(),
+            **{name: settings[name] for name in _ARTIFACT_SETTINGS if name in settings},
         )
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
@@ -232,8 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         pixels = cast("list[int] | None", args.detector)
         grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
         detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
-        artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
-        artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
+        artifact_keys = {name: settings[name] for name in _ARTIFACT_SETTINGS if name in settings}
+        artifacts = replace(SimulationArtifacts(), **artifact_keys) if artifact_keys else None
         phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
         with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
             resolved_grid, resolved_detector, cfg = build_sim_config(
@@ -247,7 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 source_to_detector=cast("float | None", args.source_to_detector),
                 poisson_scale=cast("float", args.poisson_scale),
                 translation_sigma=args.translation_sigma,
-                artefacts=artefacts,
+                artifacts=artifacts,
                 grid=grid,
                 detector=detector,
                 seed=cast("int", args.seed),

@@ -45,8 +45,8 @@ class Detector(Record):
     center: tuple[float, float] = (0.0, 0.0)
 
 
-class SimulationArtefacts(Record):
-    """Wire fields of SimulationArtefacts."""
+class SimulationArtifacts(Record):
+    """Wire fields of SimulationArtifacts."""
 
     poisson_scale: float = 0.0
     gaussian_sigma: float = 0.0

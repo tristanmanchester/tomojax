@@ -100,7 +100,7 @@ surfaces and restrained greens give the project and controls a consistent
 identity. Scientific images occupy dark, neutral canvases with their own clear
 labels and interaction hints.
 
-The image remains the visual centre of the application. The project navigator
+The image remains the visual center of the application. The project navigator
 explains where it came from; the inspector exposes the next useful operation.
 Keep controls compact enough for an expert workflow and separate groups with
 space, alignment and quiet seams.
@@ -123,13 +123,13 @@ Forest carries primary actions and active navigation. Sage identifies selected
 rows, view labels and restrained grouping. Paper, panel and background create
 subtle layers without changing the overall light appearance.
 
-Ink is the main text colour; muted is for secondary information that remains
+Ink is the main text color; muted is for secondary information that remains
 readable. Line separates persistent regions and outlines secondary controls.
-Warning and error always accompany words or a labelled icon. Axis colours
+Warning and error always accompany words or a labeled icon. Axis colors
 distinguish the canonical Z, Y and X slice directions; axis names remain visible.
 
 The canvas palette belongs to scientific viewing. Its background establishes a
-consistent surround, while image colours come from the selected scientific
+consistent surround, while image colors come from the selected scientific
 colormap. Changing a colormap must change the rendered data mapping explicitly.
 
 ## Typography
@@ -155,7 +155,7 @@ remaining space. Navigator and inspector can be hidden independently.
 Below 1320 points, the command search label shortens to Search and navigation
 spacing contracts. The inspector scrolls internally while its primary action
 stays visible. Its paired fields shrink within the available width; labels and
-input text must never overlap their neighbour. The project tree, jobs list and
+input text must never overlap their neighbor. The project tree, jobs list and
 modal results have their own bounded scrolling regions.
 
 The central composition uses one large active image and a linked strip below it.
@@ -205,7 +205,7 @@ and preserve correction order when the user switches editing modes.
 Prepare, Reconstruct, Explore, Compare and Jobs are workspaces inside one project.
 The active workspace has forest text and a short underline. The asset tree keeps
 derived results under their source. Selection, missing sources and saved state
-must be described with text as well as colour.
+must be described with text as well as color.
 
 Job rows show the submitted inputs, status, worker stage and applicable controls.
 Pause, resume and cancel stay beside the heading, above long task histories.

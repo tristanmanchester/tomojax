@@ -111,10 +111,10 @@ __device__ __forceinline__ float packet_dot(float3 a, float3 b) {
                      __fmul_rn(a.z, b.z));
 }
 __device__ __forceinline__ float3 packet_source(
-    const float* c, float3 centre)
+    const float* c, float3 center)
 {
-    return make_float3(__fsub_rn(c[0], centre.x), __fsub_rn(c[1], centre.y),
-                       __fsub_rn(c[2], centre.z));
+    return make_float3(__fsub_rn(c[0], center.x), __fsub_rn(c[1], center.y),
+                       __fsub_rn(c[2], center.z));
 }
 __device__ __forceinline__ bool dense_view_packet(
     const float* coeff, int first, int nviews, int nx, int ny, int nz)
@@ -122,15 +122,15 @@ __device__ __forceinline__ bool dense_view_packet(
     int last = min(first + 8, nviews);
     // A mostly empty cross-view warp cannot amortize its unused view lanes.
     if (last - first < 4) return false;
-    float3 centre = make_float3(__fmul_rn((float)(nx - 1), .5f),
+    float3 center = make_float3(__fmul_rn((float)(nx - 1), .5f),
                                __fmul_rn((float)(ny - 1), .5f),
                                __fmul_rn((float)(nz - 1), .5f));
     float extent = (float)max(nx, max(ny, nz));
     float extent2 = __fmul_rn(extent, extent);
-    float3 before = packet_source(coeff + (long)first * NC, centre);
+    float3 before = packet_source(coeff + (long)first * NC, center);
     float before2 = packet_dot(before, before);
     for (int view = first + 1; view < last; ++view) {
-        float3 next = packet_source(coeff + (long)view * NC, centre);
+        float3 next = packet_source(coeff + (long)view * NC, center);
         float next2 = packet_dot(next, next);
         float3 cross = make_float3(
             __fsub_rn(__fmul_rn(before.y, next.z), __fmul_rn(before.z, next.y)),
@@ -391,7 +391,7 @@ __device__ float register_ray_sum(const float* __restrict__ vol,const float* c,f
     return sum;
 }
 
-// Align packet centers only by relabelling which original pixel each lane owns.
+// Align packet centers only by relabeling which original pixel each lane owns.
 // Projection arithmetic in the sampler remains untouched.
 __device__ __forceinline__ void projected_center(const float* c, int nx, int ny, int nz,
     float& u, float& v)
@@ -406,7 +406,7 @@ __device__ __forceinline__ int pixel_shift(float own,float anchor,int size)
 {
     float delta=own-anchor;
     // A center on the source plane gives no useful scheduling proposal.
-    // Zero is still an ordinary bijective pixel relabelling.
+    // Zero is still an ordinary bijective pixel relabeling.
     return isfinite(delta)?(int)rintf(remainderf(delta,(float)size)):0;
 }
 __device__ __forceinline__ int wrap_pixel(int pixel,int shift,int size)

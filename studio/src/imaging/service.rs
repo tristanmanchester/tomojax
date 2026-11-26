@@ -1,4 +1,4 @@
-//! Latest-request scheduling, scalar LRU, and neighbour prefetch. No numerical worker calls.
+//! Latest-request scheduling, scalar LRU, and neighbor prefetch. No numerical worker calls.
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::thread::JoinHandle;
@@ -364,7 +364,7 @@ impl Imaging {
     }
 
     /// After the caller clears/rebinds every obsolete view, this remains true
-    /// until pending reads, refinements and neighbour prefetch have all stopped
+    /// until pending reads, refinements and neighbor prefetch have all stopped
     /// using the scalar *and coordinate* artifacts. Decoded cache entries own
     /// their bytes and do not retain a filesystem lease.
     pub fn artifacts_in_use(&self, artifacts: &BTreeSet<String>) -> bool {
@@ -518,7 +518,7 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
                 break;
             }
         }
-        // Prefetch only neighbours of a completed current view, yielding to foreground work.
+        // Prefetch only neighbors of a completed current view, yielding to foreground work.
         if let Some((axis, index)) = request.key.plane {
             if request.descriptor.shape.len() != 3 {
                 continue;
@@ -527,12 +527,12 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
                 if !current(&shared, &request) || !shared.inbox.lock().unwrap().pending.is_empty() {
                     break;
                 }
-                let neighbour = index as isize + offset;
-                if neighbour < 0 || neighbour as usize >= request.descriptor.shape[axis] {
+                let neighbor = index as isize + offset;
+                if neighbor < 0 || neighbor as usize >= request.descriptor.shape[axis] {
                     continue;
                 }
                 let mut key = request.key.clone();
-                key.plane = Some((axis, neighbour as usize));
+                key.plane = Some((axis, neighbor as usize));
                 let _ = load(&shared, &request, &key);
             }
         }

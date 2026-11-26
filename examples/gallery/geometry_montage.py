@@ -13,7 +13,7 @@ resolution and cropped to the largest bright region:
   FBP of one detector row;
 - K11 54286: 1441 views at 35°, aligned by ``tj.align(scan)``, FBP in-plane
   through the glass-sphere layer at 2.16 µm;
-- CuO_2 tomo-B: 3201 views with the centre and per-view shifts the file records,
+- CuO_2 tomo-B: 3201 views with the center and per-view shifts the file records,
   FDK of the central plane at 1.13 µm;
 - Walnut 1: all 3600 views of its three orbits, the default ``tj.reconstruct``
   (CGLS for several cone arrangements) on the authors' 501³ grid of 0.1 mm.
@@ -41,7 +41,7 @@ RINGS = (Stripes(9), Stripes(51, varying=True))  # the I12 scan's ring correctio
 
 
 def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
-    """The smallest centred square holding the largest bright region, with a margin."""
+    """The smallest centered square holding the largest bright region, with a margin."""
     from scipy import ndimage
 
     smooth = ndimage.gaussian_filter(np.asarray(image, np.float64), 4)
@@ -49,10 +49,10 @@ def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:
     labels, count = ndimage.label(smooth > (low + high) / 2)
     largest = np.argmax(ndimage.sum(np.ones_like(smooth), labels, range(1, count + 1))) + 1
     rows, columns = np.nonzero(labels == largest)
-    centre = np.array(((rows.min() + rows.max()) / 2, (columns.min() + columns.max()) / 2))
+    center = np.array(((rows.min() + rows.max()) / 2, (columns.min() + columns.max()) / 2))
     half = (1 + margin) * max(rows.max() - rows.min(), columns.max() - columns.min()) / 2
-    half = min(half, *centre, *(np.array(image.shape) - centre))
-    r0, c0 = (centre - half).astype(int)
+    half = min(half, *center, *(np.array(image.shape) - center))
+    r0, c0 = (center - half).astype(int)
     side = int(2 * half)
     return image[r0 : r0 + side, c0 : c0 + side]
 

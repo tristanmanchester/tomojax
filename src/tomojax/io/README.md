@@ -5,7 +5,7 @@ ESRF acquisitions, TIFF stacks and PSI cSAXS ptychographic tomography `.mat` fil
 with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
-Zeiss Xradia acquisitions are recognised by OLE content, with lazy raw counts,
+Zeiss Xradia acquisitions are recognized by OLE content, with lazy raw counts,
 embedded or explicitly selected XRM reference images and physical calibration;
 fractional image shifts stay in the geometry rather than resampling the data. Per-view cone arrangements use
 matched CGLS under automatic reconstruction, not single-arrangement FDK.
@@ -13,7 +13,7 @@ Use `tomojax correct scan.txrm --darks 0 -o scan.nxs`, or
 `tj.load_frames("scan.txrm", darks=0).corrected(...)`; the
 [lab-CT guide](../../../docs/lab-ct.md#zeiss-xradia-preview) gives a binned CPU preview.
 Pass separate flat or dark images with `flats="reference_Front.xrm"` or `darks=...`.
-Sample and flat exposure durations normalise dark-subtracted counts before
+Sample and flat exposure durations normalize dark-subtracted counts before
 timestamp interpolation of multiple reference sets. Large OLE images retain only
 allocation metadata and read the requested rows, without reopening their directory.
 
@@ -34,14 +34,14 @@ raw-frame discovery for APS Data Exchange, Diamond/GDA and uniquely named HDF5
 stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
-Validation of recognised raw acquisitions reports missing detector/axis metadata
+Validation of recognized raw acquisitions reports missing detector/axis metadata
 and flat/dark references, using the same requirements as frame loading. A file
-that records pitches without an axial centre loads with the centre at the
+that records pitches without an axial center loads with the center at the
 middle of the detector and `detector_center_status="not_recorded"`; fit it with
 `tj.align(scan, fit="center")` or supply `detector=`. CLI errors name `--flats`,
 `--darks`, `--angles`, or `--pixel-size` where those flags supply the missing input.
 
-Both raw-frame and processed NXtomo loading convert rotation angles labelled
+Both raw-frame and processed NXtomo loading convert rotation angles labeled
 `rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
 units mean degrees at the format-defined NXtomo/Data Exchange angular paths;
 generic unitless motors require an explicit `angles=` override. Angles must be a
@@ -64,7 +64,7 @@ and loading with `apply_poses=False` removes all of them.
 
 ## TIFF angle sidecars
 
-TIFF frame and projection loading reads every top-level greyscale page of a
+TIFF frame and projection loading reads every top-level grayscale page of a
 file, including separate series. Folders are naturally sorted by filename,
 then pages retain their file order. All pages must be two-dimensional and the
 same size; RGB/RGBA pages are not interpreted as extra detector views.
@@ -85,15 +85,15 @@ for the distinction between raw intensities and corrected absorption.
 
 ## SkyScan corrected acquisitions
 
-`tomojax.load_frames` and `tomojax.load` recognise a SkyScan acquisition log by
+`tomojax.load_frames` and `tomojax.load` recognize a SkyScan acquisition log by
 content, either explicitly or in its folder. Numbered sample TIFFs are read
 lazily; scout images and the separate drift-reference acquisition are excluded.
 Distances, camera calibration, and the vertical optical-axis line come from
-the log in millimetres, with detector v pointing up. Geometric and flat-field
+the log in millimeters, with detector v pointing up. Geometric and flat-field
 corrections must be enabled in the export. Camera rotation, aspect, and
 random-movement settings stay in source metadata without being reapplied.
 
-The log does not establish a horizontal rotation centre: supply `detector=`
+The log does not establish a horizontal rotation center: supply `detector=`
 (or a complete `geometry=`). Missing binning/resize metadata remains unknown.
 Keep the log beside its numbered TIFFs. Supply measured flats/white level and
 darks explicitly: storage bit depth does not establish calibration. The example
@@ -123,7 +123,7 @@ tomojax reconstruct grains.nxs --method fbp --grid 256 256 256 \
 
 External NXtomo and Data Exchange raw exports are content-discovered, including
 renamed files and NXtomo entries other than `/entry`. Recorded physical pixel
-sizes are retained in millimetres; an absent axial rotation centre defaults to
+sizes are retained in millimeters; an absent axial rotation center defaults to
 the detector middle (`detector_center_status="not_recorded"`). Supply
 `detector=`/`geometry=` or fit it with `tj.align(scan, fit="center")`. The
 support matrix lists metadata paths.

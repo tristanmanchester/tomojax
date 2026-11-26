@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate independent mesh projections using an optional, isolated gVXR install.
 
-All lengths are millimetres; reconstructed attenuation is mm^-1. The synthetic
+All lengths are millimeters; reconstructed attenuation is mm^-1. The synthetic
 five-bin spectrum is a stress case, not a calibrated tube or detector model.
 Only NumPy is needed to import the geometry/normalization helpers.
 """
@@ -30,7 +30,7 @@ MATERIALS = (
         "extent_mm": [18.0, 24.0, 22.0],
     },
     {
-        "label": "aluminium",
+        "label": "aluminum",
         "compound": "Al",
         "density_g_cm3": 2.70,
         "center_mm": [8.0, 2.0, -3.0],
@@ -89,7 +89,7 @@ def rotation(angle: float, tilt: float) -> np.ndarray:
 
 
 def add_materials(gvxr: Any, coordinates: np.ndarray) -> tuple[np.ndarray, list[dict]]:
-    """Create three disjoint mesh materials and their voxel-centre reference."""
+    """Create three disjoint mesh materials and their voxel-center reference."""
     materials = []
     truth = np.zeros(coordinates.shape[:-1], dtype=np.float64)
     for item in MATERIALS:
@@ -132,7 +132,7 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
     from gvxrPython3 import gvxr
 
     spacing = 48.0 / size
-    # Odd dimensions and sub-pixel offsets exercise orientation and centre conventions.
+    # Odd dimensions and sub-pixel offsets exercise orientation and center conventions.
     nu, nv = size + 5 if size % 2 == 0 else size + 4, size + 3 if size % 2 == 0 else size + 2
     center = np.array([0.23 * spacing, -0.31 * spacing])
     angles = np.linspace(0, 180, views, endpoint=False)
@@ -154,7 +154,7 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
         gvxr.useParallelBeam()
         gvxr.disablePoissonNoise()
         # Finer raster coordinates reduce hardware triangle interpolation error.
-        # Odd refinement preserves each original centre exactly; no area averaging.
+        # Odd refinement preserves each original center exactly; no area averaging.
         gvxr.setDetectorNumberOfPixels(nu * 5, nv * 5)
         gvxr.setDetectorPixelSize(spacing / 5, spacing / 5, "mm")
         truth, materials = add_materials(gvxr, coordinates)
@@ -228,7 +228,7 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
         "energy_keV": ENERGIES_KEV.tolist(),
         "photon_fractions": PHOTON_FRACTIONS.tolist(),
         "incident_photons_per_pixel": photons,
-        "raster_refinement": {"factor": 5, "reduction": "centre sample only; no averaging"},
+        "raster_refinement": {"factor": 5, "reduction": "center sample only; no averaging"},
         "detector_model": "ideal photon-counting, point-sampled; no blur or scatter",
         "noise": {
             "model": "independent Poisson from gVXR mean counts",
@@ -243,7 +243,7 @@ def generate(size: int, views: int, tilt: float, photons: float, seed: int) -> t
         "reference": "Independent analytic box-ray lengths using gVXR material attenuation tables",
         "limitations": (
             "Synthetic spectrum, not a calibrated scanner. Poly data do not satisfy "
-            "a single-energy linear model. Voxel-centre truth has boundary "
+            "a single-energy linear model. Voxel-center truth has boundary "
             "discretization error."
         ),
     }

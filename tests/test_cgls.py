@@ -216,7 +216,7 @@ def test_changed_data_geometry_and_budget_reuse_compiled_solver():
             )
         np.testing.assert_allclose(result.ravel(), truth, rtol=2e-4, atol=2e-5)
         assert info["converged"]
-        assert labels == (["initialise solver", "first update"] if watched else [])
+        assert labels == (["initialize solver", "first update"] if watched else [])
         assert [program._cache_size() for program in programs] == expected_sizes
         outputs.append(np.asarray(result))
     assert _run_cgls.unwatched._cache_size() == 1

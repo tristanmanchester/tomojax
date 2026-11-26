@@ -52,7 +52,7 @@ def run() -> int:
     try:
         return main()
     except KeyboardInterrupt:
-        _console.report_cancelled(prog)
+        _console.report_canceled(prog)
         return 130
     except Exception as exc:
         _console.report_internal(prog, exc)

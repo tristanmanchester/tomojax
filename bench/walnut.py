@@ -196,7 +196,7 @@ def _sum_squares(array: np.ndarray) -> float:
     """Accumulate large image energies without FP32 BLAS reduction/order bias."""
     total = 0.0
     # Buffer only the conversion chunk, not another full FP64 volume. External
-    # loop also accepts the noncontiguous sampled centres of native volumes.
+    # loop also accepts the noncontiguous sampled centers of native volumes.
     for chunk in np.nditer(
         array,
         flags=["external_loop", "buffered"],
@@ -209,12 +209,12 @@ def _sum_squares(array: np.ndarray) -> float:
 
 
 def compare(volume: np.ndarray, truth: np.ndarray) -> dict[str, float]:
-    """Compare on the reconstructed voxel centres, over the walnut's support.
+    """Compare on the reconstructed voxel centers, over the walnut's support.
 
-    ``volume_geometry`` keeps the same centre-to-centre extent at every voxel
+    ``volume_geometry`` keeps the same center-to-center extent at every voxel
     density. The published reference is always 501 cubed: sample that field at
-    the output's centres rather than broadcasting unequal-resolution volumes.
-    Linear interpolation keeps aligned centres exact, including both endpoints.
+    the output's centers rather than broadcasting unequal-resolution volumes.
+    Linear interpolation keeps aligned centers exact, including both endpoints.
     """
     if volume.shape != truth.shape:
         from scipy.ndimage import zoom

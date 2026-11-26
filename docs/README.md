@@ -4,7 +4,7 @@ TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab 
 
 ![Four reconstructed slices, one per geometry: a sandstone plug from Diamond I12 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
 
-Four real scans reconstructed at native detector resolution and cropped to the sample: Diamond I12 sandstone (parallel beam, `Stripes(9)` + `Stripes(51, varying=True)`, FBP), Diamond K11 scan 54286 (laminography, aligned with `tj.align(scan)`, FBP at 2.16 µm), Zeiss Xradia CuO_2 tomo-B (cone beam, FDK at 1.13 µm using recorded centre and shifts), and FIPS walnut 1 (three cone orbits, CGLS on the authors' 0.1 mm grid).
+Four real scans reconstructed at native detector resolution and cropped to the sample: Diamond I12 sandstone (parallel beam, `Stripes(9)` + `Stripes(51, varying=True)`, FBP), Diamond K11 scan 54286 (laminography, aligned with `tj.align(scan)`, FBP at 2.16 µm), Zeiss Xradia CuO_2 tomo-B (cone beam, FDK at 1.13 µm using recorded center and shifts), and FIPS walnut 1 (three cone orbits, CGLS on the authors' 0.1 mm grid).
 
 ```bash
 uv run python examples/gallery/geometry_montage.py DATA geometry-montage.png
@@ -33,7 +33,7 @@ Warm times on one 8 GB laptop GPU (measured 2026-11-21) on identical corrected d
 | Simulate data or script the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real parallel and laminography scans](real-laminography.md) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](lab-ct.md) |
-| Correct per-view motion, setup angles, or the centre of rotation | [Align a scan](align-a-scan.md) |
+| Correct per-view motion, setup angles, or the center of rotation | [Align a scan](align-a-scan.md) |
 | Reconstruct volumes larger than GPU memory, or use several GPUs | [Large scans and several GPUs](large-scans.md) |
 | Differentiate through projection in PyTorch | [PyTorch bridge](pytorch.md) |
 | Let an AI agent such as Claude Code drive TomoJAX through MCP | [Use TomoJAX from an AI agent](mcp.md) |
@@ -58,4 +58,4 @@ Import through public package roots or their `.api` facades; modules starting wi
 - [Alignment](../src/tomojax/alignment/README.md): joint alignment solver and convergence criteria.
 - [Benchmarks](../bench/README.md): rerunning comparisons with ASTRA and TIGRE.
 - [Contributing](../CONTRIBUTING.md): development setup, checks, and release process.
-- [Changelog](../CHANGELOG.md): behavioural changes and migration notes.
+- [Changelog](../CHANGELOG.md): behavioral changes and migration notes.

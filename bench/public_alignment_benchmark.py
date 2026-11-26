@@ -201,7 +201,7 @@ def generate_analytic_fixture(
     """Write a scan of continuous Gaussian blobs with analytic line integrals.
 
     Unlike the voxel-basis pilot's trilinear integrals, these data match no
-    discretisation, so pose errors include the model-mismatch floor real data
+    discretization, so pose errors include the model-mismatch floor real data
     would show.
     """
     from compare_projectors import _sample_volume

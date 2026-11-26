@@ -493,7 +493,7 @@ fn task_count(task: &TaskProgress) -> String {
         TaskState::Paused => "paused",
         TaskState::Done => "complete",
         TaskState::Failed => "failed",
-        TaskState::Cancelled => "cancelled",
+        TaskState::Canceled => "canceled",
     };
     match (count.is_empty(), status.is_empty()) {
         (false, false) => format!("{count} · {status}"),

@@ -108,7 +108,7 @@ def default_fbp_scale(n_views: int) -> float:
 
 
 def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
-    """Sample at centred pixel coordinates, excluding the integer image origin."""
+    """Sample at centered pixel coordinates, excluding the integer image origin."""
     nv, nu = image.shape
     iu, iv = jnp.floor(u).astype(jnp.int32), jnp.floor(v).astype(jnp.int32)
     wu, wv = u - iu.astype(jnp.float32), v - iv.astype(jnp.float32)
@@ -128,7 +128,7 @@ def _bilinear_detector(image: jnp.ndarray, u: jnp.ndarray, v: jnp.ndarray) -> jn
 def _backproject_voxels_jax(
     poses: jnp.ndarray, filtered: jnp.ndarray, *, grid: Grid, detector: Detector
 ) -> jnp.ndarray:
-    """Sum views at each voxel centre's detector position, for any rigid poses."""
+    """Sum views at each voxel center's detector position, for any rigid poses."""
     ox, oy, oz = grid_volume_origin(grid)
     x = (jnp.arange(grid.nx, dtype=jnp.float32) * grid.vx + ox)[None, None, :]
     y = (jnp.arange(grid.ny, dtype=jnp.float32) * grid.vy + oy)[None, :, None]
@@ -586,7 +586,7 @@ def _lattice_motion(
     """The pose motion taking ``det_grid``'s rays to the canonical lattice's, None if equal.
 
     Parallel rays run along lab y through detector-plane points (x, z). A
-    lattice ``o + R q`` (q the centred pixel offsets, R a rotation) sees the
+    lattice ``o + R q`` (q the centered pixel offsets, R a rotation) sees the
     object the canonical lattice ``c + q`` sees after moving it by
     ``p -> c + R.T (p - o)`` in that plane.
     """
@@ -633,7 +633,7 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     Raw samples outside the measured row are zero, but filtered samples are not.
     Cropping the filter output to the measured detector discards negative tails
     needed by voxels outside its inscribed field of view. Bound all z rotations
-    of voxel centres, with symmetric padding preserving the acquired coordinates.
+    of voxel centers, with symmetric padding preserving the acquired coordinates.
     This does not infer missing attenuation in genuinely truncated acquisitions.
     """
     ox, oy, _ = grid_volume_origin(grid)
@@ -645,7 +645,7 @@ def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
 
 
 def _filter_detector(grid: Grid, detector: Detector, poses: np.ndarray, *, pad_v: bool) -> Detector:
-    """Extend the detector to every view's projected voxel centres.
+    """Extend the detector to every view's projected voxel centers.
 
     Filtered values are nonzero beyond the measured detector. Padding keeps
     those tails for voxels projecting outside it, as ``_parallel_filter_detector``

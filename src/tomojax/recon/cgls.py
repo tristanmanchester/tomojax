@@ -50,7 +50,7 @@ class CGLSConfig:
     Both penalties default to zero. Their weights are independent of view count;
     the data term is an unnormalized sum of squared residuals.
 
-    The projector samples voxel-centre planes along the dominant voxel
+    The projector samples voxel-center planes along the dominant voxel
     direction, interpolates each plane and uses its matched transpose; a rolled
     (affine) ``det_grid`` is carried in the plane coefficients. On CUDA the
     transpose gathers into voxels without atomic writes. Bilinear interpolation

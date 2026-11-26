@@ -43,7 +43,7 @@ def _ellipsoids(extent: float) -> list[tuple[float, np.ndarray, np.ndarray]]:
     return shapes
 
 
-def _voxelise(grid: Grid, shapes: list, supersample: int = 3) -> np.ndarray:
+def _voxelize(grid: Grid, shapes: list, supersample: int = 3) -> np.ndarray:
     origin = np.asarray(grid_volume_origin(grid))
     spacing = np.asarray([grid.vx, grid.vy, grid.vz])
     offsets = (np.arange(supersample) + 0.5) / supersample - 0.5
@@ -61,7 +61,7 @@ def _voxelise(grid: Grid, shapes: list, supersample: int = 3) -> np.ndarray:
 
 
 def _analytic(shapes: list, geometry: ConeGeometry) -> np.ndarray:
-    """Exact line integrals from the source through each pixel centre."""
+    """Exact line integrals from the source through each pixel center."""
     beam, det = geometry.beam, geometry.detector
     center, u_dir, v_dir = beam.detector_frame(det)
     u = (np.arange(det.nu) - (det.nu - 1) / 2) * det.du
@@ -166,7 +166,7 @@ def test_cone_projection_matches_analytic_line_integrals(backend):
         jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, detector, geometry.beam
     )
     projected = np.asarray(
-        cone_project(_voxelise(grid, shapes), coeff, grid, detector, backend=backend)
+        cone_project(_voxelize(grid, shapes), coeff, grid, detector, backend=backend)
     )
     truth = _analytic(shapes, geometry)
     # Partial-volume error of sharp edges on a 32-cubed grid; 2.3% at 64-cubed.
@@ -197,7 +197,7 @@ def test_cgls_solves_a_cone_beam_scan(backend):
     geometry = ConeGeometry(
         grid, detector, np.linspace(0, 360, 40, endpoint=False), ConeBeam(60, 100)
     )
-    truth = _voxelise(grid, _ellipsoids(float(n)))
+    truth = _voxelize(grid, _ellipsoids(float(n)))
     coeff = cone_coefficients(
         jnp.asarray(geometry.pose_matrices(), jnp.float32), grid, detector, geometry.beam
     )
@@ -214,7 +214,7 @@ def test_fdk_reconstructs_full_and_short_scans(backend):
     detector = Detector(48, 48, 1.0, 1.0)
     beam = ConeBeam(96, 144)
     shapes = _ellipsoids(float(n))
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     fan = np.rad2deg(2 * np.arctan(24 / beam.source_to_detector))
     errors = []
     for arc, views in ((360.0, 120), (180.0 + fan + 2.0, 90), (300.0, 120)):
@@ -238,7 +238,7 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
     n = 32
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     shapes = _ellipsoids(float(n))
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     angles = np.linspace(0.0, 360.0, 120, endpoint=False)
     errors = []
     for detector in (Detector(48, 48, 1.0, 1.0), Detector(32, 48, 1.0, 1.0, (offset, 0.0))):
@@ -270,7 +270,7 @@ def test_fdk_changing_panels_recover_independent_ellipsoids(backend, columns, ce
     image = np.asarray(
         fdk(geometry, grid, geometry.detector, data, config=FDKConfig(backend=backend))
     )
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     assert np.linalg.norm(image - truth) < 0.08 * np.linalg.norm(truth)
 
 
@@ -286,19 +286,19 @@ def test_fdk_equivalent_angle_labels_preserve_analytic_phantom_recovery(backend,
     )
     geometry = ConeGeometry(grid, detector, angles, ConeBeam(96, 144))
     shapes = _ellipsoids(float(n))
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     data = _analytic(shapes, geometry)
     cfg = FDKConfig(backend=backend, views_per_batch=31)
     reference = np.asarray(fdk(geometry, grid, detector, data, config=cfg))
     # Wrap short-scan labels at zero; give full-turn views different turn numbers.
     labels = angles % 360 if kind == "short" else angles + 360 * (np.arange(len(angles)) % 3)
-    relabelled = replace(geometry, angles=labels)
+    relabeled = replace(geometry, angles=labels)
     actual = np.asarray(
         fdk_host(
-            relabelled, grid, detector, data, config=FDKHostConfig(slices_per_batch=11, fdk=cfg)
+            relabeled, grid, detector, data, config=FDKHostConfig(slices_per_batch=11, fdk=cfg)
         )
         if host
-        else fdk(relabelled, grid, detector, data, config=cfg)
+        else fdk(relabeled, grid, detector, data, config=cfg)
     )
     np.testing.assert_allclose(actual, reference, atol=2e-3 if backend == "cuda" else 3e-6)
     assert np.linalg.norm(actual - truth) / np.linalg.norm(truth) < (
@@ -394,7 +394,7 @@ def test_cone_projection_is_continuous_as_a_view_turns_through_45_degrees():
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     detector = Detector(26, 24, 1.0, 1.0)
     beam = ConeBeam(48, 72)
-    x = jnp.asarray(_voxelise(grid, _ellipsoids(float(n)), supersample=2))
+    x = jnp.asarray(_voxelize(grid, _ellipsoids(float(n)), supersample=2))
 
     def project(deg: float) -> jax.Array:
         pose = ConeGeometry(grid, detector, [deg], beam).pose_matrices()
@@ -450,7 +450,7 @@ def test_preprocess_reads_a_nikon_xtekct_scan(tmp_path: Path):
     np.testing.assert_allclose(loaded.angles, angles, atol=1e-4)  # nominal XTekCT schedule
     np.testing.assert_allclose(loaded.projections, data, atol=3e-4)
     volume = fdk(ingested, grid, ingested.detector, loaded.projections)
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     assert np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth) < 0.15
 
 
@@ -633,10 +633,10 @@ def test_nikon_flat_and_dark_tiffs_take_the_projection_panel_orientation(tmp_pat
 
 
 @pytest.mark.parametrize("automatic", [0, 1])
-def test_a_nikon_centre_left_to_the_reconstructor_is_not_recorded(tmp_path: Path, automatic):
-    # An acquisition file with AutomaticCentreOfRotation=1 leaves the centre to Nikon's
-    # reconstructor: its zero centre fields calibrate nothing. The seeds scan of the
-    # docs is one; its _recon.xtekct records the centre the reconstructor found.
+def test_a_nikon_center_left_to_the_reconstructor_is_not_recorded(tmp_path: Path, automatic):
+    # An acquisition file with AutomaticCentreOfRotation=1 leaves the center to Nikon's
+    # reconstructor: its zero center fields calibrate nothing. The seeds scan of the
+    # docs is one; its _recon.xtekct records the center the reconstructor found.
     import imageio.v3 as iio
 
     import tomojax as tj
@@ -668,7 +668,7 @@ def test_fdk_short_scan_on_an_offset_detector_matches_a_centered_one(backend, of
     n = 32
     grid = Grid(n, n, n, 1.0, 1.0, 1.0)
     shapes = _ellipsoids(20.0)
-    truth = _voxelise(grid, shapes)
+    truth = _voxelize(grid, shapes)
     angles = np.linspace(0.0, 230.0, 115, endpoint=False)
     errors = []
     centered = Detector(48, 48, 1.0, 1.0)

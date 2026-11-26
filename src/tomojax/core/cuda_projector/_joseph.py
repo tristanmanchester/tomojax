@@ -38,7 +38,7 @@ def forward_cuda(
     absolute_weights: bool = False,
     z_fast: bool = False,
 ) -> jax.Array:
-    """Project voxel-centre planes, optionally using absolute interpolation weights.
+    """Project voxel-center planes, optionally using absolute interpolation weights.
 
     The volume is (nz, ny, nx), or solver-private (nx, ny, nz) with ``z_fast``.
     """

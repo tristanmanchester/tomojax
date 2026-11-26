@@ -404,7 +404,7 @@ def run_worker(args: argparse.Namespace) -> dict[str, Any]:
         return {
             **record,
             "status": "unsupported_comparison",
-            "reason": "This adapter is validated only for centred isotropic parallel scans",
+            "reason": "This adapter is validated only for centered isotropic parallel scans",
         }
     if args.method in {"tomojax_fourier_cupy", "tomojax_fbp_host_cuda"} and args.kind == "lamino":
         return {

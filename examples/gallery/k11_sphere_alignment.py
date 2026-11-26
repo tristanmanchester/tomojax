@@ -2,10 +2,10 @@
 
     uv run python examples/gallery/k11_sphere_alignment.py k11-54013.nxs alignment-k11-sphere.png
 
-The scan is aligned with the plain ``tj.align(scan)`` on a 6.48 micrometre grid. The scan as
+The scan is aligned with the plain ``tj.align(scan)`` on a 6.48 micrometer grid. The scan as
 loaded and the aligned scan are then reconstructed by FBP in two slices at the detector's
-2.16 micrometre pitch: through the ruby sphere's equator and 78 micrometres below it. Each slice
-has one enlarged region where the large bubble meets the sphere; a row shares one grey range.
+2.16 micrometer pitch: through the ruby sphere's equator and 78 micrometers below it. Each slice
+has one enlarged region where the large bubble meets the sphere; a row shares one gray range.
 """
 
 from __future__ import annotations

@@ -2,7 +2,7 @@
 
 ``walnut``: FIPS Walnut 1, orbit 2, binned 2 x 2, reconstructed by FDK after
 the method. Its relative L2 error inside the walnut against the authors'
-three-orbit reference, after the one scale factor that minimises it
+three-orbit reference, after the one scale factor that minimizes it
 (``scaled_in_walnut``), must not exceed the uncorrected one: the reference is
 itself in the beam's polychromatic units, and a gauge is a choice of unit.
 The raw error and the factor (``scale``) are reported beside it.

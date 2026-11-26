@@ -13,7 +13,7 @@ All arXiv IDs below were checked against the arXiv abstract page or arXiv PDF du
 ## 1. Differentiable CT/projector libraries and how they compute geometry/pose derivatives
 
 ### Takeaway
-Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, diffct, TIGRE's PyTorch wrapper) differentiate only with respect to the **volume or sinogram**: the VJP of A is Aᵀ, so a gradient costs about one extra projector call. **Geometry/pose** derivatives come from two places. One is autodiff through a tensorised ray tracer (DiffDRR); it is memory-hungry and slow. The other is analytic derivatives that reuse the projector itself (Thies et al. for backprojection; Jiang/Stayman et al. for forward and back projection). The best measured result is Jiang et al. 2025 (arXiv 2508.13304, IEEE TBME): their analytic pose gradient used 0.77 GB against DiffDRR's 5.74 GB for a 256³ volume and was about 7.8× faster in 2D/3D registration. That is the most direct template for TomoJAX's unused fused analytic pose-normal kernel.
+Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, diffct, TIGRE's PyTorch wrapper) differentiate only with respect to the **volume or sinogram**: the VJP of A is Aᵀ, so a gradient costs about one extra projector call. **Geometry/pose** derivatives come from two places. One is autodiff through a tensorized ray tracer (DiffDRR); it is memory-hungry and slow. The other is analytic derivatives that reuse the projector itself (Thies et al. for backprojection; Jiang/Stayman et al. for forward and back projection). The best measured result is Jiang et al. 2025 (arXiv 2508.13304, IEEE TBME): their analytic pose gradient used 0.77 GB against DiffDRR's 5.74 GB for a 256³ volume and was about 7.8× faster in 2D/3D registration. That is the most direct template for TomoJAX's unused fused analytic pose-normal kernel.
 
 ### Cited Findings
 
@@ -28,7 +28,7 @@ Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, d
   - Memory: 256³ volume, 384² projections, 100 iterations. The proposed ray-driven method used 0.77 GB; DiffDRR used 5.74 GB (86.6% less). — [arXiv HTML](https://arxiv.org/html/2508.13304)
   - Limitations stated by the authors:
     - Rigid motion only.
-    - The continuous-domain gradient is then discretised, which gives an "approximation error due to mismatch between continuous formulation and discrete application".
+    - The continuous-domain gradient is then discretized, which gives an "approximation error due to mismatch between continuous formulation and discrete application".
     - Narrow capture range in 2D/3D registration.
     - Calibration is 6-DoF only, not 9-DoF. — [arXiv HTML](https://arxiv.org/html/2508.13304)
   - No explicit "gradient cost = k × forward" ratio is reported. — [arXiv abs](https://arxiv.org/abs/2508.13304)
@@ -40,11 +40,11 @@ Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, d
   - Propagates gradients from an image-domain loss into fan-beam geometry parameters.
   - With an autofocus-style learned quality metric: 35.5% lower MSE and 12.6% higher SSIM than the motion-affected reconstruction. — [arXiv abs](https://arxiv.org/abs/2212.02177)
 - **Gopalakrishnan & Golland (2022), "Fast Auto-Differentiable Digitally Reconstructed Radiographs for Solving Inverse Problems in Intraoperative Imaging" (DiffDRR), arXiv 2208.12737; MICCAI CLIP workshop [PR, workshop].**
-  - Siddon's method rewritten as vectorised PyTorch tensor ops; pose gradients come from PyTorch autodiff.
+  - Siddon's method rewritten as vectorized PyTorch tensor ops; pose gradients come from PyTorch autodiff.
   - Claims rendering speed "equivalent to" CUDA/C++ DRR generators. — [arXiv abs](https://arxiv.org/abs/2208.12737)
   - Independent measurements (Jiang et al. above) show it is about 7.5× more memory-hungry and about 7.8× slower than analytic pose gradients. — [arXiv HTML 2508.13304](https://arxiv.org/html/2508.13304)
 - **Choi, Cho, Kim, Kim (2026), "Revisiting Pose Sensitivity in Splat-based Computed Tomography under Sparse-view Reconstruction", arXiv 2608.04752 [arXiv].**
-  - Finds that splat-CT artefacts on real systems "primarily originate from pose inaccuracies in the acquisition geometry rather than from view sparsity itself".
+  - Finds that splat-CT artifacts on real systems "primarily originate from pose inaccuracies in the acquisition geometry rather than from view sparsity itself".
   - Proposes a "stable gradient-based framework that jointly refines geometric parameters during reconstruction". The abstract gives no numbers. — [arXiv abs](https://arxiv.org/abs/2608.04752)
 
 **Volume-gradient libraries (gradient = adjoint projector)**
@@ -76,10 +76,10 @@ Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, d
 
 **Splat/differentiable-rendering projectors**
 - **FaCT-GS**, Pieta, Pedersen, Borgi, Jørgensen, Andreasen, Dahl (2026), "FaCT-GS: Fast and Scalable CT Reconstruction with Gaussian Splatting", arXiv 2604.01844 [arXiv].
-  - Fused CUDA rasteriser and voxeliser, plus fused SSIM/TV loss kernels.
+  - Fused CUDA rasterizer and voxelizer, plus fused SSIM/TV loss kernels.
   - The biggest win came from replacing the per-pixel backward pass with a **per-Gaussian backward pass**, plus axis-aligned bounding boxes.
   - Timings at 512², 75 views: about 112 s, against about 9 min for R²-Gaussian and about 55 s for FISTA. About 13× faster than R²-Gaussian at 2k. — [arXiv HTML](https://arxiv.org/html/2604.01844)
-- **R²-Gaussian** (2024), arXiv 2405.20693 (ID from search snippet/title only). Gaussian kernels with X-ray rasterisation and a CUDA differentiable voxeliser. — [arXiv abs](https://arxiv.org/abs/2405.20693)
+- **R²-Gaussian** (2024), arXiv 2405.20693 (ID from search snippet/title only). Gaussian kernels with X-ray rasterization and a CUDA differentiable voxelizer. — [arXiv abs](https://arxiv.org/abs/2405.20693)
 
 ### Inferences
 - **For TomoJAX's fused pose-normal kernel.** In Jiang et al., the pose gradient is the projection of ∇μ contracted with the pose Jacobian. For a rigid pose with rotation R and translation t, ∂x′/∂t is constant and ∂x′/∂ω is linear in position.
@@ -103,7 +103,7 @@ Most differentiable CT libraries (LEAP, tomosipo, TorchRadon, PYRO-NN, CTorch, d
 ## 2. Exact or high-accuracy voxel/spline-basis projectors
 
 ### Takeaway
-The closest recent analogue to TomoJAX's exact trilinear integrator is Haouchat, Kashani, Thévenaz, Unser (2025, arXiv 2503.20907). They use closed-form X-ray transforms of box-splines and tensor B-splines (degree 1 is the trilinear/bilinear basis) via ray tracing in Dr.Jit, with **matched adjoints** and geometry-independent runtime. Compared with pixels, runtime rises 2.6× for degree 1 and 4.1× for degree 2, and quality improves. The work is 2D only, and 3D is left as future work. The Cutting Voxel Projector (Kulvait et al., J. Comput. Sci. 2025) gives near-exact cone-beam voxel-footprint integration and beats TT footprints at large cone angles.
+The closest recent analog to TomoJAX's exact trilinear integrator is Haouchat, Kashani, Thévenaz, Unser (2025, arXiv 2503.20907). They use closed-form X-ray transforms of box-splines and tensor B-splines (degree 1 is the trilinear/bilinear basis) via ray tracing in Dr.Jit, with **matched adjoints** and geometry-independent runtime. Compared with pixels, runtime rises 2.6× for degree 1 and 4.1× for degree 2, and quality improves. The work is 2D only, and 3D is left as future work. The Cutting Voxel Projector (Kulvait et al., J. Comput. Sci. 2025) gives near-exact cone-beam voxel-footprint integration and beats TT footprints at large cone angles.
 
 ### Cited Findings
 - **Haouchat, Kashani, Thévenaz, Unser (2025), "Generalized Ray Tracing with Basis functions for Tomographic Projections", arXiv 2503.20907 (v2 Sep 2025) [arXiv].**
@@ -127,10 +127,10 @@ The closest recent analogue to TomoJAX's exact trilinear integrator is Haouchat,
 - **Separable-footprint / distance-driven** projectors with matched pairs are now standard in CTorch, PYRO-NN-adjacent tools, diffct and Jiang et al.'s analytic gradients. — [CTorch arXiv 2503.16741](https://arxiv.org/abs/2503.16741); [diffct](https://github.com/sypsyp97/diffct); [arXiv HTML 2508.13304](https://arxiv.org/html/2508.13304)
 - **Why matched adjoints matter.** Bentley, Pasha, Sabaté Landman, Yang, Zhang (2026), "Hybrid ABBA-GMRES for Unmatched Backprojectors in Large Scale X-Ray Computerized Tomography", arXiv 2602.17892 [arXiv].
   - Unmatched forward/back pairs "violate adjointness assumptions underlying classical least-squares solvers".
-  - Hybrid AB/BA-GMRES with automatic regularisation mitigates the resulting semi-convergence. 2D GPU experiments. — [arXiv abs](https://arxiv.org/abs/2602.17892)
+  - Hybrid AB/BA-GMRES with automatic regularization mitigates the resulting semi-convergence. 2D GPU experiments. — [arXiv abs](https://arxiv.org/abs/2602.17892)
 
 ### Inferences
-- **Fit with TomoJAX's exact integrator.** Integrating the zero-extended trilinear basis exactly per cell with two-point Gauss–Legendre is the 3D, rigid-pose analogue of Haouchat et al.'s degree-1 tensor-B-spline exact X-ray transform. It is exact because the integrand is cubic in t between voxel-centre planes.
+- **Fit with TomoJAX's exact integrator.** Integrating the zero-extended trilinear basis exactly per cell with two-point Gauss–Legendre is the 3D, rigid-pose analog of Haouchat et al.'s degree-1 tensor-B-spline exact X-ray transform. It is exact because the integrand is cubic in t between voxel-center planes.
   - Haouchat et al.'s ×2.6 runtime for degree 1 over degree 0, in 2D, is a useful reference for what "exactness" should cost relative to a nearest/box projector.
   - It also suggests TomoJAX could reasonably add a 3D degree-2 box-spline mode later if accuracy at coarse multires levels matters.
 - **Publishable gap.** No 3D, arbitrary-per-view-pose, matched exact trilinear projector with analytic pose gradients was found in the 2022–2026 literature. Haouchat et al. is 2D, and Kulvait et al. is a voxel footprint without pose gradients. TomoJAX's integrator appears to fill that gap.
@@ -152,7 +152,7 @@ Recent measured speed gains come from fusion (loss and gradient inside the proje
 - **FaCT-GS (arXiv 2604.01844):** the largest speed-up came from reformulating the backward pass per primitive (per Gaussian) instead of per pixel, plus **fused loss kernels** (SSIM, TV), giving 4.5–13× over R²-Gaussian. — [arXiv HTML](https://arxiv.org/html/2604.01844)
 - **Nikitin (2022/2023), "TomocuPy: efficient GPU-based tomographic reconstruction with asynchronous data processing", arXiv 2209.08450 [arXiv verified; journal version (believed J. Synchrotron Rad. 2023) not re-verified in this session].**
   - FP16 arithmetic and storage, justified by sub-16-bit detectors.
-  - A 2048³ reconstruction, including I/O and initialisation, takes <7 s on one A100. 20–30× faster than TomoPy on CPU.
+  - A 2048³ reconstruction, including I/O and initialization, takes <7 s on one A100. 20–30× faster than TomoPy on CPU.
   - Overlaps disk I/O, H2D/D2H transfers and GPU compute. — [arXiv abs](https://arxiv.org/abs/2209.08450)
   - Another summary reports a 2× drop in total memory use with FP16. — [search result citing arXiv PDF](https://arxiv.org/pdf/2209.08450)
 - **Nikitin, Wildenberg, Mittone, Shevchenko, Deriy, De Carlo (2024), "Laminography as a tool for imaging large-size samples with high resolution", arXiv 2401.11101 [arXiv].**
@@ -168,7 +168,7 @@ Recent measured speed gains come from fusion (loss and gradient inside the proje
 - **Fuse the loss into the projector.** For TomoJAX's 256³ laminography solves, which are projector-bound, fusing residual computation and the data-term loss into the forward kernel removes one full sinogram read/write per iteration. FaCT-GS shows fused-loss gains, and TomoJAX already has `_pallas_loss.py`.
 - **BF16/FP16 for volume and sinogram storage, FP32 accumulation along rays**, is the low-risk variant supported by TomocuPy-style evidence. Pure FP16 accumulation in CG/LSQR inner products is risky (the 2210.03844 overflow finding).
   - Validate against the FP32 exact integrator using residual-norm curves.
-- **ASTRA's geometry advantage.** Per-view rigid poses are effectively "arbitrary geometry", where ASTRA's specialised paths lose their edge. Benchmarks against ASTRA should include arbitrary-pose (`*_vec`) geometries, not just circular parallel/cone.
+- **ASTRA's geometry advantage.** Per-view rigid poses are effectively "arbitrary geometry", where ASTRA's specialized paths lose their edge. Benchmarks against ASTRA should include arbitrary-pose (`*_vec`) geometries, not just circular parallel/cone.
 
 ### Gaps
 - No 2022–2026 paper found specifically on slab/plane-based backprojection kernels for tilted laminography with per-view rigid poses.
@@ -182,7 +182,7 @@ Recent measured speed gains come from fusion (loss and gradient inside the proje
 ### Takeaway
 JAX offers three tiers.
 1. The **persistent compilation cache** stores XLA executables keyed by HLO. By default it only stores entries that took ≥1 s to compile, so TomoJAX should lower `jax_persistent_cache_min_compile_time_secs`. It can also persist the GPU autotune and kernel caches. Python tracing and lowering still run on every fresh process.
-2. **`jax.export`** serialises StableHLO, which removes tracing and lowering but **still requires XLA compilation**. It supports Pallas/Mosaic-GPU/Triton custom calls subject to a stability allowlist.
+2. **`jax.export`** serializes StableHLO, which removes tracing and lowering but **still requires XLA compilation**. It supports Pallas/Mosaic-GPU/Triton custom calls subject to a stability allowlist.
 3. **`jax.experimental.serialize_executable`** pickles a fully compiled executable, skipping both tracing and compile for an exact shape and device.
 
 Scientific JAX imaging codes (cryoJAX, phaser, mbirjax) report iteration speed-ups but publish no cold-start measurements.
@@ -200,7 +200,7 @@ Scientific JAX imaging codes (cryoJAX, phaser, mbirjax) report iteration speed-u
   - Gotchas: functions recreated in loops or lambdas change `id()` and defeat the trace cache (use `functools.partial` or module-level functions); Python loops unroll into huge jaxprs (use `lax.scan`/`fori_loop`); shape variability recompiles (pad or bucket, or use `jax.export` shape polymorphism).
   - Long `HLO_PASSES` time indicates unrolling. — [JAX docs](https://docs.jax.dev/en/latest/debugging/slow_tracing_compilation.html)
 - **`jax.export`** [docs]:
-  - Serialises StableHLO plus metadata (flatbuffers). "Deserialized artifacts still require XLA compilation."
+  - Serializes StableHLO plus metadata (flatbuffers). "Deserialized artifacts still require XLA compilation."
   - Supports symbolic dimensions.
   - Pallas, Mosaic GPU and Triton kernels are exportable, but only custom calls on a stability allowlist are permitted by default (`DisabledSafetyCheck.custom_call()` to override).
   - Compatibility: 6 months backward, 3 weeks forward. — [JAX export docs](https://docs.jax.dev/en/latest/export/export.html)
@@ -209,19 +209,19 @@ Scientific JAX imaging codes (cryoJAX, phaser, mbirjax) report iteration speed-u
   - `serialize()` / `deserialize_and_load()` build a `jax.stages.Compiled` from bytes, letting a new process skip tracing *and* compiling for a known shape.
   - Loading an executable can run arbitrary code, so the bytes must come from a trusted source. — [JAX API docs](https://docs.jax.dev/en/latest/jax.experimental.serialize_executable.html)
   - Example use: [uwplasma/LMhdX PR #194](https://github.com/uwplasma/LMhdX/pull/194) ("keep a shape's program across processes beside the compilation cache").
-  - Caveats: CPU deserialisation SIGBUS bug — [jax #40944](https://github.com/jax-ml/jax/issues/40944); AOT GPU compile needs a device — [jax #23971](https://github.com/jax-ml/jax/issues/23971).
+  - Caveats: CPU deserialization SIGBUS bug — [jax #40944](https://github.com/jax-ml/jax/issues/40944); AOT GPU compile needs a device — [jax #23971](https://github.com/jax-ml/jax/issues/23971).
 - **XLA GPU autotuning:** `XLA_FLAGS=--xla_gpu_autotune_level=0` disables compile-time autotune benchmarking. This cuts compile time and memory but may choose slower kernels. `--xla_gpu_experimental_enable_fusion_autotuner=false` turns off the fusion autotuner. — [TensorCircuit write-up (dev.to)](https://dev.to/refractionray/large-scale-tensorcircuit-contractions-on-gpus-disabling-xla-gpu-autotuning-3p2); [NVIDIA JAX-Toolbox GPU perf docs](https://docs.nvidia.com/jax-toolbox/performance-profiling/gpu-performance)
 - **Measured cache benefit (non-imaging):** Tunix/MLPerf on TPU v7x reported precompilation falling from 711 s to 109 s, and engine startup from 15.8 to 4.78 min, with a restored persistent cache. — [google/tunix PR #2599](https://github.com/google/tunix/pull/2599)
 - **JAX scientific imaging codes:**
-  - **cryoJAX**: O'Brien et al., bioRxiv 10.1101/2025.10.23.682564; Acta Cryst. D (2026), DOI 10.1107/S2059798326000550 [PR]. A JAX image-formation modelling library relying on JIT, autodiff and vmap; no cold-start numbers found. — [bioRxiv](https://www.biorxiv.org/content/10.1101/2025.10.23.682564v2); [Wiley](https://onlinelibrary.wiley.com/doi/abs/10.1107/S2059798326000550)
+  - **cryoJAX**: O'Brien et al., bioRxiv 10.1101/2025.10.23.682564; Acta Cryst. D (2026), DOI 10.1107/S2059798326000550 [PR]. A JAX image-formation modeling library relying on JIT, autodiff and vmap; no cold-start numbers found. — [bioRxiv](https://www.biorxiv.org/content/10.1101/2025.10.23.682564v2); [Wiley](https://onlinelibrary.wiley.com/doi/abs/10.1107/S2059798326000550)
   - **phaser**: Gilgenbach, Zhu, LeBeau (2025), arXiv 2505.14372. JAX backend that JIT-compiles the whole inner loop; 6× faster per iteration than fold_slice; no compile-time figures. — [arXiv abs](https://arxiv.org/abs/2505.14372); [arXiv PDF](https://arxiv.org/pdf/2505.14372)
-  - **mbirjax** (Bouman & Buzzard; GitHub plus docs, no arXiv paper found) [README/docs]. Vectorised coordinate descent in JAX. — [GitHub](https://github.com/cabouman/mbirjax)
+  - **mbirjax** (Bouman & Buzzard; GitHub plus docs, no arXiv paper found) [README/docs]. Vectorized coordinate descent in JAX. — [GitHub](https://github.com/cabouman/mbirjax)
   - **JAX-AMG** (arXiv 2606.09001) wraps AmgX as a native JAX primitive compatible with jit and reverse-mode AD. This is the pattern for external CUDA kernels as primitives. — [arXiv HTML](https://arxiv.org/html/2606.09001v1)
   - **DESC** (stellarator code) has a "Performance Tips" page on compilation caching. — [DESC docs](https://desc-docs.readthedocs.io/en/v0.14.2/performance_tips.html)
 
 ### Inferences (concrete actions for TomoJAX's 2–5 s cold compile)
 1. **Enable the persistent cache with low thresholds.** Set `jax_persistent_cache_min_compile_time_secs=0` (or 0.1) and `min_entry_size_bytes=-1`. Each TomoJAX kernel probably compiles in under 1 s, so with the default threshold most kernels are *never cached*. Set `jax_persistent_cache_enable_xla_caches="all"` so GPU autotune results and the kernel cache persist too. This is the quickest route to the "<1 s cached startup" target.
-2. **Measure before optimising.** Use `JAX_LOG_COMPILES=1` and `jax_explain_cache_misses` to split the 2–5 s into tracing, lowering and backend compile. Pallas→Triton/Mosaic lowering and PTX→SASS (ptxas) may dominate for custom kernels.
+2. **Measure before optimizing.** Use `JAX_LOG_COMPILES=1` and `jax_explain_cache_misses` to split the 2–5 s into tracing, lowering and backend compile. Pallas→Triton/Mosaic lowering and PTX→SASS (ptxas) may dominate for custom kernels.
 3. **Set `--xla_gpu_autotune_level=0` for small-cell interactive runs.** The heavy work is in Pallas kernels, which XLA's GEMM/fusion autotuner does not tune, so the downside should be small. Confirm by A/B testing.
 4. **Bucket shapes.** Pad detector and volume shapes to a small set of buckets (for example multiples of 32/64) and pass the per-view pose arrays as traced arguments rather than static ones. Multires levels then reuse a bounded set of executables. This addresses "<5 s compile for new shapes" by turning many shapes into few.
 5. **Pre-build an executable bundle.** For shipped defaults, `serialize_executable` executables per (GPU arch, bucket) skip both tracing and compile. The persistent cache plus `jax.export` still pays XLA compile on first load.

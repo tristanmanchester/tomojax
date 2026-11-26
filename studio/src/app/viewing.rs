@@ -30,7 +30,7 @@ impl AppState {
                 true
             } else {
                 array.shape.len() == 3
-                    && array.axes.first().is_some_and(|axis| axis.name == "centre")
+                    && array.axes.first().is_some_and(|axis| axis.name == "center")
             };
             spatial && registered_plane_kind(array) == Some(plane)
         })
@@ -121,7 +121,7 @@ impl AppState {
         self.ui.display.window_low.replace_text("");
         self.ui.display.window_high.replace_text("");
         self.window_prefill = Default::default();
-        self.centre_sinogram = true;
+        self.center_sinogram = true;
         self.ui.display.indices = self
             .volume_dimensions()
             .map_or([0; 3], |shape| shape.map(|n| n / 2));
@@ -139,7 +139,7 @@ impl AppState {
             .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
         {
             self.model.error = Some(
-                "NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition."
+                "NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition."
                     .into(),
             );
             return;
@@ -357,9 +357,9 @@ impl AppState {
         }
         if let Some(projections) = self.active_projections().cloned() {
             let projections = self.resolved(&projections);
-            if self.centre_sinogram {
+            if self.center_sinogram {
                 self.ui.display.sinogram_row = projections.shape[1] / 2;
-                self.centre_sinogram = false;
+                self.center_sinogram = false;
             }
             self.ui.display.projection_index = self
                 .ui
@@ -722,7 +722,7 @@ impl AppState {
             });
         }
         if let Some((_, data)) = &self.difference {
-            // Symmetric about zero, in grey, so no change reads as mid-grey.
+            // Symmetric about zero, in gray, so no change reads as mid-gray.
             let reach = data
                 .statistics
                 .min
@@ -824,7 +824,7 @@ impl AppState {
             .plane(plane.mark())
             .ok_or("Wait for the slice to load")?;
         let points = [self.data_uv(start), self.data_uv(end)];
-        // Sample-centre coordinates: sample i is centred at i.
+        // Sample-center coordinates: sample i is centered at i.
         let unclamped = points.map(|p| {
             [
                 p[1] as f64 * data.shape[0] as f64 - 0.5,
@@ -839,7 +839,7 @@ impl AppState {
                 (
                     "Distance",
                     format!("{distance:.4} {}", crate::ui::unit_name(&data.axes[0].unit)),
-                    "Pixel-centre coordinates".into(),
+                    "Pixel-center coordinates".into(),
                 )
             }
             InspectTool::Region => {
@@ -858,7 +858,7 @@ impl AppState {
                     });
                     return Ok(());
                 }
-                // The samples whose centres lie inside the drawn box.
+                // The samples whose centers lie inside the drawn box.
                 let low: [f64; 2] =
                     std::array::from_fn(|i| unclamped[0][i].min(unclamped[1][i]).ceil().max(0.));
                 let high: [f64; 2] = std::array::from_fn(|i| {
@@ -1024,7 +1024,7 @@ impl AppState {
         self.ui.display.indices = context.indices;
         self.ui.display.projection_index = context.projection;
         self.ui.display.sinogram_row = context.sinogram;
-        self.centre_sinogram = false;
+        self.center_sinogram = false;
         self.applied_window = context.window;
         self.ui.display.window_low.replace_text("");
         self.ui.display.window_high.replace_text("");
@@ -1356,7 +1356,7 @@ impl AppState {
                                 project::JobStatus::Paused => JobStatus::Paused,
                                 project::JobStatus::Completed => JobStatus::Completed,
                                 project::JobStatus::Failed => JobStatus::Failed,
-                                project::JobStatus::Cancelled => JobStatus::Cancelled,
+                                project::JobStatus::Canceled => JobStatus::Canceled,
                                 project::JobStatus::Interrupted => JobStatus::Interrupted,
                             },
                             stage: j.stage.clone(),

@@ -166,7 +166,7 @@ def astra_fbp3d(case: Any, *, filter_batch: int | None = None) -> tuple[np.ndarr
 
 
 def astra_fbp2d(case: Any) -> tuple[np.ndarray, dict]:
-    """Run native FBP_CUDA slice by slice on centred, isotropic parallel fixtures."""
+    """Run native FBP_CUDA slice by slice on centered, isotropic parallel fixtures."""
     import astra
 
     case, padding = extend_filter_support(case)

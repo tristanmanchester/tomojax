@@ -45,13 +45,13 @@ def test_phantom_is_deterministic_bounded_and_scale_free(name: str) -> None:
 
 
 def test_procedural_voxel_coordinates_are_zyx():
-    from _procedural import Grid, sample_where, voxelise
+    from _procedural import Grid, sample_where, voxelize
 
     def labels(x, y, z):
         return (x > 0).astype(int) + 2 * (y > 0) + 4 * (z > 0), np.ones_like(x)
 
     grid = Grid(4, 4)
-    volume = voxelise(labels, grid, np.arange(8), fine=1)
+    volume = voxelize(labels, grid, np.arange(8), fine=1)
     z, y, x = np.indices((4, 4, 4))
     np.testing.assert_array_equal(volume, (x >= 2) + 2 * (y >= 2) + 4 * (z >= 2))
     mask = (x == 1) | (z == 3)

@@ -1,4 +1,4 @@
-"""The Zeiss centre and orientation against the vendor's own reconstruction of a real scan.
+"""The Zeiss center and orientation against the vendor's own reconstruction of a real scan.
 
 The scan and its reconstruction are not public; the test runs where they are held
 and is skipped elsewhere.
@@ -45,7 +45,7 @@ def _high_pass(image: np.ndarray) -> np.ndarray:
 
 
 def _peak_correlation(ours: np.ndarray, theirs: np.ndarray) -> float:
-    """Largest normalised cross-correlation over all relative shifts."""
+    """Largest normalized cross-correlation over all relative shifts."""
     rows, columns = max(ours.shape[0], theirs.shape[0]), max(ours.shape[1], theirs.shape[1])
     a, b = np.zeros((rows, columns)), np.zeros((rows, columns))
     a[: ours.shape[0], : ours.shape[1]] = (ours - ours.mean()) / ours.std()
@@ -54,9 +54,9 @@ def _peak_correlation(ours: np.ndarray, theirs: np.ndarray) -> float:
     return float(np.fft.ifft2(product).real.max() / a.size)
 
 
-def test_the_recorded_centre_shift_reproduces_the_vendor_reconstruction():
+def test_the_recorded_center_shift_reproduces_the_vendor_reconstruction():
     # spl1 records AutoRecon/CenterShift = +2.55 px. Applied with the wrong sign the
-    # centre is 5.1 px out, every small feature becomes a ring and the fine structure
+    # center is 5.1 px out, every small feature becomes a ring and the fine structure
     # no longer matches the vendor's slice (correlation about 0.70 against 0.90). The
     # slices are compared as they stand: a mirrored or turned reconstruction fails too.
     frames = tj.load_frames(SCAN)

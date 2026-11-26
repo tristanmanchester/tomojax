@@ -65,7 +65,7 @@ if TYPE_CHECKING:
 
     from tomojax import _region, corrections
     from tomojax._planning import ResolvedReconstruction
-    from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax._smooth_alignment import CenterSelection, JointSelection
     from tomojax.corrections.api import CorrectedRows
     from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
@@ -490,7 +490,7 @@ def reconstruct(
     better image at the cost of its iterations (https://tomojax.dev/measurements/). It
     reconstructs with the geometry and poses the scan carries, on its grid or
     the ``grid`` given; it fits no poses (use :func:`align`).
-    It estimates nothing: a centre comes from the file or from :func:`align`.
+    It estimates nothing: a center comes from the file or from :func:`align`.
     ``info["automatic"]`` records those choices and limitations. Explicit
     methods bypass this policy.
 
@@ -558,7 +558,7 @@ def reconstruct(
         The part of the scan's grid to reconstruct, in place of ``grid``: the box
         every view sees ("auto" and "bbox"; "auto" keeps the scan's grid, with a
         warning, when there is none), its largest cube, or its largest cylinder
-        about the axis ("cyl", which also zeroes the volume outside it); a
+        about the axis ("cyl", which also zeros the volume outside it); a
         :class:`RegionEstimate` gives its own grid. None keeps the scan's grid.
     out : numpy.ndarray or None, optional
         Writable float32 output or memmap for fbp/fourier, CUDA Joseph fista,
@@ -599,7 +599,7 @@ def reconstruct(
     """
     from tomojax._planning import resolve_reconstruction
 
-    progress.check_cancelled()
+    progress.check_canceled()
 
     plan = resolve_reconstruction(
         scan,
@@ -691,7 +691,7 @@ def reconstruct_slabs(
     Cone FDK corrects host row bands in device-sized view batches and retains
     the complete acquisition's weights while reconstructing each slab. On a rolled
     detector, Fourier reads the rotated row footprint with its interpolation
-    neighbours. The oblique FBP filter and iterative projector couple the rows;
+    neighbors. The oblique FBP filter and iterative projector couple the rows;
     these methods read the complete detector and return the coupled volume in one slab.
 
     Parameters
@@ -852,7 +852,7 @@ def _slab_results(
         SlabPlanes(target) if progress.previewing() and getattr(cfg, "iterations", 0) else None
     )
     with registration(frames), progress.outcome():
-        progress.check_cancelled()
+        progress.check_canceled()
         for slab in prepared:
             block = replace(
                 target,
@@ -893,15 +893,15 @@ def _slab_results(
             yield result
             del result
             if not last:
-                progress.check_cancelled()
+                progress.check_canceled()
             del slab, scan  # Do not retain device rows while preparing the next slab.
 
 
-def _estimate_center(scan: Scan, selection: CentreSelection) -> tuple[Scan, dict[str, object]]:
-    """The scan with its centre from near-opposite views, and the estimate's record.
+def _estimate_center(scan: Scan, selection: CenterSelection) -> tuple[Scan, dict[str, object]]:
+    """The scan with its center from near-opposite views, and the estimate's record.
 
     Pixels are unchanged; the record gives the pair diagnostics, input and output.
-    The centre fixes the median sampled-pair mean shift to zero, so it aliases
+    The center fixes the median sampled-pair mean shift to zero, so it aliases
     common sample motion.
     """
     report = selection.measure(scan.projections)
@@ -945,13 +945,13 @@ def align(
     """Fit selected geometry parameters jointly with a reconstruction.
 
     ``fit`` is one name or a tuple of names: ``center``, ``tilt``, ``roll``,
-    ``translations`` and ``rotations``. Centre, tilt and roll are shared by all
+    ``translations`` and ``rotations``. Center, tilt and roll are shared by all
     views. Translations and rotations are per view; every unselected parameter
     is held at its declared value. Translations have two components for parallel
     rays and three for cone beams. Rotations are the per-view wobble of the
     rotation axis, two components; each view's angle about the axis is taken as
     recorded, since stage encoders give it and errors in it are rare. By
-    default each view's corrections are free of its neighbours';
+    default each view's corrections are free of its neighbors';
     ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
     prior on their physical size.
 
@@ -960,7 +960,7 @@ def align(
     poses are preserved and the fitted correction is composed with them. The
     returned scan carries both calibrated global geometry and local poses, so
     reconstructing or saving it preserves the fitted ray geometry. "opposite-views"
-    fits the centre alone, without an image, from near-opposite views of an
+    fits the center alone, without an image, from near-opposite views of an
     unposed axial parallel scan (within two degrees): a quick estimate from
     row-wise gradient correlations, which can be ambiguous for repetitive
     structure and records its pair diagnostics in ``info``.
@@ -981,7 +981,7 @@ def align(
     method : {"joint", "opposite-views"} or None, optional
         How the parameters are estimated; None is "joint".
     motion : {"independent", "smooth"} or None, optional
-        Whether each view moves independently of its neighbours (the default) or the
+        Whether each view moves independently of its neighbors (the default) or the
         motion is smooth drift with occasional slips, for a steady stage (see
         :class:`tomojax.alignment.AlignConfig`); None keeps ``config``'s value.
     iterations, image_iterations, tolerance, interpolation, resolution : optional
@@ -997,12 +997,12 @@ def align(
         Corrected scan, its per-view poses, the record and the joint fit's working image.
         ``info["config"]`` holds the settings used.
         Each fitted global appears under its name in ``info["calibration"]`` as
-        ``{"value": ..., "change": ...}``: the final value, the centre in geometry
+        ``{"value": ..., "change": ...}``: the final value, the center in geometry
         length units (u, or u/v for cone beams) and angles in degrees, and the
-        fitted change, the centre in detector pixels and angles in degrees. Tilt
+        fitted change, the center in detector pixels and angles in degrees. Tilt
         is the signed inclination ``atan2(axis_y, axis_z)``; positive roll turns
         detector u towards v (right-handed about the detector normal, which points
-        back towards the source), so a point above the detector centre projects
+        back towards the source), so a point above the detector center projects
         towards +u. Cone segments with different calibrated values report them in
         segment order.
 
@@ -1049,11 +1049,11 @@ def alignment_task(
     return progress.task("align", label, None, "fit")
 
 
-def align_resolved(scan: Scan, plan: CentreSelection | JointSelection) -> Alignment:
-    """Execute the selected centre or joint-image fit."""
-    from tomojax._smooth_alignment import CentreSelection, align_poses
+def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignment:
+    """Execute the selected center or joint-image fit."""
+    from tomojax._smooth_alignment import CenterSelection, align_poses
 
-    if isinstance(plan, CentreSelection):
+    if isinstance(plan, CenterSelection):
         with registration(scan), progress.runtime() as actual:
             alignment = _opposite_views(scan, plan)
         return replace(
@@ -1079,8 +1079,8 @@ def align_resolved(scan: Scan, plan: CentreSelection | JointSelection) -> Alignm
     return Alignment(corrected, info, image, result.grid)
 
 
-def _opposite_views(scan: Scan, selection: CentreSelection) -> Alignment:
-    """Fit the centre from near-opposite views, without an image."""
+def _opposite_views(scan: Scan, selection: CenterSelection) -> Alignment:
+    """Fit the center from near-opposite views, without an image."""
     centered, record = _estimate_center(scan, selection)
     before, after = scan.detector.center[0], centered.detector.center[0]
     center = {"value": float(after), "change": float((after - before) / scan.detector.du)}

@@ -86,7 +86,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "docs/align-a-scan.md",
                 "align-a-scan",
                 None,
-                "Choose what to fit: the centre, drift, the setup angles or sample rotation.",
+                "Choose what to fit: the center, drift, the setup angles or sample rotation.",
             ),
             (
                 "docs/held-out-evaluation.md",

@@ -102,7 +102,7 @@ def _sample():
     return progress.Sample(np.ones((8, 8), np.float32), plane, "1/mm", "attenuation")
 
 
-def test_cancelling_after_a_checkpoint_keeps_its_image(tmp_path, watching):
+def test_canceling_after_a_checkpoint_keeps_its_image(tmp_path, watching):
     from tomojax.cli._progress import run_command  # check-public-imports: allow-private
 
     watch = watching.WatchDirectory(tmp_path / "watch", working=False)
@@ -111,7 +111,7 @@ def test_cancelling_after_a_checkpoint_keeps_its_image(tmp_path, watching):
         with progress.previews(), progress.task("solve", "cgls", 3, "iterations"):
             progress.current_task.get().advance(1, {})
             progress.preview(lambda: {"z": _sample()}, final=True)
-            raise progress.Cancelled
+            raise progress.Canceled
 
     assert run_command("reconstruct", "none", operation, watch=watch) == 130
     assert (tmp_path / "watch" / "slice_z.png").exists()

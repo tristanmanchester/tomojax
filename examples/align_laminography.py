@@ -2,7 +2,7 @@
 
 Raw frames record neither the laminography tilt nor, often, the detector pitch,
 and alignment refuses undeclared geometry. This example reads the frame labels
-and rotation angles (recognised Diamond/GDA layouts need no dataset paths),
+and rotation angles (recognized Diamond/GDA layouts need no dataset paths),
 declares a laminography geometry from ``--tilt`` and ``--pixel``, and fits the
 selected parameters jointly with the image. Consistency is not physical truth.
 """

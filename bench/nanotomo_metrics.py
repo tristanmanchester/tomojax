@@ -54,7 +54,7 @@ def threshold_crossing(
 
     DC is excluded. A curve below threshold at its first measured frequency
     is unresolved; a curve above throughout is Nyquist-limited. Both cases are
-    explicitly labelled instead of claiming an observed crossing.
+    explicitly labeled instead of claiming an observed crossing.
     """
     valid = (frequency > 0) & np.isfinite(correlation)
     frequencies = frequency[valid]

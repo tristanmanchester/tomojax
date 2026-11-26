@@ -56,7 +56,7 @@ pub struct AxisScale {
     pub name: String,
     pub frame: String,
     pub unit: String,
-    /// Pixel-centre registration, in stored index order. Signed spacing is preserved.
+    /// Pixel-center registration, in stored index order. Signed spacing is preserved.
     pub origin: f64,
     pub spacing: f64,
     /// Nonuniform coordinates when the axis is an explicitly registered vector.
@@ -181,7 +181,7 @@ impl PlaneData {
         value.is_finite().then_some(value)
     }
 
-    /// Distance between sample-centre coordinates; rejects unlike coordinate frames/units.
+    /// Distance between sample-center coordinates; rejects unlike coordinate frames/units.
     pub fn distance(&self, from: [f64; 2], to: [f64; 2]) -> Result<f64, String> {
         if self.axes[0].unit != self.axes[1].unit || self.axes[0].frame != self.axes[1].frame {
             return Err("A physical distance needs two axes in the same frame and unit.".into());
@@ -213,7 +213,7 @@ impl PlaneData {
 #[derive(Clone, Debug)]
 pub struct VolumeData {
     pub id: u64,
-    /// Normalised scalar half floats, C order (z,y,x); original values use scalar_range.
+    /// Normalized scalar half floats, C order (z,y,x); original values use scalar_range.
     pub texels: Arc<[u16]>,
     pub shape: [usize; 3],
     pub source_shape: [usize; 3],

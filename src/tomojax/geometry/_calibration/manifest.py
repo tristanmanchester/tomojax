@@ -28,7 +28,7 @@ class CalibratedGeometryMetadataPatch(TypedDict):
     Attributes
     ----------
     detector : dict
-        Updated detector dimensions, pitches and physical centre.
+        Updated detector dimensions, pitches and physical center.
     geometry_meta : dict
         Updated detector roll and axis metadata.
     geometry_calibration : dict

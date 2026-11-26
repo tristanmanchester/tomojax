@@ -28,7 +28,7 @@ class InvalidParameter(ValueError):
         self.path = path
 
 
-class Cancelled(Exception):
+class Canceled(Exception):
     """The operation stopped at a cooperative checkpoint."""
 
 
@@ -52,7 +52,7 @@ def _causes(exc: BaseException) -> Iterator[BaseException]:
 
 def _device_allocation_failed(error: BaseException) -> bool:
     # An exception implies its defining module is already loaded. Checking one
-    # must not import JAX or CuPy, nor initialise CUDA.
+    # must not import JAX or CuPy, nor initialize CUDA.
     cupy_oom = getattr(sys.modules.get("cupy.cuda.memory"), "OutOfMemoryError", None)
     if cupy_oom is not None and isinstance(error, cupy_oom):
         return True
@@ -96,8 +96,8 @@ def classify(exc: Exception) -> Error:
     for cause in _causes(exc):
         if isinstance(cause, InvalidParameter):
             return Error(2, "invalid_parameter", str(exc), cause.path)
-        if isinstance(cause, Cancelled):
-            return Error(2, "cancelled", str(exc))
+        if isinstance(cause, Canceled):
+            return Error(2, "canceled", str(exc))
         if isinstance(cause, MemoryError) or _device_allocation_failed(cause):
             return Error(2, "out_of_memory", str(exc))
         if isinstance(cause, OSError | ValueError | KeyError):

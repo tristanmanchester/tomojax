@@ -17,7 +17,7 @@ impl AppState {
             }
             self.cancel_local(id);
             if let Some(job) = self.project.as_mut().and_then(|p| p.document.job_mut(id)) {
-                job.stage = "Cancelling file work".into();
+                job.stage = "Canceling file work".into();
             }
             return Ok(());
         }
@@ -116,7 +116,7 @@ impl AppState {
                     &job,
                     &target,
                     &action,
-                    "The worker returned an invalid control acknowledgement".into(),
+                    "The worker returned an invalid control acknowledgment".into(),
                 );
             }
             return;
@@ -191,7 +191,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn control_acknowledgement_and_stale_status_do_not_invent_or_restore_a_pause() {
+    fn control_acknowledgment_and_stale_status_do_not_invent_or_restore_a_pause() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = AppState::init();
         let mut project = Project::open(&directory.path().join("project"), true).unwrap();

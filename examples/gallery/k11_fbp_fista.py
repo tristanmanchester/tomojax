@@ -3,13 +3,13 @@
     uv run python examples/gallery/k11_fbp_fista.py k11-54286.nxs k11-fbp-fista.png
 
 The scan is aligned with the plain ``tj.align(scan)``, then reconstructed on its
-own 704 x 704 x 234 grid of 6.48 micrometre voxels (4.56 by 4.56 by 1.52 mm):
+own 704 x 704 x 234 grid of 6.48 micrometer voxels (4.56 by 4.56 by 1.52 mm):
 by FBP, the default, and by FISTA-TV with 100 iterations, nonnegativity and its
 automatic TV weight, as the laminography guide recommends. FISTA needs the
-whole sample inside its grid, and at the detector's 2.16 micrometres that grid
+whole sample inside its grid, and at the detector's 2.16 micrometers that grid
 does not fit on an 8 GB GPU. Each row shows an in-plane slice through the
 glass-sphere layer, an enlarged region of it and a vertical section through
-the plates; each row has its own grey range.
+the plates; each row has its own gray range.
 """
 
 from __future__ import annotations

@@ -120,7 +120,7 @@ class Volume(Record, tag="volume"):
 
 
 class Sweep(Record, tag="sweep"):
-    """Ordered planes with a leading signed centre-offset coordinate."""
+    """Ordered planes with a leading signed center-offset coordinate."""
 
     planes: Array
 
@@ -216,8 +216,8 @@ class JointPlan(Record, tag="joint_plan"):
     placement: Placement
 
 
-class CentrePlan(Record, tag="opposite_views_plan"):
-    """Centre estimation uses paired projections."""
+class CenterPlan(Record, tag="opposite_views_plan"):
+    """Center estimation uses paired projections."""
 
     pairs: Count
     reasons: tuple[str, ...]
@@ -255,7 +255,7 @@ type DataProduct = (
     | Inspection
     | ReconPlan
     | JointPlan
-    | CentrePlan
+    | CenterPlan
     | Validated
 )
 type Product = HandleProduct | DataProduct

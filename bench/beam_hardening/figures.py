@@ -22,7 +22,7 @@ def save(
     """Write ``reference`` and ``images`` (``[y, x]``, same units) and their radial profiles.
 
     ``center`` is in physical x, y pixel indices, ``pitch`` the pixel size in mm and ``window``
-    the grey range (by default the reference's 0.5th to 99.5th percentile).
+    the gray range (by default the reference's 0.5th to 99.5th percentile).
     """
     import matplotlib
 

@@ -2,9 +2,9 @@
 
     uv run python examples/gallery/zeiss_shell.py S_1_tomo-A.txrm OUT.png
 
-The scan is 1601 views of 1024 x 1024 pixels over a full turn, with the centre
+The scan is 1601 views of 1024 x 1024 pixels over a full turn, with the center
 and per-view image shifts the file records; no alignment is run. It is binned
-twice and reconstructed by FDK on 512³ voxels of 30 micrometres. The shell sat
+twice and reconstructed by FDK on 512³ voxels of 30 micrometers. The shell sat
 tilted on its mount, so the volume is turned to stand its coiling axis upright
 before it is drawn. The surface views are first-hit renderings of the shell,
 the largest connected piece of dense material, lit from the upper left.
@@ -60,11 +60,11 @@ def main() -> None:
     shell = labels == 1 + int(np.argmax(sizes))  # the largest piece: the mount is not joined to it
     z, y, x = (slice(i.min() - 6, i.max() + 7) for i in np.nonzero(shell))
     volume, shell = volume[z, y, x], shell[z, y, x]
-    centre_y = int(ndimage.center_of_mass(shell)[1])
+    center_y = int(ndimage.center_of_mass(shell)[1])
     spire = int(0.7 * shell.shape[0])  # a height where three whorls are cut
     across = shell.shape[2] * recon.grid.vx
     opened = shell.copy()
-    opened[:, :centre_y] = False
+    opened[:, :center_y] = False
 
     style()
     fig, axes = plt.subplots(1, 4, figsize=(13.6, 3.9), constrained_layout=True)
@@ -75,7 +75,7 @@ def main() -> None:
         ax.imshow(image, origin="lower", cmap="bone", vmin=0, vmax=1)
         ax.set_title(title)
         ax.set_axis_off()
-    panel(axes[2], volume[:, centre_y], "Slice through the axis", low, high)
+    panel(axes[2], volume[:, center_y], "Slice through the axis", low, high)
     panel(axes[3], volume[spire], "Slice across the spire, from the apex side", low, high)
     save(fig, args.out)
 

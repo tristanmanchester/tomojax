@@ -80,7 +80,7 @@ def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | N
     return record if len(record) > 1 else None
 
 
-CENTRE_KEYS = ("ObjectOffsetX", "ObjectRoll", "ObjectTilt", "CentreOfRotationTop",
+CENTER_KEYS = ("ObjectOffsetX", "ObjectRoll", "ObjectTilt", "CentreOfRotationTop",
                "CentreOfRotationBottom")  # fmt: skip
 
 
@@ -138,8 +138,8 @@ def _axis(
 ) -> tuple[float, list[float]] | None:
     """Nikon's axis in the right/up detector frame, matching CIL's Nikon reader.
 
-    Old COR values are detector-plane millimetres at the full panel's ends;
-    ObjectOffsetX is already in object-plane millimetres. Both horizontal
+    Old COR values are detector-plane millimeters at the full panel's ends;
+    ObjectOffsetX is already in object-plane millimeters. Both horizontal
     offsets have the opposite sign to our rightward detector u. ObjectRoll
     and ObjectTilt are degrees, not a rotation of the detector itself.
     """
@@ -213,7 +213,7 @@ def _geometry(
         if calibrated is not None:
             offset, axis = calibrated
             beam = replace(beam, axis_offset=offset)
-    # CIL first aligns the axis to z, then the source-to-panel centre line
+    # CIL first aligns the axis to z, then the source-to-panel center line
     # to +y. Absorb that second rotation in our object angle, not in pixels.
     origin = 180.0
     if detector is not None and beam is not None and axis is not None:
@@ -269,13 +269,13 @@ def _nikon_record(
     }
     metadata: dict[str, object] = {
         "axis_status": "recorded" if axis is not None else "not_recorded",
-        # With AutomaticCentreOfRotation=1 Nikon's reconstructor finds the centre and writes
-        # it to the _recon.xtekct beside the file; zero centre fields here calibrate nothing.
+        # With AutomaticCentreOfRotation=1 Nikon's reconstructor finds the center and writes
+        # it to the _recon.xtekct beside the file; zero center fields here calibrate nothing.
         "detector_center_status": "not_recorded"
         if axis is None
         or (
             _number(params, "AutomaticCentreOfRotation", 0.0)
-            and not any(_number(params, k, 0.0) for k in CENTRE_KEYS)
+            and not any(_number(params, k, 0.0) for k in CENTER_KEYS)
         )
         else "recorded",
         "grid_status": "derived",

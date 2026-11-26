@@ -31,7 +31,7 @@ CASES = ("clean", "center", "translations", "background", "tilt", "roll", "rotat
 
 
 def phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return centres, precision matrices and amplitudes of fixed smooth ellipsoids."""
+    """Return centers, precision matrices and amplitudes of fixed smooth ellipsoids."""
     rng = np.random.default_rng(9361)
     centers = rng.uniform(-12, 12, (12, 3))
     radii = rng.uniform(2.0, 4.0, (12, 3))
@@ -65,7 +65,7 @@ def line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndarray:
 
 
 def solid_phantom() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Return centres, shape matrices and densities of sharp-edged uniform ellipsoids.
+    """Return centers, shape matrices and densities of sharp-edged uniform ellipsoids.
 
     A point p lies inside ellipsoid k when (p - c_k)' M_k (p - c_k) <= 1.
     """
@@ -92,7 +92,7 @@ def solid_line_integrals(origins: np.ndarray, directions: np.ndarray) -> np.ndar
 
 @dataclass(frozen=True)
 class Rays:
-    """Object-frame detector centre, pixel steps and beam direction or source."""
+    """Object-frame detector center, pixel steps and beam direction or source."""
 
     center: np.ndarray
     u: np.ndarray
@@ -101,7 +101,7 @@ class Rays:
     cone: bool
 
     def pixels(self, points: np.ndarray) -> np.ndarray:
-        """Project object landmarks onto detector coordinates, including its centre."""
+        """Project object landmarks onto detector coordinates, including its center."""
         points = np.broadcast_to(points, (len(self.center), *points.shape))
         if self.cone:
             normal = np.cross(self.u, self.v)
@@ -119,7 +119,7 @@ class Rays:
         )
 
     def render(self, size: int, *, solid: bool = False) -> np.ndarray:
-        """Render pixel-centre line integrals without a voxel projector."""
+        """Render pixel-center line integrals without a voxel projector."""
         integrate = solid_line_integrals if solid else line_integrals
         u, v = np.meshgrid(np.arange(size) - (size - 1) / 2, np.arange(size) - (size - 1) / 2)
         output = []
@@ -267,7 +267,7 @@ def make_case(
         background = rng.normal(0, 1, (views, 2)) * [0.15, 0.1] * projections.std()
         rows = np.linspace(-1, 1, size)[None, :, None]
         projections = projections + background[:, :1, None] + background[:, 1:, None] * rows
-    # The same observations declared with the true geometry, the true detector centre and
+    # The same observations declared with the true geometry, the true detector center and
     # roll on the detector and every pose difference as per-view corrections: a fit
     # started there must stay.
     if geometry == "cone":
@@ -296,7 +296,7 @@ def make_case(
 
 
 def score(estimated: Rays, truth: Rays) -> tuple[float, float, np.ndarray]:
-    """Score 27 physical landmarks after one rigid gauge, retaining centre offsets."""
+    """Score 27 physical landmarks after one rigid gauge, retaining center offsets."""
     points = np.stack(np.meshgrid(*[np.linspace(-14.4, 14.4, 3)] * 3, indexing="ij"), -1)
     points = points.reshape(-1, 3)
     target = truth.pixels(points)

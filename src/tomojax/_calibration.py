@@ -137,9 +137,9 @@ def publish_calibration(
 ) -> tuple[Scan, _PublishedValues]:
     """Calibrate the declared geometry and compose the previous and fitted local poses once.
 
-    ``corrections`` contains native-pixel centre corrections and degree tilt/roll
+    ``corrections`` contains native-pixel center corrections and degree tilt/roll
     corrections from the joint fit. The returned calibration has the same names:
-    centre is the final physical detector centre (u, or u/v for cone); tilt is
+    center is the final physical detector center (u, or u/v for cone); tilt is
     the signed lab inclination ``atan2(axis_y, axis_z)`` in degrees; roll is the
     final detector angle from u towards v, also in degrees. ``fitted`` is None
     when the fit selected no per-view parameters. Different cone

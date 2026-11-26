@@ -107,9 +107,9 @@ class Grid:
     """Regular voxel grid metadata.
 
     TomoJAX treats ``vol_origin`` as the physical location of voxel ``(0, 0, 0)``'s
-    centre. When ``vol_origin`` is omitted, the default centred convention places
-    voxel centres on coordinates ``(i - (n/2 - 0.5)) * v`` along each axis.
-    ``vol_center`` can override that default centre while still deriving the
+    center. When ``vol_origin`` is omitted, the default centered convention places
+    voxel centers on coordinates ``(i - (n/2 - 0.5)) * v`` along each axis.
+    ``vol_center`` can override that default center while still deriving the
     voxel ``(0, 0, 0)`` location from the grid dimensions and voxel sizes. If
     both are provided, ``vol_origin`` is the authoritative placement.
 
@@ -120,9 +120,9 @@ class Grid:
     vx, vy, vz : float
         Voxel pitches in a consistent physical length unit.
     vol_origin : tuple of float or None, optional
-        Physical centre of voxel (0, 0, 0); takes precedence over vol_center.
+        Physical center of voxel (0, 0, 0); takes precedence over vol_center.
     vol_center : tuple of float or None, optional
-        Physical grid centre when vol_origin is absent; defaults to (0, 0, 0).
+        Physical grid center when vol_origin is absent; defaults to (0, 0, 0).
 
     Raises
     ------
@@ -163,7 +163,7 @@ class Grid:
 
     def __setstate__(self, state: _State) -> None:
         # Run this class's checks, not a subclass's __post_init__: its fields are
-        # already initialised, and a subclass's own initialisation need not repeat.
+        # already initialized, and a subclass's own initialization need not repeat.
         _restore(self, state)
         Grid.__post_init__(self)
 
@@ -181,8 +181,8 @@ class Grid:
     def resampled(self, *, shape: tuple[int, int, int]) -> Grid:
         """Return a grid with new voxel counts and the same physical extent.
 
-        Voxel pitches change to preserve the outer cell edges and centre, not
-        the positions of the first and last voxel centres. Explicit origins
+        Voxel pitches change to preserve the outer cell edges and center, not
+        the positions of the first and last voxel centers. Explicit origins
         remain authoritative over ``vol_center``. No volume data is resampled.
 
         Parameters
@@ -281,17 +281,17 @@ class Grid:
 
 
 def grid_volume_origin(grid: Grid) -> Vec3:
-    """Return the physical centre of voxel (0, 0, 0) for a grid.
+    """Return the physical center of voxel (0, 0, 0) for a grid.
 
     Parameters
     ----------
     grid : Grid
-        Voxel grid with optional origin or centre.
+        Voxel grid with optional origin or center.
 
     Returns
     -------
     tuple of float
-        Physical (x, y, z) centre of voxel (0, 0, 0).
+        Physical (x, y, z) center of voxel (0, 0, 0).
     """
     if grid.vol_origin is not None:
         return grid.vol_origin
@@ -311,10 +311,10 @@ def grid_volume_origin(grid: Grid) -> Vec3:
 class Detector:
     """Regular detector plane metadata.
 
-    ``center`` is the detector centre's ``(u, v)`` offset (equivalently lab-frame
+    ``center`` is the detector center's ``(u, v)`` offset (equivalently lab-frame
     ``(x, z)`` before detector rotations), in the same physical units as ``du``
     and ``dv``. For a rolled or tilted cone-beam detector, rotations are applied
-    about this displaced centre.
+    about this displaced center.
 
     Parameters
     ----------
@@ -323,12 +323,12 @@ class Detector:
     du, dv : float
         Pixel pitches along u and v, in the geometry's physical length unit.
     center : tuple of float, optional
-        Detector-centre ``(u, v)`` offset in physical units; defaults to zero.
+        Detector-center ``(u, v)`` offset in physical units; defaults to zero.
 
     Raises
     ------
     TypeError
-        If counts are not integers or centre coordinates are not real numbers.
+        If counts are not integers or center coordinates are not real numbers.
     ValueError
         If a count or pitch is not positive, or center is not two finite numbers.
     """
@@ -344,7 +344,7 @@ class Detector:
         object.__setattr__(self, "center", _coerce_fixed_tuple("center", self.center, 2))
 
     def __setstate__(self, state: _State) -> None:
-        # As Grid: this class's checks only, on fields that are already initialised.
+        # As Grid: this class's checks only, on fields that are already initialized.
         _restore(self, state)
         Detector.__post_init__(self)
 
@@ -354,7 +354,7 @@ class Detector:
         Returns
         -------
         dict
-            Pixel counts, pitches and centre under the file key det_center.
+            Pixel counts, pitches and center under the file key det_center.
         """
         return {
             "nu": int(self.nu),
@@ -383,10 +383,10 @@ class Detector:
         KeyError
             If pixel counts or pitches are missing.
         ValueError
-            If the centre is missing or has the wrong number of coordinates.
+            If the center is missing or has the wrong number of coordinates.
         """
         if "det_center" not in data:
-            raise ValueError("Missing detector centre: pass detector=... or geometry=...")
+            raise ValueError("Missing detector center: pass detector=... or geometry=...")
         return cls(
             nu=int(data["nu"]),
             nv=int(data["nv"]),
@@ -410,7 +410,7 @@ def _detector_grid(
 
 
 def get_detector_grid_device(det: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """The detector's pixel-centre coordinates (u, v), flattened row by row.
+    """The detector's pixel-center coordinates (u, v), flattened row by row.
 
     Call it outside jit, grad or scan; the result can be cached and reused.
     """
@@ -430,7 +430,7 @@ def parallel_detector_rays(
 ) -> RayPair:
     """Return the standard detector-plane ray model used by parallel-beam setups.
 
-    The pixel lattice turns by ``detector_roll`` about the detector centre,
+    The pixel lattice turns by ``detector_roll`` about the detector center,
     from u towards v.
     """
     nu, nv = int(detector.nu), int(detector.nv)
@@ -506,7 +506,7 @@ class ScanGeometry(Geometry, Protocol):
         Returns
         -------
         Detector
-            Detector dimensions, pixel sizes and physical centre.
+            Detector dimensions, pixel sizes and physical center.
         """
         ...
 

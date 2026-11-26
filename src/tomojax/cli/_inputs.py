@@ -58,7 +58,7 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
         type=float,
         nargs=2,
         metavar=("U", "V"),
-        help="Detector centre, in the pixel size's unit (default: the file's, or the middle)",
+        help="Detector center, in the pixel size's unit (default: the file's, or the middle)",
     )
     _ = group.add_argument(
         "--geometry",

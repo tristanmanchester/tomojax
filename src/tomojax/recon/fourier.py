@@ -189,7 +189,7 @@ def fourier(
         output[start:stop] = volume
 
     while True:
-        progress.check_cancelled()
+        progress.check_canceled()
         progress.remaining("slabs", (grid.nz + depth - 1) // depth)
         try:
             overlap = (
@@ -210,7 +210,7 @@ def fourier(
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)
             else:
                 for start in range(0, grid.nz, depth):
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     count = min(depth, grid.nz - start)
                     with progress.preparing("dispatch fourier transform", start):
                         write(start, plan.reconstruct(prepare(start), count=count))
@@ -271,7 +271,7 @@ def check_fourier_inputs(
     if projections is None or not check_samples:
         return
     for z in range(0, grid.nz, 8):
-        progress.check_cancelled()
+        progress.check_canceled()
         depth = min(8, grid.nz - z)
         for first in range(0, len(sampling.order), 32):
             sampling.sample(
@@ -381,13 +381,13 @@ def _run_host_pipeline(
             if written is not None:
                 written.result()
                 progress.step("slabs")
-                progress.check_cancelled()
+                progress.check_canceled()
             written = writer.submit(write, start, volume)
 
         prepared = reader.submit(prepare, 0)
         try:
             for start in range(0, nz, depth):
-                progress.check_cancelled()
+                progress.check_canceled()
                 try:
                     assert prepared is not None
                     data = prepared.result()

@@ -71,7 +71,7 @@ impl Client {
         let pinned = &self.pinned;
         self.previews
             .collect_retired(&mut self.engine, |tokens| !tokens.is_disjoint(pinned));
-        for kind in [PreviewKind::Slice, PreviewKind::Centres] {
+        for kind in [PreviewKind::Slice, PreviewKind::Centers] {
             if let Some(current) = self.previews.current(kind) {
                 let history = self.published.entry(kind).or_default();
                 if history.last() != Some(&current.request) {
@@ -161,15 +161,15 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     client
         .previews
         .request(
-            PreviewKind::Centres,
+            PreviewKind::Centers,
             input.clone(),
-            json!({"axis":"z","index":5,"centres":[-1.0,0.0,0.0,1.0],"method":"fourier"}),
+            json!({"axis":"z","index":5,"centers":[-1.0,0.0,0.0,1.0],"method":"fourier"}),
         )
         .unwrap();
     client.until(|client| {
         client
             .previews
-            .status(PreviewKind::Centres)
+            .status(PreviewKind::Centers)
             .request
             .is_some()
             && client.previews.status(PreviewKind::Slice).blocked_by_paused
@@ -188,7 +188,7 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     client.terminal(json!({"type":"control","target":holding,"action":"cancel"}));
     client.until(|client| {
         client.previews.status(PreviewKind::Slice).phase == PreviewPhase::Ready
-            && client.previews.status(PreviewKind::Centres).phase == PreviewPhase::Ready
+            && client.previews.status(PreviewKind::Centers).phase == PreviewPhase::Ready
     });
     let current = client.previews.current(PreviewKind::Slice).unwrap();
     assert_eq!(current.parameters["index"], 5);
@@ -209,15 +209,15 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     assert!(current.revision >= 3);
     let Product::Sweep { planes } = &client
         .previews
-        .current(PreviewKind::Centres)
+        .current(PreviewKind::Centers)
         .unwrap()
         .output
         .value
     else {
-        panic!("expected centre sweep")
+        panic!("expected center sweep")
     };
     assert_eq!(planes.shape, [4, 16, 16]);
-    assert_eq!(planes.axes[0].name, "centre");
+    assert_eq!(planes.axes[0].name, "center");
 
     // The actual worker may finish just before the pointer changes again. Hold
     // that real terminal in the client event queue, edit locally before the next
@@ -304,7 +304,7 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     );
     client.pinned.clear();
     client.until(|_| !saved.exists());
-    // Completed centre-sweep pixels remain owned independently of their source.
+    // Completed center-sweep pixels remain owned independently of their source.
     // Moving away from that form must put its open scan under the idle limit.
     client.previews.retain_inputs(&[]).unwrap();
     for index in 0..3 {
@@ -314,7 +314,7 @@ fn interactive_channels_supersede_queued_work_keep_only_latest_and_retain_open_s
     }
     client.pump();
     assert!(client.previews.source_ref(&warm_input).unwrap().is_none());
-    assert!(client.previews.current(PreviewKind::Centres).is_some());
+    assert!(client.previews.current(PreviewKind::Centers).is_some());
     client.previews.reset();
     client.until(|client| !client.previews.has_work());
     let ending = client.engine.drain_shutdown(Duration::from_secs(5));

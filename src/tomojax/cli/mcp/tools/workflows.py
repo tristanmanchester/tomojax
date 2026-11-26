@@ -32,7 +32,7 @@ type Steps = tuple[
 DETAIL = ("detail", Literal["summary", "full"], "summary")
 DRY = ("dry_run", bool, False)
 EDIT = (op.Select, op.Crop, op.Bin, op.Poses, op.Combine)
-PREVIEWS = (op.Slice, op.CentreSweep, op.CorrectionPreview, op.RegionPreview)
+PREVIEWS = (op.Slice, op.CenterSweep, op.CorrectionPreview, op.RegionPreview)
 WORKFLOW_HELP = {
     op.Correct: (
         "Convert raw frames to line integrals or apply ordered corrections to an existing "
@@ -47,7 +47,7 @@ WORKFLOW_HELP = {
         "when the full acquisition or volume exceeds memory."
     ),
     op.Align: (
-        "Fit the rotation centre, detector geometry or per-view motion. Use the aligned scan"
+        "Fit the rotation center, detector geometry or per-view motion. Use the aligned scan"
         " for reconstruction and inspect the fitted poses."
     ),
     op.Evaluate: (
@@ -56,7 +56,7 @@ WORKFLOW_HELP = {
     ),
     op.Simulate: (
         "Generate a synthetic scan and its ground-truth phantom to check reconstruction "
-        "accuracy or test acquisition artefacts."
+        "accuracy or test acquisition artifacts."
     ),
     op.Project: (
         "Forward-project a volume through the source scan geometry. Supply a handle member, "
@@ -115,7 +115,7 @@ def form(model: type[Record], *, tagged: bool = False) -> type[Record]:
             shapes = op.Box | op.Sphere | op.Cylinder | op.Prism | op.Seeded
             entry = (field.name, shapes | form(op.Band, tagged=True))
         fields.append(entry if field.required else (*entry, default))
-    if model in (op.Slice, op.CentreSweep):
+    if model in (op.Slice, op.CenterSweep):
         interval = tuple[int, int]
         fields.append(("roi", tuple[interval, interval, interval] | None, None))
     if not tagged:
@@ -160,7 +160,7 @@ def forms() -> dict[str, type[Record]]:
             bases=(Record,),
             namespace={
                 "__doc__": (
-                    "Preview a slice, sweep the centre or compare corrections. "
+                    "Preview a slice, sweep the center or compare corrections. "
                     "For a slice or sweep, zoom in on detail with operation.roi: three half-open "
                     "volume index intervals in (z, y, x) order containing the slice index. "
                     "A region preview returns a handle for reconstruction."

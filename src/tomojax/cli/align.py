@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from tomojax import Alignment, Scan
-    from tomojax._smooth_alignment import CentreSelection, JointSelection
+    from tomojax._smooth_alignment import CenterSelection, JointSelection
     from tomojax._workflow import Region
     from tomojax.alignment import AlignConfig
     from tomojax.cli._watch import WatchDirectory
@@ -68,7 +68,7 @@ def build_parser() -> ProgressParser:
         prog="tomojax align",
         description=(
             "Fit selected geometry parameters jointly with a reconstruction, or estimate "
-            "the rotation centre from near-opposite views (--method opposite-views). "
+            "the rotation center from near-opposite views (--method opposite-views). "
             "OUTPUT holds the corrected scan and poses, plus the working image for joint fits."
         ),
         epilog=(
@@ -76,7 +76,7 @@ def build_parser() -> ProgressParser:
             "  tomojax align scan.nxs -o aligned.nxs\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit center\n"
             "  tomojax align scan.nxs -o aligned.nxs --fit translations tilt roll\n"
-            "  tomojax align scan.nxs -o centred.nxs --method opposite-views\n"
+            "  tomojax align scan.nxs -o centered.nxs --method opposite-views\n"
             "  tomojax reconstruct aligned.nxs -o recon.nxs\n\n" + EXIT_STATUS
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -108,13 +108,13 @@ def build_parser() -> ProgressParser:
         "--method",
         choices=("joint", "opposite-views"),
         default="joint",
-        help="joint (default): fit an image with the parameters; opposite-views: the centre "
+        help="joint (default): fit an image with the parameters; opposite-views: the center "
         "alone from near-opposite views of an axial parallel scan, without an image",
     )
     _ = parser.add_argument(
         "--motion",
         choices=("independent", "smooth"),
-        help="independent (default): each view may differ from its neighbours; smooth: drift "
+        help="independent (default): each view may differ from its neighbors; smooth: drift "
         "and occasional slips, for a steady stage",
     )
     _ = parser.add_argument(
@@ -290,7 +290,7 @@ def _dry_run_plan(
     args: _Args,
     fit: tuple[str, ...],
     scan: Scan,
-    work: JointSelection | CentreSelection,
+    work: JointSelection | CenterSelection,
     plan: object,
 ) -> dict[str, object]:
     """Return the JSON document of ``tomojax align --dry-run``."""
@@ -382,9 +382,9 @@ def _run(
         raise FileNotFoundError(f"input not found: {args.data}")
     outputs = [] if args.dry_run else [args.out, args.manifest]
     check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
-    progress.check_cancelled()
+    progress.check_canceled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
-    progress.check_cancelled()
+    progress.check_canceled()
     from tomojax._smooth_alignment import JointSelection, resolve_alignment
     from tomojax._workflow import align_resolved, alignment_task
     from tomojax.cli._plans import announce, dry_run, plan_product
@@ -403,11 +403,11 @@ def _run(
         _ = announce("align", scan, work, used=used)
         with progress.previews() if watch is not None else nullcontext():
             result = align_resolved(scan, work)
-    progress.check_cancelled()
+    progress.check_canceled()
     assert args.out is not None
     tj.save(args.out, result)
     if args.manifest is not None:
-        progress.check_cancelled()
+        progress.check_canceled()
         masked = isinstance(work, JointSelection) and work.cylinder is not None
         _write_manifest(args, metadata, scan, result, fit=fit, masked=masked)
     if args.progress == "json":

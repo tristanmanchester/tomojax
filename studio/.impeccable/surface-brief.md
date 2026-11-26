@@ -2,7 +2,7 @@
 
 Mode: **Operate**. Target: `studio/src/ui/` and the native application shell.
 The brief provides the audience, task, persistent-project model, light visual
-world and creative authorisation. This is a code-led native implementation.
+world and creative authorization. This is a code-led native implementation.
 The Impeccable launcher is unavailable; its source playbooks are applied directly.
 The HTML/CSS detector has no verdict on Rune code.
 
@@ -12,20 +12,20 @@ The HTML/CSS detector has no verdict on Rune code.
 The workspace grows from one scan to a collection without changing its model.
 
 **OWN-WORLD:** Warm white surfaces, forest text and primary actions, sage selected
-regions, quiet green-grey seams, a readable sans family and tabular values.
-Image canvases remain dark and neutral. Native controls keep familiar behaviour.
+regions, quiet green-gray seams, a readable sans family and tabular values.
+Image canvases remain dark and neutral. Native controls keep familiar behavior.
 
 **STORY:** Create or reopen a project, add scans, prepare and queue operations,
 explore real results while work continues, compare alternatives, then export.
 
 **FIRST VIEWPORT:** A 64-point topbar holds five workspaces. A collapsible
 228-point project tree anchors the left; a 304-point context inspector sits at
-right. The centre belongs to a large active image and linked thumbnail strip.
+right. The center belongs to a large active image and linked thumbnail strip.
 A compact job/status line keeps background work visible. The signature move is
 promoting any linked view to the main canvas without losing project context.
 
 **FORM:** Native scientific desktop workspace; seed: none (pinned).
-“Terrarium’s image-led, light-mode design with muted greens” and “centred on
+“Terrarium’s image-led, light-mode design with muted greens” and “centered on
 persistent projects” pin the visual world and first-surface experience.
 
 **FINISH:** unreviewed and undocumented is unfinished; this build ends with the

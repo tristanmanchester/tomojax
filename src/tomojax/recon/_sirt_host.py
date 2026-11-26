@@ -50,7 +50,7 @@ def solve(
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
     with problem.using(out, solver.volume, solver.point):
         for step, momentum in enumerate(_momenta(cfg), 1):
-            progress.check_cancelled()
+            progress.check_canceled()
             solver.momentum = momentum
             for subset in range(cfg.subsets):
                 solver.update(np.arange(subset, projections.shape[0], cfg.subsets))

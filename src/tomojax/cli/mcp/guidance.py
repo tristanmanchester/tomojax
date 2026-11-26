@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 WORKFLOWS = (
     "reconstruct-scan",
     "lab-ct-start-to-finish",
-    "find-the-centre",
+    "find-the-center",
     "check-a-reconstruction",
 )
 PYTHON_TOPICS = ("python", "solvers", "geometry", "calibration")

@@ -195,7 +195,7 @@ def test_stop_wakes_paused(client, finish):
         c.send("stop", "control", target="old", action="cancel")
         c.end("stop")
     terminal = c.end("old")
-    assert terminal["error"]["kind"] == "cancelled"
+    assert terminal["error"]["kind"] == "canceled"
     assert c.rows[-2]["record"]["event"] == "finished"
     if finish == "shutdown":
         c.end("bye")
@@ -254,7 +254,7 @@ def test_durable_group_at_commit(client, tmp_path, outcome):
     if outcome == "commit":
         assert result["result"]["value"]["paths"] == list(map(str, files))
     else:
-        assert result["error"]["kind"] == {"cancel": "cancelled", "supersede": "superseded"}.get(
+        assert result["error"]["kind"] == {"cancel": "canceled", "supersede": "superseded"}.get(
             outcome, "input"
         )
     c.shutdown()
@@ -344,7 +344,7 @@ def test_dispatches_every_other_execution_tag_through_adapter(client):
         "validate": {"operation": reconstruct},
         "plan": {"operation": reconstruct},
         "slice": {"source": source, "axis": "z", "index": 2},
-        "centre_sweep": {"source": source, "axis": "z", "index": 2, "centres": [2, -1, 2]},
+        "center_sweep": {"source": source, "axis": "z", "index": 2, "centers": [2, -1, 2]},
         "correction_preview": {"source": source, "rows": [1, 3]},
         "region_preview": {"source": source},
     }

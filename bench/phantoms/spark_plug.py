@@ -2,7 +2,7 @@
 
 python spark_plug.py OUT_DIR        (needs numpy, scipy and scikit-image)
 
-A small-engine iridium plug with an M10 x 1 thread, z along its axis, millimetres.
+A small-engine iridium plug with an M10 x 1 thread, z along its axis, millimeters.
 
 - Steel shell: a 60 degree thread with rounded crests, a chamfered lead-in and a run-out into a
   relief groove; a seat flange with a chamfered edge; a crimp groove; a 16 mm hex whose corners are
@@ -11,8 +11,8 @@ A small-engine iridium plug with an M10 x 1 thread, z along its axis, millimetre
   talc packing and a steel wire ring under the rolled lip.
 - Outside: a folded steel sealing washer under the flange.
 - Alumina insulator: a rounded nose, a shoulder, a collar under the crimp, a neck, sinusoidal ribs
-  and a rounded top; its bore narrows for the centre electrode.
-- Down the bore: a nickel centre electrode with a flared head on the bore step, a copper core and an
+  and a rounded top; its bore narrows for the center electrode.
+- Down the bore: a nickel center electrode with a flared head on the bore step, a copper core and an
   iridium tip; a copper-loaded conductive glass seal with small and a few large bubbles; a carbon
   resistor with pores; a
   second glass seal holding the threaded end of the steel terminal stud; a round terminal nut with
@@ -210,7 +210,7 @@ def sd_box(
 
 
 def sd_ellipsoid(p: Sequence[np.ndarray], c: Sequence[float], r: Sequence[float]) -> np.ndarray:
-    """Approximate signed distance to an ellipsoid with centre ``c`` and radii ``r``."""
+    """Approximate signed distance to an ellipsoid with center ``c`` and radii ``r``."""
     q = [(p[i] - c[i]) / r[i] for i in range(3)]
     return (np.sqrt(q[0] ** 2 + q[1] ** 2 + q[2] ** 2) - 1.0) * min(r)
 
@@ -221,13 +221,13 @@ def smooth_union(a: np.ndarray, b: np.ndarray, k: float) -> np.ndarray:
     return b * (1 - h) + a * h - k * h * (1 - h)
 
 
-def voids(p: Sequence[np.ndarray], centres: Sequence[tuple], radii: Sequence[float]) -> np.ndarray:
+def voids(p: Sequence[np.ndarray], centers: Sequence[tuple], radii: Sequence[float]) -> np.ndarray:
     """Signed distance to the nearest of a set of spheres."""
     return np.min(
         np.stack(
             [
                 np.sqrt(sum((p[i] - c[i]) ** 2 for i in range(3))) - r
-                for c, r in zip(centres, radii, strict=True)
+                for c, r in zip(centers, radii, strict=True)
             ]
         ),
         0,
@@ -242,16 +242,16 @@ def random_voids(
     radius: float,
     rmin: float = 0.05,
 ) -> tuple[list, list]:
-    """Void centres inside a cylinder of ``radius`` (less the void) between z_range, and radii."""
-    centres, radii = [], []
-    while len(centres) < count:
+    """Void centers inside a cylinder of ``radius`` (less the void) between z_range, and radii."""
+    centers, radii = [], []
+    while len(centers) < count:
         r = rng.uniform(*r_range)
         rho = np.sqrt(rng.uniform(0, 1)) * (radius - r - rmin)
         a = rng.uniform(0, TAU)
         z = rng.uniform(z_range[0] + r + rmin, z_range[1] - r - rmin)
-        centres.append((rho * np.cos(a), rho * np.sin(a), z))
+        centers.append((rho * np.cos(a), rho * np.sin(a), z))
         radii.append(r)
-    return centres, radii
+    return centers, radii
 
 
 def marched(
@@ -417,8 +417,8 @@ def insulator() -> Mesh:
     return moved(revolve((outer + bore)[::-1]), OFFSET)
 
 
-def centre_electrode() -> tuple[Mesh, Mesh, Mesh]:
-    """The nickel centre electrode, its copper core and its iridium tip."""
+def center_electrode() -> tuple[Mesh, Mesh, Mesh]:
+    """The nickel center electrode, its copper core and its iridium tip."""
     nickel = revolve(
         [
             (0, -19.6),
@@ -534,7 +534,7 @@ def ground_electrode() -> tuple[Mesh, Mesh]:
 
 def build() -> dict[str, Mesh]:
     """Every material's mesh, by name."""
-    nickel, copper, iridium = centre_electrode()
+    nickel, copper, iridium = center_electrode()
     glass, resistor = bore_fill()
     stud, nut, m4 = terminal()
     ground, platinum = ground_electrode()

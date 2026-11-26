@@ -29,7 +29,7 @@ def lab_point(poses, point):
 
 def test_a_slip_is_an_object_frame_step_that_turns_with_the_sample():
     nominal = axial_nominal(ANGLES)
-    shift = (5.0, 0.0, 0.0)  # micrometres along object x
+    shift = (5.0, 0.0, 0.0)  # micrometers along object x
     slipped = motion.poses(
         motion.Motion(slips=(motion.Slip(30, shift),)), nominal, ANGLES, np.zeros(3)
     )

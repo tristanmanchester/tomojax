@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.alignment._geometry.detector_center import CentreSelection, opposite_samples
+from tomojax.alignment._geometry.detector_center import CenterSelection, opposite_samples
 from tomojax.alignment._joint._fit import FitSchedule, fit_poses, fit_schedule
 from tomojax.alignment._joint._parameters import parse_fit
 from tomojax.core.geometry.cone import cone_parts
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 
 def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
-    """Lab detector centre, u, v and source for each view; None for parallel rays."""
+    """Lab detector center, u, v and source for each view; None for parallel rays."""
     parts = cone_parts(geometry)
     if parts is None:
         return None
@@ -33,7 +33,7 @@ def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
 
 
 __all__ = [
-    "CentreSelection",
+    "CenterSelection",
     "FitSchedule",
     "cone_frames",
     "fit_poses",

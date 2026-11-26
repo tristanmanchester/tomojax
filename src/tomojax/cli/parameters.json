@@ -9,7 +9,7 @@
           "$ref": "#/$defs/Slice"
         },
         {
-          "$ref": "#/$defs/CentreSweep"
+          "$ref": "#/$defs/CenterSweep"
         },
         {
           "$ref": "#/$defs/CorrectionPreview"
@@ -23,7 +23,7 @@
         "mapping": {
           "plane": "#/$defs/Plane",
           "slice": "#/$defs/Slice",
-          "centre_sweep": "#/$defs/CentreSweep",
+          "center_sweep": "#/$defs/CenterSweep",
           "correction_preview": "#/$defs/CorrectionPreview",
           "region_preview": "#/$defs/RegionPreview"
         }
@@ -659,7 +659,7 @@
     },
     "BeamHardening": {
       "title": "BeamHardening",
-      "description": "Linearise single-material beam hardening.",
+      "description": "Linearize single-material beam hardening.",
       "type": "object",
       "properties": {
         "type": {
@@ -725,7 +725,7 @@
         },
         "distance": {
           "type": "number",
-          "description": "Positive effective propagation distance at the sample, in metres.",
+          "description": "Positive effective propagation distance at the sample, in meters.",
           "x-unit": "m"
         },
         "energy_kev": {
@@ -735,7 +735,7 @@
         },
         "pixel_size": {
           "type": "number",
-          "description": "Positive detector-pixel size at the sample, in metres.",
+          "description": "Positive detector-pixel size at the sample, in meters.",
           "x-unit": "m"
         }
       },
@@ -771,7 +771,7 @@
             }
           ],
           "items": false,
-          "description": "Distortion centre (column, row) in zero-based frame pixels.",
+          "description": "Distortion center (column, row) in zero-based frame pixels.",
           "x-unit": "pixel"
         },
         "coefficients": {
@@ -813,7 +813,7 @@
     },
     "Rings": {
       "title": "Rings",
-      "description": "Correct ring artefacts from each detector column's own response.",
+      "description": "Correct ring artifacts from each detector column's own response.",
       "type": "object",
       "properties": {
         "type": {
@@ -843,7 +843,7 @@
             }
           ],
           "default": 512,
-          "description": "Fit the responses on the means of about this many contiguous angular bins of views, neighbouring bins as instrument, and correct every view. Default 512. Scans without a mirror axis then fit once rather than twice. None fits every view: several times slower, for scans whose structure moves across columns within a bin.",
+          "description": "Fit the responses on the means of about this many contiguous angular bins of views, neighboring bins as instrument, and correct every view. Default 512. Scans without a mirror axis then fit once rather than twice. None fits every view: several times slower, for scans whose structure moves across columns within a bin.",
           "x-unit": "view"
         }
       },
@@ -865,7 +865,7 @@
         "width": {
           "type": "integer",
           "default": 9,
-          "description": "Neighbourhood width in detector columns, at least 3. Default is 9.",
+          "description": "Neighborhood width in detector columns, at least 3. Default is 9.",
           "x-unit": "pixel"
         },
         "varying": {
@@ -892,13 +892,13 @@
         "threshold": {
           "type": "number",
           "default": 0.1,
-          "description": "Positive excess over the neighbourhood median, as a fraction of the open beam. Default is 0.1.",
+          "description": "Positive excess over the neighborhood median, as a fraction of the open beam. Default is 0.1.",
           "x-unit": "transmission"
         },
         "size": {
           "type": "integer",
           "default": 3,
-          "description": "Odd side length of the square neighbourhood, at least 3 pixels. Default is 3.",
+          "description": "Odd side length of the square neighborhood, at least 3 pixels. Default is 3.",
           "x-unit": "pixel"
         }
       },
@@ -1291,7 +1291,7 @@
             }
           ],
           "default": null,
-          "description": "Physical centre of voxel (0, 0, 0); takes precedence over vol_center.",
+          "description": "Physical center of voxel (0, 0, 0); takes precedence over vol_center.",
           "x-unit": "geometry_length"
         },
         "vol_center": {
@@ -1318,7 +1318,7 @@
             }
           ],
           "default": null,
-          "description": "Physical grid centre when vol_origin is absent; defaults to (0, 0, 0).",
+          "description": "Physical grid center when vol_origin is absent; defaults to (0, 0, 0).",
           "x-unit": "geometry_length"
         }
       },
@@ -1608,7 +1608,7 @@
         "huber_delta": {
           "type": "number",
           "default": 0.01,
-          "description": "Positive dimensionless Huber transition scale when regulariser is \"huber_tv\". Default is 0.01."
+          "description": "Positive dimensionless Huber transition scale when regularizer is \"huber_tv\". Default is 0.01."
         },
         "lipschitz": {
           "anyOf": [
@@ -1817,7 +1817,7 @@
         "huber_delta": {
           "type": "number",
           "default": 0.01,
-          "description": "Positive dimensionless Huber transition scale when regulariser is \"huber_tv\". Default is 0.01."
+          "description": "Positive dimensionless Huber transition scale when regularizer is \"huber_tv\". Default is 0.01."
         },
         "theta": {
           "type": "number",
@@ -2313,7 +2313,7 @@
             "smooth"
           ],
           "default": "independent",
-          "description": "How each view's corrections may differ from its neighbours'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbours', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbours'; use it for a steady stage, where per-view error that is not motion should not be followed.",
+          "description": "How each view's corrections may differ from its neighbors'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbors', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbors'; use it for a steady stage, where per-view error that is not motion should not be followed.",
           "x-choices": [
             "independent",
             "smooth"
@@ -2406,7 +2406,7 @@
         "slip_scale": {
           "type": "number",
           "default": 0.02,
-          "description": "Under motion=\"smooth\", the view-to-view step, in native pixels, at which the pull towards the neighbours is strongest; larger steps are followed as slips, and the rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.",
+          "description": "Under motion=\"smooth\", the view-to-view step, in native pixels, at which the pull towards the neighbors is strongest; larger steps are followed as slips, and the rotations' tie to their neighbors is inversely proportional to it. Default is 0.02.",
           "x-unit": "native_pixel"
         },
         "knot_spacing": {
@@ -2471,7 +2471,7 @@
     },
     "Interleaved": {
       "title": "Interleaved",
-      "description": "Hold out regularly spaced views with optional neighbouring guard views.",
+      "description": "Hold out regularly spaced views with optional neighboring guard views.",
       "type": "object",
       "properties": {
         "type": {
@@ -2615,7 +2615,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeros the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -3092,7 +3092,7 @@
             }
           ],
           "default": null,
-          "description": "How each view's corrections may differ from its neighbours'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbours', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbours'; use it for a steady stage, where per-view error that is not motion should not be followed.",
+          "description": "How each view's corrections may differ from its neighbors'. \"independent\" (the default) leaves every view free: no term ties a view's translations or rotations to its neighbors', and only the rotations' size prior remains. \"smooth\" lets the translations drift freely along a spline and step from one view to the next only where the data call for a slip, and ties each view's rotations to its neighbors'; use it for a steady stage, where per-view error that is not motion should not be followed.",
           "x-choices": [
             "independent",
             "smooth"
@@ -3335,17 +3335,17 @@
           "description": "Standard deviation of Gaussian object shifts along each detector axis, drawn independently for each view. Uses the same length unit as voxel spacing. Zero adds no motion. The scan geometry stays nominal; sim.true_poses gives the shifts that produced the projections.",
           "x-unit": "geometry_length"
         },
-        "artefacts": {
+        "artifacts": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SimulationArtefacts"
+              "$ref": "#/$defs/SimulationArtifacts"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise) from tomojax.datasets.SimulationArtefacts."
+          "description": "Detector artifacts (dead/hot pixels, zingers, stripes, Poisson noise) from tomojax.datasets.SimulationArtifacts."
         },
         "grid": {
           "anyOf": [
@@ -3393,16 +3393,16 @@
           "source_to_detector": "source_to_detector",
           "poisson_scale": "poisson_scale",
           "translation_sigma": "translation_sigma",
-          "artefacts": "artefacts",
+          "artifacts": "artifacts",
           "grid": "grid",
           "detector": "detector",
           "seed": "seed"
         }
       }
     },
-    "SimulationArtefacts": {
-      "title": "SimulationArtefacts",
-      "description": "Configure simple projection-domain simulation artefacts.",
+    "SimulationArtifacts": {
+      "title": "SimulationArtifacts",
+      "description": "Configure simple projection-domain simulation artifacts.",
       "type": "object",
       "properties": {
         "poisson_scale": {
@@ -3549,7 +3549,7 @@
             0.0,
             0.0
           ],
-          "description": "Detector-centre (u, v) offset in physical units; defaults to zero.",
+          "description": "Detector-center (u, v) offset in physical units; defaults to zero.",
           "x-unit": "geometry_length"
         }
       },
@@ -4632,7 +4632,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeros the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -4799,14 +4799,14 @@
       ],
       "additionalProperties": false
     },
-    "CentreSweep": {
-      "title": "CentreSweep",
+    "CenterSweep": {
+      "title": "CenterSweep",
       "description": "Reconstruct at signed horizontal offsets in detector pixels.",
       "type": "object",
       "properties": {
         "type": {
           "enum": [
-            "centre_sweep"
+            "center_sweep"
           ]
         },
         "source": {
@@ -4885,7 +4885,7 @@
             }
           ],
           "default": null,
-          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeroes the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
+          "description": "The part of the scan's grid to reconstruct, in place of grid: the box every view sees (\"auto\" and \"bbox\"; \"auto\" keeps the scan's grid, with a warning, when there is none), its largest cube, or its largest cylinder about the axis (\"cyl\", which also zeros the volume outside it); a RegionEstimate gives its own grid. None keeps the scan's grid.",
           "x-choices": [
             "auto",
             "bbox",
@@ -5043,7 +5043,7 @@
           "type": "integer",
           "minimum": 0
         },
-        "centres": {
+        "centers": {
           "type": "array",
           "items": {
             "type": "number"
@@ -5055,7 +5055,7 @@
         "source",
         "axis",
         "index",
-        "centres"
+        "centers"
       ],
       "additionalProperties": false
     },
@@ -5225,7 +5225,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "HDF5/NXtomo dataset, saved reconstruction, or recognised raw acquisition."
+          "description": "HDF5/NXtomo dataset, saved reconstruction, or recognized raw acquisition."
         }
       },
       "required": [
@@ -5377,7 +5377,7 @@
             }
           ],
           "default": null,
-          "description": "Replacement detector dimensions, pixel sizes and physical centre."
+          "description": "Replacement detector dimensions, pixel sizes and physical center."
         },
         "pixel_size": {
           "anyOf": [
@@ -5403,7 +5403,7 @@
             }
           ],
           "default": null,
-          "description": "The detector's pixel size (u, v) in the geometry's length unit, when the file records none or another; the shape comes from the frames and the centre from the file or the middle. Not with detector or geometry.",
+          "description": "The detector's pixel size (u, v) in the geometry's length unit, when the file records none or another; the shape comes from the frames and the center from the file or the middle. Not with detector or geometry.",
           "x-unit": "geometry_length"
         },
         "grid": {
@@ -5537,7 +5537,7 @@
         "apply_poses": {
           "type": "boolean",
           "default": true,
-          "description": "Apply saved per-view pose corrections, and a scanner's own recorded per-view shifts and centre shift (Zeiss); default is True. False gives the nominal geometry while keeping vendor shift provenance in metadata."
+          "description": "Apply saved per-view pose corrections, and a scanner's own recorded per-view shifts and center shift (Zeiss); default is True. False gives the nominal geometry while keeping vendor shift provenance in metadata."
         }
       },
       "required": [
@@ -5705,7 +5705,7 @@
             }
           ],
           "default": null,
-          "description": "Detector centre offset in horizontal and vertical coordinates.",
+          "description": "Detector center offset in horizontal and vertical coordinates.",
           "x-unit": "geometry_length"
         }
       },
@@ -5840,7 +5840,7 @@
                   "$ref": "#/$defs/Slice"
                 },
                 {
-                  "$ref": "#/$defs/CentreSweep"
+                  "$ref": "#/$defs/CenterSweep"
                 },
                 {
                   "$ref": "#/$defs/CorrectionPreview"
@@ -5854,7 +5854,7 @@
                 "mapping": {
                   "plane": "#/$defs/Plane",
                   "slice": "#/$defs/Slice",
-                  "centre_sweep": "#/$defs/CentreSweep",
+                  "center_sweep": "#/$defs/CenterSweep",
                   "correction_preview": "#/$defs/CorrectionPreview",
                   "region_preview": "#/$defs/RegionPreview"
                 }

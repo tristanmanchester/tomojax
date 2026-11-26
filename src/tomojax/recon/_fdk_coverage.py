@@ -84,9 +84,9 @@ def full_turn_weights(
 ) -> np.ndarray:
     """Angular weights for per-view fans, including changing or repeated panels.
 
-    ``counts`` partitions the views into runs sharing one fan. Pixel centres
+    ``counts`` partitions the views into runs sharing one fan. Pixel centers
     lie half a pixel inside their panel edges. Reliability tends continuously
-    to equal weighting as the panel centres; absent conjugates receive none.
+    to equal weighting as the panel centers; absent conjugates receive none.
     """
     lo, hi = fans.min(axis=1), fans.max(axis=1)
     parameters = np.column_stack([lo - pixels / 2, hi + pixels / 2, pixels])

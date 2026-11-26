@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Compare TV-regularised reconstruction: TomoJAX FISTA-TV against TIGRE FISTA and ASD-POCS.
+"""Compare TV-regularized reconstruction: TomoJAX FISTA-TV against TIGRE FISTA and ASD-POCS.
 
 Usage: ``python bench/compare_tv.py SIZE tomojax|tigre``. A structured parallel
 phantom (analytic line integrals, 180 views) gets 3% Gaussian noise. Each
-library runs 50 iterations over a grid of its own regularisation weights; the
+library runs 50 iterations over a grid of its own regularization weights; the
 two weight conventions differ, so compare each library's best result. Every
 timed solve is warm (each library first runs once untimed) and host to host:
 TomoJAX uploads the data and downloads the volume inside the timer, as TIGRE's

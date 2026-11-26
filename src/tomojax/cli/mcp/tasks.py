@@ -71,7 +71,7 @@ class Task:
 
 
 class Tasks(Extension):
-    """Materialise eligible modern calls and serve task methods through the SDK."""
+    """Materialize eligible modern calls and serve task methods through the SDK."""
 
     identifier = "io.modelcontextprotocol/tasks"
 
@@ -169,7 +169,7 @@ class Tasks(Extension):
                 if (
                     result is not None
                     and result.get("isError")
-                    and (result.get("structuredContent") or {}).get("kind") == "cancelled"
+                    and (result.get("structuredContent") or {}).get("kind") == "canceled"
                 ):
                     fields.update(status="cancelled")
                 else:

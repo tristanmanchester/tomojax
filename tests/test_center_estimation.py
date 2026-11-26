@@ -1,4 +1,4 @@
-"""Projection-only centre estimation returns the scan with its physical detector-u centre."""
+"""Projection-only center estimation returns the scan with its physical detector-u center."""
 
 from dataclasses import replace
 
@@ -10,7 +10,7 @@ from tomojax.geometry import Detector, Grid, ParallelGeometry
 
 
 def _centered(scan):
-    """The scan with its centre from near-opposite views (``tj.align``'s method)."""
+    """The scan with its center from near-opposite views (``tj.align``'s method)."""
     return tj.align(scan, method="opposite-views").scan
 
 
@@ -37,7 +37,7 @@ def _scan(*, pitch=0.8, views=180, span=180):
         truth += amplitude * np.exp(-0.5 * ((x - cx) ** 2 + (y - cy) ** 2) / r**2)
     data = np.broadcast_to(sino[:, None], (views, 8, 64)).astype(np.float32).copy()
     return (
-        tj.Scan(data, ParallelGeometry(grid, detector, angles), name="centre fixture"),
+        tj.Scan(data, ParallelGeometry(grid, detector, angles), name="center fixture"),
         true_u,
         truth,
     )
@@ -116,13 +116,13 @@ def test_opposite_views_rejects_scans_without_usable_axial_pairs(kind):
     else:
         geometry = tj.ConeGeometry(scan.grid, scan.detector, scan.angles, tj.ConeBeam(100, 200))
         scan = replace(scan, geometry=geometry)
-    message = "angular neighbours" if kind == "sparse_views" else "opposite-views"
+    message = "angular neighbors" if kind == "sparse_views" else "opposite-views"
     with pytest.raises(ValueError, match=message):
         _centered(scan)
 
 
 def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch):
-    # A file with pixel pitches and no centre loads with the centre at the middle and says the
+    # A file with pixel pitches and no center loads with the center at the middle and says the
     # file recorded none; nothing estimates it until asked.
     import h5py
 
@@ -144,7 +144,7 @@ def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch)
     estimate = alignment.estimate_center_report
 
     def no_estimate(*_args, **_kwargs):
-        raise AssertionError("loading estimated a centre")
+        raise AssertionError("loading estimated a center")
 
     monkeypatch.setattr(alignment, "estimate_center_report", no_estimate)
     frames = tj.load_frames(path)
@@ -160,7 +160,7 @@ def test_loading_keeps_an_unrecorded_center_at_the_middle(tmp_path, monkeypatch)
     again = tj.load(saved)
     assert again.detector == loaded.detector
     assert again.source.geometry_metadata["detector_center_status"] == "not_recorded"
-    # Asked for, the centre is estimated.
+    # Asked for, the center is estimated.
     monkeypatch.setattr(alignment, "estimate_center_report", estimate)
     assert abs(_centered(loaded).detector.center[0] - true_u) <= 0.3 * scan.detector.du
 
@@ -177,7 +177,7 @@ def test_recon_says_when_the_file_recorded_no_center(tmp_path, caplog):
     for method in ("auto", "fbp"):
         caplog.clear()
         assert main(["reconstruct", str(path), "-o", str(out), "--method", method, "--force"]) == 0
-        assert "records no rotation centre" in caplog.text
+        assert "records no rotation center" in caplog.text
 
 
 def test_opposite_views_retains_signed_phase_contrast_across_rows():

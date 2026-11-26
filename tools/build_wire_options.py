@@ -178,7 +178,7 @@ def description() -> dict[str, Any]:
     inherit_align_config(definitions)
     for target, source in (
         (op.Slice, op.Reconstruct),
-        (op.CentreSweep, op.Reconstruct),
+        (op.CenterSweep, op.Reconstruct),
         (op.CorrectionPreview, op.Correct),
     ):
         props = definitions[target.__name__]["properties"]

@@ -927,7 +927,7 @@ def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector()
         get_detector_grid_device,
     )
 
-    # FP32 neighbours 0.7 apart differ by 0.69995: 0.2 lengths of drift over 4097 columns.
+    # FP32 neighbors 0.7 apart differ by 0.69995: 0.2 lengths of drift over 4097 columns.
     grid, detector = Grid(8, 8, 8, 1.0, 1.0, 1.0), Detector(4097, 3, 0.7, 0.7)
     poses = np.eye(4, dtype=np.float32)[None]
     grid_values = tuple(np.asarray(a) for a in get_detector_grid_device(detector))

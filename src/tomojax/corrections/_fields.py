@@ -134,7 +134,7 @@ def _moments(
     batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
     total, squares = np.zeros(shape), np.zeros(shape)
     for start in range(0, count, batch):
-        progress.check_cancelled()
+        progress.check_canceled()
         which = slice(start, start + batch) if indices is None else indices[start : start + batch]
         values = np.asarray(frames[which], np.float64)
         if scales is not None:

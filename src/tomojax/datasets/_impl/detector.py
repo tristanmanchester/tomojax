@@ -45,7 +45,7 @@ class DetectorModel:
 
     Static sensitivity is shared by sample and flat measurements and cancels
     under exact calibration. Finite reference noise persists across all views.
-    Spatially correlated noise and time-dependent illumination are not modelled.
+    Spatially correlated noise and time-dependent illumination are not modeled.
 
     Parameters
     ----------
@@ -142,7 +142,7 @@ class DetectorModel:
         ----------
         line_integrals : array_like
             Noise-free line integrals, shape (view, row, column). Projection
-            discretisation is the caller's choice, independent of this model.
+            discretization is the caller's choice, independent of this model.
         flat_frames, dark_frames : int
             Positive numbers of frames averaged into the two reference maps.
         seed : int

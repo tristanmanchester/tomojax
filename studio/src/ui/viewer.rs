@@ -11,7 +11,7 @@ pub fn workspace(state: &AppState) -> El {
     if state.ui.workspace == Workspace::Compare {
         return compare(state);
     }
-    let mut centre = col()
+    let mut center = col()
         .key("image-workspace")
         .w_full()
         .h_full()
@@ -19,9 +19,9 @@ pub fn workspace(state: &AppState) -> El {
         .min_h(0.)
         .padding(20.)
         .gap(14.);
-    centre = centre.child(heading(state));
+    center = center.child(heading(state));
     if state.model.preview.is_some() {
-        centre = centre.child(super::preview::status_bar(state));
+        center = center.child(super::preview::status_bar(state));
     }
     let kind = state.ui.main_view;
     let mut main = col()
@@ -38,7 +38,7 @@ pub fn workspace(state: &AppState) -> El {
         true,
     ));
     main = main.child(image_footer(state, kind));
-    centre = centre.child(main);
+    center = center.child(main);
     let candidates = if state
         .model
         .planes
@@ -112,9 +112,9 @@ pub fn workspace(state: &AppState) -> El {
         );
     }
     if count > 1 {
-        centre = centre.child(strip);
+        center = center.child(strip);
     }
-    centre
+    center
 }
 
 fn heading(state: &AppState) -> El {
@@ -394,9 +394,9 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
             .preview
             .as_ref()
             .map(|p| {
-                p.centre.map_or_else(
+                p.center.map_or_else(
                     || format!("Updating slice {}…", p.index + 1),
-                    |c| format!("Updating centre {c:+.2} px…"),
+                    |c| format!("Updating center {c:+.2} px…"),
                 )
             })
             .unwrap_or_default();

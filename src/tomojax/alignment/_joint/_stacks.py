@@ -1,7 +1,7 @@
 """A level's storage: its stacks, each on the device or in a host buffer, and its volumes.
 
 A level holds up to six arrays with one image per view: the data ``y`` and its
-``precision`` (when not uniform), the linearisation's ``residual``, IRLS weights
+``precision`` (when not uniform), the linearization's ``residual``, IRLS weights
 ``sw`` and pose columns ``j`` (FP16), and ``r``, the weighted projection that
 the Schur matvec and then the step's line search use in turn (they never
 coexist, so one buffer serves both). Together they are what a large scan cannot
@@ -30,7 +30,7 @@ time. A handle's placement is static, so a function compiles once per placement:
 the resident path is a slice of a device array and costs nothing extra; only a
 stack held on the host pays the transfer (``read_block`` / ``write_block``).
 Written stacks are donated, so a level rewrites its buffers in place instead of
-allocating fresh stacks at every linearisation and matvec.
+allocating fresh stacks at every linearization and matvec.
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ class StorageRecord(_StorageRecord, total=False):
 
 
 # Who most deserves the device: read in every matvec (sw, r, j), then the data
-# (each linearisation and line-search trial), then the residual (the trials at
+# (each linearization and line-search trial), then the residual (the trials at
 # unchanged poses only).
 ORDER = ("sw", "r", "j", "y", "precision", "residual")
 

@@ -11,10 +11,10 @@ that gauge:
   thinner wall); the RMS includes noise and the reconstruction's own blur of
   strong edges, which ``exact`` shows;
 - ``ratio_error``: the RMS over materials of the relative error of their mean
-  attenuation after the one scale factor that minimises it, so independent
+  attenuation after the one scale factor that minimizes it, so independent
   of the gauge: whether the materials keep their true ratios (0 for one);
 - ``cupping``: in the largest region, the mean attenuation near its rim minus
-  that near its centre, relative to the region's mean (0 when flat);
+  that near its center, relative to the region's mean (0 when flat);
 - ``dark_band``: between every pair of dense rods in a matrix, the matrix
   attenuation on the line joining them minus that at the same radius
   elsewhere, relative to the region's mean (0 without streaks; the worst pair);
@@ -25,7 +25,7 @@ that gauge:
   material for rays through one material only, and after the best scale.
 
 Flatness and data residual are never scores: they are what correction
-methods optimise.
+methods optimize.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ MARGIN = 0.3  # mm clear of edges for interior statistics
 
 
 def coordinates(case: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Voxel-centre x and y (mm) of the case's grid, indexed ``[iy, ix]``."""
+    """Voxel-center x and y (mm) of the case's grid, indexed ``[iy, ix]``."""
     g = GEOMETRIES[case.get("geometry", "cone")]
     axis = (np.arange(g["grid"]) - (g["grid"] - 1) / 2) * g["voxel"]
     return np.meshgrid(axis, axis, indexing="xy")
@@ -210,7 +210,7 @@ def _matrix(image: np.ndarray, case: dict, big: int, owner: np.ndarray) -> dict:
     for a, rod in enumerate(dense):
         for other in dense[a + 1 :]:
             band = _segment_band(x, y, rod, other) & region
-            # The matrix at the same distance from its centre, away from rods and this band.
+            # The matrix at the same distance from its center, away from rods and this band.
             elsewhere = reference & ~band
             level = np.bincount(bins[elsewhere], image[elsewhere], bins.max() + 1)
             count = np.bincount(bins[elsewhere], minlength=bins.max() + 1)
@@ -242,7 +242,7 @@ def score_line_integrals(
 
     Rays are binned by true line integral and the error averaged in each bin,
     so noise cancels and the bias of the curve remains; ``shape`` is the same
-    after the one scale factor that minimises it (independent of the gauge),
+    after the one scale factor that minimizes it (independent of the gauge),
     and ``rms`` keeps the noise.
     """
     truth = sum(truth_mu[m] * path.astype(np.float64) for m, path in paths.items())

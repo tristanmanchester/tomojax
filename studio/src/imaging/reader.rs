@@ -267,7 +267,7 @@ pub(crate) fn table(descriptor: &ArrayDescriptor) -> Result<super::TableData, St
 pub(super) fn volume(
     descriptor: &ArrayDescriptor,
     max_edge: usize,
-    cancelled: &dyn Fn() -> bool,
+    canceled: &dyn Fn() -> bool,
 ) -> Result<VolumeData, String> {
     validate(descriptor)?;
     if descriptor.shape.len() != 3 {
@@ -296,7 +296,7 @@ pub(super) fn volume(
     // Small slabs release HDF5's lock between reads so a second reader can serve navigation.
     let mut values = Vec::with_capacity(count.iter().product());
     for first in (0..count[0]).step_by(4) {
-        if cancelled() {
+        if canceled() {
             return Err("Volume loading was superseded.".into());
         }
         let mut slab = count.clone();

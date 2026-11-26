@@ -42,27 +42,27 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
     GaugeConflict(
         code="det_u_px_world_dx",
         variables=("det_u_px", "world_dx"),
-        message="Estimate detector/ray-grid u-centre or static world dx, not both.",
+        message="Estimate detector/ray-grid u-center or static world dx, not both.",
     ),
     GaugeConflict(
         code="det_u_px_rotation_axis_intercept_u",
         variables=("det_u_px", "rotation_axis_intercept_u_px"),
         message=(
-            "Estimate detector/ray-grid u-centre or rotation-axis u-intercept, not both "
-            "under the detector-centre gauge."
+            "Estimate detector/ray-grid u-center or rotation-axis u-intercept, not both "
+            "under the detector-center gauge."
         ),
     ),
     GaugeConflict(
         code="det_v_px_world_dz",
         variables=("det_v_px", "world_dz"),
-        message="Estimate detector/ray-grid v-centre or static world dz, not both.",
+        message="Estimate detector/ray-grid v-center or static world dz, not both.",
     ),
     GaugeConflict(
         code="det_v_px_rotation_axis_intercept_v",
         variables=("det_v_px", "rotation_axis_intercept_v_px"),
         message=(
-            "Estimate detector/ray-grid v-centre or rotation-axis v-intercept, not both "
-            "under the detector-centre gauge."
+            "Estimate detector/ray-grid v-center or rotation-axis v-intercept, not both "
+            "under the detector-center gauge."
         ),
     ),
     GaugeConflict(
@@ -98,7 +98,7 @@ _CONFLICT_RULES: tuple[GaugeConflict, ...] = (
     GaugeConflict(
         code="object_translation_mean_volume_center",
         variables=("object_translation_mean", "volume_center"),
-        message="Estimate object mean translation or volume centre, not both.",
+        message="Estimate object mean translation or volume center, not both.",
     ),
 )
 

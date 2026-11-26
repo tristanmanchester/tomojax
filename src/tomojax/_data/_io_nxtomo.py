@@ -334,7 +334,7 @@ def _write_in_tiles(target: h5py.Dataset, source: np.ndarray | jax.Array) -> Non
             )
             target[region] = np.asarray(source[region])
             progress.step("tiles")
-            progress.check_cancelled()
+            progress.check_canceled()
 
 
 def _write_tomojax_metadata_sections(
@@ -360,11 +360,11 @@ def _write_tomojax_metadata_sections(
                 meta.geometry_calibration
             )
 
-    if meta.simulation_artefacts is not None:
+    if meta.simulation_artifacts is not None:
         processing = ensure_group(entry, "processing", "NXprocess")
         tj = ensure_group(processing, "tomojax", "NXcollection")
         simulation_grp = ensure_group(tj, "simulation", "NXcollection")
-        simulation_grp.attrs["artefacts_json"] = json.dumps(meta.simulation_artefacts)
+        simulation_grp.attrs["artifacts_json"] = json.dumps(meta.simulation_artifacts)
 
 
 def _write_alignment_metadata_section(
@@ -406,14 +406,14 @@ def _read_projections(stack: Hdf5Frames) -> np.ndarray:
         if step >= views:
             result = np.asarray(stack)
             active.advance(views, {})
-            progress.check_cancelled()
+            progress.check_canceled()
             return result
         result = np.empty(stack.shape, stack.dtype)
         for start in range(0, views, step):
             stop = min(views, start + step)
             result[start:stop] = stack[start:stop]
             active.advance(stop, {})
-            progress.check_cancelled()
+            progress.check_canceled()
         return result
 
 

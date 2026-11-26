@@ -26,11 +26,11 @@ class AlignConfig:
     Parameters
     ----------
     motion : {"independent", "smooth"}, optional
-        How each view's corrections may differ from its neighbours'. "independent" (the
+        How each view's corrections may differ from its neighbors'. "independent" (the
         default) leaves every view free: no term ties a view's translations or rotations to
-        its neighbours', and only the rotations' size prior remains. "smooth" lets the
+        its neighbors', and only the rotations' size prior remains. "smooth" lets the
         translations drift freely along a spline and step from one view to the next only
-        where the data call for a slip, and ties each view's rotations to its neighbours';
+        where the data call for a slip, and ties each view's rotations to its neighbors';
         use it for a steady stage, where per-view error that is not motion should not be
         followed.
     iterations : int, optional
@@ -66,8 +66,8 @@ class AlignConfig:
         FISTA iterations for the first level's starting image. Default is 5.
     slip_scale : float, optional
         Under ``motion="smooth"``, the view-to-view step, in native pixels, at which the pull
-        towards the neighbours is strongest; larger steps are followed as slips, and the
-        rotations' tie to their neighbours is inversely proportional to it. Default is 0.02.
+        towards the neighbors is strongest; larger steps are followed as slips, and the
+        rotations' tie to their neighbors is inversely proportional to it. Default is 0.02.
     knot_spacing : int, optional
         Under ``motion="smooth"``, views between the drift's spline knots. Default is 10.
     rotation_sigma : float, optional

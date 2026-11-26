@@ -83,7 +83,7 @@ def _check_dense_transpose(grid, detector, frames, poses=None):
 @pytest.mark.parametrize("roll", [0.0, 0.13, 0.61])
 @pytest.mark.parametrize("reverse_v", [False, True])
 def test_cuda_cone_dense_transpose_at_dominant_axis_ties(direction, roll, reverse_v):
-    # Odd detector/volume sizes, shifted voxel centres, pair and triple ties.
+    # Odd detector/volume sizes, shifted voxel centers, pair and triple ties.
     # For (1,1,1), roll=.13, subtracting the source before adding v changes
     # the FP32 dominant axis and formerly produced a 1.6% transpose error.
     grid = Grid(7, 6, 5, 1.0, 1.0, 1.0, vol_center=(0.2, -0.1, 0.3))
@@ -105,7 +105,7 @@ def test_cuda_cone_dense_transpose_with_anisotropy_and_a_view_chunk_tail():
 
 
 @pytest.mark.gpu
-def test_cuda_cone_dense_transpose_with_sparse_and_cancelling_pixels():
+def test_cuda_cone_dense_transpose_with_sparse_and_canceling_pixels():
     grid = Grid(7, 6, 5, 0.7, 1.1, 0.9, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(9, 7, 1.3, 0.8)
     frame = _frame((1, 1, 1), 0.13)
@@ -119,11 +119,11 @@ def test_cuda_cone_dense_transpose_with_sparse_and_cancelling_pixels():
     rng = np.random.default_rng(43)
     sparse = rng.normal(size=(2, detector.nv, detector.nu)).astype(np.float32)
     sparse[:, ::2] = 0
-    cancelling = sparse.copy()
-    cancelling[1] = -cancelling[0]
+    canceling = sparse.copy()
+    canceling[1] = -canceling[0]
     impulse = np.zeros_like(sparse)
     impulse[0, detector.nv // 2, detector.nu // 2] = 1
-    for images in (np.zeros_like(sparse), impulse, sparse, cancelling):
+    for images in (np.zeros_like(sparse), impulse, sparse, canceling):
         expected = matrix @ images.ravel()
         # An absolute contribution bound remains meaningful under cancellation.
         scale = (np.abs(matrix) @ np.abs(images).ravel()).max()
@@ -156,7 +156,7 @@ def test_cuda_cone_dense_transpose_across_row_and_plane_tile_tails():
 
 @pytest.mark.gpu
 def test_cuda_cone_dense_transpose_with_many_rays_per_cell():
-    # Pixels a fifth of a voxel at the centre put ~25 rays on each cell per view: the
+    # Pixels a fifth of a voxel at the center put ~25 rays on each cell per view: the
     # fixed-point tiles' largest sums, from positive images, must not wrap.
     grid = Grid(7, 6, 5, 1.0, 1.0, 1.0, vol_center=(0.2, -0.1, 0.3))
     detector = Detector(41, 37, 0.3, 0.3)

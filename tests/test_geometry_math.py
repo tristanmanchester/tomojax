@@ -154,7 +154,7 @@ def test_rotation_axis_vocabulary_and_cone_segments_beam():
         beam_of(ConeSegments((cone,)))
 
 
-def test_detector_grid_is_flattened_row_by_row_about_the_centre() -> None:
+def test_detector_grid_is_flattened_row_by_row_about_the_center() -> None:
     from tomojax.geometry.detector_grid import zero_center_detector_grid
 
     detector = Detector(nu=3, nv=2, du=2.0, dv=4.0, center=(10.0, -5.0))
@@ -223,7 +223,7 @@ def test_copies_keep_grid_and_detector_subclasses_and_their_fields() -> None:
     detector = ShiftedDetector(4, 3, 1.0, 1.0, shift=2.5)
     copied = copy.deepcopy(detector)
     assert type(copied) is ShiftedDetector and copied.shift == 2.5
-    # A subclass's own initialisation runs once, at construction, not again on a copy.
+    # A subclass's own initialization runs once, at construction, not again on a copy.
     calibrated = CalibratedDetector(4, 3, 1.0, 1.0, (1.0, 2.0), offset=(1.5, 1.5))
     assert pickle.loads(pickle.dumps(calibrated)).center == calibrated.center == (2.5, 3.5)
     assert copy.copy(calibrated).center == (2.5, 3.5)

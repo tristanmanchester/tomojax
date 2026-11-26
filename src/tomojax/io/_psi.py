@@ -3,10 +3,10 @@
 The cSAXS tomography codes (Odstrcil et al., Opt. Express 2019) save, in a MATLAB
 7.3 (HDF5) file, ``aligned_phase_sinogram``: the unwrapped, aligned phase of each
 ptychographic projection, MATLAB-ordered [rows, columns, views]; ``rotation_angle``
-in degrees; ``pixel_size`` and ``lambda`` in metres. The phase is already a line
+in degrees; ``pixel_size`` and ``lambda`` in meters. The phase is already a line
 integral, of 2π/λ times the refractive index decrement δ, so the scan's volume is
 that phase per unit length. Projections are parallel. The file records no rotation
-centre: the alignment leaves the axis at the middle column.
+center: the alignment leaves the axis at the middle column.
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def read_psi_mat(
                 # Whole chunks of views at a time: each compressed chunk spans several views.
                 step = (stack.chunks or (1,))[0]
                 for first in range(0, views, step):
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     block = read_hdf5_array(
                         stack, (slice(first, first + step), slice(None), slice(None))
                     )
@@ -68,9 +68,9 @@ def read_psi_mat(
                     if task is not None:
                         task.advance(min(views, first + step), {})
         angles = np.asarray(file["rotation_angle"], np.float64).ravel()
-        metres = 1e3  # the file's lengths in mm, every reader's unit
-        pixel = float(np.asarray(file["pixel_size"]).item()) * metres
-        wavelength = float(np.asarray(file["lambda"]).item()) * metres
+        meters = 1e3  # the file's lengths in mm, every reader's unit
+        pixel = float(np.asarray(file["pixel_size"]).item()) * meters
+        wavelength = float(np.asarray(file["lambda"]).item()) * meters
         if len(angles) != views:
             raise ValueError(f"{path}: {len(angles)} rotation angles for {views} projections")
         return projections, angles, pixel, wavelength, path.stem

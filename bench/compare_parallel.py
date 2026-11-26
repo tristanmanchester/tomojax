@@ -147,8 +147,8 @@ def agreement(work: Path) -> dict[str, float]:
 
     reference = gaussian_filter(np.load(work / "slice-tomojax-fbp.npy").astype(np.float64), 2)
     n = reference.shape[0]
-    centres = np.arange(n) - (n - 1) / 2
-    disk = np.hypot(*np.meshgrid(centres, centres)) < 0.43 * n
+    centers = np.arange(n) - (n - 1) / 2
+    disk = np.hypot(*np.meshgrid(centers, centers)) < 0.43 * n
     out = {}
     for tool in IN_MEMORY[:1] + IN_MEMORY[2:]:
         image = gaussian_filter(np.load(work / f"slice-{tool}.npy").astype(np.float64), 2)

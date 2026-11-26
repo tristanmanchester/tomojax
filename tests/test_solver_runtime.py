@@ -338,7 +338,7 @@ def test_spdhg_partial_tv_step_controls_dense_primal_update(regularizer):
 
 @pytest.mark.numerical
 def test_batched_normal_bound_brackets_the_dense_scaled_spectrum():
-    # Physical length units and an unnormalised start must not change the bound.
+    # Physical length units and an unnormalized start must not change the bound.
     scale, start_scale = 1e-4, 1e3
     matrix = jnp.asarray([[1.0, 0.3], [0.3, 2.0]], dtype=jnp.float32) * scale
     support = jnp.asarray([0.4, 1.0]).reshape(1, 1, 2)

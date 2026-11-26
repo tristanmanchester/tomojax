@@ -1,7 +1,7 @@
 """Shared pieces of the gallery figures: phantoms, measurement noise and plots.
 
 The phantoms are the procedural generators in ``bench/phantoms``. Each figure
-projects a phantom voxelised finer than the reconstruction grid, so the data
+projects a phantom voxelized finer than the reconstruction grid, so the data
 are not made by the model that inverts them.
 """
 
@@ -78,14 +78,14 @@ def panel(ax: Any, image: np.ndarray, title: str, vmin: float, vmax: float) -> N
 
 
 def save(fig: Any, path: Path, *, palette: bool = True) -> None:
-    """Write ``fig`` to ``path`` and close it: a 256-colour PNG unless ``palette`` is False."""
+    """Write ``fig`` to ``path`` and close it: a 256-color PNG unless ``palette`` is False."""
     from PIL import Image
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, bbox_inches="tight", pad_inches=0.04, facecolor="white")
     plt.close(fig)
-    if palette:  # grey figures fit 256 colours; one with colour gradients does not
+    if palette:  # gray figures fit 256 colors; one with color gradients does not
         with Image.open(path) as image:
-            quantised = image.convert("RGB").quantize(256)
-        quantised.save(path, optimize=True)
+            quantized = image.convert("RGB").quantize(256)
+        quantized.save(path, optimize=True)
     print(f"wrote {path}")

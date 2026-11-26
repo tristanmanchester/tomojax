@@ -128,7 +128,7 @@ def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> t
     target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
     batch = max(1, _PARTITION_BYTES // (math.prod(source.shape[1:]) * source.dtype.itemsize))
     for first in range(0, len(ids), batch):
-        progress.check_cancelled()
+        progress.check_canceled()
         group = ids[first : first + batch]
         if hasattr(source, "frames_at"):
             target[first : first + len(group)] = source[group]
@@ -320,7 +320,7 @@ def prediction_score(
     batch = min(native, batch) if native else batch
     score = Score(0, 0, 0, 0)
     for first in range(0, views, batch):
-        progress.check_cancelled()
+        progress.check_canceled()
         stop = min(views, first + batch)
         start = max(0, stop - batch) if native else first
         geometry = views_of(held.geometry, np.arange(start, stop))

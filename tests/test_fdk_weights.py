@@ -35,7 +35,7 @@ def test_angular_weights_ignore_equivalent_angle_labels(arc, labels):
 
 
 def test_irregular_full_turn_weights_match_circular_midpoint_quadrature():
-    # A centred detector gives half each view's angular Voronoi-cell width.
+    # A centered detector gives half each view's angular Voronoi-cell width.
     angles = np.array([0, 60, 150, 260])
     scan = geometry(angles)
     weights = view_weights(scan, scan.detector, len(angles))

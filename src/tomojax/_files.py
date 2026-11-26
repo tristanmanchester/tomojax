@@ -31,13 +31,13 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     flats and darks, the corrections recorded, saved poses, memory estimates and a
     saved volume. ``valid`` is True when the checks performed for that format
     find no issues in ``issues`` (frame layout, angles, sample frames, and raw
-    calibration for recognised acquisitions). A generic HDF5 stack can still
+    calibration for recognized acquisitions). A generic HDF5 stack can still
     require explicit geometry or pixel size on load even when ``valid`` is True.
 
     Parameters
     ----------
     path : str or path-like
-        HDF5/NXtomo dataset, saved reconstruction, or recognised raw acquisition.
+        HDF5/NXtomo dataset, saved reconstruction, or recognized raw acquisition.
 
     Returns
     -------
@@ -230,7 +230,7 @@ def _write_tiff_directory(
     staging.mkdir(parents=True, exist_ok=False)
     try:
         for z in range(nz):
-            progress.check_cancelled()
+            progress.check_canceled()
             iio.imwrite(staging / slice_name(prefix, z), convert(plane(z)), extension=".tif")
             progress.step("slices")
         _ = (staging / f"{prefix}.json").write_text(sidecar_text)
@@ -303,7 +303,7 @@ def write_volume(
         little = np.dtype(dtype).newbyteorder("<")
         with replaced_when_complete(out, parts) as temporary, temporary.open("wb") as stream:
             for z in range(nz):
-                progress.check_cancelled()
+                progress.check_canceled()
                 _ = stream.write(convert(plane(z)).astype(little).tobytes())
                 progress.step("slices")
         sidecar = out.with_suffix(".json")

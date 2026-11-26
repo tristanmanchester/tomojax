@@ -200,7 +200,7 @@ def _iterate(
     *,
     zero_start: bool,
 ) -> tuple[CuPyValue, dict[str, object]]:
-    with progress.preparing("initialise cgls"):
+    with progress.preparing("initialize cgls"):
         k = _kernels(cp)
         residual = data.copy() if zero_start else data - ops.forward(x)
         residual = project_residual(residual, cfg.data_term, xp=cp)
@@ -218,7 +218,7 @@ def _iterate(
     direction = cp.empty_like(gradient)
     restart, previous_gamma = True, gamma
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
-        progress.check_cancelled()
+        progress.check_canceled()
         if restart:
             cp.copyto(direction, gradient)
         else:

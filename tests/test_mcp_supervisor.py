@@ -48,7 +48,7 @@ def test_slots_progress_and_off_queue_controls(tmp_path):
             assert (await g.request({"type": "status"}))["requests"][rid] == "running"
             await g.request({"type": "control", "target": rid, "action": "cancel"})
             port.sendall(b"C")
-            with pytest.raises(workers.WorkerError, match="cancelled"):
+            with pytest.raises(workers.WorkerError, match="canceled"):
                 await first.result
             await asyncio.gather(*(job.result for job in jobs))
             _, ticks = g.submit({"type": "inspect", "path": "ticks"})
@@ -214,7 +214,7 @@ def test_early_cancellation_is_delivered_at_submission(tmp_path):
             try:
                 with pytest.raises(workers.WorkerError) as failure:
                     await g.request({"type": "inspect", "path": "notify"})
-                assert failure.value.kind == "cancelled"
+                assert failure.value.kind == "canceled"
             finally:
                 workers.activity.reset(token)
             port.sendall(b"C")
@@ -224,7 +224,7 @@ def test_early_cancellation_is_delivered_at_submission(tmp_path):
 
 
 @pytest.mark.parametrize("cancel_first", [True, False])
-def test_cancelled_view_releases_pixels_and_coordinates(tmp_path, monkeypatch, cancel_first):
+def test_canceled_view_releases_pixels_and_coordinates(tmp_path, monkeypatch, cancel_first):
     from tomojax.cli.mcp.tools.seeing import temporary
 
     async def run():
@@ -236,7 +236,7 @@ def test_cancelled_view_releases_pixels_and_coordinates(tmp_path, monkeypatch, c
 
             async def render():
                 async with temporary(g, {"type": "read", "source": source}):
-                    pytest.fail("cancelled read reached renderer")
+                    pytest.fail("canceled read reached renderer")
 
             receive = g.receive
             files = []

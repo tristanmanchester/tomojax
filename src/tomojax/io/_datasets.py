@@ -142,7 +142,7 @@ class ProjectionDataset:
     volume : numpy.ndarray, jax.Array or None, optional
         Reconstructed volume in (z, y, x) order, when present.
     detector : Detector or None, optional
-        Detector pixel counts, pitches and physical centre.
+        Detector pixel counts, pitches and physical center.
     grid : Grid or None, optional
         Reconstruction voxel grid.
     geometry_type : str, optional
@@ -216,7 +216,7 @@ class ProjectionDataset:
         detector = metadata.detector
         if isinstance(detector, dict) and not {"du", "dv", "det_center"} <= detector.keys():
             # NPZ can carry an incomplete record too. Preserve its absence so
-            # load_frames can apply an explicit detector before materialisation.
+            # load_frames can apply an explicit detector before materialization.
             detector = None
         grid = metadata.grid
         dataset = cls(
@@ -281,7 +281,7 @@ class ProjectionDataset:
                 stored,
                 image_key=None if stored.image_key is None else np.array(stored.image_key),
                 geometry_calibration=_copied(stored.geometry_calibration),
-                simulation_artefacts=_copied(stored.simulation_artefacts),
+                simulation_artifacts=_copied(stored.simulation_artifacts),
             )
         metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
         metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
@@ -362,11 +362,11 @@ class ProjectionDataset:
     def with_parallel_detector(self) -> ProjectionDataset:
         """A parallel record's detector, from its recorded pitches or in pixel units.
 
-        Some files record the pixel pitches but not the rotation centre, and some record
+        Some files record the pixel pitches but not the rotation center, and some record
         neither. The detector takes the recorded pitches, or a pitch of one pixel when
         the file records none (the record then says ``detector_pixel_size_status``
-        "not_recorded" and ``length_unit`` "pixel": lengths, poses and the centre are in
-        pixels and attenuation is per pixel). The centre is the middle, and the record
+        "not_recorded" and ``length_unit`` "pixel": lengths, poses and the center are in
+        pixels and attenuation is per pixel). The center is the middle, and the record
         keeps ``detector_center_status`` as the file gave it: nothing is estimated. A cone
         record is left alone, since its pitch and distances must share a unit.
 

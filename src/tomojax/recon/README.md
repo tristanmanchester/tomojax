@@ -151,7 +151,7 @@ An explicit integer `slices_per_batch` overrides this choice. Additional buffers
 and FFT workspaces need more memory, so CUDA exhaustion still halves the depth.
 This API is not differentiable and rejects tilted/custom geometry. Large
 missing angular sectors are interpolated, not recovered, and the angular
-interpolation can introduce artefacts on sharp or undersampled scans; the
+interpolation can introduce artifacts on sharp or undersampled scans; the
 [measurements](../../../docs/measurements.md#fourier-inverse) give its memory
 and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)
 its accuracy-gated results.
@@ -235,7 +235,7 @@ file until released. Projections and a haloed TV tile still need device space;
 the exact halo grows with `tv_prox_iterations`. Host execution is not a
 differentiable layer.
 
-Every solver projects with one model: bilinear voxel-centre plane integration
+Every solver projects with one model: bilinear voxel-center plane integration
 (Joseph) for parallel beams and laminography, with CUDA kernels on CUDA, and
 its cone-beam counterpart for cone beams. The matched CUDA transpose gathers
 into voxels without scattered atomic writes, and JAX provides an independently

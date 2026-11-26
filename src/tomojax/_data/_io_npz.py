@@ -24,7 +24,7 @@ _JSON_FIELDS = {
     "align_gauge",
     "geometry_calibration",
     "misalign_spec",
-    "simulation_artefacts",
+    "simulation_artifacts",
 }
 
 
@@ -97,7 +97,7 @@ def _load_npz_dataset(archive: ZipFile, *, volume_only: bool = False) -> LoadedD
                     out[k] = np.lib.format.read_array(stream, allow_pickle=False)
                     if active := progress.for_unit("views"):
                         active.advance(views, {})
-                    progress.check_cancelled()
+                    progress.check_canceled()
                 continue
             val = np.lib.format.read_array(stream, allow_pickle=False)
             out["angles" if k == _ANGLES_KEY else k] = (

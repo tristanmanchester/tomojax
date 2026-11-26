@@ -128,7 +128,7 @@ def _cuo(args: argparse.Namespace, record: dict, memory: _Memory) -> None:
 
 
 def _spheres(size: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Centres, radii and attenuations (voxel units) of 24 spheres inside a larger one."""
+    """Centers, radii and attenuations (voxel units) of 24 spheres inside a larger one."""
     rng = np.random.default_rng(seed)
     centers = np.vstack([np.zeros((1, 3)), rng.uniform(-0.6, 0.6, (24, 3)) * size / 2])
     radii = np.concatenate([[0.8 * size / 2], rng.uniform(0.04, 0.18, 24) * size / 2])
@@ -137,7 +137,7 @@ def _spheres(size: int, seed: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarr
 
 
 def _sphere_planes(size: int, z0: int, z1: int) -> np.ndarray:
-    """Planes ``[z0, z1)`` of the spheres sampled at voxel centres, each only in its box."""
+    """Planes ``[z0, z1)`` of the spheres sampled at voxel centers, each only in its box."""
     axis = np.arange(size, dtype=np.float32) - (size - 1) / 2
     z = np.arange(z0, z1, dtype=np.float32) - (size - 1) / 2
     out = np.zeros((z1 - z0, size, size), np.float32)

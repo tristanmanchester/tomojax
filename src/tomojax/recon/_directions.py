@@ -14,8 +14,8 @@ def group_repeats(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Distinct directions in ``[0, 2 pi)``, each view's group, and group sizes.
 
-    Angles in radians within a millionth of a turn of a neighbour share a
-    group by default, whichever whole turn they are labelled with and whatever
+    Angles in radians within a millionth of a turn of a neighbor share a
+    group by default, whichever whole turn they are labeled with and whatever
     their rounding, so a direction measured twice keeps one angular cell.
     ``tolerance`` is in radians; literal high-precision acquisition angles can
     request only roundoff-scale grouping instead of fitted-pose tolerance.

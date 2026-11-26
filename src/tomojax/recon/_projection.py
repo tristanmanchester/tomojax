@@ -261,7 +261,7 @@ def subset_operators(
     operator weights. ``residual_adjoint(x, full_data, row_weights, row_support=mask)`` evaluates
     ``A.T @ (row_weights * (full_data[indices] - A*x))`` one batch at a time,
     without storing a predicted sinogram. Cone source arrangements and detector
-    centres stay attached to their original views.
+    centers stay attached to their original views.
     With ``stream``, data names a registered host source. Passing ``weights=None``
     recomputes inverse row sums from ``row_support`` per batch instead of storing them;
     ``row_support=None`` denotes uniform unit support.

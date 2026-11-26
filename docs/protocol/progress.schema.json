@@ -275,7 +275,7 @@
         },
         "status": {
           "enum": [
-            "cancelled",
+            "canceled",
             "done",
             "failed"
           ]
@@ -535,7 +535,7 @@
         },
         "kind": {
           "enum": [
-            "cancelled",
+            "canceled",
             "input",
             "internal",
             "invalid_parameter",

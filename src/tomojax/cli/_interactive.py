@@ -31,10 +31,10 @@ def slice_product(
     plan = plans[0]
     axis, index = command.axis, command.index
     write = partial(stage_array, context)
-    if isinstance(command, op.CentreSweep):
+    if isinstance(command, op.CenterSweep):
         pixels = interactive.resolved_sweep(plans, axis, index)
         leading = (
-            Axis("centre", "detector", "pixel", Coordinates(write(np.asarray(command.centres)))),
+            Axis("center", "detector", "pixel", Coordinates(write(np.asarray(command.centers)))),
         )
         product = p.Sweep
     else:

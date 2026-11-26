@@ -36,7 +36,7 @@ def refine_pair(a: np.ndarray, b: np.ndarray, *, lag: float, bandwidth: float) -
     excludes the template-noise contribution to the squared-gradient Hessian;
     block leverage and effective degrees of freedom account for sparse signal.
     Intervals describe a selected rigid-registration mode, not mode selection,
-    unmodelled motion, or an absolute physical rotation centre.
+    unmodeled motion, or an absolute physical rotation center.
     """
     width = a.shape[-1]
     columns = np.arange(width)

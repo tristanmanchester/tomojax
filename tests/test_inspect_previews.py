@@ -1,4 +1,4 @@
-"""``inspect --preview-dir``: slice previews of scans, and the centre sweep."""
+"""``inspect --preview-dir``: slice previews of scans, and the center sweep."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ _ANGLES = np.linspace(0.0, 180.0, 48, endpoint=False)
 
 def _phantom(grid):
     z, y, x = np.mgrid[: grid.nz, : grid.ny, : grid.nx]
-    centre = np.array([grid.nz, grid.ny, grid.nx]) / 2 - 0.5
-    inside = (x - centre[2]) ** 2 + (y - centre[1]) ** 2 < (0.3 * grid.nx) ** 2
-    return np.where(inside & (abs(z - centre[0]) < grid.nz / 3), 1.0, 0.0).astype(np.float32)
+    center = np.array([grid.nz, grid.ny, grid.nx]) / 2 - 0.5
+    inside = (x - center[2]) ** 2 + (y - center[1]) ** 2 < (0.3 * grid.nx) ** 2
+    return np.where(inside & (abs(z - center[0]) < grid.nz / 3), 1.0, 0.0).astype(np.float32)
 
 
 def _scan(detector=None, grid=None, recorded=0.0):
@@ -56,13 +56,13 @@ def test_a_sweep_writes_every_candidate_in_order_and_a_sheet(tmp_path, capsys):
     assert report["sweep_apply"]["recorded_px"] == pytest.approx(3.0)
 
 
-def test_the_sweep_plane_at_the_true_centre_is_the_plane_of_the_corrected_scan():
+def test_the_sweep_plane_at_the_true_center_is_the_plane_of_the_corrected_scan():
     off, true = _scan(recorded=3.0), _scan()
-    (plane,) = interactive.centre_sweep(off, "z", 4, [0.0], method="fbp")
+    (plane,) = interactive.center_sweep(off, "z", 4, [0.0], method="fbp")
     np.testing.assert_array_equal(plane, interactive.reconstruct_slice(true, "z", 4, method="fbp"))
 
 
-def test_the_printed_command_applies_the_chosen_centre_in_length_units(tmp_path, capsys):
+def test_the_printed_command_applies_the_chosen_center_in_length_units(tmp_path, capsys):
     detector = tj.Detector(16, 8, 0.25, 0.5, (0.0, 0.75))
     grid = tj.Grid(16, 16, 8, 0.25, 0.25, 0.5, vol_center=(0.0, 0.0, 0.75))
     path, directory = tmp_path / "scan.nxs", tmp_path / "sweep"
@@ -76,10 +76,10 @@ def test_the_printed_command_applies_the_chosen_centre_in_length_units(tmp_path,
     out = tmp_path / "centered.nxs"
     assert command[:2] == ["tomojax", "correct"]
     assert main([*command[1:3], "-o", str(out), *command[5:], "--progress", "none"]) == 0
-    centred = tj.load(out)
-    assert centred.detector.center == pytest.approx((u, 0.75))
-    (swept,) = interactive.centre_sweep(tj.load(path), "z", 4, [2.0])
-    np.testing.assert_allclose(interactive.reconstruct_slice(centred, "z", 4), swept, atol=1e-6)
+    centered = tj.load(out)
+    assert centered.detector.center == pytest.approx((u, 0.75))
+    (swept,) = interactive.center_sweep(tj.load(path), "z", 4, [2.0])
+    np.testing.assert_allclose(interactive.reconstruct_slice(centered, "z", 4), swept, atol=1e-6)
 
 
 def test_repeated_candidates_and_slices_keep_their_order_and_never_collide(tmp_path, capsys):
@@ -186,7 +186,7 @@ def test_laminography_and_cone_scans_sweep(tmp_path, capsys, geometry):
         ["--centers=-3:3:1"],
     ],
 )
-def test_signed_centres_reach_the_parser_whole(tmp_path, capsys, argv):
+def test_signed_centers_reach_the_parser_whole(tmp_path, capsys, argv):
     path = tmp_path / "scan.nxs"
     tj.save(path, _scan())
     report = _inspect_json(capsys, str(path), "--preview-dir", str(tmp_path / "pv"), *argv)

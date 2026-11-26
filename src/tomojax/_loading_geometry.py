@@ -1,8 +1,8 @@
 """Record-to-geometry resolution, before any detector pixels are read.
 
 Explicit geometry and grids remain authoritative. When a file records a pitch
-but no rotation centre, the detector middle ``(0.0, 0.0)`` is used and recorded
-with ``detector_center_status="not_recorded"``; fit a centre explicitly with
+but no rotation center, the detector middle ``(0.0, 0.0)`` is used and recorded
+with ``detector_center_status="not_recorded"``; fit a center explicitly with
 :func:`tomojax.align`.
 """
 
@@ -58,7 +58,7 @@ class DeclaredGeometry:
     axis_offset : float
         Horizontal displacement of the rotation axis in the cone geometry.
     detector_center : tuple of float or None
-        Detector centre offset in horizontal and vertical coordinates.
+        Detector center offset in horizontal and vertical coordinates.
     """
 
     kind: GeometryName | None = None
@@ -93,7 +93,7 @@ class DeclaredGeometry:
 
 
 def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
-    """A scanner's own per-view shifts and centre shift, applied or left out, said either way."""
+    """A scanner's own per-view shifts and center shift, applied or left out, said either way."""
     vendor = record.geometry_metadata.get("vendor_corrections")
     if vendor is None:
         return record
@@ -199,7 +199,7 @@ def _updated_geometry_metadata(
 ) -> tuple[Detector | None, dict[str, Any]]:
     """Update detector and provenance flags from explicit caller overrides."""
     meta = dict(record.geometry_metadata)
-    if pixel_size is not None:  # the shape from the frames, the centre from the file or the middle
+    if pixel_size is not None:  # the shape from the frames, the center from the file or the middle
         du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
         _, nv, nu = cast("np.ndarray", record.projections).shape  # frames: always present
         center = (0.0, 0.0) if record.detector is None else record.detector.center
@@ -302,13 +302,13 @@ class Located(Protocol):
     def source(self) -> ProjectionDataset | None: ...
 
 
-def centre_of(
+def center_of(
     declared: DeclaredGeometry | None,
 ) -> tuple[tuple[float, float] | None, DeclaredGeometry | None]:
-    """A declaration's detector centre, and the declaration without it.
+    """A declaration's detector center, and the declaration without it.
 
-    The centre is applied after everything else has resolved, as an edit of the
-    loaded geometry (:func:`centred`); a declaration of nothing else is dropped.
+    The center is applied after everything else has resolved, as an edit of the
+    loaded geometry (:func:`centered`); a declaration of nothing else is dropped.
     """
     if declared is None or declared.detector_center is None:
         return None, declared
@@ -316,14 +316,14 @@ def centre_of(
     return declared.detector_center, (None if rest.kind is None else rest)
 
 
-def centred[T: Located](item: T, centre: tuple[float, float] | None) -> T:
-    """``item`` with its first detector centred at ``centre`` and every segment moved alike."""
-    if centre is None:
+def centered[T: Located](item: T, center: tuple[float, float] | None) -> T:
+    """``item`` with its first detector centered at ``center`` and every segment moved alike."""
+    if center is None:
         return item
     from tomojax._scan import shifted_center
 
     u, v = item.geometry.detector.center
-    geometry = shifted_center(item.geometry, centre[0] - u, centre[1] - v)
+    geometry = shifted_center(item.geometry, center[0] - u, center[1] - v)
     source = item.source
     if source is not None:
         meta = {**source.geometry_metadata, "detector_center_status": "provided"}

@@ -24,7 +24,7 @@ def test_a_spike_is_isolated_in_either_direction_and_column():
 
 def test_a_slip_is_a_step_and_not_isolated():
     steps = _drift(60)
-    steps[25:, 0] += 0.8  # a slip: the view leaves one neighbour, not both
+    steps[25:, 0] += 0.8  # a slip: the view leaves one neighbor, not both
     steps[40:, 1] -= 1.2
     assert isolated_views(steps) == []
 
@@ -37,15 +37,15 @@ def test_a_jump_below_the_working_pixel_floor_is_not_flagged():
 
 
 def test_a_view_the_image_explains_badly_is_unusual():
-    # Unusual means a residual RMS three times the neighbours': energy 9x.
+    # Unusual means a residual RMS three times the neighbors': energy 9x.
     energy = 1 + np.random.default_rng(8).normal(0, 0.02, 80)
     energy[[9, 33, 63]] = [12.0, 7.0, 9.5]  # 7x is below the bar
     assert unusual_views(energy) == [9, 63]
 
 
-def test_unusual_is_judged_against_neighbours_not_the_scan_angle_trend():
+def test_unusual_is_judged_against_neighbors_not_the_scan_angle_trend():
     # Residual energy varies smoothly with angle by a factor of three; only the
-    # frames that differ from their neighbours by the bar are unusual.
+    # frames that differ from their neighbors by the bar are unusual.
     angle = np.linspace(0, 4 * np.pi, 200)
     energy = (2 + np.cos(angle)) * (1 + np.random.default_rng(9).normal(0, 0.02, 200))
     energy[[40, 151]] *= 12.0

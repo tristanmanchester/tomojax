@@ -14,7 +14,7 @@ def option_types() -> tuple[type, ...]:
         DeclaredGeometry,
         tj.Grid,
         tj.Detector,
-        datasets.SimulationArtefacts,
+        datasets.SimulationArtifacts,
         alignment.AlignConfig,
         *get_args(MethodConfig.__value__),
         *(

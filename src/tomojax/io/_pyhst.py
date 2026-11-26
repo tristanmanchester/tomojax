@@ -1,7 +1,7 @@
 """Explicit PyHST parameter files describing axial EDF radiographs.
 
 The parameter file is data, never executed as Python. Detector columns use
-zero-based pixel centres, as in PyHST's texture coordinate ``h + 0.5``.
+zero-based pixel centers, as in PyHST's texture coordinate ``h + 0.5``.
 """
 
 from __future__ import annotations

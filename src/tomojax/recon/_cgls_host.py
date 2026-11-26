@@ -392,7 +392,7 @@ class _HostCGLS:
             and gamma > threshold**2
             and not (state["failed"] or state["roundoff"])
         ):
-            progress.check_cancelled()
+            progress.check_canceled()
             energy, direction_norm2 = self.normal(beta)
             denominator = (
                 energy

@@ -9,9 +9,9 @@ script turns those into measurements with physics gVXR does not apply itself:
 - propagation-based phase contrast: Fresnel propagation of the exit wave
 - scintillator/optics blur (Gaussian PSF) and detector pixel integration
 - Poisson noise, a fixed-pattern pixel gain and flat fields with their own noise
-- per-view sample motion and a centre-of-rotation (detector-u) offset
+- per-view sample motion and a center-of-rotation (detector-u) offset
 
-Scattering, harmonics, beam drift and partial coherence are not modelled.
+Scattering, harmonics, beam drift and partial coherence are not modeled.
 
 Three steps run in two environments. ``plan`` and ``finish`` use TomoJAX
 (geometry, exact voxel truth, a consistency check against TomoJAX's projector,
@@ -61,7 +61,7 @@ MATERIALS: dict[str, dict[str, Any]] = {
     "solder": {"components": [("Sn", 0.965), ("Ag", 0.03), ("Cu", 0.005)], "density": 7.38},
 }
 NESTED = {"die": "mold", "wires": "mold", "traces": "mold"}
-SUPERSAMPLE = 3  # odd, so the centre sub-pixel is the detector pixel centre
+SUPERSAMPLE = 3  # odd, so the center sub-pixel is the detector pixel center
 
 
 def _defaults(parser: argparse.ArgumentParser) -> None:
@@ -303,7 +303,7 @@ def finish(args: argparse.Namespace) -> None:
     table = json.loads((args.out / "materials.json").read_text())["materials"]
     truth = _truth_volume(args.meshes, grid, table)
     # The Beer-Lambert line integrals must match TomoJAX's projector applied to
-    # the voxel truth, up to the voxelisation of thin parts.
+    # the voxel truth, up to the voxelization of thin parts.
     shifted = Detector(nominal.nu, nominal.nv, nominal.du, nominal.dv, (float(data["cor_mm"]), 0.0))
     checks = {}
     for key, detector in (("static", nominal), ("moving", shifted)):

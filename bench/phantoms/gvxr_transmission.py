@@ -20,7 +20,7 @@ in both directions. Each pixel is the mean of ``exp(-sum(mu * length))`` over
 its sub-pixels, the photons it collects, so ``OUT.npz`` holds ``transmission``
 ``(views, nv, nu)`` plus gVXR version and renderer source hash; noise and the
 logarithm are the caller's. Optional odd ``raster_refinement`` (default 1)
-renders on a finer raster but keeps only each intended subray's exact centre;
+renders on a finer raster but keeps only each intended subray's exact center;
 it reduces rasterization error without changing the ``supersample`` quadrature.
 Cone meshes must remain wholly between source and detector in every view.
 

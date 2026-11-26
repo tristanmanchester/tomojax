@@ -39,7 +39,7 @@ def test_the_identity_polynomial_changes_nothing() -> None:
     np.testing.assert_allclose(step.apply(image), image, atol=1e-6)
 
 
-def test_a_distortion_step_normalises_first_and_is_recorded() -> None:
+def test_a_distortion_step_normalizes_first_and_is_recorded() -> None:
     views, rows, cols = 3, 24, 32
     flat = 900.0 + np.arange(cols) * 2.0  # not described by the polynomial
     transmission = np.broadcast_to(_image(rows, cols), (views, rows, cols))

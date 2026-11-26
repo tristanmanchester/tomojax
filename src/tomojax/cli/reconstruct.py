@@ -367,10 +367,10 @@ def _run(
 
     run = _Run.of(args)
     config = run.validate(parser, args, metadata)
-    progress.check_cancelled()
+    progress.check_canceled()
 
     scan = tj.load(run.data, apply_poses=run.apply_poses)
-    progress.check_cancelled()
+    progress.check_canceled()
     from tomojax._planning import resolve_reconstruction
     from tomojax._workflow import reconstruct_resolved
     from tomojax.cli._plans import announce, dry_run, plan_product
@@ -394,20 +394,20 @@ def _run(
         and source.geometry_metadata.get("detector_center_status") == "not_recorded"
     ):
         LOG.warning(
-            "%s records no rotation centre; the detector middle was used. "
+            "%s records no rotation center; the detector middle was used. "
             "Fit one with tomojax align --fit center before reconstructing.",
             run.data,
         )
-    progress.check_cancelled()
+    progress.check_canceled()
     tj.save(run.out, result, include_scan=run.include_scan)
     if run.preview is not None:
         from tomojax.cli._images import save_volume_plane
 
-        progress.check_cancelled()
+        progress.check_canceled()
         label = f"z plane · {result.method} · {Path(run.out).name}"
         _ = save_volume_plane(Path(run.preview), result.volume, result.grid, "z", label)
     if run.manifest is not None:
-        progress.check_cancelled()
+        progress.check_canceled()
         _write_manifest(args, metadata, scan, result, masked=run.region == "cyl")
     if args.progress == "json":
         from tomojax.cli._results import saved_result

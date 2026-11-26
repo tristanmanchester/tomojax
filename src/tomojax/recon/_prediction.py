@@ -63,7 +63,7 @@ def host_prediction(
     depth = max(1, _SLAB_BYTES // (4 * grid.nx * grid.ny))
     total = jnp.zeros((len(poses), detector.nv, detector.nu), jnp.float32)
     for start in range(0, grid.nz, depth):
-        progress.check_cancelled()
+        progress.check_canceled()
         stop = min(grid.nz, start + depth)
         if cone:
             local = window_coefficients(coeff, 0, start)

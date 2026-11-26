@@ -33,7 +33,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 
-`just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 10 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artefacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
+`just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 10 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artifacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
 
 `tools/smoke_installed_wheel.py` creates a disposable environment outside the repository, installs the built wheel without a package cache (requiring a real GPU under `--extra cuda12`), and runs simulation, automatic reconstruction, and slice export.
 
@@ -64,7 +64,7 @@ TomoJAX should feel like one small, consistent tool. Check API changes against t
 - **Small interfaces, deep modules.** Hide implementation detail behind small entry points. Compute settings from the data rather than adding options; add a config field only with a clear reason. Export user-facing calls from package roots and expert helpers from `.api`.
 - **Keyword-only options.** Accept at most one or two positional arguments for the main subject (`tj.reconstruct(scan, "cgls", iterations=50)`); make all other options keyword-only.
 - **Results carry their context.** Return objects that bundle their geometry and settings rather than bare arrays plus separate metadata.
-- **Fix the method, don't wrap it.** When a method gets a case wrong, fix its model or statistics instead of detecting the case and bypassing it. For example, an earlier aligner reported ~0.1 px of motion on already aligned scans. A "consistency guard" was added that split the data in two, compared resolutions, and discarded alignment below a threshold. That hid the bias, flipped discontinuously between aligned and unaligned, and still let bad results through on drifted data. The right fix lives in the estimator: noise-weighted residuals, regularisation scaled by data observability, and reported uncertainties.
+- **Fix the method, don't wrap it.** When a method gets a case wrong, fix its model or statistics instead of detecting the case and bypassing it. For example, an earlier aligner reported ~0.1 px of motion on already aligned scans. A "consistency guard" was added that split the data in two, compared resolutions, and discarded alignment below a threshold. That hid the bias, flipped discontinuously between aligned and unaligned, and still let bad results through on drifted data. The right fix lives in the estimator: noise-weighted residuals, regularization scaled by data observability, and reported uncertainties.
 - **A helper earns its name** by having two or more callers, being tested on its own, or naming a concept its caller should not need to know. Keep single-use helpers inline.
 - **Fixed CLI shape.** File-producing commands take `tomojax <command> INPUT -o OUTPUT`, refuse to overwrite existing outputs without `--force`, and use exit codes 0 (success), 1 (failure), 2 (usage error), and 130 (interrupted). Keep `--help` short and put expert settings in `--config` TOML files. Interactive and server entry points (`inspect`, `simulate`, `serve`, `mcp`, `studio`) omit `-o` or `INPUT` where not applicable.
 
@@ -80,7 +80,7 @@ After an intentional change (or when a ratchet drops), run `just guardrails` and
 
 Write public API docstrings in NumPy style with `Parameters`, `Returns` (or `Yields`), and `Raises` sections, stating array shapes, coordinate frames, and units at boundaries. Include short `Examples` on main workflow entry points. Run `just docstrings` to validate coverage and `just docs` to build the HTML reference.
 
-Keep user guides in `docs/` (using British English in prose while keeping API identifiers exact) and module-level interfaces in each package's `README.md`. Check commands against the actual CLI and public API.
+Keep user guides in `docs/` (using US English consistently across code, CLI, schemas, and prose) and module-level interfaces in each package's `README.md`. Check commands against the actual CLI and public API.
 
 The README watch figures come from [examples/reconstruct_watch.py](examples/reconstruct_watch.py), [examples/align_watch.py](examples/align_watch.py), and [examples/render_watch.py](examples/render_watch.py). Keep image scales explicit with their JSON records, and note provenance for historical assets in [images/README.md](images/README.md).
 
@@ -92,7 +92,7 @@ The README watch figures come from [examples/reconstruct_watch.py](examples/reco
 | `studio/` | Native Rust/Rune desktop workspace (`tomojax studio`); see [studio/README.md](studio/README.md#verification) for `cargo` checks |
 | `plugins/` | Claude Code plugin wrapping `tomojax mcp` and workflow skills |
 | `site/` | Documentation website (`tomojax.dev`) generated from repository Markdown and docstrings |
-| `tests/` | Public behaviour, numerical, and GPU regression tests |
+| `tests/` | Public behavior, numerical, and GPU regression tests |
 | `examples/` | Small runnable public API examples |
 | `tools/` | Development and packaging checks |
 | `docs/` | User guides and measured benchmarks |
@@ -101,4 +101,4 @@ The README watch figures come from [examples/reconstruct_watch.py](examples/reco
 | `reports/`, `research_notes/` | Research notes and literature reviews |
 | `.artifacts/` | Ignored local runs, logs, and build outputs |
 
-Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) records each published result with the commit and date needed to contextualise it (with full runner commands in [bench/README.md](bench/README.md)). When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.
+Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) records each published result with the commit and date needed to contextualize it (with full runner commands in [bench/README.md](bench/README.md)). When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.

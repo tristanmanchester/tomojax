@@ -5,13 +5,13 @@ Run in the gVXR environment, not TomoJAX's::
 
     python simulate.py --split dev --index 3 --output case.npz
 
-gVXR rasterises the path length through every cylinder mesh for each view
+gVXR rasterizes the path length through every cylinder mesh for each view
 (its L-buffer); nested shapes become per-material path lengths by
 subtraction. The tube spectrum is filtered by the window, the recorded
-filters and some unrecorded aluminium, and detected through gVXR's
+filters and some unrecorded aluminum, and detected through gVXR's
 scintillator energy response, with energy-weighted quantum noise and
 scintillator blur. Two checks run on every case: the L-buffers against exact
-ray-cylinder chords in every view (the rare pixel gVXR rasterises beyond a
+ray-cylinder chords in every view (the rare pixel gVXR rasterizes beyond a
 silhouette takes the chord), and the spectral integration against gVXR's own
 image (99th percentile, as that image has the same rare silhouette columns).
 """
@@ -39,7 +39,7 @@ FILTER_DENSITY = {"Be": 1.848, "Al": 2.699, "Cu": 8.96, "Sn": 7.31}
 
 
 def spectrum(spec: dict) -> tuple[np.ndarray, np.ndarray]:
-    """Bin centres (keV) and relative photon fluence of the filtered tube output."""
+    """Bin centers (keV) and relative photon fluence of the filtered tube output."""
     kv, angle = spec["kv"], spec["hidden"]["anode_angle_deg"]
     if spec["generator"] == "spekpy":
         import spekpy
@@ -178,7 +178,7 @@ def _lengths(gvxr: Any, case: dict, angle: float, checks: dict) -> tuple[list, l
             start, end, shape["center"], shape["radius"], shape.get("half_height")
         )
         error = length - chord
-        # gVXR occasionally rasterises one column beyond a silhouette; take the chord there.
+        # gVXR occasionally rasterizes one column beyond a silhouette; take the chord there.
         glitch = np.abs(error) > 0.2
         checks["repaired_pixels"] += int(glitch.sum())
         checks["chord_max_mm"] = max(checks["chord_max_mm"], float(np.abs(error[~glitch]).max()))
@@ -239,7 +239,7 @@ def render(case: dict) -> tuple[dict, dict]:
                 )
                 ours = np.tensordot(weight, np.exp(-total), 1) / weight.sum()
                 theirs = 1000 * np.array(gvxr.computeXRayImage(True), np.float64) / open_beam
-                # Its image can rasterise a silhouette column differently from its L-buffers.
+                # Its image can rasterize a silhouette column differently from its L-buffers.
                 error = float(np.percentile(np.abs(ours - theirs), 99))
                 checks["spectral_p99_relative"] = max(checks["spectral_p99_relative"], error)
         checks["versions"] = {p: version(p) for p in ("gvxr", "xraylib", "spekpy", "xpecgen")}

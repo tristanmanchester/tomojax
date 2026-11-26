@@ -266,7 +266,7 @@ def _registered(volume: np.ndarray, target: np.ndarray) -> tuple[np.ndarray, np.
     """The physical xyz shift (voxels) moving ``volume`` onto ``target``, and moved volume.
 
     The peak of their cross-correlation, refined to a fraction of a voxel by a
-    parabola through its neighbours along each axis.
+    parabola through its neighbors along each axis.
     """
     from scipy import fft, ndimage
 
@@ -342,7 +342,7 @@ def main() -> None:
     parser.add_argument("--previews", action="store_true", help="Write a slice PNG per walnut")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-    # The scanner's TIFFs carry a malformed colour-map tag, which tifffile skips.
+    # The scanner's TIFFs carry a malformed color-map tag, which tifffile skips.
     logging.getLogger("tifffile").setLevel(logging.CRITICAL)
     args.out.mkdir(parents=True, exist_ok=True)
     results = args.out / "results.jsonl"

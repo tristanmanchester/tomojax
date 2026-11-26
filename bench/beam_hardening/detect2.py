@@ -8,7 +8,7 @@ hardening). The out-of-distribution slices (5521 onwards) are held out; slice
 5920 belongs to the noise study, whose modes are permuted, and is not used.
 
 Counts are binned 2x along the detector, as for the published reconstructions,
-and each view is normalised so that the open beam beside the sample tube has
+and each view is normalized so that the open beam beside the sample tube has
 unit transmission: the recorded flats sit 2-8 % below the open beam of the
 sample frames, and in mode 2 they drift within each batch of ten slices.
 """
@@ -29,7 +29,7 @@ SIZE = 1024
 VOXEL = COLUMNS * PIXEL * BINNING * SOURCE_TO_AXIS / SOURCE_TO_DETECTOR / SIZE
 # Raw columns that see the open beam beside the sample tube in every view.
 OPEN = np.r_[0:64, 1848:1912]
-# The scanner had two detectors; their centres differ (sharpest FBP of modes 2 and 3).
+# The scanner had two detectors; their centers differ (sharpest FBP of modes 2 and 3).
 FIRST_DETECTOR = (range(1, 2831), range(5521, 5871))
 # Segmentation labels.
 BACKGROUND, WALL, FILLER, OBJECTS = 1, 2, 3, 4
@@ -52,7 +52,7 @@ def _read(path: Path) -> np.ndarray:
 
 
 def frames(slice_id: int, mode: int) -> dict[str, np.ndarray]:
-    """Binned counts ``(views, 1, 956)``, flat and dark ``(1, 1, 956)``, open-beam normalised.
+    """Binned counts ``(views, 1, 956)``, flat and dark ``(1, 1, 956)``, open-beam normalized.
 
     The last of the 3601 views repeats the first and is dropped. The returned
     counts are rescaled about the dark so that ``(counts - dark) / (flat -
@@ -79,7 +79,7 @@ def frames(slice_id: int, mode: int) -> dict[str, np.ndarray]:
 def geometry(slice_id: int, *, center_shift: float | None = None) -> object:
     """TomoJAX fan-beam geometry on the 1024 x 1024 grid of the published images.
 
-    ``center_shift`` is the detector centre in binned pixels; by default the
+    ``center_shift`` is the detector center in binned pixels; by default the
     value that focuses each of the two detectors.
     """
     import tomojax as tj

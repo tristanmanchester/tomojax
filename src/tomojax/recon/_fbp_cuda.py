@@ -210,7 +210,7 @@ def backproject_filtered_cuda(
     accumulate: jax.Array | None = None,
     run: int | None = None,
 ) -> jax.Array:
-    """Sum filtered views at voxel centres, adding to an optional accumulator."""
+    """Sum filtered views at voxel centers, adding to an optional accumulator."""
     mode = {"integer": 0, "fixed": 1, "general": 2}[z_mode]
     first = (grid_volume_origin(grid)[2] - detector.center[1]) / detector.dv
     first += (detector.nv - 1) / 2

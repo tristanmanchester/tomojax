@@ -283,7 +283,7 @@ def tomojax.simulate(
         source_to_detector: "Annotated[float | None, 'geometry_length']" = None,
         poisson_scale: "Annotated[float, 'counts_per_line_integral']" = 0.0,
         translation_sigma: "Annotated[float, 'geometry_length']" = 0.0,
-        artefacts: 'datasets.SimulationArtefacts | None' = None,
+        artifacts: 'datasets.SimulationArtifacts | None' = None,
         grid: 'Grid | None' = None,
         detector: 'Detector | None' = None,
         seed: 'int' = 0,
@@ -461,10 +461,10 @@ class tomojax.progress.Advanced(
         time: 'float',
         eta: 'float | None' = None,
     ) -> None
-class tomojax.progress.Cancelled
+class tomojax.progress.Canceled
 class tomojax.progress.Control() -> 'None'
     .cancel(self) -> 'None'
-    .cancelled
+    .canceled
     .checkpoint(self) -> 'None'
     .pause(self) -> 'None'
     .resume(self) -> 'None'
@@ -510,11 +510,11 @@ class tomojax.interactive.RegionOverlay(
         bounds: 'tuple[tuple[float, float], tuple[float, float], tuple[float, float]]',
         images: 'dict[str, progress.Sample]',
     ) -> None
-def tomojax.interactive.centre_sweep(
+def tomojax.interactive.center_sweep(
         scan: 'Scan',
         axis: 'Axis',
         index: 'int',
-        centres: 'Sequence[float]',
+        centers: 'Sequence[float]',
         *,
         method: 'Method' = 'auto',
         **options: 'Any',
@@ -1035,13 +1035,13 @@ class tomojax.datasets.SimConfig(
         min_value: 'float' = 0.1,
         max_value: 'float' = 1.0,
         max_rotation: 'float' = 180.0,
-        artefacts: 'SimulationArtefacts | None' = None,
+        artifacts: 'SimulationArtifacts | None' = None,
         seed: 'int' = 0,
         lamino_thickness_ratio: 'float' = 0.2,
         translation_sigma: 'float' = 0.0,
     ) -> None
 class tomojax.datasets.SimulatedData
-class tomojax.datasets.SimulationArtefacts(
+class tomojax.datasets.SimulationArtifacts(
         poisson_scale: 'float' = 0.0,
         gaussian_sigma: 'float' = 0.0,
         dead_pixel_fraction: 'float' = 0.0,

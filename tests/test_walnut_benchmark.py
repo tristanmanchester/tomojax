@@ -1,4 +1,4 @@
-"""Walnut quality comparisons use matching physical voxel centres."""
+"""Walnut quality comparisons use matching physical voxel centers."""
 
 from __future__ import annotations
 

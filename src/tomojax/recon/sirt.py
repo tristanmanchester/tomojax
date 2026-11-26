@@ -139,7 +139,7 @@ def _normalization(
     *,
     axial: bool,
 ) -> tuple[Callable, int, tuple[int, int, int]]:
-    """Use shared one-plane normalisers only for exactly independent axial rows."""
+    """Use shared one-plane normalizers only for exactly independent axial rows."""
     if not axial:
         return select, detector.nv, volume_shape(model, grid)
     from tomojax.geometry import grid_volume_origin

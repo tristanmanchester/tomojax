@@ -58,7 +58,7 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
     cos_theta = jnp.clip(jnp.dot(ez, axis), -1.0, 1.0)
 
     def aligned() -> jnp.ndarray:
-        # Rodrigues' formula using the unnormalised cross product avoids the
+        # Rodrigues' formula using the unnormalized cross product avoids the
         # zero-axis singularity at ez. This keeps the pose map differentiable
         # at the nominal parallel-CT axis, where axis calibration starts.
         cross = jnp.cross(ez, axis)
@@ -77,7 +77,7 @@ def _align_ez_to_axis(axis_unit: jnp.ndarray) -> jnp.ndarray:
         # Keep the same minimum-angle rotation as the host geometries. A
         # helper-vector basis maps ez correctly but changes the in-plane
         # frame, creating an artificial pose jump as the axis is calibrated.
-        # Normalised Rodrigues avoids cancellation in 1 + cos(theta) here.
+        # Normalized Rodrigues avoids cancellation in 1 + cos(theta) here.
         cross = jnp.cross(ez, axis)
         sin2 = jnp.dot(cross, cross)
 

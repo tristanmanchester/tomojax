@@ -100,16 +100,16 @@ def _angle_rows(angles: Mapping[str, Any]) -> list[tuple[str, str]]:
 def _detector_rows(detector: Mapping[str, Any]) -> list[tuple[str, str]]:
     if not detector["found"]:
         return [("detector", "not found")]
-    centre = detector["center"]
-    centre_text = (
-        ", ".join(_fmt_value(c) for c in centre)
-        if isinstance(centre, list | tuple)
-        else str(centre)
+    center = detector["center"]
+    center_text = (
+        ", ".join(_fmt_value(c) for c in center)
+        if isinstance(center, list | tuple)
+        else str(center)
     )
     return [
         ("detector", f"{detector['nu']} x {detector['nv']} pixels (u x v)"),
         ("pixel size", f"{_fmt_value(detector['du'])} x {_fmt_value(detector['dv'])}"),
-        ("centre", f"({centre_text})"),
+        ("center", f"({center_text})"),
     ]
 
 

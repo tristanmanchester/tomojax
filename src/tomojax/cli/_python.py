@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from tomojax.cli import operations as op
     from tomojax.cli._handles import Root
-    from tomojax.cli._marks import Colour, Frame
+    from tomojax.cli._marks import Color, Frame
     from tomojax.wire.arrays import Array, Storage
 
 _KINDS = {
@@ -247,9 +247,9 @@ class Registrations:
                 Panel(title, pixels, (where, span, *sampling), meta.unit, 1.0, meta.domain)
             )
             frames.append(frame_of(names, window, d))
-            colours = ("cyan", "magenta", "green", "orange", "red")
+            colors = ("cyan", "magenta", "green", "orange", "red")
             outlines.append(
-                [(flat(mask).astype(bool), c) for mask, c in zip(masks, colours, strict=False)]
+                [(flat(mask).astype(bool), c) for mask, c in zip(masks, colors, strict=False)]
             )
         return self.overlaid(panels, frames, marks, outlines, ticks, shown=limits, grid=grid)
 
@@ -258,7 +258,7 @@ class Registrations:
         panels: list[Panel],
         frames: list[Frame],
         marks: Sequence[object],
-        outlines: list[list[tuple[np.ndarray, Colour]]],
+        outlines: list[list[tuple[np.ndarray, Color]]],
         ticks: bool | None,
         *,
         shown: tuple[float, float] | None = None,
@@ -354,7 +354,7 @@ def execute_in_namespace(
             value = eval(compile(expression, "<python>", "eval"), namespace)
         if isinstance(value, np.ndarray | jax.Array):
             value = registrations.register(value)
-        return registrations, msgspec.to_builtins(value, enc_hook=summarise)
+        return registrations, msgspec.to_builtins(value, enc_hook=summarize)
     finally:
         for key in ("handles", "register", "register_feature", "show", "view"):
             namespace.pop(key, None)
@@ -369,7 +369,7 @@ def _load(ref: Storage) -> np.ndarray:
     return np.load(ref.path, mmap_mode="r", allow_pickle=False)
 
 
-def summarise(value: object) -> object:
+def summarize(value: object) -> object:
     """Keep returned values small: short arrays as lists, longer ones as a summary."""
     if isinstance(value, np.generic):
         return value.item()

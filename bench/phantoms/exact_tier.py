@@ -9,7 +9,7 @@ fit's gauge holds, and the fit bends its poses to buy sharpness instead of reach
 
 Noise is the corpus's counting model: Poisson at a photon count per pixel, with counts floored
 at 0.5 before the log. Each file has its own seed, derived from the draw's seed, the row's name
-and the photon count, so no two files share a noise realisation.
+and the photon count, so no two files share a noise realization.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def gauge_free(
     component of its correction along those motions. In continuous space the choice is free,
     but on a voxel grid a sub-voxel rigid shift changes how sharply the grid can represent the
     object, so a grid-aligned truth at another gauge cannot be reached. This returns
-    ``poses @ T`` for the rigid T minimising the start-relative correction, translations over
+    ``poses @ T`` for the rigid T minimizing the start-relative correction, translations over
     the pitch and, with ``rotations``, the wobble angles times ``lever_px``. That is the same
     object moved rigidly, and the representative the fit converges to. Rotations are included
     only when the fit fits them; a translations-only fit cannot express a rotated truth.

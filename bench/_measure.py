@@ -2,10 +2,10 @@
 
 :func:`environment` records the machine, the command and every installed
 package's version. :class:`GpuSampler` polls ``nvidia-smi`` in the background;
-:meth:`GpuSampler.window` summarises each GPU's samples between two times. The
+:meth:`GpuSampler.window` summarizes each GPU's samples between two times. The
 memory figures are sampled process footprints (allocator pools included, short
 peaks between samples missed), not exact operation peaks, and NVIDIA averages
-utilisation over its own period of roughly 1/6 to 1 s, whatever the polling rate.
+utilization over its own period of roughly 1/6 to 1 s, whatever the polling rate.
 """
 
 from __future__ import annotations
@@ -185,7 +185,7 @@ def _git_commit() -> str | None:
 
 
 class GpuSampler:
-    """``nvidia-smi`` samples of every GPU's memory and utilisation, every ``period`` s.
+    """``nvidia-smi`` samples of every GPU's memory and utilization, every ``period`` s.
 
     The baseline is each GPU's memory in use when sampling began: create the
     sampler before the library under test touches a GPU.
@@ -225,22 +225,22 @@ class GpuSampler:
             if self._stop.is_set():
                 break
             try:
-                gpu, memory, utilisation = (float(x) for x in line.split(","))
+                gpu, memory, utilization = (float(x) for x in line.split(","))
             except ValueError:
                 continue
-            self.samples.append((time.perf_counter(), int(gpu), memory, utilisation))
+            self.samples.append((time.perf_counter(), int(gpu), memory, utilization))
 
     def window(self, start: float, stop: float) -> dict[str, dict[str, float | None]]:
-        """Each GPU between ``start`` and ``stop``: samples, memory (MiB) and utilisation (%).
+        """Each GPU between ``start`` and ``stop``: samples, memory (MiB) and utilization (%).
 
         ``peak_memory_mib`` is the largest sampled memory in use, and
         ``peak_above_baseline_mib`` that less what the GPU held when sampling
         began (None if it had not reported by then).
         """
         per: dict[int, list[tuple[float, float]]] = {}
-        for t, gpu, memory, utilisation in self.samples:
+        for t, gpu, memory, utilization in self.samples:
             if start <= t <= stop:
-                per.setdefault(gpu, []).append((memory, utilisation))
+                per.setdefault(gpu, []).append((memory, utilization))
         summary: dict[str, dict[str, float | None]] = {}
         for gpu, values in sorted(per.items()):
             peak = max(m for m, _ in values)
@@ -249,7 +249,7 @@ class GpuSampler:
                 "samples": len(values),
                 "peak_memory_mib": peak,
                 "peak_above_baseline_mib": None if base is None else peak - base,
-                "mean_utilisation": sum(u for _, u in values) / len(values),
+                "mean_utilization": sum(u for _, u in values) / len(values),
             }
         return summary
 

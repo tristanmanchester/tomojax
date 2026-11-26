@@ -422,7 +422,7 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
         let dataset = directory.join("validation-cone.nxs");
         std::fs::copy(project.resolve(&asset.path), &dataset).unwrap();
         let evidence = json!({
-            "description":"Captured from the official worker during the real validation regression; suitable for explicitly labelled UI replay.",
+            "description":"Captured from the official worker during the real validation regression; suitable for explicitly labeled UI replay.",
             "input":{"path":dataset,"kind":asset.kind,"name":"Validation cone fixture","geometry":"cone","size":6,"views":12},
             "reconstruction_error":reconstruction_error,
             "reconstruction_plan":reconstruction_plan,

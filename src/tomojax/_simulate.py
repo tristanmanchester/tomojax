@@ -107,14 +107,14 @@ def build_sim_config(
     source_to_detector: float | None = None,
     poisson_scale: float = 0.0,
     translation_sigma: float = 0.0,
-    artefacts: datasets.SimulationArtefacts | None = None,
+    artifacts: datasets.SimulationArtifacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
     seed: int = 0,
     phantom_settings: Mapping[str, object] | None = None,
 ) -> tuple[Grid, Detector, SimConfig]:
     """Resolve grid, detector and ``SimConfig`` once for Python and the CLI."""
-    from tomojax.datasets import SimConfig, SimulationArtefacts
+    from tomojax.datasets import SimConfig, SimulationArtifacts
     from tomojax.geometry import Grid
 
     if grid is None and size < 1:
@@ -137,18 +137,18 @@ def build_sim_config(
         default_detector(resolved_grid, beam, tilt=resolved_tilt) if detector is None else detector
     )
     resolved_n_views = 2 * max(resolved_grid.shape) if n_views is None else n_views
-    if poisson_scale > 0.0 and artefacts is not None and artefacts.poisson_scale > 0.0:
+    if poisson_scale > 0.0 and artifacts is not None and artifacts.poisson_scale > 0.0:
         raise InvalidParameter(
             "poisson_scale",
-            "pass poisson_scale= or artefacts=SimulationArtefacts(poisson_scale=...), not both",
+            "pass poisson_scale= or artifacts=SimulationArtifacts(poisson_scale=...), not both",
         )
-    resolved_artefacts = artefacts
+    resolved_artifacts = artifacts
     if poisson_scale > 0.0:
-        resolved_artefacts = replace(
-            artefacts or SimulationArtefacts(), poisson_scale=poisson_scale
+        resolved_artifacts = replace(
+            artifacts or SimulationArtifacts(), poisson_scale=poisson_scale
         )
-    if resolved_artefacts is not None and not resolved_artefacts.has_enabled():
-        resolved_artefacts = None
+    if resolved_artifacts is not None and not resolved_artifacts.has_enabled():
+        resolved_artifacts = None
 
     cfg = SimConfig(
         nx=resolved_grid.nx,
@@ -169,7 +169,7 @@ def build_sim_config(
         rotation=rotation,
         phantom=phantom,
         seed=seed,
-        artefacts=resolved_artefacts,
+        artifacts=resolved_artifacts,
         translation_sigma=translation_sigma,
     )
     if phantom_settings:
@@ -229,7 +229,7 @@ def simulate(
     source_to_detector: Annotated[float | None, "geometry_length"] = None,
     poisson_scale: Annotated[float, "counts_per_line_integral"] = 0.0,
     translation_sigma: Annotated[float, "geometry_length"] = 0.0,
-    artefacts: datasets.SimulationArtefacts | None = None,
+    artifacts: datasets.SimulationArtifacts | None = None,
     grid: Grid | None = None,
     detector: Detector | None = None,
     seed: int = 0,
@@ -270,9 +270,9 @@ def simulate(
         independently for each view. Uses the same length unit as voxel spacing.
         Zero adds no motion. The scan geometry stays nominal; ``sim.true_poses``
         gives the shifts that produced the projections.
-    artefacts : SimulationArtefacts or None, optional
-        Detector artefacts (dead/hot pixels, zingers, stripes, Poisson noise)
-        from :class:`tomojax.datasets.SimulationArtefacts`.
+    artifacts : SimulationArtifacts or None, optional
+        Detector artifacts (dead/hot pixels, zingers, stripes, Poisson noise)
+        from :class:`tomojax.datasets.SimulationArtifacts`.
     grid : Grid or None, optional
         The volume's grid, including any ``vol_origin`` or ``vol_center``.
     detector : Detector or None, optional
@@ -311,7 +311,7 @@ def simulate(
         source_to_detector=source_to_detector,
         poisson_scale=poisson_scale,
         translation_sigma=translation_sigma,
-        artefacts=artefacts,
+        artifacts=artifacts,
         grid=grid,
         detector=detector,
         seed=seed,

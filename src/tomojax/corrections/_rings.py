@@ -1,7 +1,7 @@
 """Detector-response correction with geometric or statistical separation from the object.
 
 Each column reports ``q + a + b (1 - exp(-q))``. Independent-view regressions
-fit neighbouring-column references. Parallel full turns use opposed-ray parity;
+fit neighboring-column references. Parallel full turns use opposed-ray parity;
 other scans use angular covariance and a spatial scene-power prior.
 """
 
@@ -40,7 +40,7 @@ WINDOWS = (30, 20, 14, 9, 6)
 
 @lru_cache(maxsize=16)
 def _quadratic_taps(window: int, guard: int) -> np.ndarray:
-    """Weights giving each column the local quadratic through its neighbours (guard left out)."""
+    """Weights giving each column the local quadratic through its neighbors (guard left out)."""
     j = np.arange(-window, window + 1, dtype=np.float64)
     keep = np.abs(j) > guard
     design = np.stack([np.ones_like(j), j, j * j], axis=1)[keep]
@@ -71,11 +71,11 @@ def _correlate(x: jax.Array, kernel: np.ndarray) -> jax.Array:
 def _weighted_quadratics(
     values: jax.Array, weights: jax.Array, windows: tuple[int, ...], guard: int
 ) -> list[jax.Array]:
-    """Each column's weighted least-squares quadratic through its neighbours, per window.
+    """Each column's weighted least-squares quadratic through its neighbors, per window.
 
-    Neighbours are taken relative to the column's own value and their offsets scaled to
+    Neighbors are taken relative to the column's own value and their offsets scaled to
     [-1, 1] at each window, then the 3x3 normal equations are solved by Cholesky, so float32
-    keeps the local variation's digits. The windows share their sums over common neighbours.
+    keeps the local variation's digits. The windows share their sums over common neighbors.
     """
     widest = max(windows)
     values_shifted, weights_shifted = _shifts(values, widest), _shifts(weights, widest)
@@ -83,7 +83,7 @@ def _weighted_quadratics(
     t = [jnp.zeros_like(values) for _ in range(3)]
     fits = {}
     # Pair the even/odd moments too: tiny asymmetric residuals otherwise steer
-    # Tukey weights very differently in nearly flat, reflected neighbourhoods.
+    # Tukey weights very differently in nearly flat, reflected neighborhoods.
     for j in range(guard + 1, widest + 1):
         left, right = weights_shifted[widest - j], weights_shifted[widest + j]
         dl = left * (values_shifted[widest - j] - values)
@@ -132,7 +132,7 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     It starts from the local quadratic through +-30 columns and moves toward the +-20, 14, 9 and 6
     ones only as far as each differs from it by more than ``gamma`` times its noise at that view
     and place, so roughness of the object's values (an edge turning at some radius) is
-    followed rather than turned into a column correction. Neighbours are Tukey-weighted by their
+    followed rather than turned into a column correction. Neighbors are Tukey-weighted by their
     misfit to the +-6 quadratic so that a defective column does not steer them.
     """
     taps = [_quadratic_taps(w, 1) for w in WINDOWS]
@@ -163,7 +163,7 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
 def _fit(ranked: jax.Array, ref: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
     """Per column, the rank differences' offset, slope on ``1 - T`` and mean ``1 - T``.
 
-    Centred weighted least squares with weights ``T`` against ``ref``.
+    Centered weighted least squares with weights ``T`` against ``ref``.
     """
     x = -jnp.expm1(-ref)
     w = jnp.exp(-jnp.minimum(ref, 50.0))
@@ -181,7 +181,7 @@ def _fit(ranked: jax.Array, ref: jax.Array) -> tuple[jax.Array, jax.Array, jax.A
 def _feasible_response(
     q: jax.Array, ref: jax.Array, alpha: jax.Array, beta: jax.Array, lowest: jax.Array | None = None
 ) -> tuple[jax.Array, jax.Array]:
-    """Refit regularised coefficients to cover every observation on a stable branch.
+    """Refit regularized coefficients to cover every observation on a stable branch.
 
     For negative beta, derivative >= 1/2 requires p >= log(-2 beta).
     Its image begins at alpha + h(beta), h = log(-2 beta) + beta + 1/2.
@@ -226,7 +226,7 @@ def _invert(q: jax.Array, alpha: jax.Array, beta: jax.Array) -> jax.Array:
 
 
 def _fit_unsorted(q: jax.Array, ref: jax.Array, instrument: jax.Array) -> tuple[jax.Array, ...]:
-    """Response contrasts and their influence, using independent neighbouring-view noise.
+    """Response contrasts and their influence, using independent neighboring-view noise.
 
     Regressing on the noisy spatial reference itself correlates predictor and error.
     The angular interpolation of the reference, ``instrument``, is the instrument,
@@ -238,7 +238,7 @@ def _fit_unsorted(q: jax.Array, ref: jax.Array, instrument: jax.Array) -> tuple[
     xm, zm, level = (w * x).sum(0) / sw, (w * z).sum(0) / sw, (w * d).sum(0) / sw
     xc, zc = x - xm, z - zm
     denominator = jnp.maximum((w * xc * zc).sum(0), 0) + 1e-4 * sw
-    # a dead column sees no spread of transmission, so its slope only amplifies its neighbours
+    # a dead column sees no spread of transmission, so its slope only amplifies its neighbors
     beta = jnp.clip((w * zc * (d - level)).sum(0) / denominator, -0.5, 0.5)
     residual = d - level - beta * xc
     scene_level = (w * q).sum(0) / sw
@@ -258,7 +258,7 @@ def _angular_variance(influence: jax.Array, groups: tuple[int, ...]) -> jax.Arra
     """Bartlett sandwich spectral variance, without correlating separate trajectories.
 
     All overlapping windows avoid a privileged block origin. The finite-sample
-    factor restores the iid variance removed by centring each trajectory.
+    factor restores the iid variance removed by centering each trajectory.
     """
     variance = jnp.zeros(influence.shape[1] // 2 + 1, influence.dtype)
     offset = 0
@@ -282,7 +282,7 @@ def _response_posterior(
     taps: np.ndarray,
     groups: tuple[int, ...],
 ) -> jax.Array:
-    """Regularise a local response contrast by angular noise and spatial scene power.
+    """Regularize a local response contrast by angular noise and spatial scene power.
 
     The local quadratic measures a high-pass contrast, not the response itself.
     Its transfer function is a local approximation for the weighted fit. A white
@@ -315,7 +315,7 @@ def _response_posterior(
 
 def _unsorted_response(
     q: jax.Array,
-    neighbours: jax.Array,
+    neighbors: jax.Array,
     weights: jax.Array,
     groups: tuple[int, ...],
     lowest: jax.Array,
@@ -324,14 +324,14 @@ def _unsorted_response(
     """A row's fitted responses, each after inverting the ones before, and ``q`` corrected.
 
     ``lowest`` is each column's least value over every view, which keeps the inverse
-    admissible everywhere when ``q`` only summarises the views; the inverse is
+    admissible everywhere when ``q`` only summarizes the views; the inverse is
     increasing, so it carries the least value through each pass.
     """
     taps = _quadratic_taps(6, 0)
     responses = []
     for _ in range(passes):
         ref = _correlate(q, taps)
-        instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
+        instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
         level, beta, xm, il, ib, ml, mb = _fit_unsorted(q, ref, instrument)
         level = _response_posterior(level, il, ml, taps, groups)
         beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
@@ -358,7 +358,7 @@ def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 
     median over +-window columns is sorted, a line fitted through the middle half, and the values
     beyond the fitted ends by more than ``ratio``/2 spans flagged on each side whose extreme lies
     beyond them by ``ratio`` spans. Only the flagged columns, grown by two, lose their level
-    against the +-window quadratic of their neighbours, faded out over eight more columns.
+    against the +-window quadratic of their neighbors, faded out over eight more columns.
     The flagged response uses the reflection-aware significance prior too: an even scene
     contrast alone is not evidence of a detector calibration error.
     """
@@ -389,7 +389,7 @@ def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 
 
 
 def _turn_response(
-    q: jax.Array, lowest: jax.Array, axis: float, neighbours: jax.Array, weights: jax.Array
+    q: jax.Array, lowest: jax.Array, axis: float, neighbors: jax.Array, weights: jax.Array
 ) -> tuple[jax.Array, ...]:
     """A full-turn row's large-stripe offset, three responses and ``q`` corrected.
 
@@ -402,7 +402,7 @@ def _turn_response(
     responses = []
     for _ in range(2):
         ref = _reference(q)
-        instrument = (ref[neighbours] * weights[:, :, None]).sum(1)
+        instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
         level, beta, xm, *_ = _fit_unsorted(q, ref, instrument)
         level = regularize(level, axis, "significance")
         beta = regularize(beta, axis, "significance")
@@ -421,7 +421,7 @@ def _turn_response(
 @dataclass(frozen=True)
 class _ViewPlan:
     order: tuple[int, ...]
-    neighbours: tuple[tuple[int, int], ...]
+    neighbors: tuple[tuple[int, int], ...]
     weights: tuple[tuple[float, float], ...]
     groups: tuple[int, ...]
     closing: bool = False
@@ -436,7 +436,7 @@ def _angular_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     indices = np.argsort(phase, kind="stable")
     ordered = phase[indices]
     # Cut the circle at the largest unsampled arc, not at the arbitrary zero of
-    # the angle labels. A tie favours the smallest phase for deterministic order.
+    # the angle labels. A tie favors the smallest phase for deterministic order.
     gaps = np.diff(np.r_[ordered[-1] - 360, ordered])
     cut = int(np.argmax(gaps))
     indices = np.roll(indices, -cut)
@@ -473,7 +473,7 @@ def _periodic_order(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool] |
 
 
 def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
-    """Angular neighbours within declared acquisition trajectories, not calibration blocks."""
+    """Angular neighbors within declared acquisition trajectories, not calibration blocks."""
     layout = geometry
     while (base := getattr(layout, "base", None)) is not None:
         layout = base
@@ -486,7 +486,7 @@ def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
         trajectories = (np.asarray(layout.angles, np.float64),)
     else:
         return None
-    order, neighbours, weights, groups = [], [], [], []
+    order, neighbors, weights, groups = [], [], [], []
     offset = 0
     closing = False
     for trajectory in trajectories:
@@ -512,18 +512,18 @@ def _view_plan(geometry: object, *, cyclic: bool = False) -> _ViewPlan | None:
             left, right = (angles - angles[lo]) % 360, (angles[hi] - angles) % 360
             weight = right / (left + right)
         else:
-            lo, hi = _open_neighbours(size)
+            lo, hi = _open_neighbors(size)
             gap = angles[hi] - angles[lo]
             weight = np.divide(angles[hi] - angles, gap, out=np.full(size, 0.5), where=gap != 0)
-        neighbours.extend((int(a + offset), int(b + offset)) for a, b in zip(lo, hi, strict=True))
+        neighbors.extend((int(a + offset), int(b + offset)) for a, b in zip(lo, hi, strict=True))
         weights.extend((float(w), float(1 - w)) for w in weight)
         groups.append(size)
         offset += size
-    return _ViewPlan(tuple(order), tuple(neighbours), tuple(weights), tuple(groups), bool(closing))
+    return _ViewPlan(tuple(order), tuple(neighbors), tuple(weights), tuple(groups), bool(closing))
 
 
-def _open_neighbours(size: int) -> tuple[np.ndarray, np.ndarray]:
-    """Each of ``size`` angle-sorted views' two neighbours; an end view's one, twice."""
+def _open_neighbors(size: int) -> tuple[np.ndarray, np.ndarray]:
+    """Each of ``size`` angle-sorted views' two neighbors; an end view's one, twice."""
     i = np.arange(size)
     lo, hi = np.maximum(i - 1, 0), np.minimum(i + 1, size - 1)
     lo[0], hi[-1] = hi[0], lo[-1]
@@ -535,26 +535,26 @@ def _bins(
 ) -> tuple[np.ndarray, np.ndarray, tuple[int, ...]]:
     """About ``views`` contiguous angular bins, shared among trajectories by length.
 
-    Returns each view's bin, each bin's two neighbouring bins (around the turn when
+    Returns each view's bin, each bin's two neighboring bins (around the turn when
     ``cyclic``) and the bins per trajectory.
     """
-    total, offset, labels, neighbours, counts = sum(groups), 0, [], [], []
+    total, offset, labels, neighbors, counts = sum(groups), 0, [], [], []
     for size in groups:
         k = min(size, max(2, round(views * size / total)))
         labels.append(offset + np.arange(size) * k // size)
         i = np.arange(k)
-        lo, hi = ((i - 1) % k, (i + 1) % k) if cyclic else _open_neighbours(k)
-        neighbours.append(offset + np.stack([lo, hi], axis=1))
+        lo, hi = ((i - 1) % k, (i + 1) % k) if cyclic else _open_neighbors(k)
+        neighbors.append(offset + np.stack([lo, hi], axis=1))
         counts.append(k)
         offset += k
-    return np.concatenate(labels), np.concatenate(neighbours), tuple(counts)
+    return np.concatenate(labels), np.concatenate(neighbors), tuple(counts)
 
 
 @partial(jax.jit, static_argnames=("axis", "groups", "closing", "views", "order"))
 def correct_rings(
     batch: jax.Array,
     axis: float | None = None,
-    neighbours: jax.Array | None = None,
+    neighbors: jax.Array | None = None,
     weights: jax.Array | None = None,
     groups: tuple[int, ...] = (),
     *,
@@ -566,13 +566,13 @@ def correct_rings(
 
     ``views`` fits the responses on about that many angular bin means.
     """
-    if neighbours is None or weights is None:
+    if neighbors is None or weights is None:
         size = batch.shape[0]
         if size < 2:
             raise ValueError("Rings needs at least two views")
         i = np.arange(size)
-        lo, hi = _open_neighbours(size) if axis is None else ((i - 1) % size, (i + 1) % size)
-        neighbours = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
+        lo, hi = _open_neighbors(size) if axis is None else ((i - 1) % size, (i + 1) % size)
+        neighbors = jnp.asarray(np.stack([lo, hi], axis=1), jnp.int32)
         weights = jnp.full((size, 2), 0.5, batch.dtype)
         groups = (size,)
     # Only the fitting samples need angular order. Apply the column responses
@@ -584,29 +584,29 @@ def correct_rings(
         fitted = jnp.concatenate([0.5 * (fitted[:1] + fitted[-1:]), fitted[1:-1]])
     if views is not None and views < sum(groups):
         # Fit on angular bin means, which keep every view's photons; an additive column
-        # error commutes with the mean, and neighbouring bins share no views.
-        labels, bin_neighbours, groups = _bins(groups, views, cyclic=axis is not None)
+        # error commutes with the mean, and neighboring bins share no views.
+        labels, bin_neighbors, groups = _bins(groups, views, cyclic=axis is not None)
         sizes = np.bincount(labels)
         starts = np.cumsum(sizes) - sizes
         means = fitted[starts]
         for j in range(1, sizes.max()):
             means += fitted[starts + np.minimum(j, sizes - 1)] * (j < sizes)[:, None, None]
         fitted = means / sizes[:, None, None].astype(batch.dtype)
-        neighbours = jnp.asarray(bin_neighbours, jnp.int32)
+        neighbors = jnp.asarray(bin_neighbors, jnp.int32)
         # equal weights: the instrument need only be independent of each bin's noise
-        weights = jnp.full(bin_neighbours.shape, 0.5, batch.dtype)
+        weights = jnp.full(bin_neighbors.shape, 0.5, batch.dtype)
         # bin means are quiet enough for one fit to remove what two do on every view
         passes = 1
     rows = (jnp.swapaxes(fitted, 0, 1), batch.min(0))
     if axis is not None:
         stripes, alpha, beta, corrected = jax.lax.map(
-            lambda row: _turn_response(row[0], row[1], axis, neighbours, weights),
+            lambda row: _turn_response(row[0], row[1], axis, neighbors, weights),
             rows,
         )
         batch = batch - stripes[None]
     else:
         alpha, beta, corrected = jax.lax.map(
-            lambda row: _unsorted_response(row[0], neighbours, weights, groups, row[1], passes),
+            lambda row: _unsorted_response(row[0], neighbors, weights, groups, row[1], passes),
             rows,
         )
     if corrected.shape[1] == batch.shape[0]:
@@ -634,7 +634,7 @@ def mirror_axis(geometry: object) -> float | None:
 
 @dataclass(frozen=True)
 class Rings(Step):
-    """Correct ring artefacts from each detector column's own response.
+    """Correct ring artifacts from each detector column's own response.
 
     A column whose gain or response the flat field does not describe reports
     ``q + a + b (1 - exp(-q))`` instead of the line integral ``q``: a stripe in
@@ -646,9 +646,9 @@ class Rings(Step):
     illumination; other defective measurements need independent calibration
     evidence and repair before this step.
 
-    After statistical regularisation, a constrained coefficient refit ensures
+    After statistical regularization, a constrained coefficient refit ensures
     that every observation has an inverse on a branch with response derivative
-    at least one half. It minimises coefficient displacement in the reference
+    at least one half. It minimizes coefficient displacement in the reference
     regression metric subject to a conservative linear feasibility constraint;
     corrected line integrals are not clipped. This also modifies the parity
     prior where it would otherwise produce a noninvertible response.
@@ -656,9 +656,9 @@ class Rings(Step):
     On a stationary parallel-beam scan over one evenly sampled full turn,
     each view is compared with a local quadratic through 30 columns either
     side, narrowed toward 6 where the object changes faster. Independent
-    neighbouring views provide the instrument for the response fit. Keeping
+    neighboring views provide the instrument for the response fit. Keeping
     these references unsorted preserves their spatial smoothness at the axis.
-    The fine fits use cyclic angular neighbours (bins, when ``views`` bins them)
+    The fine fits use cyclic angular neighbors (bins, when ``views`` bins them)
     and average a repeated closing phase. Large stripes are detected first using
     the sorted-column procedure of Vo, Atwood and Drakopoulos (2018, Opt. Express
     26, 28396, algorithms 4 and 5); a last sorted fit over 100 columns either side
@@ -666,8 +666,8 @@ class Rings(Step):
 
     Opposed columns see the same lines over a full turn. Their fitted odd
     component therefore supplies a stationary detector-field spectrum; the
-    even component is regularised locally in an undecimated multiscale frame,
-    accounting for correlation between reflected neighbours. Flagged large and
+    even component is regularized locally in an undecimated multiscale frame,
+    accounting for correlation between reflected neighbors. Flagged large and
     fine corrections use per-scale simultaneous significance; the final broad
     correction uses a Wiener gain.
     The variance and effective degrees are estimated, not a calibrated
@@ -677,10 +677,10 @@ class Rings(Step):
     not a no-change guarantee. The axis used, or none, is recorded.
 
     Otherwise, each unsorted view is compared with a quadratic through six
-    neighbouring columns on either side. Independent neighbouring views supply
+    neighboring columns on either side. Independent neighboring views supply
     an instrument for the response fit, avoiding correlation between reference
     noise and regression error. Angular covariance and the unfiltered scene's
-    spatial power regularise the local response contrast before inversion.
+    spatial power regularize the local response contrast before inversion.
     Smooth object structure is retained rather than interpreted as calibration
     error. This is a statistical separation, not a no-change guarantee: fine
     stationary object structure and broad detector errors can be ambiguous.
@@ -699,7 +699,7 @@ class Rings(Step):
         Default is None.
     views : int or None, optional
         Fit the responses on the means of about this many contiguous angular bins of
-        views, neighbouring bins as instrument, and correct every view. Default 512.
+        views, neighboring bins as instrument, and correct every view. Default 512.
         Scans without a mirror axis then fit once rather than twice. None fits every
         view: several times slower, for scans whose structure moves across columns
         within a bin.
@@ -820,7 +820,7 @@ class Rings(Step):
             batch,
             order=plan.order,
             axis=self._axis,
-            neighbours=jnp.asarray(plan.neighbours, jnp.int32),
+            neighbors=jnp.asarray(plan.neighbors, jnp.int32),
             weights=jnp.asarray(plan.weights, batch.dtype),
             groups=plan.groups,
             closing=plan.closing,

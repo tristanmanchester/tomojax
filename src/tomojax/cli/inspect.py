@@ -56,7 +56,7 @@ def _build_parser() -> ProgressParser:
     _ = parser.add_argument(
         "--centers",
         metavar="SPEC",
-        help="Sweep the detector centre, in pixels from the middle: START:STOP:STEP or a,b,c",
+        help="Sweep the detector center, in pixels from the middle: START:STOP:STEP or a,b,c",
     )
     add_progress(parser)
     add_force(parser)
@@ -72,7 +72,7 @@ def _joined(argv: Sequence[str]) -> list[str]:
     joined: list[str] = []
     i = 0
     while i < len(args):
-        if args[i] == "--centers" and i + 1 < len(args) and pv.is_centres_value(args[i + 1]):
+        if args[i] == "--centers" and i + 1 < len(args) and pv.is_centers_value(args[i + 1]):
             joined.append(f"--centers={args[i + 1]}")
             i += 2
             continue
@@ -119,12 +119,12 @@ def _print_previews(previews: pv.Previews) -> None:
         return
     apply = previews.apply or {}
     unit = apply.get("unit", "")
-    print("Centre sweep")
-    print(f"  recorded centre: {apply.get('recorded_px', 0.0):+.2f} px")
+    print("Center sweep")
+    print(f"  recorded center: {apply.get('recorded_px', 0.0):+.2f} px")
     for entry in previews.sweep:
-        centre, length = entry["center_px"], entry["center_length"]
+        center, length = entry["center_px"], entry["center_length"]
         print(
-            f"  {entry['ordinal']:>3}  {centre:+.2f} px  U = {length:.6g} {unit}  {entry['path']}"
+            f"  {entry['ordinal']:>3}  {center:+.2f} px  U = {length:.6g} {unit}  {entry['path']}"
         )
     print(f"  sheet: {previews.files['center_sweep.png']}")
     print(f"  apply one: {apply.get('command')} (U from the list above)")
@@ -136,7 +136,7 @@ def _make_previews(
     directory: Path,
     *,
     slices: list[tuple[pv.Axis, int]] | None,
-    centres: tuple[float, ...] | None,
+    centers: tuple[float, ...] | None,
     force: bool,
     listing: bool,
 ) -> pv.Previews:
@@ -148,21 +148,21 @@ def _make_previews(
     saved = pv.has_saved_volume(path)  # its planes are read, not reconstructed
     frameless = saved and saved_without_frames(path)
     # Only a scan's slices or a sweep need to know (and loading the frames needs JAX).
-    raw = (centres is not None or not saved) and not frameless and is_raw_input(path)
-    if centres is not None and (frameless or raw):
+    raw = (centers is not None or not saved) and not frameless and is_raw_input(path)
+    if centers is not None and (frameless or raw):
         kind = "a reconstruction without its scan" if frameless else "raw frames"
         parser.fail(
             f"--centers sweeps a scan of line integrals; {path} holds {kind}",
             hint="tomojax correct turns raw frames into a scan" if raw else None,
         )
-    scan = None if frameless or raw or (saved and centres is None) else tj.load(path)
+    scan = None if frameless or raw or (saved and centers is None) else tj.load(path)
     projection = pv.projection_image(path)
     if saved:
         wanted = pv.saved_requests(path, slices)
     else:
         wanted = [] if scan is None else slices or [("z", scan.grid.nz // 2)]
     has = {"projection": projection is not None, "listing": listing}
-    paths = pv.destinations(directory, wanted, centres or (), **has)
+    paths = pv.destinations(directory, wanted, centers or (), **has)
     try:
         check_destinations({path.resolve()}, paths, force=force)
     except FileExistsError as exc:
@@ -175,13 +175,13 @@ def _make_previews(
     else:
         assert scan is not None
         pv.write_scan_slices(scan, directory, wanted, out)
-    if scan is not None and centres is not None:
+    if scan is not None and centers is not None:
         plane = slices[0] if slices else None
-        pv.write_sweep(scan, path, directory, centres, plane, out)
+        pv.write_sweep(scan, path, directory, centers, plane, out)
     if projection is not None:  # last, so a bad --slice leaves nothing that needs --force
         from tomojax.cli import _images
 
-        image = _images.labelled(
+        image = _images.labeled(
             _images.to_uint8(projection, _images.limits(projection)), "central projection"
         )
         out.files["projection.png"] = str(_images.save_png(image, directory / "projection.png"))
@@ -201,10 +201,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     preview_dir = cast("str | None", args.preview_dir)
     try:
         slices = None if args.slice is None else [pv.parse_slice(s) for s in args.slice]
-        centres = None if args.centers is None else pv.parse_centres(cast("str", args.centers))
+        centers = None if args.centers is None else pv.parse_centers(cast("str", args.centers))
     except ValueError as exc:
         parser.fail(str(exc), hint="for example --slice z=200 or --centers -10:10:1")
-    if (slices or centres) and preview_dir is None:
+    if (slices or centers) and preview_dir is None:
         parser.fail(
             "--slice and --centers write images", hint="give a folder for them with --preview-dir"
         )
@@ -223,7 +223,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     path,
                     Path(preview_dir),
                     slices=slices,
-                    centres=centres,
+                    centers=centers,
                     force=cast("bool", args.force),
                     listing=args.progress == "json",
                 )

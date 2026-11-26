@@ -109,7 +109,7 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
             hessian[np.ix_(local + shared, local + shared)] += blocks[view]
         if parameters.nlocal:
             # Every local column has first-difference coupling with its own link weights;
-            # the drift spline (outside which translations are penalised) spans none of the
+            # the drift spline (outside which translations are penalized) spans none of the
             # rotation columns, so Q leaves those as they are.
             d = np.kron(np.diff(np.eye(n), axis=0), np.eye(parameters.nlocal))
             laplacian = d.T @ np.diag(weights.reshape(-1)) @ d
@@ -267,7 +267,7 @@ def test_analytic_fixture_integrates_density_independently_of_a_voxel_projector(
 
 
 def test_solid_fixture_integrates_ellipsoid_chords_independently():
-    # Riemann sum of each ellipsoid's inside test along a ray through one centre.
+    # Riemann sum of each ellipsoid's inside test along a ray through one center.
     centers, shape, densities = solid_phantom()
     origin = centers[:1] + np.array([[0.3, -0.2, 0.1]])
     direction = np.array([[0.4, 0.8, 0.2]])
@@ -326,7 +326,7 @@ def test_rotation_increments_gradient_is_the_weighted_apply(fit, cone):
 @pytest.mark.parametrize(("name", "sign"), [("tilt", -1.0), ("roll", 1.0)])
 def test_a_shared_tilt_or_roll_is_its_per_view_pattern_to_first_order(tilt, name, sign):
     # The poses a small shared tilt (a lab Rx(-t)) or parallel roll (about the beam through
-    # the detector centre) produce are the ones its per-view pattern produces: the tangent
+    # the detector center) produce are the ones its per-view pattern produces: the tangent
     # comes from the geometry, not from a copy of its formula.
     import tomojax as tj
     from tomojax.geometry import stack_view_poses
@@ -406,9 +406,9 @@ def test_the_constrained_solve_leaves_no_per_view_component_along_a_shared_patte
 @pytest.mark.parametrize("name", ["tilt", "roll"])
 def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(name):
     # R1b's runaway: a shared tilt or roll and a per-view pose pattern give the same
-    # projections, and the neighbour-increment prior does not see the pattern, so only the
+    # projections, and the neighbor-increment prior does not see the pattern, so only the
     # size prior held that direction. The pattern comes here from the geometry (no fit code):
-    # a tilted axis, or the scene turned about the beam through the detector centre for a
+    # a tilted axis, or the scene turned about the beam through the detector center for a
     # rolled detector. The fit's gauge must contain it, so the per-view poses cannot carry it.
     import tomojax as tj
     from tomojax.geometry import RotationAxisGeometry, stack_view_poses

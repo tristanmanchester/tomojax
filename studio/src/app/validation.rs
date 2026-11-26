@@ -639,7 +639,7 @@ impl AppState {
             }
             Response::Error { error, .. } => {
                 self.validation.in_flight = None;
-                if matches!(error.kind, ErrorKind::Cancelled | ErrorKind::Superseded) {
+                if matches!(error.kind, ErrorKind::Canceled | ErrorKind::Superseded) {
                     self.validation.next = Next::Complete;
                     self.validation
                         .status(Phase::Unavailable, "Validation did not complete.");

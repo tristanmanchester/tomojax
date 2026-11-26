@@ -6,10 +6,10 @@ over a 1.1 mm field (4.3 µm voxels at n = 256, the scale of a TOMCAT or I13
 micro-CT scan). The core axis is the rotation axis, z.
 
 Grains are packed by random sequential addition of lognormal spheres (median
-diameter 110 µm, fine sand) whose centres may approach to 0.8 of the sum of
+diameter 110 µm, fine sand) whose centers may approach to 0.8 of the sum of
 their radii, then each is given a sub-angular shape: a randomly oriented
 ellipsoid (aspect ratios about 1 : 0.85 : 0.72) cut by seven softly rounded
-facets, with a few per cent of low-order surface relief. Where two grains
+facets, with a few percent of low-order surface relief. Where two grains
 overlap, the point belongs to the grain whose shape function is smaller, so
 contacts are flat or gently curved interfaces like pressure-solution contacts,
 and the open space left between the grains is a connected intergranular pore
@@ -49,7 +49,7 @@ from _procedural import (
     main,
     random_rotations,
     slab_fraction,
-    voxelise,
+    voxelize,
 )
 import numpy as np
 from scipy.spatial import cKDTree
@@ -74,19 +74,19 @@ PORE, QUARTZ, FELDSPAR, ZIRCON, PYRITE, CLAY, CALCITE = range(7)
 
 FACETS = 7
 WAVES = 4
-NEIGHBOURS = 8
+NEIGHBORS = 8
 CHUNK = 1 << 16
 FILL = 0.8  # summed sphere volume over the packing volume
 SEAM = 0.0025  # mm, width of the clay seam along grain contacts
-OVERLAP = 0.8  # centres may approach to this fraction of the radius sum
+OVERLAP = 0.8  # centers may approach to this fraction of the radius sum
 
 
 @dataclass(frozen=True)
 class Grains:
-    """Packed grains: centres, shapes and minerals."""
+    """Packed grains: centers, shapes and minerals."""
 
     center: np.ndarray  # (g, 3) mm
-    shape: np.ndarray  # (g, 3, 3): maps p - centre to the unit-ellipsoid frame
+    shape: np.ndarray  # (g, 3, 3): maps p - center to the unit-ellipsoid frame
     quad: np.ndarray  # (g, 6) upper triangle of shape.T @ shape
     facet: np.ndarray  # (g, F, 3) facet normals over their offsets
     wave_dir: np.ndarray  # (g, W, 3)
@@ -96,7 +96,7 @@ class Grains:
     mineral: np.ndarray  # (g,)
     dissolved: np.ndarray  # (g,) bool: partially dissolved feldspar
     cleavage: np.ndarray  # (g, 2, 3) cleavage-plane normals
-    hole_center: np.ndarray  # (g, 3) centre of the dissolved region
+    hole_center: np.ndarray  # (g, 3) center of the dissolved region
     hole_radius: np.ndarray  # (g,)
 
 
@@ -281,7 +281,7 @@ class RockSampler:
         g = self.grains
         m = p.shape[0]
         rows = np.arange(m)
-        _, near = self.tree.query(p, NEIGHBOURS)
+        _, near = self.tree.query(p, NEIGHBORS)
         d = p[:, None, :] - g.center[near]
         a = g.quad[near]
         ellipse = (
@@ -468,7 +468,7 @@ def porous_rock(n: int = 256, *, seed: int = 0) -> tuple[np.ndarray, dict[str, A
     grid = Grid(n, FOV_MM)
     sampler = _sampler(seed)
     mu = np.array(list(MATERIALS.values()))
-    volume = voxelise(sampler, grid, mu, fine=3)
+    volume = voxelize(sampler, grid, mu, fine=3)
     for crack in _cracks(sampler, seed):
         crack.open(volume, grid)
     meta = {

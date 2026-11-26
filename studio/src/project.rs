@@ -288,7 +288,7 @@ pub enum JobStatus {
     Paused,
     Completed,
     Failed,
-    Cancelled,
+    Canceled,
     Interrupted,
 }
 impl JobStatus {

@@ -8,7 +8,7 @@ r"""A first slice from a raw synchrotron scan, as the quickstart reaches it.
 The script follows the quickstart on an NXtomo file of raw counts with its
 flats and darks: ``tj.load_frames``, a crop to 16 detector rows,
 ``corrected(Stripes(9), Stripes(51, varying=True))`` for the rings, then FBP.
-The rotation centre is the recorded one given by ``--center`` (in pixels),
+The rotation center is the recorded one given by ``--center`` (in pixels),
 or without it ``tj.align(method="opposite-views")`` finds it.
 The figure shows one raw frame with the cropped rows marked, the corrected
 sinogram of the middle row and its slice at the detector's resolution, with
@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument(
         "--rows", type=int, nargs=2, default=(1072, 1088), metavar=("FIRST", "STOP")
     )
-    parser.add_argument("--center", type=float, help="the recorded rotation centre, pixels")
+    parser.add_argument("--center", type=float, help="the recorded rotation center, pixels")
     parser.add_argument(
         "--crop", type=int, nargs=2, default=(1400, 1000), metavar=("ROW", "COLUMN")
     )
@@ -62,7 +62,7 @@ def main() -> None:
     scan = frames.cropped(rows, slice(None)).corrected(Stripes(9), Stripes(51, varying=True))
     if args.center is None:
         scan = tj.align(scan, method="opposite-views").scan
-    print("detector centre:", scan.detector.center)
+    print("detector center:", scan.detector.center)
     middle = (rows.stop - rows.start) // 2
     sinogram = np.asarray(scan.projections, np.float32)[:, middle]
     image = np.asarray(tj.reconstruct(scan, "fbp").volume, np.float32)[middle]

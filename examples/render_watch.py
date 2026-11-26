@@ -51,7 +51,7 @@ TRANSFER = _volume_render.Transfer(  # attenuation in mm^-1 at 120 keV
         1.2,
         4.5,
     ),
-    colours=(
+    colors=(
         (0.0, 0.0, 0.0),
         (0.25, 0.34, 0.50),
         (0.32, 0.44, 0.66),  # silicon escape wheel and pallet lever
@@ -132,7 +132,7 @@ def run(args: argparse.Namespace) -> tuple[np.ndarray, dict[str, object]]:
         },
         "transfer_function": {
             "stops_mm": TRANSFER.stops,
-            "colours": TRANSFER.colours,
+            "colors": TRANSFER.colors,
             "opacity_per_mm": TRANSFER.opacity,
         },
         "camera": {
@@ -167,7 +167,7 @@ def plot(rgb: np.ndarray, metrics: dict[str, object], path: Path) -> None:
         21,
         MUTED,
     )
-    card.save(path, colours=None)
+    card.save(path, colors=None)
 
 
 def main() -> None:

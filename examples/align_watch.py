@@ -1,8 +1,8 @@
-"""Align a watch-movement scan with an off-centre axis and a wobbling, jittering sample.
+"""Align a watch-movement scan with an off-center axis and a wobbling, jittering sample.
 
 The 29 mm movement of ``_watch.py`` is scanned in a 120 keV parallel beam,
 400 views over a half turn with 2 x 10^4 photons per pixel, on 77 µm voxels.
-The rotation axis projects 5.3 pixels off the detector centre, and every view
+The rotation axis projects 5.3 pixels off the detector center, and every view
 has its own pose: a slow wobble of the sample plus jitter, up to 0.25° in each
 rotation and 2.4 pixels across and 1.5 pixels along the axis. gVXR traces the
 projections through the movement's meshes at those poses. ``tj.align`` fits
@@ -11,9 +11,9 @@ and aligned scans are reconstructed with the same FISTA-TV settings (TV weight 1
 
 A shared rigid movement of the object and its poses cannot be distinguished by
 projection data. After fitting, an independent SciPy registration compares 27
-physical landmarks on the detector, including the detector centre. This one
+physical landmarks on the detector, including the detector center. This one
 rigid transform puts the truth volume and poses in the fitted object's frame;
-truth never enters the alignment. The centre and constant per-view translation
+truth never enters the alignment. The center and constant per-view translation
 are interchangeable when both are free, so the detector score is the accuracy
 measure for their combined effect. Writes ``images/alignment-example.png`` and
 a JSON record beside it.
@@ -39,7 +39,7 @@ import _watch
 import tomojax as tj
 from tomojax.geometry import grid_volume_origin, stack_view_poses
 
-SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), centre z
+SIZE, LAYERS, FIELD, MIDDLE = 384, 82, 29.6, 3.0  # voxels, z layers, field (mm), center z
 VIEWS, PHOTONS = 400, 2e4
 CENTER_PX, ROTATION_DEG = 5.3, 0.25
 # A TV weight of 1e-5 keeps the hairspring; the automatic weight smooths it away.
@@ -91,7 +91,7 @@ def comparison(
     gauge[:3, :3] = Rotation.from_rotvec(parameters[:3]).as_matrix()
     gauge[:3, 3] = parameters[3:]
     adjusted = true_poses @ np.linalg.inv(gauge)
-    # Express truth with the fitted detector centre, retaining the corresponding
+    # Express truth with the fitted detector center, retaining the corresponding
     # constant translation. This leaves every detector ray prediction unchanged.
     adjusted[:, [0, 2], 3] += np.asarray(detector.center) - true_detector.center
     rms = float(np.sqrt(np.mean(residual(parameters).reshape(-1, 2) ** 2) * 2))
@@ -218,7 +218,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
     card.text(
         margin,
         54,
-        "Aligning a scan with an off-centre axis and a wobbling sample",
+        "Aligning a scan with an off-center axis and a wobbling sample",
         32,
         weight="bold",
     )
@@ -226,9 +226,9 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         margin,
         92,
         f"{metrics['views']} views over 180°  ·  axis "
-        f"{metrics['true_axis_offset_px']:g} px off centre  ·  every view tilted up to "
+        f"{metrics['true_axis_offset_px']:g} px off center  ·  every view tilted up to "
         f"{ROTATION_DEG:g}° and shifted up to 2.4 px  ·  "
-        "joint centre, translations and rotations",
+        "joint center, translations and rotations",
         21,
         MUTED,
     )
@@ -283,7 +283,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
     card.text(
         margin + 60,
         y + strip + 16,
-        f"Grey: true, amber: recovered, against rotation angle.  Rotations recovered to "
+        f"Gray: true, amber: recovered, against rotation angle.  Rotations recovered to "
         f"{max(rotations):.2f}° RMS or better; detector landmark error "
         f"{detector_error:.2f} px.",
         21,
@@ -293,7 +293,7 @@ def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) 
         margin + 60,
         y + strip + 50,
         "One shared rigid registration puts the truth in the fitted frame; "
-        "the detector score includes the fitted centre.",
+        "the detector score includes the fitted center.",
         21,
         MUTED,
     )

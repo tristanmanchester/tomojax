@@ -99,12 +99,12 @@ def test_finished_tasks_at_the_top_two_levels_leave_a_line(capsys, monkeypatch, 
         progress.Started(4, 1, "level", "binning 1", 8, "steps", 3.0),
         progress.Advanced(4, 1, 8, {}, 3.2),
         progress.Finished(4, "done", 3.5),  # under a second: no line
-        progress.Finished(1, "cancelled", 3.6),
+        progress.Finished(1, "canceled", 3.6),
     )
     lines = _drawn(capsys, display).splitlines()
     assert lines == [
         "✓ binning 2  3/12 steps  objective 4.38 → 0.0833  3.0s",
-        "✗ translations  0 fit  3.6s  (cancelled)",
+        "✗ translations  0 fit  3.6s  (canceled)",
     ]
 
 
@@ -122,11 +122,11 @@ def test_notes_appear_once_and_info_only_with_live_rows(capsys, displays):
     assert _drawn(capsys, quiet) == ""
 
 
-def test_cancelling_is_announced_once(capsys, displays):
+def test_canceling_is_announced_once(capsys, displays):
     token = progress.Control()
     display = displays.Display(token, live=False)
     token.cancel()
-    assert "cancelling at the next checkpoint" in _drawn(capsys, display)
+    assert "canceling at the next checkpoint" in _drawn(capsys, display)
     assert _drawn(capsys, display) == ""
 
 

@@ -1,6 +1,6 @@
 """The watch-movement phantom of the README figures: meshes, projections, truth and noise.
 
-``bench/phantoms/watch_blender.py`` models a 29 mm skeletonised Swiss-lever
+``bench/phantoms/watch_blender.py`` models a 29 mm skeletonized Swiss-lever
 movement in Blender as one closed STL mesh per material. gVXR traces the path
 length through each mesh along every ray (``bench/phantoms/gvxr_transmission.py``),
 so the projections are exact line integrals of the meshes, not of a voxel

@@ -63,7 +63,7 @@ def slab_windows(
 ) -> list[tuple[int, int]]:
     """Detector rows ``[first, stop)`` whose rays can sample each ``depth``-plane slab.
 
-    ``frames`` are the views' lab detector centre, u and v directions and
+    ``frames`` are the views' lab detector center, u and v directions and
     source (see :meth:`ConeModel.frames`). Joseph taps reach a voxel from
     sample points less than one voxel away, so each slab's box is widened by
     one voxel on every side; a box projects inside the hull of its projected

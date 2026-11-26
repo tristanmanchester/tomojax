@@ -1,11 +1,11 @@
 """A moving sandstone plug before and after the plain ``tj.align`` call.
 
-The sandstone core (``bench/phantoms/porous_rock.py``), voxelised 1.5 times finer than the
+The sandstone core (``bench/phantoms/porous_rock.py``), voxelized 1.5 times finer than the
 384-voxel reconstruction grid, is scanned in parallel beam over a half turn without noise while
 it drifts smoothly by up to 4.5 voxels and slips by 6 voxels a third of the way through. The
 scan is reconstructed as loaded, with the nominal geometry, and after ``tj.align(scan)``; both use
 ``tj.reconstruct``'s default method. Two slices through the sample, clear of its calcite,
-pyrite and zircon grains, each with one enlarged region, share one grey range.
+pyrite and zircon grains, each with one enlarged region, share one gray range.
 
     uv run python examples/gallery/rock_alignment.py alignment-rock.png
 

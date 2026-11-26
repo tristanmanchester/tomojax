@@ -21,14 +21,14 @@ MATERIALS = {
     "ptfe": ("C2F4", 2.20),
     "magnesium": ("Mg", 1.74),
     "glass": ("SiO2", 2.20),
-    "aluminium": ("Al", 2.70),
+    "aluminum": ("Al", 2.70),
     "hydroxyapatite": ("Ca5P3O13H", 3.16),
     "titanium": ("Ti", 4.51),
     "iron": ("Fe", 7.87),
     "copper": ("Cu", 8.96),
 }
 LOW_Z = ("water", "polyethylene", "pmma", "peek", "ptfe")
-DENSE = ("magnesium", "glass", "aluminium", "hydroxyapatite", "titanium", "iron", "copper")
+DENSE = ("magnesium", "glass", "aluminum", "hydroxyapatite", "titanium", "iron", "copper")
 HELD_OUT_MATERIAL = "titanium"
 HELD_OUT_KV = 150.0
 FAMILIES = {"cone": ("single", "inclusions", "tube"), "lamino": ("plate", "plate-rods")}
@@ -99,7 +99,7 @@ def _spectrum(rng: np.random.Generator, kv: float) -> dict:
 
 
 def _place(rng: np.random.Generator, radius: float, inside: float, taken: list) -> list | None:
-    """A centre for a rod of ``radius`` within a disc of ``inside``, clear of ``taken``."""
+    """A center for a rod of ``radius`` within a disc of ``inside``, clear of ``taken``."""
     for _ in range(200):
         r = np.sqrt(rng.uniform()) * (inside - radius - 0.6)
         angle = rng.uniform(0, 2 * np.pi)
@@ -140,7 +140,7 @@ def _mu(material: str, kv: float) -> float:
         "ptfe": 8.4,
         "magnesium": 12,
         "glass": 11.6,
-        "aluminium": 13,
+        "aluminum": 13,
         "hydroxyapatite": 16,
         "titanium": 22,
         "iron": 26,
@@ -169,7 +169,7 @@ def _plate(rng: np.random.Generator, family: str, split: str) -> dict | None:
     """A plate, perhaps with dense rods through it, for laminography."""
     kv, dense = _voltage_and_dense(rng, split)
     tilt = float(rng.uniform(30.0, 40.0))
-    material = str(rng.choice([*LOW_Z, "glass", "aluminium", *dense]))
+    material = str(rng.choice([*LOW_Z, "glass", "aluminum", *dense]))
     # Rays cross the plate at the tilt from its face: path 2 h / sin(tilt).
     depth = np.exp(rng.uniform(np.log(0.5), np.log(5.0)))
     half = float(np.clip(depth * np.sin(np.radians(tilt)) / _mu(material, kv) / 2, 0.5, 2.0))
@@ -242,7 +242,7 @@ def _draw(rng: np.random.Generator, family: str, split: str) -> dict | None:
         # A tube wall of a given thickness; its tangent path is about 2 sqrt(2 R wall).
         walls = [
             m
-            for m in ("pmma", "glass", "aluminium", *dense)
+            for m in ("pmma", "glass", "aluminum", *dense)
             if _mu(m, kv) * 2 * np.sqrt(0.8 * radius) <= 6.0
         ]
         if not rods or not walls:

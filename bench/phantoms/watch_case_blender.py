@@ -6,7 +6,7 @@ Run headless (Blender 4.5 LTS):
 
 The 29 mm movement sits in a 36.4 mm 316L steel case. Seen from the dial,
 12 o'clock is +y and 3 o'clock is -x (the dial faces -z). Lengths are
-millimetres, and different materials never overlap.
+millimeters, and different materials never overlap.
 
 - Case: a middle with four lugs, a bezel holding a domed sapphire crystal on a
   rubber gasket, and a screwed caseback ring with a sapphire display window
@@ -14,7 +14,7 @@ millimetres, and different materials never overlap.
 - Dial: a brass disc with a date window at 3 o'clock, eleven applied 18-carat
   gold indices (a double one at 12) and lume plots at every hour.
 - Hands at 10:09:30: dauphine hour and minute hands of blued steel with lume
-  inlays, a lancet centre seconds hand with a counterweight, on nested pipes.
+  inlays, a lancet center seconds hand with a counterweight, on nested pipes.
 - Date: a thin steel ring with 31 inner teeth between the dial and the plate.
 """
 
@@ -52,7 +52,7 @@ def hand_direction(fraction: float) -> np.ndarray:
     return np.array([-math.sin(a), math.cos(a)])
 
 
-LUG_X = 11.45  # lug centres either side of a 20 mm strap
+LUG_X = 11.45  # lug centers either side of a 20 mm strap
 YZ_TO_XYZ = np.array(
     [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
 )  # a (y, z) outline extruded along x

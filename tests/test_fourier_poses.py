@@ -63,7 +63,7 @@ def test_fourier_resamples_a_rolled_parallel_detector(backend):
     angles = np.arange(0, 180, 2.0)
     theta = np.deg2rad(angles)
     roll = np.deg2rad(4.0)
-    # Rolled pixel offsets (x', z') sit at R(roll) @ (x', z') from the detector centre.
+    # Rolled pixel offsets (x', z') sit at R(roll) @ (x', z') from the detector center.
     xr = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     zr = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
     u = detector.center[0] + np.cos(roll) * xr[None, :] - np.sin(roll) * zr[:, None]

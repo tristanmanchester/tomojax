@@ -71,13 +71,13 @@ pub fn definition(operation: &str) -> String {
 
 fn plan_definition(operation: &str) -> Option<(&'static str, &'static str)> {
     match operation {
-        "reconstruct" | "plan" | "slice" | "centre_sweep" => Some(("reconstruct", "Reconstruct")),
+        "reconstruct" | "plan" | "slice" | "center_sweep" => Some(("reconstruct", "Reconstruct")),
         "align" => Some(("align", "Align")),
         _ => None,
     }
 }
 
-/// Slice and centre-sweep plans use the full reconstruction's declared fields.
+/// Slice and center-sweep plans use the full reconstruction's declared fields.
 pub fn plan_operation(operation: &Value, catalog: &SchemaCatalog) -> Option<Value> {
     let (tag, definition) = plan_definition(operation["type"].as_str()?)?;
     let properties = catalog.definition(definition)?["properties"].as_object()?;
@@ -137,7 +137,7 @@ fn accepts(schema: &Value, kind: &str) -> bool {
 
 fn label(key: &str) -> String {
     match key {
-        "tv_weight" => "TV regularisation".into(),
+        "tv_weight" => "TV regularization".into(),
         "n_views" => "Number of views".into(),
         "source_to_axis" => "Source to axis".into(),
         "source_to_detector" => "Source to detector".into(),
@@ -158,7 +158,7 @@ fn label(key: &str) -> String {
     }
 }
 
-pub fn initialise(
+pub fn initialize(
     ui: &mut UiState,
     catalog: &SchemaCatalog,
     operation: &str,
@@ -232,7 +232,7 @@ pub fn initialise(
                 | "seed"
                 | "warm_start"
                 | "views_per_batch"
-                | "artefacts"
+                | "artifacts"
                 | "image_key_path"
                 | "data_path"
                 | "angles_path"
@@ -312,7 +312,7 @@ pub fn initialise(
         "cols",
         "axis",
         "index",
-        "centres",
+        "centers",
     ];
     views.sort_by_key(|p| {
         (
@@ -335,7 +335,7 @@ pub fn refresh_catalog(ui: &mut UiState, catalog: &SchemaCatalog) -> Vec<Paramet
     let choices = std::mem::take(&mut ui.parameter_choices);
     let toggles = std::mem::take(&mut ui.parameter_toggles);
     let corrections = std::mem::take(&mut ui.corrections);
-    let views = initialise(ui, catalog, &operation, None);
+    let views = initialize(ui, catalog, &operation, None);
     for (name, draft) in edits {
         if let Some(edit) = ui.parameter_edits.get_mut(&name) {
             *edit = draft;
@@ -373,14 +373,14 @@ pub fn refresh_catalog(ui: &mut UiState, catalog: &SchemaCatalog) -> Vec<Paramet
 pub fn method_setting(ui: &UiState, name: &str) -> bool {
     matches!(
         ui.operation.as_str(),
-        "reconstruct" | "plan" | "slice" | "centre_sweep"
+        "reconstruct" | "plan" | "slice" | "center_sweep"
     ) && matches!(
         name,
         "filter" | "iterations" | "tv_weight" | "nonnegative" | "warm_start"
     )
 }
 
-/// Alignment by opposite views fits the centre alone, from paired views: it takes no fit
+/// Alignment by opposite views fits the center alone, from paired views: it takes no fit
 /// choice, no image and no joint options.
 fn opposite_views(ui: &UiState) -> bool {
     ui.operation == "align"
@@ -599,7 +599,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "simulate", None);
+        initialize(&mut ui, &catalog, "simulate", None);
         let shown = |ui: &UiState| {
             ["tilt", "source_to_axis", "source_to_detector"].map(|name| applies(ui, &catalog, name))
         };
@@ -620,7 +620,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "align", None);
+        initialize(&mut ui, &catalog, "align", None);
         ui.parameter_edits
             .get_mut("iterations")
             .unwrap()
@@ -631,7 +631,7 @@ mod tests {
         for name in ["iterations", "motion", "config", "grid", "region"] {
             assert!(!applies(&ui, &catalog, name), "{name} is a joint option");
         }
-        assert!(!applies(&ui, &catalog, "fit"), "it fits the centre alone");
+        assert!(!applies(&ui, &catalog, "fit"), "it fits the center alone");
         let sent = parameters(&ui, &catalog).unwrap();
         assert!(sent.get("iterations").is_none(), "{sent}");
         assert_eq!(sent["method"], "opposite-views");
@@ -649,7 +649,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        let views = initialise(&mut ui, &catalog, "align", None);
+        let views = initialize(&mut ui, &catalog, "align", None);
         let view = |name: &str| views.iter().find(|view| view.name == name).unwrap();
         let shown = |ui: &UiState| {
             ["iterations", "motion", "interpolation"].map(|name| default_label(ui, view(name)))
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn catalog_refresh_preserves_unfinished_drafts_and_initialises_only_new_fields() {
+    fn catalog_refresh_preserves_unfinished_drafts_and_initializes_only_new_fields() {
         let mut described: Value = serde_json::from_str(
             // The description the worker sends: the wire schema with help, units and defaults.
             include_str!("../../src/tomojax/cli/parameters.json"),
@@ -683,7 +683,7 @@ mod tests {
             .remove("seed");
         let previous = SchemaCatalog::new(described).unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &previous, "reconstruct", None);
+        initialize(&mut ui, &previous, "reconstruct", None);
         ui.parameter_edits
             .get_mut("config")
             .unwrap()
@@ -737,7 +737,7 @@ mod tests {
         .unwrap();
         let ordered = r#"[ {"type":"BeamHardening","rates":[1,2],"weights":[0.5,0.5]}, {"type":"Zingers","threshold":0.2}, {"type":"Rings","views":null} ]"#;
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "correct", None);
+        initialize(&mut ui, &catalog, "correct", None);
         ui.parameter_edits
             .get_mut("corrections")
             .unwrap()
@@ -787,7 +787,7 @@ mod tests {
         .unwrap();
         let mut ui = UiState::default();
         let recipe = serde_json::json!({"kind": "frames", "flats": "/data/flat field.tif"});
-        initialise(&mut ui, &catalog, "open", Some(&recipe));
+        initialize(&mut ui, &catalog, "open", Some(&recipe));
         let parameters = parameters_detailed(&ui, &catalog).unwrap();
         assert_eq!(parameters["flats"], "/data/flat field.tif");
     }
@@ -800,7 +800,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "align", None);
+        initialize(&mut ui, &catalog, "align", None);
         let Some(fit) = ui.parameter_edits.get_mut("fit") else {
             panic!("fit is a text field");
         };
@@ -823,7 +823,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "open", None);
+        initialize(&mut ui, &catalog, "open", None);
         ui.parameter_choices.insert("kind".into(), "frames".into());
         // A storage reference for per-view exposure times.
         ui.parameter_edits
@@ -862,7 +862,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "reconstruct", None);
+        initialize(&mut ui, &catalog, "reconstruct", None);
         let args = parameters(&ui, &catalog).unwrap();
         assert!(args.get("nonnegative").is_none());
         ui.parameter_choices
@@ -871,7 +871,7 @@ mod tests {
             parameters(&ui, &catalog).unwrap()["nonnegative"],
             Value::Bool(false)
         );
-        initialise(&mut ui, &catalog, "crop", None);
+        initialize(&mut ui, &catalog, "crop", None);
         assert!(parameters(&ui, &catalog).is_err());
         ui.parameter_edits
             .get_mut("rows")
@@ -895,7 +895,7 @@ mod tests {
         )
         .unwrap();
         let mut ui = UiState::default();
-        let fields = initialise(&mut ui, &catalog, "reconstruct", None);
+        let fields = initialize(&mut ui, &catalog, "reconstruct", None);
         let error = field_issue(
             &ui,
             &fields,
@@ -903,7 +903,7 @@ mod tests {
         );
         assert_eq!(error.control.as_deref(), Some("parameter-config"));
         assert_eq!(error.path, "config.interpolation");
-        let fields = initialise(
+        let fields = initialize(
             &mut ui,
             &catalog,
             "correct",
@@ -948,7 +948,7 @@ mod tests {
             .unwrap(),
         )
         .unwrap();
-        let operation = serde_json::json!({"type":"centre_sweep","source":{"type":"member","handle":"h1","member":"scan"},"method":"cgls","iterations":5,"axis":"x","index":2,"centres":[-1.0,0.0,1.0]});
+        let operation = serde_json::json!({"type":"center_sweep","source":{"type":"member","handle":"h1","member":"scan"},"method":"cgls","iterations":5,"axis":"x","index":2,"centers":[-1.0,0.0,1.0]});
         let plan = plan_operation(&operation, &catalog).unwrap();
         assert_eq!(plan["type"], "reconstruct");
         assert_eq!(plan["source"], operation["source"]);
@@ -956,10 +956,10 @@ mod tests {
         assert!(
             plan.get("axis").is_none()
                 && plan.get("index").is_none()
-                && plan.get("centres").is_none()
+                && plan.get("centers").is_none()
         );
         let mut ui = UiState::default();
-        initialise(&mut ui, &catalog, "slice", Some(&operation));
+        initialize(&mut ui, &catalog, "slice", Some(&operation));
         let before = plan_signature(&ui, &catalog);
         ui.parameter_edits
             .get_mut("index")

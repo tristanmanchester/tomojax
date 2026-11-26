@@ -3,7 +3,7 @@
 Only selected local parameters and shared calibration parameters have columns.
 The default has two translations per view; cone translations also include
 beam depth. Local rotations, when selected, compose in the sample frame and
-use geometry-scaled pixel units. Global centre, tilt and roll columns are
+use geometry-scaled pixel units. Global center, tilt and roll columns are
 shared by the whole scan through the parameter layout's broadcast and summed
 score. Coefficients and exact active-coordinate derivatives are computed from
 the physical geometry on the device.
@@ -349,7 +349,7 @@ class Operators:
             tangent = tangent.at[:, column, 0].set(-cf[:, 1] * u - cf[:, 2] * v)
             tangent = tangent.at[:, column, 1].set(-cf[:, 5] * u - cf[:, 6] * v)
         if self.parameters.nglobal:
-            # Parallel centre u is a positive lab-x detector displacement.
+            # Parallel center u is a positive lab-x detector displacement.
             u, v = c * self.native[0] / d.du, -s * self.native[0] / d.dv
             tangent = tangent.at[:, -1, 0].set(cf[:, 1] * u + cf[:, 2] * v)
             tangent = tangent.at[:, -1, 1].set(cf[:, 5] * u + cf[:, 6] * v)
@@ -560,7 +560,7 @@ class Operators:
         ArrayStack,
         jax.Array,
     ]:
-        """The linearisation, with ``out`` = (gradient, diagonal, sw, j, residual) donated.
+        """The linearization, with ``out`` = (gradient, diagonal, sw, j, residual) donated.
 
         The stacks are rewritten in place; the gradient and diagonal are written into the
         two volumes, unread.

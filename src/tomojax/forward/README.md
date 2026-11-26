@@ -32,10 +32,10 @@ can overshoot nonnegative data. Both models have matching CUDA volume/pose
 derivatives and a matched volume transpose; dominant-axis switches remain
 nonsmooth. To reconstruct with the cubic model, use
 `CGLSConfig(interpolation="cubic")`.
-By default it samples voxel-centre planes along the dominant ray direction,
+By default it samples voxel-center planes along the dominant ray direction,
 bilinearly interpolates the other two coordinates with zero extension, and multiplies by
 physical path length between planes. Supply finite rigid world-from-object matrices `(views, 4, 4)`;
-voxel origins and detector centres retain their physical units.
+voxel origins and detector centers retain their physical units.
 
 The explicit `backend="cuda"` runs on NVIDIA CUDA and supports first-order
 `jax.grad`, `jax.jvp`, `jax.jacfwd`, `jax.jacrev`, `jax.linearize`, transposing
@@ -102,7 +102,7 @@ orchestration, CUDA fast paths without JAX-reference equivalence tests.
 - Backend fast paths report provenance and compare against the reference path.
 - Supported DOFs: nominal theta, theta scale/offset, per-view alpha/beta/phi
   residuals, detector u/v shift, detector roll, axis x/y tilt, per-view dx/dz.
-- Detector roll applies around the zero-centre detector plane; detector centre
+- Detector roll applies around the zero-center detector plane; detector center
   offsets are independent.
 - Axis rotations use the core rotation-axis pose convention: nominal axis from
   acquisition metadata, x/y setup corrections on top, `T_all` built with

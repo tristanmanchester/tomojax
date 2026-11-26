@@ -47,7 +47,7 @@ def test_load_reads_the_phase_angles_and_pixel_size(tmp_path):
     np.testing.assert_allclose(np.asarray(scan.geometry.angles), angles, rtol=1e-6)
     detector = scan.geometry.detector
     assert (detector.nu, detector.nv) == (columns, rows)
-    # Metres in the file, millimetres in the scan, as every reader gives lengths.
+    # Meters in the file, millimeters in the scan, as every reader gives lengths.
     assert detector.du == detector.dv == pytest.approx(6.868e-6)
     assert detector.center == (0.0, 0.0)
     assert isinstance(scan.geometry, tj.ParallelGeometry)

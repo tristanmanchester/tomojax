@@ -77,7 +77,7 @@ def metric(precision: jax.Array) -> jax.Array:
 
 
 class Common(NamedTuple):
-    """The linearised common term at one image and pose state.
+    """The linearized common term at one image and pose state.
 
     ``images`` are B = [A^T w, A^T (w v)] summed over views (2, *volume),
     ``poses`` D, the moments' derivatives along the compact pose parameters

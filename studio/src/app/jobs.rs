@@ -50,7 +50,7 @@ impl AppState {
     pub(super) fn queue_operation(&mut self, operation: &str) -> Result<(), String> {
         if matches!(
             operation,
-            "slice" | "centre_sweep" | "correction_preview" | "region_preview"
+            "slice" | "center_sweep" | "correction_preview" | "region_preview"
         ) {
             return self.request_interactive(operation);
         }
@@ -77,7 +77,7 @@ impl AppState {
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
         }) {
-            return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognised acquisition".into());
+            return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognized acquisition".into());
         }
         let project = self
             .project
@@ -191,9 +191,9 @@ impl AppState {
             return;
         };
         let id = job.id.clone();
-        self.spawn_local(Some(id.clone()),move|cancelled|{
+        self.spawn_local(Some(id.clone()),move|canceled|{
             let result=(||->Result<(),String>{
-                check_cancel(&cancelled)?;
+                check_cancel(&canceled)?;
                 let parent=destination.parent().ok_or("Invalid export directory")?;
                 if destination.exists(){return Err("The export directory already exists".into());}
                 let stage=tempfile::Builder::new().prefix(".tomojax-export-").tempdir_in(parent).map_err(|e|e.to_string())?;
@@ -203,7 +203,7 @@ impl AppState {
                         match storage {
                             Storage::Npy{path,..}=>{
                                 let file=format!("array-{index}{suffix}.npy");
-                                local::copy_file(Path::new(path),&stage.path().join(&file),&cancelled)?;
+                                local::copy_file(Path::new(path),&stage.path().join(&file),&canceled)?;
                                 *storage=Storage::Npy{path:file,artifact:None};Ok(())
                             }
                             _=>Err("This bundle export supports durable NPY arrays only".into()),
@@ -214,7 +214,7 @@ impl AppState {
                 }
                 let document=json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
                 std::fs::write(stage.path().join("arrays.json"),serde_json::to_vec_pretty(&document).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-                check_cancel(&cancelled)?;
+                check_cancel(&canceled)?;
                 if destination.exists(){return Err("The export directory was created by another process".into());}
                 std::fs::rename(stage.path(),&destination).map_err(|e|e.to_string())?;
                 Ok(())
@@ -344,7 +344,7 @@ impl AppState {
         }
         if matches!(
             job.operation.as_str(),
-            "slice" | "centre_sweep" | "correction_preview" | "region_preview"
+            "slice" | "center_sweep" | "correction_preview" | "region_preview"
         ) {
             return Ok(Value::Object(operation));
         }
@@ -749,17 +749,17 @@ impl AppState {
         }
         self.mark_dirty();
         let job = job.to_owned();
-        self.spawn_local(Some(job.clone()), move |cancelled| {
+        self.spawn_local(Some(job.clone()), move |canceled| {
             let result = (|| -> Result<(), String> {
-                check_cancel(&cancelled)?;
+                check_cancel(&canceled)?;
                 let stage = tempfile::Builder::new()
                     .prefix(".arrays-")
                     .tempdir_in(root.join("derived"))
                     .map_err(|e| e.to_string())?;
                 for (source, filename) in copies {
-                    local::copy_file(&source, &stage.path().join(filename), &cancelled)?;
+                    local::copy_file(&source, &stage.path().join(filename), &canceled)?;
                 }
-                check_cancel(&cancelled)?;
+                check_cancel(&canceled)?;
                 if destination.exists() {
                     return Err("The result destination already exists".into());
                 }
@@ -848,22 +848,22 @@ impl AppState {
         self.mark_dirty();
     }
 
-    pub(super) fn fail_job(&mut self, id: &str, error: &str, cancelled: bool) {
+    pub(super) fn fail_job(&mut self, id: &str, error: &str, canceled: bool) {
         if let Some(project) = &mut self.project
             && let Some(job) = project.document.job_mut(id)
         {
-            job.status = if cancelled {
-                JobStatus::Cancelled
+            job.status = if canceled {
+                JobStatus::Canceled
             } else {
                 JobStatus::Failed
             };
             job.error = Some(error.into());
-            job.stage = if cancelled { "Cancelled" } else { "Failed" }.into();
+            job.stage = if canceled { "Canceled" } else { "Failed" }.into();
             job.finished = Some(now_ms());
             self.model.status = format!(
                 "{} {}",
                 job.name,
-                if cancelled { "cancelled" } else { "failed" }
+                if canceled { "canceled" } else { "failed" }
             );
         }
         self.close_running(id);
@@ -883,7 +883,7 @@ impl AppState {
         }
     }
 
-    pub(super) fn request_failed(&mut self, pending: Pending, error: String, cancelled: bool) {
+    pub(super) fn request_failed(&mut self, pending: Pending, error: String, canceled: bool) {
         match pending {
             Pending::Inspect(id) => {
                 if let Some(project) = &mut self.project
@@ -895,11 +895,11 @@ impl AppState {
                 self.mark_dirty();
             }
             Pending::OpenInput { job, .. } | Pending::Execute(job) => {
-                self.fail_job(&job, &error, cancelled)
+                self.fail_job(&job, &error, canceled)
             }
             Pending::Save { job, output, .. } => {
                 self.release_output(&output);
-                self.fail_job(&job, &error, cancelled);
+                self.fail_job(&job, &error, canceled);
             }
             Pending::Control {
                 job,

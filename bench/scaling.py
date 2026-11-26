@@ -15,8 +15,8 @@ arrays:
 Each operation records its first call in the process (compiling, for TomoJAX;
 earlier operations have already started each library's GPU runtime) and every
 one of its ``--repeats`` warm calls, its result's error (projections against the
-analytic line integrals, volumes against the voxelised phantom) and the GPUs'
-sampled memory and utilisation (see ``_measure.py``). CGLS records each solver's
+analytic line integrals, volumes against the voxelized phantom) and the GPUs'
+sampled memory and utilization (see ``_measure.py``). CGLS records each solver's
 own account: TomoJAX's effective iterations and termination, TIGRE's residual
 history (its CGLS uses the Siddon projector, projects twice per iteration and
 may stop early when the residual rises). ASTRA's CGLS3D_CUDA runs on one GPU

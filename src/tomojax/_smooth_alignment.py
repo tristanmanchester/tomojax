@@ -10,7 +10,7 @@ import numpy as np
 from tomojax._parameters import method_fit
 from tomojax._planning import resolve_grid
 from tomojax._scan import Reconstruction, describe, record_of, with_grid
-from tomojax.alignment._integration import CentreSelection, fit_poses
+from tomojax.alignment._integration import CenterSelection, fit_poses
 from tomojax.backends.api import is_oom_error
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import stack_view_poses
@@ -75,7 +75,7 @@ def _warn_about_views(report: dict) -> None:
     isolated, unusual = report["isolated_views"], report["unusual_views"]
     parts = [text.rstrip(".") for text in report["advisories"]]
     if isolated:
-        parts.append(f"{len(isolated)} views jump away from both neighbours ({_first(isolated)})")
+        parts.append(f"{len(isolated)} views jump away from both neighbors ({_first(isolated)})")
     if unusual:
         parts.append(f"{len(unusual)} views fit unusually badly ({_first(unusual)})")
     if not parts:
@@ -115,7 +115,7 @@ def resolve_alignment(
     config: AlignConfig | None = None,
     shape: tuple[int, int, int] | None = None,
     **settings: Any,
-) -> JointSelection | CentreSelection:
+) -> JointSelection | CenterSelection:
     """Resolve the method-specific work without sampling projections.
 
     A ``fit`` of None selects the method's own fit; an explicit fit the method

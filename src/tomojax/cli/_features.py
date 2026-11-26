@@ -125,15 +125,15 @@ def shape_mask(
         )
         along = window[a].stop - window[a].start
         return np.repeat(np.expand_dims(np.array(plane, dtype=bool), a), along, axis=a), window
-    centre = np.asarray(recipe.at, dtype=float)
-    lo, hi = centre - recipe.radius, centre + recipe.radius
+    center = np.asarray(recipe.at, dtype=float)
+    lo, hi = center - recipe.radius, center + recipe.radius
     across = [d for d in range(len(shape)) if d != a]
     if a is not None:
         assert isinstance(recipe, op.Cylinder)
         lo[a], hi[a] = sorted(recipe.extent)
     window = clipped(lo, hi, shape)
     g = grids(window)
-    mask = sum((g[d] - centre[d]) ** 2 for d in across) <= recipe.radius**2
+    mask = sum((g[d] - center[d]) ** 2 for d in across) <= recipe.radius**2
     if a is not None:
         mask = mask & (g[a] >= lo[a]) & (g[a] <= hi[a])
     return np.broadcast_to(mask, [w.stop - w.start for w in window]).copy(), window
@@ -153,7 +153,7 @@ def seed_statistics(recipe: op.Seeded, data: Any, seeds: np.ndarray) -> dict[str
     if recipe.tolerance_unit == "value":
         found["band"] = recipe.tolerance
         return found
-    # Robust noise from the high-pass residual in the seeds' neighbourhood.
+    # Robust noise from the high-pass residual in the seeds' neighborhood.
     residual = values - ndimage.gaussian_filter(values, 1.0)
     noise = float(1.4826 * np.median(np.abs(residual - np.median(residual))))
     if noise == 0:
@@ -213,7 +213,7 @@ def seeded(recipe: op.Seeded, data: Any) -> tuple[np.ndarray, Window, dict[str, 
 def band(recipe: op.Band, base: ex.Feature, shape: Sequence[int]) -> tuple[np.ndarray, Window]:
     """Voxels whose signed distance from the base feature lies in (inner, outer].
 
-    The feature's boundary voxels are at 0 and their outside neighbours at 1. The
+    The feature's boundary voxels are at 0 and their outside neighbors at 1. The
     distances are computed over the feature's box widened by the band.
     """
     if base.shape != tuple(shape):

@@ -89,7 +89,7 @@ class Python(Record):
     .mask), register(obj or array) -> ID, register_feature(mask, like=ID or object,
     name=...) -> ID, view(source, mode=, axis=, index=, roi=, stride=, other=, marks=,
     features=, ticks=) with the view tool's arguments, and show(plane, marks=). The last
-    expression is the result; arrays over 16 values come back summarised, so register
+    expression is the result; arrays over 16 values come back summarized, so register
     big ones. Errors give the exception and your lines; set traceback for the full
     trace. Variables persist between calls; reset or a worker restart clears them and
     restart also drops handles. Long runs are cancellable at TomoJAX's checkpoints.
@@ -187,7 +187,7 @@ def tree(path: Path) -> Object:
 
 
 def inspect_directory(path: Path) -> CallToolResult:
-    """Summarise acquisition entry points and count TIFF frames in one directory pass."""
+    """Summarize acquisition entry points and count TIFF frames in one directory pass."""
     formats = {
         ".xtekct": "Nikon",
         ".txrm": "Zeiss",
@@ -298,7 +298,7 @@ class Tools:
         )
 
     async def inspect(self, args: Inspect) -> CallToolResult:
-        """Inspect through the worker with directory discovery and unrecognised-HDF5 fallback."""
+        """Inspect through the worker with directory discovery and unrecognized-HDF5 fallback."""
         path = (self.supervisor.base / Path(args.path).expanduser()).resolve()
         if path.is_dir():
             return await asyncio.to_thread(inspect_directory, path)
@@ -381,7 +381,7 @@ class Tools:
         if "path" in command:
             destination = self.supervisor.base / Path(command["path"]).expanduser()
             command["path"] = str(destination.parent.resolve() / destination.name)
-        roi = command.pop("roi", None) if model in (op.Slice, op.CentreSweep) else None
+        roi = command.pop("roi", None) if model in (op.Slice, op.CenterSweep) else None
         if roi is not None:
             lo, hi = roi["zyx".index(command["axis"])]
             if not 0 <= lo <= command["index"] < hi:
@@ -665,7 +665,7 @@ def tool_error(
     choices = spec["properties"].get(path, {}).get("enum")
     hints = {
         "out_of_memory": "Try dry_run, slab reconstruction, binning or different devices.",
-        "cancelled": "Resubmit when ready.",
+        "canceled": "Resubmit when ready.",
         "superseded": "Use the newer job.",
         "input": "Read the error, correct the Python code and retry."
         if name == "python"

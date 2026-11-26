@@ -117,7 +117,7 @@ impl AppState {
                 }
                 tx.open_folder(FileDialogOptions{title:"Import an acquisition folder or a folder of NXtomo scans".into(),..Default::default()},|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{
-                        if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognised acquisition.".into());return;}
+                        if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition.".into());return;}
                         let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&crate::metadata::is_hdf5(p)).collect();
                         scans.sort();
                         // A folder of NXtomo/HDF5 scans imports each scan; a folder of
@@ -264,7 +264,7 @@ impl AppState {
                 self.ui.main_view = PlaneKind::Projection;
                 self.ui.display.projection_index = 0;
                 self.ui.display.sinogram_row = 0;
-                self.centre_sinogram = true;
+                self.center_sinogram = true;
                 self.ui.display.window_low.replace_text("");
                 self.ui.display.window_high.replace_text("");
                 self.applied_window = None;
@@ -291,15 +291,15 @@ impl AppState {
                     .replace_text(index.to_string());
                 self.poll_interactive();
             }
-            UiAction::SetPreviewCentre(centre) => {
-                if !centre.is_finite() {
-                    return Err("Enter a finite centre offset".into());
+            UiAction::SetPreviewCenter(center) => {
+                if !center.is_finite() {
+                    return Err("Enter a finite center offset".into());
                 }
                 self.ui
                     .parameter_edits
-                    .get_mut("centres")
-                    .ok_or("This preview has no centre sweep")?
-                    .replace_text(json!([centre]).to_string());
+                    .get_mut("centers")
+                    .ok_or("This preview has no center sweep")?
+                    .replace_text(json!([center]).to_string());
                 self.poll_interactive();
             }
             UiAction::SaveRecipe => {
@@ -339,7 +339,7 @@ impl AppState {
                     .and_then(|p| p.document.jobs.iter().find(|j| j.id == id))
                     .map(|j| j.status);
                 if status == Some(JobStatus::Queued) {
-                    self.fail_job(&id, "Cancelled before execution", true);
+                    self.fail_job(&id, "Canceled before execution", true);
                 } else {
                     self.control_job(&id, "cancel")?;
                 }

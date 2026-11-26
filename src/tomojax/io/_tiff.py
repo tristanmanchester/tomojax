@@ -217,7 +217,7 @@ def read_tiff_frames(path: Path | str, *, lazy: bool = False) -> np.ndarray | Ti
 
     Files in a folder are naturally sorted, then every top-level page is read
     in file order. Every page must be a 2-D image of the first page's size and
-    dtype; colour images are rejected rather than read as extra view axes.
+    dtype; color images are rejected rather than read as extra view axes.
     ``lazy=True`` checks the headers and returns a stack read only as indexed
     (``np.asarray`` reads it all); windows read only their mapped pixels or
     intersecting compressed strips/tiles.

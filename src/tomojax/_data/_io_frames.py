@@ -172,7 +172,7 @@ def _gda_metadata(
             units_override = "degree"
             acquisition.update(angle_units_recorded=units, angle_units="degree")
             logging.getLogger(__name__).warning(
-                "%s:%s: GDA angular command is labelled mm; interpreting it as degrees",
+                "%s:%s: GDA angular command is labeled mm; interpreting it as degrees",
                 file.filename,
                 angles_at,
             )
@@ -226,12 +226,12 @@ class LocatedFrames:
 
     @property
     def samples(self) -> Hdf5Frames:
-        """The detector stack restricted to frames labelled as sample projections.
+        """The detector stack restricted to frames labeled as sample projections.
 
         Returns
         -------
         Hdf5Frames
-            A lazy view of sample frames, or all frames for an unlabelled stack.
+            A lazy view of sample frames, or all frames for an unlabeled stack.
         """
         return self.stack if self.image_key is None else self.stack.frames_at(self.image_key == 0)
 

@@ -36,7 +36,7 @@ pub enum Icon {
     Alert,
 }
 
-pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
+pub fn icon(kind: Icon, size: f32, color: Color) -> El {
     let paths: Vec<Vec<[f32; 2]>> = match kind {
         Icon::Folder => vec![vec![
             [3., 19.],
@@ -178,7 +178,7 @@ pub fn icon(kind: Icon, size: f32, colour: Color) -> El {
     };
     let mut shape = Shape::new().view_box(24., 24.);
     for path in paths {
-        shape = shape.stroke(path, 1.5, colour);
+        shape = shape.stroke(path, 1.5, color);
     }
     canvas(shape).size(size, size).inert()
 }
@@ -475,10 +475,10 @@ pub fn field(
     suffix: &str,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
-    labelled(title, input(key, value, title, suffix, edit))
+    labeled(title, input(key, value, title, suffix, edit))
 }
 
-/// An unlabelled input that runs `submit` when Enter is pressed.
+/// An unlabeled input that runs `submit` when Enter is pressed.
 pub fn submit_input(
     key: &str,
     value: &TextEdit,
@@ -489,7 +489,7 @@ pub fn submit_input(
     text_field(key, value, title, "", "", Some(submit), edit)
 }
 
-/// A labelled field with placeholder text shown while it is empty.
+/// A labeled field with placeholder text shown while it is empty.
 pub fn field_hint(
     key: &str,
     value: &TextEdit,
@@ -498,13 +498,13 @@ pub fn field_hint(
     placeholder: &str,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
-    labelled(
+    labeled(
         title,
         input_hint(key, value, title, suffix, placeholder, edit),
     )
 }
 
-/// A labelled field that runs `submit` when Enter is pressed.
+/// A labeled field that runs `submit` when Enter is pressed.
 pub fn submit_field(
     key: &str,
     value: &TextEdit,
@@ -512,13 +512,13 @@ pub fn submit_field(
     submit: UiAction,
     edit: impl for<'a> Fn(&'a mut AppState) -> &'a mut TextEdit + 'static,
 ) -> El {
-    labelled(
+    labeled(
         title,
         text_field(key, value, title, "", "", Some(submit), edit),
     )
 }
 
-fn labelled(title: &str, control: El) -> El {
+fn labeled(title: &str, control: El) -> El {
     col()
         .w_full()
         .shrink()
@@ -695,8 +695,8 @@ fn slider_on(
         .child(track)
 }
 
-pub fn status_dot(colour: Color) -> El {
-    el().size(6., 6.).radius(3.).fill(colour)
+pub fn status_dot(color: Color) -> El {
+    el().size(6., 6.).radius(3.).fill(color)
 }
 
 /// A unit as people read it; the schema and arrays name units with identifiers.

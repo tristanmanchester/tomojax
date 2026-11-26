@@ -1,4 +1,4 @@
-"""External HDF5 exports are recognised by content without inventing calibration."""
+"""External HDF5 exports are recognized by content without inventing calibration."""
 
 import h5py
 import numpy as np
@@ -33,7 +33,7 @@ def test_data_exchange_preserves_syrmep_units_and_leaves_an_unrecorded_center_at
     meta = raw.record.geometry_metadata["acquisition"]
     np.testing.assert_allclose(meta["detector_pixel_size"], [0.00204, 0.00306])
     assert meta["beamline"] == "Syrmep" and meta["length_unit"] == "mm"
-    if recorded:  # pitches and no centre: the middle, and the record says none was recorded
+    if recorded:  # pitches and no center: the middle, and the record says none was recorded
         loaded = tj.load_frames(path)
         assert loaded.geometry.detector.center == (0.0, 0.0)
         assert loaded.source.geometry_metadata["detector_center_status"] == "not_recorded"

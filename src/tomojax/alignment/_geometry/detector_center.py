@@ -1,4 +1,4 @@
-"""Projection-domain detector-centre estimates."""
+"""Projection-domain detector-center estimates."""
 
 from __future__ import annotations
 
@@ -91,7 +91,7 @@ def _sample_pairs(
     pairs = []
     for i, j, error in _opposite_pairs(angles, width):
         # Share the interpolation distance between both ends instead of treating
-        # a nearly opposite pair as exact (which confounds angle and centre).
+        # a nearly opposite pair as exact (which confounds angle and center).
         delta = float((angles[j] - angles[i]) % 360 - 180)
         first = _angular_sample(angles, i, delta / 2)
         second = _angular_sample(angles, j, -delta / 2)
@@ -182,14 +182,14 @@ class CenterPair:
     angular_mismatch_deg : float
         Angular departure of the nearest acquired pair from exact opposition.
     offset_px : float
-        Detector-centre placement inferred from this pair, in detector pixels.
+        Detector-center placement inferred from this pair, in detector pixels.
     local_sigma_px : float
         Local matching scale; infinity denotes no local information.
         Global coverage is uncalibrated.
     local_interval90_px : tuple of float
-        Nominal local 90% interval, not a calibrated global centre interval.
+        Nominal local 90% interval, not a calibrated global center interval.
     alternatives_px : tuple of float
-        Other correlation-peak locations, in detector-centre pixels.
+        Other correlation-peak locations, in detector-center pixels.
     relative_peak_heights : tuple of float
         Correlation heights of alternatives relative to the selected peak.
     """
@@ -231,9 +231,9 @@ class CenterPair:
 
 @dataclass(frozen=True)
 class CenterEstimate:
-    """Centre geometry and the opposing-view evidence behind it.
+    """Center geometry and the opposing-view evidence behind it.
 
-    The reported centre is the median pair location, fixing the median
+    The reported center is the median pair location, fixing the median
     opposing-pair mean shift to zero, not the mean motion over all views.
     Changing the sampled pairs can change that gauge when the sample moves.
     ``pair_scatter_px`` describes
@@ -241,25 +241,25 @@ class CenterEstimate:
     is a conditional inverse-variance heterogeneity diagnostic; correlated
     pairs and ambiguous matches invalidate its chi-square reference. Apparent
     row slope is in horizontal pixels per detector row, not a calibrated 3D
-    rotation-axis tilt. Arbitrary sample motion aliases the physical centre:
-    no absolute-centre confidence interval is identifiable without a motion
+    rotation-axis tilt. Arbitrary sample motion aliases the physical center:
+    no absolute-center confidence interval is identifiable without a motion
     assumption. Pair intervals are local matching diagnostics; global coverage
     is explicitly uncalibrated even when the pairs do not disagree.
 
     Parameters
     ----------
     geometry : ParallelGeometry
-        Geometry with the effective median pair centre in physical detector units.
+        Geometry with the effective median pair center in physical detector units.
     pairs : tuple of CenterPair
         Opposing-view constraints and their conditional uncertainties.
     row_positions_px : tuple of float
         Mean original detector-row index of each sampled row band.
     row_offsets_px : tuple of tuple
-        Pair-by-row-band centre locations, or None for unusable bands.
+        Pair-by-row-band center locations, or None for unusable bands.
     row_slope_px_per_row : float or None
         Median pair slope, or None when fewer than two row bands are usable.
     pair_scatter_px : float
-        Sample standard deviation of pair centre locations, not their mean error.
+        Sample standard deviation of pair center locations, not their mean error.
     consistency_pvalue : float or None
         Conditional chi-square diagnostic, or None without two informative pairs.
     calibration_views : tuple of int or None, optional
@@ -283,14 +283,14 @@ class CenterEstimate:
         -------
         dict
             JSON-native pair constraints, row trend and consistency diagnostics.
-            ``pair_mean_shift_constraints_px`` gives the reported centre minus
+            ``pair_mean_shift_constraints_px`` gives the reported center minus
             each pair offset, in the same order as ``pairs``. In the linearized
-            rigid-match model, a pair offset is the physical centre minus half
+            rigid-match model, a pair offset is the physical center minus half
             the sum of its two weighted detector-u sample shifts. The weights
             and view indices are stored in each pair's ``first`` and ``second``.
-            These constraints share the same fitted centre and are correlated;
+            These constraints share the same fitted center and are correlated;
             they are not per-view poses or independently calibrated intervals.
-            Common centre/shift changes and the null space of the weighted
+            Common center/shift changes and the null space of the weighted
             pair averages remain unresolved. Large or discontinuous motion,
             wrong matching modes and model mismatch invalidate the linearization.
         """
@@ -309,11 +309,11 @@ class CenterEstimate:
             "row_slope_px_per_row": self.row_slope_px_per_row,
             "pair_scatter_px": self.pair_scatter_px,
             "consistency_pvalue": self.consistency_pvalue,
-            "uncertainty_scope": "conditional rigid pair match; physical centre aliases motion",
+            "uncertainty_scope": "conditional rigid pair match; physical center aliases motion",
             "global_coverage_calibrated": False,
             "uncertainty_status": "local_matching_only",
             "uncertainty_reason": (
-                "Local matching uncertainty is not a calibrated centre interval; "
+                "Local matching uncertainty is not a calibrated center interval; "
                 "wrong matching modes and sample motion are excluded."
             ),
         }
@@ -360,7 +360,7 @@ type AngularSample = tuple[list[tuple[int, float]], list[tuple[int, float]], flo
 
 
 @dataclass(frozen=True)
-class CentreSelection:
+class CenterSelection:
     """Eligible opposing view pairs with their interpolation weights in source order."""
 
     geometry: ParallelGeometry
@@ -384,7 +384,7 @@ class CentreSelection:
                 views = np.unique([i for first, second, _ in samples for i, _ in first + second])
                 data = np.asarray(projections[views[:, None], rows[None, :], :], np.float64)
                 for first, second, error in samples:
-                    progress.check_cancelled()
+                    progress.check_canceled()
                     a = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in first))
                     b = np.asarray(sum(w * data[np.searchsorted(views, i)] for i, w in second))
                     result = _paired_measurement(a, b, error)
@@ -411,7 +411,7 @@ class CentreSelection:
             if not pairs:
                 raise ValueError(
                     'method="opposite-views" needs finite, nonconstant opposite projections. '
-                    "Near-opposite pairs need angular neighbours within 2 degrees; "
+                    "Near-opposite pairs need angular neighbors within 2 degrees; "
                     "use finer angular sampling when subsampling views."
                 )
             return replace(
@@ -422,7 +422,7 @@ class CentreSelection:
 
 def opposite_samples(
     geometry: object, views: slice | Sequence[int] | np.ndarray | None = None
-) -> CentreSelection:
+) -> CenterSelection:
     """Original view indices and interpolation weights for the estimator's work."""
     if type(geometry) is not ParallelGeometry:
         raise ValueError('method="opposite-views" needs an unposed axial ParallelGeometry')
@@ -439,7 +439,7 @@ def opposite_samples(
         )
         for first, second, error in _sample_pairs(angles[eligible], detector.nu)
     ]
-    return CentreSelection(geometry, calibration_views, tuple(samples))
+    return CenterSelection(geometry, calibration_views, tuple(samples))
 
 
 def estimate_center_report(
@@ -448,13 +448,13 @@ def estimate_center_report(
     *,
     views: slice | Sequence[int] | np.ndarray | None = None,
 ) -> CenterEstimate:
-    """Estimate an axial parallel centre and retain pair and row diagnostics.
+    """Estimate an axial parallel center and retain pair and row diagnostics.
 
     At most sixteen near-opposite pairs and 64 rows are sampled. Gradient
     correlations select matching modes; a symmetric fit on overlapping
     support estimates each location. Eight detector bands give conditional
     sandwich standard errors with leverage correction. Up to eight row bands
-    measure the apparent row-centre trend. No reconstruction is performed.
+    measure the apparent row-center trend. No reconstruction is performed.
 
     Parameters
     ----------
@@ -473,7 +473,7 @@ def estimate_center_report(
     -------
     CenterEstimate
         Geometry, weighted view-pair constraints, conditional 90% intervals,
-        alternative correlation peaks, pair disagreement and row-centre slope.
+        alternative correlation peaks, pair disagreement and row-center slope.
         Global coverage is uncalibrated: sample motion and wrong-mode selection
         are outside the local intervals, including for a single opposing pair.
 
@@ -481,7 +481,7 @@ def estimate_center_report(
     ------
     ValueError
         If geometry is unsupported, usable opposing data are absent, or
-        near-opposite pairs lack angular neighbours within two degrees.
+        near-opposite pairs lack angular neighbors within two degrees.
         Exact opposing views do not require angular interpolation.
     """
     return opposite_samples(geometry, views).measure(projections)
@@ -493,10 +493,10 @@ def estimate_center(
     *,
     views: slice | Sequence[int] | np.ndarray | None = None,
 ) -> ParallelGeometry:
-    """Estimate an axial parallel detector's effective u-centre placement.
+    """Estimate an axial parallel detector's effective u-center placement.
 
     Opposing projections agree after detector-u reflection and a shift of twice
-    the centre offset. Gradient correlations of up to 64 corresponding rows are summed,
+    the center offset. Gradient correlations of up to 64 corresponding rows are summed,
     retaining signed phase contrast rather than assuming positive absorption.
     At most sixteen near-opposite pairs (within two degrees), spread across the
     scan, and their angular neighbors are read. Pairs within half a detector-edge
@@ -504,9 +504,9 @@ def estimate_center(
     removes the mismatch. Nothing is reconstructed. Non-axial and posed
     geometries raise. The result is an absolute placement in physical units,
     not an increment to the input geometry. It fixes the median sampled-pair
-    mean motion to zero; physical centre and common sample motion cannot be
+    mean motion to zero; physical center and common sample motion cannot be
     separated from these observations alone. Use ``estimate_center_report``
-    to retain the conditional constraints and unresolved-centre status.
+    to retain the conditional constraints and unresolved-center status.
 
     Parameters
     ----------
@@ -521,7 +521,7 @@ def estimate_center(
     Returns
     -------
     ParallelGeometry
-        Geometry with the effective detector-u centre in physical units,
+        Geometry with the effective detector-u center in physical units,
         conditional on the median opposing-pair mean-shift-zero gauge.
 
     Raises

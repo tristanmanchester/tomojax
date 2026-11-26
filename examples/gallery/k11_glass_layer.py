@@ -2,11 +2,11 @@
 
     uv run python examples/gallery/k11_glass_layer.py k11-54286.nxs k11-glass-layer.png
 
-The 1441 views are aligned with the plain ``tj.align(scan)`` on a 6.48 micrometre
-grid, then reconstructed by FBP at the detector's 2.16 micrometre pitch: one
+The 1441 views are aligned with the plain ``tj.align(scan)`` on a 6.48 micrometer
+grid, then reconstructed by FBP at the detector's 2.16 micrometer pitch: one
 in-plane slice through the sphere layer and two vertical sections through the
 plates. The rotation axis leans towards the beam by +35 degrees in TomoJAX's
-convention. The three planes share one grey range.
+convention. The three planes share one gray range.
 """
 
 from __future__ import annotations

@@ -1,14 +1,14 @@
 """Joint image, global-geometry and per-view motion fitting.
 
 Bounded working scales (``AlignConfig.levels``) preserve the physical field of view.
-Only parameters selected by ``fit`` have columns or unknowns; shared centre, tilt and
+Only parameters selected by ``fit`` have columns or unknowns; shared center, tilt and
 roll form a small exact Schur border. Local motion uses a drift spline and robust
 jumps; sample rotations additionally have a Gaussian prior in physical radians.
 
-By default linear interpolation serves centre/translation fits and cubic interpolation
+By default linear interpolation serves center/translation fits and cubic interpolation
 angular fits for parallel rays; every fit's image steps use the same CG iteration
 count. These are discretization/work choices for the requested model, never
-data-dependent route selection. Each working pixel is one ray through its centre; a
+data-dependent route selection. Each working pixel is one ray through its center; a
 block with missing input pixels is the mean of its finite ones, weighted by their
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
@@ -139,7 +139,7 @@ def _padded(grid: Grid, bins: Sequence[int], margin: float) -> tuple[Grid, int]:
     Moving views bring material from above and below the field into the outer
     rows; the extension gives it somewhere to be, and is cropped from the
     returned volume. Cells no ray reaches stay out of the fit. Whole
-    coarse-level cells keep every level's voxel centres where they were
+    coarse-level cells keep every level's voxel centers where they were
     relative to the detector rows. ``margin`` is the extension's share of the height.
     """
     step = math.lcm(*bins)
@@ -179,7 +179,7 @@ def _read(
     peak = np.float32(0)
     noise = Windows(measured.shape)
     for s in range(0, n, views_per_batch):
-        progress.check_cancelled()
+        progress.check_canceled()
         src = np.asarray(measured[s : s + views_per_batch], np.float32)
         finite = np.isfinite(src)
         filled = np.where(finite, src, 0)
@@ -432,13 +432,13 @@ def fit_poses(
     pitches (du, dv). Host arrays and memory maps are converted to FP32 in
     bounded view slabs, not copied as a whole stack. ``keep_grid`` fits on
     ``grid`` itself instead of a bounded resampling.
-    ``frames`` supplies cone lab frames (views, 4, 3), with rows detector centre,
+    ``frames`` supplies cone lab frames (views, 4, 3), with rows detector center,
     unit u, unit v, source; None selects parallel rays. A shared (4, 3) frame is
-    also accepted. ``fit`` selects shared centre/tilt/roll and local translation/
+    also accepted. ``fit`` selects shared center/tilt/roll and local translation/
     rotation blocks. ``detector_roll`` supplies an existing parallel detector
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
-    time (see :class:`ViewOrder`); the motion prior and the report's neighbour
+    time (see :class:`ViewOrder`); the motion prior and the report's neighbor
     tests follow them, and None means consecutive. ``declared_poses`` are the
     geometry's poses before any corrections, which set a cone's magnification and so
     the working scale: the problem's size is a property of the scan as declared, so a

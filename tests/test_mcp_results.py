@@ -109,12 +109,12 @@ def test_each_wire_field_has_a_tool_owner():
     schemas = {row["name"]: row["schema"] for row in records}
     interactive = {
         op.Plane: "view",
-        op.CentreSweep: "M3 preview",
+        op.CenterSweep: "M3 preview",
         op.Slice: "M3 preview",
         op.CorrectionPreview: "M3 preview",
         op.RegionPreview: "M3 preview",
     }
-    for cls in (op.Slice, op.CentreSweep, op.CorrectionPreview, op.RegionPreview):
+    for cls in (op.Slice, op.CenterSweep, op.CorrectionPreview, op.RegionPreview):
         assert (
             set(cls.__struct_fields__)
             <= schemas["preview"]["$defs"][cls.__name__]["properties"].keys()

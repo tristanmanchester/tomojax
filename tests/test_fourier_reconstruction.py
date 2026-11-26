@@ -782,7 +782,7 @@ def test_provided_output_retains_layout_and_identity(backend, layout):
 
 
 def dense_full_spectrum_reference(grid, detector, angles, data):
-    """Centred DFT of every sampled detector profile, then a full complex Cartesian FFT."""
+    """Centered DFT of every sampled detector profile, then a full complex Cartesian FFT."""
     origin = grid_volume_origin(grid)
     radius = abs(detector.center[0]) + detector.nu * detector.du / 2
     shape, crop = [], []
@@ -900,12 +900,12 @@ def test_cuda_fourier_coordinate_pass_matches_physical_reference(nonuniform):
     np.testing.assert_allclose(results[1], results[0], rtol=3e-4, atol=2e-7)
 
 
-def test_per_view_rows_never_read_a_neighbour_of_zero_weight():
+def test_per_view_rows_never_read_a_neighbor_of_zero_weight():
     # check-public-imports: allow-private
     from tomojax.recon._fourier_grid import sample_projection_rows
 
     projections = np.ones((2, 3, 4), np.float32)
-    projections[:, 0] = np.nan  # only the zero-weight lower neighbour is invalid
+    projections[:, 0] = np.nan  # only the zero-weight lower neighbor is invalid
     # 0.99999999 rounds to a lower weight of exactly zero in FP32.
     positions = np.array([[0.99999999, 1.0]])
     rows = sample_projection_rows(projections, np.arange(2), positions)

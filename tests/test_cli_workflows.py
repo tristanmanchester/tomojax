@@ -534,11 +534,11 @@ def test_simulate_cli_routes_loadable_synthetic_dataset(
 
     def recording(config):
         captured["shape"] = (config.nx, config.ny, config.nz, config.nu, config.nv, config.n_views)
-        captured["expert"] = (config.single_rotate, config.artefacts.zinger_fraction)
+        captured["expert"] = (config.single_rotate, config.artifacts.zinger_fraction)
         return simulate(config)
 
     monkeypatch.setattr(datasets, "simulate", recording)
-    # Phantom details and detector artefacts are config-file settings.
+    # Phantom details and detector artifacts are config-file settings.
     settings = tmp_path / "simulate.toml"
     _ = settings.write_text("single_rotate = false\nzinger_fraction = 0.25\n", encoding="utf-8")
 
@@ -629,7 +629,7 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
     import tomojax as tj
     from tomojax.geometry import grid_volume_origin
 
-    # The field (radius 6.5) reaches a voxel centre in each of the 12 columns.
+    # The field (radius 6.5) reaches a voxel center in each of the 12 columns.
     grid, detector = tj.Grid(12, 12, 10, 1, 1, 1), tj.Detector(14, 10, 1, 1)
     scan = tj.Scan(
         np.ones((20, 10, 14), np.float32),
@@ -892,8 +892,8 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
     plan = document()
     assert plan["output_path"] is None and plan["method"] == "joint"
     assert plan["fit"] == ["translations"]
-    centre = document("--method", "opposite-views")
-    assert centre["type"] == "opposite_views_plan" and centre["fit"] == ["center"]
+    center = document("--method", "opposite-views")
+    assert center["type"] == "opposite_views_plan" and center["fit"] == ["center"]
     assert plan["bounded_working_grid"] is True
     assert plan["type"] == "joint_plan" and plan["config"]["levels"]
     assert document("--region", "auto")["bounded_working_grid"] is False

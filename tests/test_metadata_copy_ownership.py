@@ -23,7 +23,7 @@ def _stored_dataset():
         align_params=np.zeros((2, 6), np.float32),
         angle_offset=np.asarray([0.031415926535, -0.271828182846]),
         geometry_calibration={"source": "stored calibration"},
-        simulation_artefacts={"source": "stored simulation"},
+        simulation_artifacts={"source": "stored simulation"},
         source_name="beamline",
         source_type="synchrotron",
         source_probe="x-ray",
@@ -73,7 +73,7 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(arrays,
         "source_probe",
         "frame",
         "geometry_calibration",
-        "simulation_artefacts",
+        "simulation_artifacts",
     ):
         assert getattr(copied, field) == getattr(stored, field)
     assert copied.sample_name == "current sample"

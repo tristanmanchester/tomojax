@@ -281,11 +281,11 @@ class MotionPrior:
     the solver derives it as), and it falls for larger jumps. Rotations have a
     zero-mean Gaussian size prior with ``rotation_sigma_deg`` standard
     deviation, in physical radians rather than numerical pixel units, and
-    Gaussian increments between neighbouring views of curvature
+    Gaussian increments between neighboring views of curvature
     ``weight / delta``, with no free drift: wobble is continuous in the angle.
     The weight may be a pair, (translations', rotation increments').
-    Multiplication by ``noise_sigma**2`` puts that prior in the unnormalised
-    data loss's units. Shared centre and angle parameters are not penalised.
+    Multiplication by ``noise_sigma**2`` puts that prior in the unnormalized
+    data loss's units. Shared center and angle parameters are not penalized.
 
     ``blocks`` contains every view's local/global Gram block. The local system
     is solved exactly on the orthogonal drift and innovation spaces, with
@@ -341,8 +341,8 @@ class MotionPrior:
                 for m in (gauge, constraint)
             )
             # A constant parallel lab-x shift is indistinguishable from a global
-            # detector-u centre shift. Fix its local mean and let centre own it.
-            # Cone centre and object translation differ with depth, so imposing
+            # detector-u center shift. Fix its local mean and let center own it.
+            # Cone center and object translation differ with depth, so imposing
             # the same constraint there would remove a measurable motion.
             if not parameters.cone and "center_u" in parameters.globals and 3 in local:
                 constant = np.zeros((views, self.nlocal))
@@ -510,7 +510,7 @@ class MotionPrior:
 
     def _weights(self, m: PriorMatrices, p: jax.Array, weight: PoseWeight) -> jax.Array:
         """Per link and local column: robust for translations, constant for rotations."""
-        if self.independent:  # no term ties a view to its neighbours
+        if self.independent:  # no term ties a view to its neighbors
             return jnp.zeros_like(jnp.asarray(self.order.edge_scale)[:, None] * self.rotation_mask)
         weight, turn_weight = weight if isinstance(weight, tuple) else (weight, weight)
         edge = jnp.asarray(self.order.edge_scale)[:, None]

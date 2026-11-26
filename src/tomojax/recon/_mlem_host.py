@@ -73,7 +73,7 @@ def solve(
     em = _HostEM(problem, x, updating=iterations > 0)
     with problem.using(out, em.volume):
         for step in range(1, max(1, iterations) + 1):
-            progress.check_cancelled()
+            progress.check_canceled()
             for group in range(subsets):
                 problem.sweep.run(
                     order[group::subsets], source=em.source, finish=em.finish, sink=em.sink,

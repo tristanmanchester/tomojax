@@ -1,6 +1,6 @@
 """Reconstruct a watch movement from few, noisy views with FBP and with FISTA-TV.
 
-A 29 mm skeletonised mechanical watch movement (see ``_watch.py``) is scanned
+A 29 mm skeletonized mechanical watch movement (see ``_watch.py``) is scanned
 in a 120 keV parallel beam with 200 views over a half turn and 10^4 photons
 per detector pixel. gVXR traces the projections through the movement's
 meshes, so they share nothing with TomoJAX's projector, and every pixel
@@ -96,7 +96,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, np.ndarray], dict[str, obje
 
 
 def plot(slices: dict[str, np.ndarray], metrics: dict[str, object], path: Path) -> None:
-    """Truth, FBP and FISTA-TV, full and close up, on one grey scale."""
+    """Truth, FBP and FISTA-TV, full and close up, on one gray scale."""
     panel, gap, margin, top = 560, 30, 30, 158
     card = Card(3 * panel + 2 * gap + 2 * margin, top + 2 * panel + 100)
     card.text(margin, 54, "Few-view, noisy scan of a mechanical watch movement", 32, weight="bold")

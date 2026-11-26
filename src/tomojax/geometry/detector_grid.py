@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 
 def zero_center_detector_grid(detector: Detector) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Return detector coordinates for the same detector shape with zero physical centre."""
+    """Return detector coordinates for the same detector shape with zero physical center."""
     from tomojax.core.geometry.base import get_detector_grid_device
 
     zero_detector = dataclasses.replace(detector, center=(0.0, 0.0))
@@ -28,15 +28,15 @@ def transform_detector_grid(
     native_du: float,
     native_dv: float,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Rotate a zero-centre detector grid, then apply native-pixel centre offsets.
+    """Rotate a zero-center detector grid, then apply native-pixel center offsets.
 
     Positive roll is a right-handed detector-plane rotation using the convention::
 
         u_rot = cos(r) * u - sin(r) * v
         v_rot = sin(r) * u + cos(r) * v
 
-    The roll is applied around the detector centre before detector/ray-grid centre
-    offsets are added, so centre and roll remain independent calibration variables.
+    The roll is applied around the detector center before detector/ray-grid center
+    offsets are added, so center and roll remain independent calibration variables.
     """
     import jax.numpy as jnp
 
@@ -60,14 +60,14 @@ def detector_grid_from_calibration(
     native_du: float | None = None,
     native_dv: float | None = None,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Build a detector grid from centre offsets and detector-plane roll.
+    """Build a detector grid from center offsets and detector-plane roll.
 
     Parameters
     ----------
     detector : Detector
-        Detector dimensions and sampling; its centre is replaced by calibration offsets.
+        Detector dimensions and sampling; its center is replaced by calibration offsets.
     det_u_px, det_v_px : array-like, optional
-        Scalar detector-centre offsets in native pixels, after rotation.
+        Scalar detector-center offsets in native pixels, after rotation.
     detector_roll : array-like, optional
         Scalar detector-plane roll in degrees.
     native_du, native_dv : float or None, optional
@@ -94,7 +94,7 @@ def detector_grid_from_detector_roll(
     *,
     detector_roll: object,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """Build a rolled detector grid preserving the detector's physical centre."""
+    """Build a rolled detector grid preserving the detector's physical center."""
     return detector_grid_from_calibration(
         detector,
         det_u_px=float(detector.center[0]) / float(detector.du),
@@ -114,7 +114,7 @@ def detector_grid_from_geometry_inputs(
     Parameters
     ----------
     detector : Detector
-        Detector geometry with physical centre offsets.
+        Detector geometry with physical center offsets.
     geometry_inputs : mapping or object
         Metadata with optional detector_roll.
 

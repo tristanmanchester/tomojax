@@ -37,7 +37,7 @@ def read_psi_objects(
     MATLAB v5 ``example_data.mat`` holds ``stack_object`` and ``theta`` with
     no physical scale: wavelength and pixel size are returned as None.
     The v7.3 porous-glass file reverses the stored axes and includes those
-    lengths in metres. Its default crop excludes unreliable detector borders;
+    lengths in meters. Its default crop excludes unreliable detector borders;
     the smaller simulated example uses the full detector by default.
     Explicit ``rows`` and ``columns`` override either default crop.
 

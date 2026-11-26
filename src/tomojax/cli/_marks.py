@@ -34,7 +34,7 @@ PALETTE = {
     "green": (110, 255, 60),
     "red": (255, 48, 48),
 }
-type Colour = Literal["yellow", "cyan", "magenta", "orange", "green", "red"]
+type Color = Literal["yellow", "cyan", "magenta", "orange", "green", "red"]
 Radius = Annotated[float, msgspec.Meta(gt=0)]
 
 
@@ -49,10 +49,10 @@ type Position = tuple[float, ...] | PixelPosition
 
 
 class Mark(Record, kw_only=True):
-    """Fields every mark shares: a short label drawn beside it and its colour."""
+    """Fields every mark shares: a short label drawn beside it and its color."""
 
     label: str | None = None
-    colour: Colour = "yellow"
+    color: Color = "yellow"
 
 
 class PointMark(Mark, tag="point", kw_only=True):
@@ -145,7 +145,7 @@ class Cell:
     sy: float
 
     def pixel(self, row: float, col: float) -> tuple[float, float]:
-        """Image position of a sample-grid position, with samples centred on integers."""
+        """Image position of a sample-grid position, with samples centered on integers."""
         return self.x + (col + 0.5) * self.sx, self.y + (row + 0.5) * self.sy
 
 
@@ -376,7 +376,7 @@ def footprint(shape: Shape, size: tuple[int, int]) -> np.ndarray:
 
 
 def outline(mask: np.ndarray) -> np.ndarray:
-    """The boundary samples of a boolean mask: set samples with an unset 4-neighbour."""
+    """The boundary samples of a boolean mask: set samples with an unset 4-neighbor."""
     padded = np.pad(mask, 1, constant_values=False)
     interior = padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:] & mask
     return mask & ~interior
@@ -400,26 +400,26 @@ def ticks(start: int, step: int, n: int) -> list[tuple[float, int]]:
 def draw_ticks(draw: ImageDraw.ImageDraw, frame: Frame, cell: Cell, size: tuple[int, int]) -> None:
     """Faint index ticks with labels along the top and left image edges."""
     h, w = size
-    grey = (150, 150, 150)
+    gray = (150, 150, 150)
     left, top = cell.x, cell.y
     right, bottom = cell.x + w * cell.sx, cell.y + h * cell.sy
     for position, value in ticks(frame.cols[1], frame.cols[2], w):
         x, _ = cell.pixel(0, position)
-        draw.line((x, top - 4, x, top - 1), fill=grey)
-        draw.text((x, top - 5), str(value), fill=grey, anchor="mb")
+        draw.line((x, top - 4, x, top - 1), fill=gray)
+        draw.text((x, top - 5), str(value), fill=gray, anchor="mb")
     for position, value in ticks(frame.rows[1], frame.rows[2], h):
         _, y = cell.pixel(position, 0)
-        draw.line((left - 4, y, left - 1, y), fill=grey)
-        draw.text((left - 6, y), str(value), fill=grey, anchor="rm")
-    draw.text((right + 3, top - 5), frame.axes[frame.cols[0]], fill=grey, anchor="lb")
-    draw.text((left - 6, bottom + 3), frame.axes[frame.rows[0]], fill=grey, anchor="rt")
+        draw.line((left - 4, y, left - 1, y), fill=gray)
+        draw.text((left - 6, y), str(value), fill=gray, anchor="rm")
+    draw.text((right + 3, top - 5), frame.axes[frame.cols[0]], fill=gray, anchor="lb")
+    draw.text((left - 6, bottom + 3), frame.axes[frame.rows[0]], fill=gray, anchor="rt")
 
 
 def draw_shape(draw: ImageDraw.ImageDraw, shape: Shape, cell: Cell, mark: AnyMark) -> None:
-    """Draw a projected mark with a dark halo so it reads on any grey."""
-    colour = PALETTE[mark.colour]
+    """Draw a projected mark with a dark halo so it reads on any gray."""
+    color = PALETTE[mark.color]
     xy = [cell.pixel(r, c) for r, c in shape.points]
-    for fill, width in (((0, 0, 0), 4), (colour, 2)):
+    for fill, width in (((0, 0, 0), 4), (color, 2)):
         if shape.kind == "point":
             (x, y) = xy[0]
             draw.ellipse((x - 4, y - 4, x + 4, y + 4), outline=fill, width=width)
@@ -457,7 +457,7 @@ def draw_shape(draw: ImageDraw.ImageDraw, shape: Shape, cell: Cell, mark: AnyMar
 
 def draw_label(draw: ImageDraw.ImageDraw, shape: Shape, cell: Cell, mark: AnyMark) -> None:
     """Write a mark's label beside its anchor, or in place of a text mark's symbol."""
-    colour = PALETTE[mark.colour]
+    color = PALETTE[mark.color]
     if mark.label:
         r, c = anchor(shape)
         x, y = cell.pixel(r, c)
@@ -465,7 +465,7 @@ def draw_label(draw: ImageDraw.ImageDraw, shape: Shape, cell: Cell, mark: AnyMar
         draw.text(
             (x + offset, y - offset),
             mark.label,
-            fill=colour,
+            fill=color,
             anchor="mm" if shape.kind == "text" else "lb",
             stroke_width=2,
             stroke_fill=(0, 0, 0),
@@ -478,7 +478,7 @@ class Overlay:
 
     frame: Frame
     marks: tuple[AnyMark, ...] = ()
-    outlines: tuple[tuple[np.ndarray, Colour], ...] = ()
+    outlines: tuple[tuple[np.ndarray, Color], ...] = ()
     ticks: bool = True
 
 
@@ -499,7 +499,7 @@ def draw(
     lo, hi = scale
     canvas = ImageDraw.Draw(image)
     size = pixels.shape[:2]
-    for mask, colour in overlay.outlines:
+    for mask, color in overlay.outlines:
         width, height = round(size[1] * cell.sx), round(size[0] * cell.sy)
         scaled = Image.fromarray(np.uint8(mask) * 255).resize(
             (max(width, 1), max(height, 1)), Image.Resampling.NEAREST
@@ -510,7 +510,7 @@ def draw(
         edge[:, 1:] |= edge[:, :-1].copy()
         edge = Image.fromarray(np.uint8(edge) * 255)
         x, y = round(cell.x), round(cell.y)
-        image.paste(PALETTE[colour], (x, y, x + edge.width, y + edge.height), mask=edge)
+        image.paste(PALETTE[color], (x, y, x + edge.width, y + edge.height), mask=edge)
     if overlay.ticks:
         draw_ticks(canvas, overlay.frame, cell, size)
     # Shapes are clipped to the plane; labels may run into the margin.
@@ -581,16 +581,16 @@ def frame_of(
 
 
 def draw_grid(image: Image.Image, every: int = 100) -> None:
-    """Dotted lines every ``every`` image pixels, labelled in pixels, for aiming by pixel."""
+    """Dotted lines every ``every`` image pixels, labeled in pixels, for aiming by pixel."""
     canvas = ImageDraw.Draw(image)
-    colour = (90, 170, 255)
+    color = (90, 170, 255)
     width, height = image.size
     for x in range(every, width, every):
-        canvas.point([(x, y) for y in range(0, height, 4)], fill=colour)
-        canvas.text((x + 2, 2), str(x), fill=colour)
+        canvas.point([(x, y) for y in range(0, height, 4)], fill=color)
+        canvas.text((x + 2, 2), str(x), fill=color)
     for y in range(every, height, every):
-        canvas.point([(x, y) for x in range(0, width, 4)], fill=colour)
-        canvas.text((2, y + 2), str(y), fill=colour)
+        canvas.point([(x, y) for x in range(0, width, 4)], fill=color)
+        canvas.text((2, y + 2), str(y), fill=color)
 
 
 def annotate(

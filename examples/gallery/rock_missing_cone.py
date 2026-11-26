@@ -3,7 +3,7 @@
     uv run python examples/gallery/rock_missing_cone.py rock-missing-cone.png
 
 A 0.25 mm thick slab cut from the sandstone core (``bench/phantoms/porous_rock.py``,
-voxelised 1.5 times finer than the grid) is scanned in laminography: 720 views
+voxelized 1.5 times finer than the grid) is scanned in laminography: 720 views
 over a full turn, the rotation axis tilted 35° from the slab's normal, with
 Poisson noise. No view measures the frequencies in a cone about the axis, so
 FBP elongates every grain along the axis; FISTA-TV with nonnegativity fills
@@ -50,8 +50,8 @@ def simulate(seed: int = 0) -> tuple[tj.Scan, np.ndarray, np.ndarray, float]:
     rng = np.random.default_rng(seed)
     measured = -np.log(np.maximum(counts(line_integrals, PHOTONS, rng), 1.0) / PHOTONS)
     truth = downsample(slab, N)
-    centres = (np.arange(N) - N / 2 + 0.5) * voxel
-    mask = np.broadcast_to((np.abs(centres) < thickness / 2)[:, None, None], truth.shape)
+    centers = (np.arange(N) - N / 2 + 0.5) * voxel
+    mask = np.broadcast_to((np.abs(centers) < thickness / 2)[:, None, None], truth.shape)
     return tj.Scan(measured.astype(np.float32), geometry), truth, mask, thickness
 
 

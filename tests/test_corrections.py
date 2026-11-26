@@ -373,7 +373,7 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     )
     plain = np.asarray(frames.corrected().projections)
     cleaned = frames.corrected(Stripes(9))
-    # Columns 10 and 31 stand out from their neighbours; column 45's offset is
+    # Columns 10 and 31 stand out from their neighbors; column 45's offset is
     # smaller than the gradient across it and stays.
     error = np.abs(np.asarray(cleaned.projections) - truth).max(axis=(0, 1))
     assert error[[10, 31]].max() < 2e-3
@@ -466,7 +466,7 @@ def _frames(counts: np.ndarray, flat: float) -> tj.Frames:
     return tj.Frames(counts, geometry, flats=np.full((1, rows, cols), flat, np.float32))
 
 
-def test_zingers_are_replaced_by_their_neighbours_median() -> None:
+def test_zingers_are_replaced_by_their_neighbors_median() -> None:
     counts = np.full((2, 5, 6), 500.0, np.float32)
     counts[0, 2, 3] = 1000.0  # a zinger
     counts[1, 1:4, 1:4] = 520.0  # a faint patch: not a zinger
@@ -510,7 +510,7 @@ def test_cropping_reads_a_block_and_moves_the_detector(tmp_path: Path) -> None:
     part = frames.cropped(slice(1, 4), slice(2, 7))
     assert part.counts.shape == (3, 3, 5) and part.flats.shape == (1, 3, 5)
     np.testing.assert_array_equal(np.asarray(part.counts[0:3]), stack[1:, 1:4, 2:7])
-    # The block's centre, in the detector's units: columns 2..6 of 8, rows 1..3 of 6.
+    # The block's center, in the detector's units: columns 2..6 of 8, rows 1..3 of 6.
     assert part.geometry.detector.center == (0.5, -0.5)
     whole = frames.corrected()
     np.testing.assert_allclose(
@@ -887,11 +887,11 @@ def test_nikon_calibrated_axis_and_closing_turn_are_physical_metadata(
     np.testing.assert_array_equal(geometry.angles, [180, 0])
     axis = geometry.rotation_axis()
     if modern:
-        assert geometry.beam.axis_offset == -0.3  # already object-plane millimetres
+        assert geometry.beam.axis_offset == -0.3  # already object-plane millimeters
         np.testing.assert_allclose(axis, [0, 0.5, np.sqrt(3) / 2], atol=1e-12)
     else:
         # Project two points on the physical rotation axis to the panel's ends:
-        # the recorded CORs are detector-plane millimetres, not pixel indices.
+        # the recorded CORs are detector-plane millimeters, not pixel indices.
         source = geometry.beam.source()
         for detector_height, expected_cor in [(1.0, 1.0), (-1.0, -0.5)]:
             z = detector_height / (2 * axis[2])
@@ -986,7 +986,7 @@ def test_nikon_rays_match_cil_frame_with_tilt_and_offset_panel(tmp_path):
     frames = tj.load_frames(path, darks=0)
     np.testing.assert_array_equal(np.asarray(frames.counts)[0], image[::-1, ::-1])
     # Independent CIL NikonDataReader + convert_geometry_to_astra_vec_3D:
-    # align the physical axis to z, the centre ray to +y, then rotate by -theta.
+    # align the physical axis to z, the center ray to +y, then rotate by -theta.
     axis = (
         Rotation.from_euler("x", -15, degrees=True) * Rotation.from_euler("y", 20, degrees=True)
     ).apply([0, 0, 1])

@@ -10,7 +10,7 @@ import pytest
 
 from tomojax.datasets import (
     SimConfig,
-    SimulationArtefacts,
+    SimulationArtifacts,
     make_phantom,
     random_cubes_spheres,
     simulate,
@@ -98,7 +98,7 @@ def test_simulate_lamino_records_tilt_metadata(monkeypatch: pytest.MonkeyPatch) 
     assert data["geometry_meta"] == {"tilt": 35.0, "tilt_about": "x"}
 
 
-def test_simulation_artefact_metadata_exists_and_is_deterministic(
+def test_simulation_artifact_metadata_exists_and_is_deterministic(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _install_fast_public_simulator(monkeypatch)
@@ -112,14 +112,14 @@ def test_simulation_artefact_metadata_exists_and_is_deterministic(
         phantom="sphere",
         single_rotate=False,
         seed=11,
-        artefacts=SimulationArtefacts(dead_pixel_fraction=0.25, dead_pixel_value=-1.0),
+        artifacts=SimulationArtifacts(dead_pixel_fraction=0.25, dead_pixel_value=-1.0),
     )
 
     first = simulate(config)
     second = simulate(config)
 
-    assert first["simulation_artefacts"] is not None
-    assert first["simulation_artefacts"]["dead_pixel_count"] == 1
+    assert first["simulation_artifacts"] is not None
+    assert first["simulation_artifacts"]["dead_pixel_count"] == 1
     np.testing.assert_allclose(np.asarray(first["projections"]), np.asarray(second["projections"]))
     assert bool(jnp.any(first["projections"] == -1.0))
     assert "noise" not in first["meta"]

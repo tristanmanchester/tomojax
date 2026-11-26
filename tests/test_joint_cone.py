@@ -300,7 +300,7 @@ def test_working_pixels_are_bounded_by_the_least_magnified_segment():
     # working pixel span 3.2 voxels in the first.
     poses = np.broadcast_to(np.eye(4), (2, 4, 4))
     frames = np.zeros((2, 4, 3))
-    # Rows: detector centre, u, v, source; the object sits at the origin.
+    # Rows: detector center, u, v, source; the object sits at the origin.
     frames[:, 1], frames[:, 2] = (1, 0, 0), (0, 0, 1)
     frames[0, 0], frames[0, 3] = (0, 800, 0), (0, -3200, 0)
     frames[1, 0], frames[1, 3] = (0, 3600, 0), (0, -400, 0)

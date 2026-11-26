@@ -155,7 +155,7 @@ def sample_projection_rows(
 def rolled_row_window(
     positions: np.ndarray, nv: int, nu: int, roll: float, pitch_ratio: float
 ) -> tuple[int, int]:
-    """Enclose the native row footprint of the rotated lattice and its interpolation neighbours."""
+    """Enclose the native row footprint of the rotated lattice and its interpolation neighbors."""
     angle = np.deg2rad(roll)
     center = (nv - 1) / 2
     height = np.cos(angle) * (positions - center)
@@ -179,7 +179,7 @@ def sample_rolled_rows(
 
     ``positions`` are unrolled detector-v indices, shape (rows,) or (rows, views);
     ``pitch_ratio`` is dv / du. A rolled pixel (u', v') lies at the physical
-    detector-plane offset R(roll) @ (x', z') from the detector centre, so the
+    detector-plane offset R(roll) @ (x', z') from the detector center, so the
     unrolled point (x, z) reads the measurement at R(-roll) @ (x, z).
     """
     _, rows, nu = projections.shape
@@ -231,7 +231,7 @@ def gather_per_view_rows(
     fraction = np.asarray(positions - lower, dtype=np.float32)
     rows = np.concatenate((lower, lower + 1))
     valid = (rows >= 0) & (rows < nv)
-    # A neighbour whose FP32 weight is zero does not contribute and is not read.
+    # A neighbor whose FP32 weight is zero does not contribute and is not read.
     valid[: len(lower)] &= fraction != 1
     valid[len(lower) :] &= fraction != 0
     samples = np.require(

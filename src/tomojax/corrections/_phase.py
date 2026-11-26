@@ -16,13 +16,13 @@ def unwrap_phase(projections: jax.Array) -> jax.Array:
     same shape, in radians, with zero mean on each image. Use
     :func:`remove_phase_ramp` to set its phase origin from air.
 
-    Solves the least-squares fit to nearest-neighbour wrapped phase gradients
+    Solves the least-squares fit to nearest-neighbor wrapped phase gradients
     with nonperiodic (Neumann) boundaries, using a discrete cosine transform.
     Smooth phase is recovered up to a constant when adjacent true phase
     differences are less than pi. With phase residues the gradients are
     inconsistent: this returns their least-squares integral, not an exact
     pointwise unwrapping. Missing or low-amplitude pixels should be cropped
-    before this operation; they are not inferred from neighbouring views.
+    before this operation; they are not inferred from neighboring views.
 
     Parameters
     ----------

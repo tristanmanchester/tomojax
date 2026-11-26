@@ -103,9 +103,9 @@ class CorrectedRows:
     projections : jax.Array
         Corrected line integrals of the requested rows, in (view, row, column) order.
     flat : Correction
-        Record of the flat and dark normalisation.
+        Record of the flat and dark normalization.
     steps : tuple of Step
-        Corrections applied after normalisation, in order.
+        Corrections applied after normalization, in order.
     epsilon : float
         Floor applied to transmission before the logarithm.
     counts : tuple of jax.Array
@@ -128,7 +128,7 @@ class CorrectedRows:
         Returns
         -------
         tuple of Correction
-            Flat normalisation, transmission steps, logarithm and line-integral steps.
+            Flat normalization, transmission steps, logarithm and line-integral steps.
 
         Raises
         ------

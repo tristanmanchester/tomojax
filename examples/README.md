@@ -12,7 +12,7 @@ uv run --no-sync python examples/simulate_and_reconstruct.py
 
 ## Reproduce the README figures
 
-All three README figures image a 29 mm skeletonised mechanical watch movement (mainspring barrel, going train, club-tooth escapement, screwed balance with hairspring) modelled in Blender as closed per-material meshes ([watch_blender.py](../bench/phantoms/watch_blender.py)). gVXR traces exact ray path lengths through the meshes at 120 keV (with `xraylib` attenuations), averaging 2 × 2 sub-pixel transmissions before Poisson noise and `-log`; the voxel truth is the exact mesh average ([mesh_voxels.py](../bench/phantoms/mesh_voxels.py)).
+All three README figures image a 29 mm skeletonized mechanical watch movement (mainspring barrel, going train, club-tooth escapement, screwed balance with hairspring) modeled in Blender as closed per-material meshes ([watch_blender.py](../bench/phantoms/watch_blender.py)). gVXR traces exact ray path lengths through the meshes at 120 keV (with `xraylib` attenuations), averaging 2 × 2 sub-pixel transmissions before Poisson noise and `-log`; the voxel truth is the exact mesh average ([mesh_voxels.py](../bench/phantoms/mesh_voxels.py)).
 
 Running these requires a CUDA GPU, Blender 4.5, and the gVXR environment described in [bench/README.md](../bench/README.md#watch-movement-phantom) (located under `.artifacts` or passed via `--blender` and `--gvxr-python`):
 
@@ -31,9 +31,9 @@ Each script writes its figure to `images/` (or `--out`) alongside a JSON record 
 
 ### Align a scan with per-view motion
 
-[align_watch.py](align_watch.py) simulates 400 views on 77 µm voxels at 2 × 10⁴ photons per pixel with a 5.3 px centre offset plus per-view wobble and jitter (up to 0.25° rotations, 2.4 px across the axis, 1.5 px along it). `tj.align(scan, fit=("center", "translations", "rotations"))` runs in 36 s, recovering rotations to ≤ 0.06° RMS and shifts to 0.07 / 0.05 px RMS. FISTA-TV error drops from 0.905 (nominal) to 0.209 (aligned), matching the true-pose reconstruction (0.212). Total runtime is ~2.5 minutes.
+[align_watch.py](align_watch.py) simulates 400 views on 77 µm voxels at 2 × 10⁴ photons per pixel with a 5.3 px center offset plus per-view wobble and jitter (up to 0.25° rotations, 2.4 px across the axis, 1.5 px along it). `tj.align(scan, fit=("center", "translations", "rotations"))` runs in 36 s, recovering rotations to ≤ 0.06° RMS and shifts to 0.07 / 0.05 px RMS. FISTA-TV error drops from 0.905 (nominal) to 0.209 (aligned), matching the true-pose reconstruction (0.212). Total runtime is ~2.5 minutes.
 
-Because a global rigid shift is unobservable, truth, poses, and centre are aligned to the same least-motion gauge before comparison (see [check the result](../docs/align-a-scan.md#check-the-result)).
+Because a global rigid shift is unobservable, truth, poses, and center are aligned to the same least-motion gauge before comparison (see [check the result](../docs/align-a-scan.md#check-the-result)).
 
 ### Volume-render a reconstruction
 
@@ -126,4 +126,4 @@ With a CUDA build of PyTorch installed, run [train_denoiser.py](train_denoiser.p
 python examples/train_denoiser.py full_rows1048-1111.nxs --center-px -138
 ```
 
-A small residual CNN trains across two disjoint angle-interleaved view sets (one for FBP input, one for image and projection targets, backpropagating through `tomojax.torch.Projector`'s exact transpose), with a third set held out for projection-error reporting. Defaults bin 8 × 8 over all views for 500 steps; avoid undersampling the splits so the CNN does not learn to blur angular detail. `--center-px` specifies the rotation centre in native pixels (omit to estimate it automatically). Pass `--output result.npz` to save outputs.
+A small residual CNN trains across two disjoint angle-interleaved view sets (one for FBP input, one for image and projection targets, backpropagating through `tomojax.torch.Projector`'s exact transpose), with a third set held out for projection-error reporting. Defaults bin 8 × 8 over all views for 500 steps; avoid undersampling the splits so the CNN does not learn to blur angular detail. `--center-px` specifies the rotation center in native pixels (omit to estimate it automatically). Pass `--output result.npz` to save outputs.

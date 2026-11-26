@@ -64,7 +64,7 @@ EXECUTABLE = (
     op.Statistics,
     op.Plane,
     op.Slice,
-    op.CentreSweep,
+    op.CenterSweep,
     op.CorrectionPreview,
     op.RegionPreview,
 )
@@ -121,7 +121,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         info = result_info(item)
         if isinstance(item, p.Files):
             info = admission.details
-        summary = ex.summarise(info, externalise=diagnostic)
+        summary = ex.summarize(info, externalize=diagnostic)
         if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction | tj.Alignment | tj.Simulation):
             storage = None
             if isinstance(operation, op.Open) and isinstance(item, tj.Reconstruction):
@@ -401,7 +401,7 @@ class Admission:
         options = arguments(
             operation,
             self.context,
-            omit=("source", "axis", "index", "centres"),
+            omit=("source", "axis", "index", "centers"),
             layout_only=layout_only,
         )
         if not isinstance(operation, op.Align):
@@ -416,9 +416,9 @@ class Admission:
             compute = apply_alignment
             work = alignment
         elif isinstance(operation, op.Slice):
-            if isinstance(operation, op.CentreSweep):
+            if isinstance(operation, op.CenterSweep):
                 plans = interactive.resolve_sweep(
-                    scan, operation.axis, operation.index, operation.centres, **options
+                    scan, operation.axis, operation.index, operation.centers, **options
                 )
             else:
                 plans = (
