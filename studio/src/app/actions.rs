@@ -155,12 +155,12 @@ impl AppState {
                     .unwrap_or_default();
             }
             UiAction::RenameResult => {
-                let (id, draft) = self
+                let id = self
                     .ui
-                    .rename
+                    .rename_asset
                     .as_ref()
                     .ok_or("Select a result to rename.")?;
-                let name = draft.text.trim();
+                let name = self.ui.rename_draft.text.trim();
                 if name.is_empty() {
                     return Err("Enter a result name.".into());
                 }
@@ -171,7 +171,7 @@ impl AppState {
                     .filter(|a| a.is_result())
                     .ok_or("Select a result to rename.")?;
                 asset.name = name.into();
-                self.ui.rename = None;
+                self.ui.rename_asset = None;
                 self.mark_dirty();
             }
             UiAction::RemoveAsset(id) => {
@@ -355,10 +355,10 @@ impl AppState {
                 if old.status.active() {
                     return Err("This job is still active".into());
                 }
-                if old.destination.as_ref().is_some_and(|p| p.exists()) {
+                if let Some(destination) = old.destination.as_ref().filter(|path| path.exists()) {
                     return Err(format!(
                         "An output already exists at {}. Move or delete it, then retry.",
-                        old.destination.as_ref().unwrap().display()
+                        destination.display()
                     ));
                 }
                 let mut job =
@@ -546,7 +546,11 @@ impl AppState {
                     self.ui.compare_split = fraction.clamp(0., 1.);
                 }
             }
-            UiAction::ComparePlane(plane) => self.ui.compare_plane = plane,
+            UiAction::ComparePlane(plane) => {
+                if plane.axis().is_some() {
+                    self.ui.compare_plane = plane;
+                }
+            }
             UiAction::SetExportFormat(format) => self.ui.export_format = format,
             UiAction::RemoveMeasurement(id) => self
                 .model

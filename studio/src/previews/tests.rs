@@ -22,7 +22,7 @@ fn admitted(previews: &mut Previews, kind: PreviewKind, id: &str) {
             kind,
             generation: intent.generation,
             input: intent.input.clone(),
-            parameters: intent.parameters.clone(),
+            parameters: Value::Object(intent.parameters.clone()),
             revision: None,
             telemetry: JobProgress::default(),
         })),

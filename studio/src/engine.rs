@@ -146,10 +146,13 @@ impl Engine {
                     python.as_ref().display()
                 )
             })?;
-        // The three pipe handles are guaranteed by the Command configuration above.
-        let mut input = child.stdin.take().expect("configured stdin pipe");
-        let output = child.stdout.take().expect("configured stdout pipe");
-        let errors = child.stderr.take().expect("configured stderr pipe");
+        let (Some(mut input), Some(output), Some(errors)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("TomoJAX worker started without its protocol pipes".into());
+        };
         let (send, incoming) = mpsc::sync_channel(128);
         let (outgoing, receive) = mpsc::sync_channel(128);
         let (terminate, stopping) = mpsc::channel();

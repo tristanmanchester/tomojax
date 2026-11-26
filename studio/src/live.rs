@@ -4,7 +4,7 @@
 //! A checkpoint's Arc is a read lease: superseding it cannot release its scalar
 //! or coordinate artifacts until queue, reader and completion all relinquish it.
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 
 use crate::imaging::{PlaneData, read_checkpoint_plane, read_pose_table};
@@ -111,14 +111,21 @@ impl LiveCheckpoints {
         let thread = std::thread::spawn(move || {
             loop {
                 let checkpoint = {
-                    let mut inbox = thread_shared.inbox.lock().unwrap();
-                    while inbox.pending.is_none() && !inbox.stopping {
-                        inbox = thread_shared.changed.wait(inbox).unwrap();
-                    }
+                    let inbox = thread_shared
+                        .inbox
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner);
+                    let mut inbox = thread_shared
+                        .changed
+                        .wait_while(inbox, |inbox| inbox.pending.is_none() && !inbox.stopping)
+                        .unwrap_or_else(PoisonError::into_inner);
                     if inbox.stopping {
                         break;
                     }
-                    inbox.pending.take().unwrap()
+                    let Some(checkpoint) = inbox.pending.take() else {
+                        continue;
+                    };
+                    checkpoint
                 };
                 // Taking the Arc from pending transfers its read lease atomically.
                 // The result never contains file-backed or borrowed scalar storage.
@@ -126,7 +133,12 @@ impl LiveCheckpoints {
                 if send.send(Completion { checkpoint, result }).is_err() {
                     break;
                 }
-                (thread_shared.wake.lock().unwrap().clone())();
+                let wake = thread_shared
+                    .wake
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .clone();
+                wake();
             }
         });
         Self {
@@ -155,7 +167,11 @@ impl LiveCheckpoints {
         }
     }
     pub fn set_waker(&mut self, wake: rune::Waker) {
-        *self.shared.wake.lock().unwrap() = wake;
+        *self
+            .shared
+            .wake
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = wake;
     }
     pub fn frame(&self) -> Option<&LiveFrame> {
         self.frame.as_ref()
@@ -237,7 +253,11 @@ impl LiveCheckpoints {
         }
         self.desired = Some(generation);
         self.error = None;
-        let mut inbox = self.shared.inbox.lock().unwrap();
+        let mut inbox = self
+            .shared
+            .inbox
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         inbox.pending = Some(checkpoint);
         drop(inbox);
         self.shared.changed.notify_one();
@@ -304,7 +324,11 @@ impl LiveCheckpoints {
         self.displayed = None;
         self.frame = None;
         self.error = None;
-        let mut inbox = self.shared.inbox.lock().unwrap();
+        let mut inbox = self
+            .shared
+            .inbox
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         inbox.pending = None;
     }
 
@@ -327,28 +351,25 @@ impl LiveCheckpoints {
             .filter(|handle| handle.retiring)
             .map(|handle| handle.request.as_str())
             .collect();
-        let retired: Vec<_> = self
-            .owners
-            .iter()
-            .filter_map(|(&id, owner)| {
-                (((Some(id) != self.desired && Some(id) != self.displayed)
-                    || retiring.contains(owner.info.request.as_str()))
-                    && Arc::strong_count(owner) == 1)
-                    .then_some(id)
-            })
-            .collect();
         let mut releases = Vec::new();
-        for id in retired {
-            let owner = self.owners.remove(&id).unwrap();
+        self.owners.retain(|&id, owner| {
+            if Arc::strong_count(owner) != 1
+                || ((Some(id) == self.desired || Some(id) == self.displayed)
+                    && !retiring.contains(owner.info.request.as_str()))
+            {
+                return true;
+            }
             for artifact in &owner.artifacts {
-                let remaining = self.references.get_mut(artifact).unwrap();
-                *remaining -= 1;
-                if *remaining == 0 {
-                    self.references.remove(artifact);
-                    releases.push(artifact.clone());
+                if let Some(remaining) = self.references.get_mut(artifact) {
+                    *remaining -= 1;
+                    if *remaining == 0 {
+                        self.references.remove(artifact);
+                        releases.push(artifact.clone());
+                    }
                 }
             }
-        }
+            false
+        });
         releases
     }
 
@@ -377,7 +398,11 @@ impl LiveCheckpoints {
     /// Drain readers before shutting down the session that owns their files.
     pub fn shutdown(&mut self) -> Vec<String> {
         self.clear();
-        self.shared.inbox.lock().unwrap().stopping = true;
+        self.shared
+            .inbox
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopping = true;
         self.shared.changed.notify_all();
         self.events.take(); // Unblock a sender before joining it.
         if let Some(thread) = self.thread.take() {

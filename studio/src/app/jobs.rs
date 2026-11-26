@@ -14,10 +14,10 @@ impl AppState {
         &mut self,
         preview: crate::previews::KeptPreview,
     ) -> Result<String, String> {
-        if self.project.is_none() || self.shutting_down {
+        let Some(project) = self.project.as_mut().filter(|_| !self.shutting_down) else {
             self.retire_output(&preview.output);
             return Err("Open a project before keeping the preview".into());
-        }
+        };
         let mut job = Job::new(&preview.operation, preview.parameters, vec![preview.input]);
         job.telemetry = preview.telemetry;
         job.status = JobStatus::Running;
@@ -28,7 +28,7 @@ impl AppState {
             revision: preview.revision,
         });
         let id = job.id.clone();
-        self.project.as_mut().unwrap().document.jobs.push(job);
+        project.document.jobs.push(job);
         self.mark_dirty();
         self.persist_arrays(&id, preview.output);
         self.refresh_model();
@@ -164,18 +164,6 @@ impl AppState {
         self.advance_job();
     }
 
-    fn active_job(&self) -> Option<Job> {
-        self.running.as_ref().and_then(|r| {
-            self.project
-                .as_ref()?
-                .document
-                .jobs
-                .iter()
-                .find(|j| j.id == r.job)
-                .cloned()
-        })
-    }
-
     fn export_array(&mut self, job: &Job) {
         let Some(input) = job.inputs.first().cloned() else {
             self.fail_job(&job.id, "Array export needs an input", false);
@@ -227,8 +215,20 @@ impl AppState {
         if self.shutting_down {
             return;
         }
-        let Some(job) = self.active_job() else { return };
-        let index = self.running.as_ref().unwrap().next_input;
+        let Some(running) = &mut self.running else {
+            return;
+        };
+        let Some(job) = self.project.as_ref().and_then(|project| {
+            project
+                .document
+                .jobs
+                .iter()
+                .find(|job| job.id == running.job)
+                .cloned()
+        }) else {
+            return;
+        };
+        let index = running.next_input;
         if job.operation == "export_array" {
             self.export_array(&job);
             return;
@@ -236,7 +236,6 @@ impl AppState {
         if !matches!(job.operation.as_str(), "open" | "inspect") && index < job.inputs.len() {
             let input = &job.inputs[index];
             if let Some(product) = registered_array(input) {
-                let running = self.running.as_mut().unwrap();
                 running.handles.push(String::new());
                 running.products.push(product);
                 running.next_input += 1;
@@ -524,16 +523,12 @@ impl AppState {
                     self.complete_job(&job, None);
                 } else if let Some(handle) = output.value.handle().map(str::to_owned) {
                     let id = new_id("result");
-                    let path = self
-                        .project
-                        .as_ref()
-                        .unwrap()
-                        .root
-                        .join("derived")
-                        .join(format!("{id}.nxs"));
-                    if let Some(project) = &mut self.project
-                        && let Some(j) = project.document.job_mut(&job)
-                    {
+                    let Some(project) = &mut self.project else {
+                        self.release_output(&output);
+                        return;
+                    };
+                    let path = project.root.join("derived").join(format!("{id}.nxs"));
+                    if let Some(j) = project.document.job_mut(&job) {
                         j.destination = Some(path.clone());
                         j.stage = "Saving result into project".into();
                         j.progress = None;
@@ -570,7 +565,14 @@ impl AppState {
                     self.fail_job(&job, "Saving did not return a committed file set", false);
                     return;
                 }
-                let mut result = self.result_asset(&job, &asset, &path, &original);
+                let mut result = match self.result_asset(&job, &asset, &path, &original) {
+                    Ok(result) => result,
+                    Err(error) => {
+                        self.release_output(&original);
+                        self.fail_job(&job, &error, false);
+                        return;
+                    }
+                };
                 match metadata::saved_arrays(&original.value, &path, None) {
                     Ok(arrays) => result.arrays = arrays,
                     Err(error) => {
@@ -593,17 +595,18 @@ impl AppState {
         id: &str,
         path: &Path,
         output: &Output,
-    ) -> Asset {
-        let job = self
+    ) -> Result<Asset, String> {
+        let project = self
             .project
             .as_ref()
-            .unwrap()
+            .ok_or("The result's project is closed")?;
+        let job = project
             .document
             .jobs
             .iter()
             .find(|j| j.id == job_id)
-            .unwrap();
-        let mut asset = Asset::input(self.project.as_ref().unwrap().stored_path(path), true);
+            .ok_or("The result's job no longer exists")?;
+        let mut asset = Asset::input(project.stored_path(path), true);
         asset.id = id.into();
         asset.kind = output.value.kind().into();
         // A projection's result belongs to the input its roles name (for a back
@@ -626,9 +629,7 @@ impl AppState {
         .map(|input| input.asset.clone());
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
-                self.project
-                    .as_ref()
-                    .unwrap()
+                project
                     .document
                     .asset(&i.asset)
                     .is_some_and(|a| a.simulated)
@@ -640,15 +641,26 @@ impl AppState {
         };
         asset.name = job.result_name(&job.subject(), asset.method.as_deref());
         asset.provenance = Some(output.manifest.clone());
-        asset
+        Ok(asset)
     }
 
     fn persist_arrays(&mut self, job: &str, output: Box<Output>) {
         let id = new_id("result");
-        let root = self.project.as_ref().unwrap().root.clone();
-        let destination = root.join("derived").join(&id);
+        let Some(project) = &self.project else {
+            self.retire_output(&output);
+            return;
+        };
+        let derived = project.root.join("derived");
+        let destination = derived.join(&id);
         let path = destination.join("array.npy");
-        let mut asset = self.result_asset(job, &id, &path, &output);
+        let mut asset = match self.result_asset(job, &id, &path, &output) {
+            Ok(asset) => asset,
+            Err(error) => {
+                self.retire_output(&output);
+                self.fail_job(job, &error, false);
+                return;
+            }
+        };
         let mut copies = Vec::new();
         let mut artifacts: Vec<String> = output
             .info
@@ -702,7 +714,7 @@ impl AppState {
                     artifacts.push(artifact.clone());
                 }
                 if copies.len() == 1 {
-                    asset.path = self.project.as_ref().unwrap().stored_path(&path);
+                    asset.path = project.stored_path(&path);
                 }
             } else {
                 self.retire_output(&output);
@@ -754,7 +766,7 @@ impl AppState {
                 check_cancel(&cancelled)?;
                 let stage = tempfile::Builder::new()
                     .prefix(".arrays-")
-                    .tempdir_in(root.join("derived"))
+                    .tempdir_in(derived)
                     .map_err(|e| e.to_string())?;
                 for (source, filename) in copies {
                     local::copy_file(&source, &stage.path().join(filename), &cancelled)?;
@@ -871,13 +883,12 @@ impl AppState {
     }
 
     fn close_running(&mut self, id: &str) {
-        if self.running.as_ref().is_some_and(|r| r.job == id) {
-            let running = self.running.take().unwrap();
-            if let Some(engine) = &mut self.engine {
-                for handle in running.handles {
-                    if !handle.is_empty() {
-                        let _ = engine.close_handle(&handle);
-                    }
+        if let Some(running) = self.running.take_if(|running| running.job == id)
+            && let Some(engine) = &mut self.engine
+        {
+            for handle in running.handles {
+                if !handle.is_empty() {
+                    let _ = engine.close_handle(&handle);
                 }
             }
         }

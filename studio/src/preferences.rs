@@ -195,18 +195,22 @@ impl Preferences {
         }
         let chord = Chord::parse(binding).map_err(|e| e.to_string())?;
         let label = chord.label_on(KeyPlatform::current());
-        for reserved in [
-            "escape", "tab", "mod+c", "mod+v", "mod+x", "mod+a", "mod+w", "mod+q",
-        ] {
-            if label
-                == Chord::parse(reserved)
-                    .unwrap()
-                    .label_on(KeyPlatform::current())
-            {
-                return Err(
-                    "This key is reserved for navigation, editing or closing the window".into(),
-                );
-            }
+        let reserved = [
+            Chord::new(rune::ChordKey::Escape),
+            Chord::new(rune::ChordKey::Tab),
+        ]
+        .into_iter()
+        .chain(
+            ['c', 'v', 'x', 'a', 'w', 'q']
+                .map(|key| Chord::new(rune::ChordKey::Char(key)).with(rune::ChordMod::Primary)),
+        );
+        if reserved
+            .into_iter()
+            .any(|chord| chord.label_on(KeyPlatform::current()) == label)
+        {
+            return Err(
+                "This key is reserved for navigation, editing or closing the window".into(),
+            );
         }
         for (other, title, _, default) in COMMANDS {
             if *other != id

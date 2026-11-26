@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -618,7 +618,10 @@ impl Project {
             let _lock = lock;
             while work.recv().is_ok() {
                 while work.try_recv().is_ok() {}
-                let snapshot = writer_pending.lock().unwrap().take();
+                let snapshot = writer_pending
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take();
                 if let Some(snapshot) = snapshot {
                     let error = atomic_write(&manifest, &snapshot.bytes).err();
                     let _ = ack.send(SaveAck {
@@ -627,7 +630,11 @@ impl Project {
                     });
                 }
             }
-            if let Some(snapshot) = writer_pending.lock().unwrap().take() {
+            if let Some(snapshot) = writer_pending
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .take()
+            {
                 let error = atomic_write(&manifest, &snapshot.bytes).err();
                 let _ = ack.send(SaveAck {
                     generation: snapshot.generation,
@@ -683,7 +690,7 @@ impl Project {
             self.save_error = Some(error.clone());
             return Err(error);
         }
-        *self.pending.lock().unwrap() = Some(Snapshot {
+        *self.pending.lock().unwrap_or_else(PoisonError::into_inner) = Some(Snapshot {
             generation: self.generation,
             bytes,
         });

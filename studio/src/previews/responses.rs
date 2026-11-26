@@ -38,14 +38,12 @@ impl Previews {
             Pending::Source(key) => self.source_response(key, &request, response, stale),
             Pending::Preview(submission) => {
                 let kind = submission.kind;
-                let current = self
-                    .slots
-                    .get(&kind)
-                    .and_then(|slot| slot.intent.as_ref())
-                    .is_some_and(|intent| {
+                let current = self.slots.get_mut(&kind).filter(|slot| {
+                    slot.intent.as_ref().is_some_and(|intent| {
                         intent.generation == submission.generation
                             && intent.request.as_deref() == Some(&request)
-                    });
+                    })
+                });
                 let admitted = response
                     .channel()
                     .filter(|channel| channel.name == kind.channel())
@@ -55,22 +53,24 @@ impl Previews {
                 if let Some(value) = admitted {
                     submission.revision = Some(value);
                 }
-                let latest_revision = self.slots.get(&kind).map_or(0, |slot| slot.revision);
-                let valid = current
-                    && !stale
-                    && consistent
-                    && (admitted.is_some() || matches!(response, Response::ProtocolError { .. }))
-                    && admitted.is_none_or(|value| value >= latest_revision);
-                if valid && let Some(value) = admitted {
-                    let slot = self.slots.get_mut(&kind).unwrap();
-                    slot.revision = value;
-                    slot.status.revision = Some(value);
-                }
-                if current && terminal && !valid {
-                    let slot = self.slots.get_mut(&kind).unwrap();
-                    slot.status.phase = PreviewPhase::Cancelled;
-                    slot.status.message = "Preview superseded before publication".into();
-                }
+                let valid = if let Some(slot) = current {
+                    let valid = !stale
+                        && consistent
+                        && (admitted.is_some()
+                            || matches!(response, Response::ProtocolError { .. }))
+                        && admitted.is_none_or(|value| value >= slot.revision);
+                    if valid && let Some(value) = admitted {
+                        slot.revision = value;
+                        slot.status.revision = Some(value);
+                    }
+                    if terminal && !valid {
+                        slot.status.phase = PreviewPhase::Cancelled;
+                        slot.status.message = "Preview superseded before publication".into();
+                    }
+                    valid
+                } else {
+                    false
+                };
                 if valid && let Response::Progress { record, .. } = &response {
                     submission.telemetry.apply(&request, record);
                 }
@@ -87,37 +87,45 @@ impl Previews {
 
     fn source_response(&mut self, key: &str, request: &str, response: Response, stale: bool) {
         let current =
-            self.sources.entries.get(key).is_some_and(
-                |source| matches!(&source.state,SourceState::Opening(id) if id==request),
+            self.sources.entries.get_mut(key).filter(
+                |source| matches!(&source.state, SourceState::Opening(id) if id == request),
             );
-        match response {
-            Response::Result {
-                result: ResultValue::Output(output),
-                ..
-            } if current && !stale => {
+        match (response, current) {
+            (
+                Response::Result {
+                    result: ResultValue::Output(output),
+                    ..
+                },
+                Some(source),
+            ) if !stale => {
                 if output.value.handle().is_some() {
-                    self.sources.entries.get_mut(key).unwrap().state = SourceState::Ready(output);
+                    source.state = SourceState::Ready(output);
                 } else {
-                    self.sources.entries.get_mut(key).unwrap().state =
+                    source.state =
                         SourceState::Failed("The source did not return a reusable handle".into());
                     self.retire_output(output);
                 }
             }
-            Response::Result {
-                result: ResultValue::Output(output),
-                ..
-            } => self.retire_output(output),
-            Response::Error { error, .. } if current => {
-                self.sources.entries.get_mut(key).unwrap().state =
-                    SourceState::Failed(error.message)
+            (
+                Response::Result {
+                    result: ResultValue::Output(output),
+                    ..
+                },
+                _,
+            ) => self.retire_output(output),
+            (Response::Error { error, .. }, Some(source)) => {
+                source.state = SourceState::Failed(error.message);
             }
-            Response::ProtocolError { message, .. } if current => {
-                self.sources.entries.get_mut(key).unwrap().state = SourceState::Failed(message)
+            (Response::ProtocolError { message, .. }, Some(source)) => {
+                source.state = SourceState::Failed(message);
             }
-            Response::Progress {
-                record: Progress::Preview { arrays, .. },
-                ..
-            } => self.retire_resources(
+            (
+                Response::Progress {
+                    record: Progress::Preview { arrays, .. },
+                    ..
+                },
+                _,
+            ) => self.retire_resources(
                 arrays
                     .values()
                     .flat_map(|array| array.artifacts().map(str::to_owned))
@@ -137,16 +145,18 @@ impl Previews {
         revision: Option<u64>,
     ) {
         let kind = submission.kind;
-        match response {
-            Response::Result {
-                result: ResultValue::Output(output),
-                ..
-            } => {
-                if valid
+        let slot = self.slots.get_mut(&kind).filter(|_| valid);
+        match (response, slot) {
+            (
+                Response::Result {
+                    result: ResultValue::Output(output),
+                    ..
+                },
+                mut slot,
+            ) => {
+                if let (Some(slot), Some(revision)) = (slot.as_deref_mut(), revision)
                     && kind.accepts(&output.value)
-                    && let Some(revision) = revision
                 {
-                    let slot = self.slots.get_mut(&kind).unwrap();
                     let old = slot.current.replace(PreviewResult {
                         input: submission.input.clone(),
                         operation: kind.operation().into(),
@@ -168,52 +178,50 @@ impl Previews {
                         self.retire_output(old.output);
                     }
                 } else {
-                    self.retire_output(output);
-                    if valid {
-                        let slot = self.slots.get_mut(&kind).unwrap();
+                    if let Some(slot) = slot {
                         slot.status.phase = PreviewPhase::Failed;
                         slot.status.message =
                             "The worker returned an unexpected preview product".into();
                     }
+                    self.retire_output(output);
                 }
             }
-            Response::Progress {
-                record: Progress::Preview { arrays, .. },
-                ..
-            } => self.retire_resources(
+            (
+                Response::Progress {
+                    record: Progress::Preview { arrays, .. },
+                    ..
+                },
+                _,
+            ) => self.retire_resources(
                 arrays
                     .values()
                     .flat_map(|array| array.artifacts().map(str::to_owned))
                     .collect(),
                 None,
             ),
-            Response::Progress { record, .. } if valid => {
-                let slot = self.slots.get_mut(&kind).unwrap();
-                match record {
-                    Progress::Started { label, name, .. } => {
-                        slot.status.phase = PreviewPhase::Running;
-                        slot.status.message = if label.is_empty() { name } else { label };
-                    }
-                    Progress::Advanced { done, total, .. } => {
-                        slot.status.phase = PreviewPhase::Running;
-                        slot.status.progress = total
-                            .filter(|value| *value > 0)
-                            .map(|value| (done as f32 / value as f32).clamp(0., 1.));
-                    }
-                    Progress::Paused { .. } => {
-                        slot.status.phase = PreviewPhase::Paused;
-                        slot.status.message = "Paused · the numerical queue is blocked".into();
-                    }
-                    Progress::Resumed { .. } => {
-                        slot.status.phase = PreviewPhase::Running;
-                        slot.status.message = "Preview resumed".into();
-                    }
-                    Progress::Note { message, .. } => slot.status.message = message,
-                    _ => {}
+            (Response::Progress { record, .. }, Some(slot)) => match record {
+                Progress::Started { label, name, .. } => {
+                    slot.status.phase = PreviewPhase::Running;
+                    slot.status.message = if label.is_empty() { name } else { label };
                 }
-            }
-            Response::Error { error, .. } if valid => {
-                let slot = self.slots.get_mut(&kind).unwrap();
+                Progress::Advanced { done, total, .. } => {
+                    slot.status.phase = PreviewPhase::Running;
+                    slot.status.progress = total
+                        .filter(|value| *value > 0)
+                        .map(|value| (done as f32 / value as f32).clamp(0., 1.));
+                }
+                Progress::Paused { .. } => {
+                    slot.status.phase = PreviewPhase::Paused;
+                    slot.status.message = "Paused · the numerical queue is blocked".into();
+                }
+                Progress::Resumed { .. } => {
+                    slot.status.phase = PreviewPhase::Running;
+                    slot.status.message = "Preview resumed".into();
+                }
+                Progress::Note { message, .. } => slot.status.message = message,
+                _ => {}
+            },
+            (Response::Error { error, .. }, Some(slot)) => {
                 slot.status.phase = if matches!(
                     error.kind,
                     crate::protocol::ErrorKind::Cancelled | crate::protocol::ErrorKind::Superseded
@@ -225,8 +233,7 @@ impl Previews {
                 slot.status.message = error.message;
                 slot.status.error_path = error.path;
             }
-            Response::ProtocolError { message, .. } if valid => {
-                let slot = self.slots.get_mut(&kind).unwrap();
+            (Response::ProtocolError { message, .. }, Some(slot)) => {
                 slot.status.phase = PreviewPhase::Failed;
                 slot.status.message = message;
             }

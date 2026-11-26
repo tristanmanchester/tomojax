@@ -45,7 +45,7 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
             state.ui.choice_menu = None;
             return true;
         }
-        if state.ui.rename.take().is_some() {
+        if state.ui.rename_asset.take().is_some() {
             return true;
         }
         if state.ui.activity.is_open() {

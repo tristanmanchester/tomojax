@@ -35,6 +35,26 @@ parley_engine = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f
 accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
 accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
 
+# Mark the integration test helpers as test code for Clippy.
+[[test]]
+name = "live_checkpoints"
+path = "src/integration/live_checkpoints.rs"
+
+[[test]]
+name = "preview_contract"
+path = "src/integration/preview_contract.rs"
+
+[[test]]
+name = "worker_contract"
+path = "src/integration/worker_contract.rs"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unused_self = "deny"
+
 [profile.dev]
 debug = 0
 

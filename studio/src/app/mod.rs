@@ -150,11 +150,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn init() -> Self {
-        let catalog = SchemaCatalog::new(
+        let catalog =
             serde_json::from_str(include_str!("../../../src/tomojax/cli/parameters.json"))
-                .expect("bundled protocol schema"),
-        )
-        .expect("schema definitions");
+                .map_err(|error| error.to_string())
+                .and_then(SchemaCatalog::new)
+                .unwrap_or_else(|error| {
+                    eprintln!("Could not load the bundled parameter schema: {error}");
+                    std::process::exit(1);
+                });
         let (local_send, local_receive) = mpsc::channel();
         let preference_result = Preferences::load();
         let preference_error = preference_result.as_ref().err().cloned();
@@ -611,13 +614,13 @@ impl AppState {
     /// project 2" and so on, so earlier demos are kept.
     fn open_demo_project(&mut self) -> Result<(), String> {
         let folder = crate::preferences::Preferences::data_dir().join("Demo projects");
-        let path = (1..)
+        let path = (1..=u32::MAX)
             .map(|n| match n {
                 1 => folder.join("Demo project"),
                 n => folder.join(format!("Demo project {n}")),
             })
             .find(|path| !path.exists())
-            .expect("an unused demo project name");
+            .ok_or("Could not find an unused demo project name")?;
         // A scan passed at launch belongs in the user's own project, not the demo.
         let pending = self.startup_input.take();
         let opened = self.open_project(&path, true);
@@ -669,7 +672,31 @@ impl AppState {
         // View undo belongs to the project it was recorded in.
         self.view_history.clear();
         self.view_future.clear();
-        let context = project.document.workspace.clone();
+        let document = &project.document;
+        let mut context = document.workspace.clone();
+        context.selected.retain(|id| document.asset(id).is_some());
+        let newest = if context
+            .active
+            .as_ref()
+            .and_then(|id| document.asset(id))
+            .is_none()
+        {
+            Some(
+                document
+                    .assets
+                    .iter()
+                    .max_by_key(|asset| (asset.is_result(), asset.created))
+                    .map(|asset| asset.id.clone()),
+            )
+        } else {
+            None
+        };
+        let unread: Vec<_> = document
+            .assets
+            .iter()
+            .filter(|asset| asset.arrays.is_empty())
+            .map(|asset| asset.id.clone())
+            .collect();
         self.preferences.visit(&project.root)?;
         self.project = Some(project);
         self.previews.reset();
@@ -681,21 +708,8 @@ impl AppState {
         self.imaging.invalidate();
         self.restore_workspace(&context);
         self.set_workspace(self.ui.workspace);
-        let document = &self.project.as_ref().unwrap().document;
-        self.model
-            .selected_assets
-            .retain(|id| document.asset(id).is_some());
-        if context
-            .active
-            .as_ref()
-            .and_then(|id| document.asset(id))
-            .is_none()
-        {
-            let newest = document
-                .assets
-                .iter()
-                .max_by_key(|asset| (asset.is_result(), asset.created));
-            self.model.active_asset = newest.map(|asset| asset.id.clone());
+        if let Some(newest) = newest {
+            self.model.active_asset = newest;
             if let Some(id) = &self.model.active_asset {
                 self.model.selected_assets.insert(id.clone());
             }
@@ -716,16 +730,6 @@ impl AppState {
         .into();
         self.refresh_model();
         self.refresh_images();
-        let unread: Vec<_> = self
-            .project
-            .as_ref()
-            .unwrap()
-            .document
-            .assets
-            .iter()
-            .filter(|asset| asset.arrays.is_empty())
-            .map(|asset| asset.id.clone())
-            .collect();
         for id in unread {
             self.start_metadata(&id);
         }
@@ -738,12 +742,13 @@ impl AppState {
     }
 
     pub fn import_paths(&mut self, paths: Vec<PathBuf>) {
-        if self.project.is_none() {
+        let selection = self.selected_inputs();
+        let Some(project) = &mut self.project else {
             self.model.error = Some("Create or open a project before importing scans".into());
             return;
-        }
+        };
         let mut metadata = Vec::new();
-        let selection = self.selected_inputs();
+        let mut copies = Vec::new();
         for path in paths {
             if path
                 .extension()
@@ -761,7 +766,6 @@ impl AppState {
                     continue;
                 }
             };
-            let project = self.project.as_mut().unwrap();
             if project
                 .document
                 .assets
@@ -773,21 +777,24 @@ impl AppState {
             let mut asset = Asset::input(path.clone(), false);
             if self.ui.import_copy {
                 let inputs = project.root.join("inputs").join(&asset.id);
-                self.copying += 1;
-                let selection = selection.clone();
-                self.spawn_local(Some(IMPORT_COPY.into()), move |cancelled| {
-                    let result = copy_acquisition(&path, &inputs, &cancelled);
-                    LocalEvent::Copied {
-                        asset,
-                        result,
-                        selection,
-                    }
-                });
+                copies.push((asset, path, inputs));
             } else {
                 asset.path = project.stored_path(&path);
                 metadata.push(asset.id.clone());
                 project.document.assets.push(asset);
             }
+        }
+        for (asset, path, inputs) in copies {
+            self.copying += 1;
+            let selection = selection.clone();
+            self.spawn_local(Some(IMPORT_COPY.into()), move |cancelled| {
+                let result = copy_acquisition(&path, &inputs, &cancelled);
+                LocalEvent::Copied {
+                    asset,
+                    result,
+                    selection,
+                }
+            });
         }
         self.ui.workspace = Workspace::Prepare;
         if let Some(id) = metadata.last() {

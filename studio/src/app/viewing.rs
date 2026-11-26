@@ -114,7 +114,7 @@ impl AppState {
         if self.model.active_asset.as_ref() == Some(&id) {
             return;
         }
-        self.ui.rename = None;
+        self.ui.rename_asset = None;
         self.model.active_asset = Some(id);
         self.image_key.clear();
         self.applied_window = None;
@@ -391,7 +391,7 @@ impl AppState {
             self.imaging.clear(5);
         }
         // Both sides show the same index, so it is clamped to the shorter volume.
-        let plane_axis = self.ui.compare_plane.axis().unwrap();
+        let plane_axis = self.ui.compare_plane.axis().unwrap_or(0);
         let compared = self.compared_volumes(plane_axis);
         let index = self
             .compared_count(plane_axis)

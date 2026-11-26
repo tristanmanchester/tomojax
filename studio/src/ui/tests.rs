@@ -574,10 +574,7 @@ fn navigator_rename_survives_reopen_without_changing_the_job_or_provenance() {
     click(&mut rt, "rename-result");
     rt.state
         .ui
-        .rename
-        .as_mut()
-        .unwrap()
-        .1
+        .rename_draft
         .replace_text(" Calibration sphere ");
     rt.frame(0.1);
     click(&mut rt, "save-result-name");

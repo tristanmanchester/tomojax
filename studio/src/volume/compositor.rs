@@ -59,14 +59,14 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
             .collect();
         let device_key = frame.device_key();
         if self.resources.as_ref().is_none_or(|r| r.key != device_key) {
-            self.resources = Some(Resources {
-                key: device_key,
-                pipes: Pipelines::new(frame.device, frame.format),
-                planes: HashMap::new(),
-                volumes: HashMap::new(),
-            });
+            self.resources = None;
         }
-        let resources = self.resources.as_mut().unwrap();
+        let resources = self.resources.get_or_insert_with(|| Resources {
+            key: device_key,
+            pipes: Pipelines::new(frame.device, frame.format),
+            planes: HashMap::new(),
+            volumes: HashMap::new(),
+        });
         resources.pipes.add_format(frame.device, frame.format);
         let mut planes = HashSet::new();
         let mut volumes = HashSet::new();

@@ -13,7 +13,7 @@ mod tests;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::{Duration, Instant};
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 use crate::engine::Engine;
 use crate::progress::JobProgress;
@@ -116,7 +116,7 @@ pub struct KeptPreview {
 struct Intent {
     input: CapturedInput,
     source: String,
-    parameters: Value,
+    parameters: Map<String, Value>,
     generation: u64,
     due: Instant,
     request: Option<String>,
@@ -198,9 +198,9 @@ impl Previews {
         input: CapturedInput,
         parameters: Value,
     ) -> Result<u64, String> {
-        if !parameters.is_object() {
+        let Value::Object(parameters) = parameters else {
             return Err("Preview parameters must be an object".into());
-        }
+        };
         let source = self.ensure_input(input.clone())?;
         let slot = self.slots.entry(kind).or_default();
         if let Some(intent) = &slot.intent
@@ -291,18 +291,15 @@ impl Previews {
         for source in self.sources.trim(&keep) {
             self.retire_source(source.state);
         }
-        let waiting: Vec<_> = self
+        for (key, source) in self
             .sources
             .entries
-            .iter()
+            .iter_mut()
             .filter(|(_, source)| matches!(source.state, SourceState::Waiting))
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in waiting {
+        {
             if engine.execution_capacity() == 0 {
                 break;
             }
-            let source = self.sources.entries.get_mut(&key).unwrap();
             let mut command = source
                 .input
                 .open_parameters
@@ -318,7 +315,7 @@ impl Previews {
             ) {
                 Ok(id) => {
                     source.state = SourceState::Opening(id.clone());
-                    self.pending.insert(id, Pending::Source(key));
+                    self.pending.insert(id, Pending::Source(key.clone()));
                 }
                 Err(error) => source.state = SourceState::Failed(error),
             }
@@ -346,14 +343,22 @@ impl Previews {
                     continue;
                 }
             };
-            let mut command = intent.parameters.as_object().unwrap().clone();
-            command.insert("type".into(), json!(kind.operation()));
-            command.insert("source".into(), serde_json::to_value(source).unwrap());
             if engine.channel_capacity(kind.channel()) == 0 {
                 slot.status.phase = PreviewPhase::Queued;
                 slot.status.message = "Waiting for worker admission capacity".into();
                 continue;
             }
+            let source = match serde_json::to_value(source) {
+                Ok(source) => source,
+                Err(error) => {
+                    slot.status.phase = PreviewPhase::Failed;
+                    slot.status.message = format!("Could not encode the preview source: {error}");
+                    continue;
+                }
+            };
+            let mut command = intent.parameters.clone();
+            command.insert("type".into(), json!(kind.operation()));
+            command.insert("source".into(), source);
             match engine.request(Value::Object(command), Some(kind.channel())) {
                 Ok(id) => {
                     intent.request = Some(id.clone());
@@ -366,7 +371,7 @@ impl Previews {
                             kind: *kind,
                             generation: intent.generation,
                             input: intent.input.clone(),
-                            parameters: intent.parameters.clone(),
+                            parameters: Value::Object(intent.parameters.clone()),
                             revision: None,
                             telemetry: JobProgress::default(),
                         })),
@@ -401,16 +406,16 @@ impl Previews {
             .slots
             .get_mut(&kind)
             .ok_or("No completed preview to keep")?;
-        if slot.status.phase != PreviewPhase::Ready
-            || !slot.current.as_ref().is_some_and(|current| {
-                slot.intent
-                    .as_ref()
-                    .is_some_and(|intent| intent.generation == current.generation)
+        let current = slot
+            .current
+            .take_if(|current| {
+                slot.status.phase == PreviewPhase::Ready
+                    && slot
+                        .intent
+                        .as_ref()
+                        .is_some_and(|intent| intent.generation == current.generation)
             })
-        {
-            return Err("Wait for the latest preview before keeping it".into());
-        }
-        let current = slot.current.take().unwrap();
+            .ok_or("Wait for the latest preview before keeping it")?;
         slot.intent = None;
         slot.status = PreviewStatus::default();
         Ok(KeptPreview {
@@ -432,25 +437,29 @@ impl Previews {
         action: &str,
         engine: &mut Engine,
     ) -> Result<(), String> {
-        let target = self
-            .slots
-            .get(&kind)
-            .and_then(|slot| slot.intent.as_ref())
-            .and_then(|intent| intent.request.clone());
+        let not_admitted = "This preview has not entered the worker queue";
+        let Some(slot) = self.slots.get_mut(&kind) else {
+            return if action == "cancel" {
+                Ok(())
+            } else {
+                Err(not_admitted.into())
+            };
+        };
+        let target = slot
+            .intent
+            .as_ref()
+            .and_then(|intent| intent.request.as_deref());
         if let Some(target) = target {
-            let id = engine.control(&target, action)?;
+            let id = engine.control(target, action)?;
             self.pending.insert(id, Pending::Cleanup);
-            self.slots.get_mut(&kind).unwrap().status.message =
-                format!("{action} requested; waiting for a safe point");
+            slot.status.message = format!("{action} requested; waiting for a safe point");
             self.next_status = Instant::now();
         } else if action == "cancel" {
-            if let Some(slot) = self.slots.get_mut(&kind) {
-                slot.intent = None;
-                slot.status.phase = PreviewPhase::Cancelled;
-                slot.status.message = "Preview cancelled before admission".into();
-            }
+            slot.intent = None;
+            slot.status.phase = PreviewPhase::Cancelled;
+            slot.status.message = "Preview cancelled before admission".into();
         } else {
-            return Err("This preview has not entered the worker queue".into());
+            return Err(not_admitted.into());
         }
         Ok(())
     }

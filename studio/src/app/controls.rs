@@ -100,17 +100,20 @@ impl AppState {
             } => (job, target, action, true),
             _ => return,
         };
-        if !self.pending.contains_key(&target)
-            || !self.control_watch.as_ref().is_some_and(|watch| {
-                watch.job == job && watch.target == target && watch.action == action
-            })
-        {
+        let Some(watch) = self
+            .control_watch
+            .as_mut()
+            .filter(|watch| watch.job == job && watch.target == target && watch.action == action)
+        else {
+            return;
+        };
+        if !self.pending.contains_key(&target) {
             return;
         }
         if !checking {
             if matches!(result, ResultValue::Ack) {
                 // Ack confirms the control request, not arrival at a safe point.
-                self.control_watch.as_mut().unwrap().next_check = Some(Instant::now());
+                watch.next_check = Some(Instant::now());
             } else {
                 self.control_failed(
                     &job,

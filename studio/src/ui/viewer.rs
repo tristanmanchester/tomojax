@@ -732,7 +732,7 @@ fn measurements(state: &AppState, kind: PlaneKind, interactive: bool) -> El {
         } else {
             vec![a, b]
         };
-        shape = shape.stroke(path, 0.28, color("#E8D296"));
+        shape = shape.stroke(path, 0.28, color([0xE8, 0xD2, 0x96]));
     }
     canvas(shape).w_full().h_full().absolute(0., 0.).inert()
 }
@@ -821,7 +821,7 @@ fn compare(state: &AppState) -> El {
         .w_full()
         .h_full()
         .child(col().gap(6.).child(strong("Compare results", 24., ink())));
-    if left.is_none() || right.is_none() {
+    let (Some(left), Some(right)) = (left, right) else {
         return main.child(
             el().grow(1.).min_h(0.).center().child(
                 col()
@@ -842,8 +842,7 @@ fn compare(state: &AppState) -> El {
                     )),
             ),
         );
-    }
-    let (left, right) = (left.expect("checked"), right.expect("checked"));
+    };
     let plane = state.ui.compare_plane;
     let mode = state.ui.compare_mode;
     let shared_grid = state.model.comparison_note.is_none();

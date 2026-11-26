@@ -23,9 +23,11 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
         .layout_with("studio-root", |r| r[2] < 1320.)
         .unwrap_or(false);
     let mut body = row().grow(1.).min_h(0.).min_w(0.).w_full();
-    if state.model.project.is_some() && state.ui.tree_open {
+    if let Some(project) = &state.model.project
+        && state.ui.tree_open
+    {
         body = body
-            .child(project_tree(state))
+            .child(project_tree(state, project))
             .child(el().w(1.).h_full().fill(line()));
     }
     let main = if state.model.project.is_none() {
@@ -61,7 +63,7 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
                 .py(10.)
                 .gap(12.)
                 .items_center()
-                .fill(color("#FAEAE4"))
+                .fill(color([0xFA, 0xEA, 0xE4]))
                 .child(icon(Icon::Alert, 16., tokens::error()))
                 .child(label(error, 12., tokens::error()).wrap().grow(1.).min_w(0.))
                 .child(icon_button(
@@ -140,7 +142,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                 if selected { forest() } else { muted() },
             ));
         if selected && available {
-            tab = tab.child(el().h(3.).radius(1.5).fill(color("#688E6E")).pin(
+            tab = tab.child(el().h(3.).radius(1.5).fill(color([0x68, 0x8E, 0x6E])).pin(
                 Some(10.),
                 None,
                 Some(10.),
@@ -211,12 +213,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
     bar
 }
 
-fn project_tree(state: &AppState) -> El {
-    let project = state
-        .model
-        .project
-        .as_ref()
-        .expect("project tree requires an open project");
+fn project_tree(state: &AppState, project: &ProjectView) -> El {
     let mut tree = col()
         .key("project-tree")
         .w(228.)
@@ -441,19 +438,15 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
         15.,
         if active { forest() } else { muted() },
     ));
-    let renaming = state
-        .ui
-        .rename
-        .as_ref()
-        .is_some_and(|(id, _)| id == &asset.id);
-    if let Some((_, draft)) = state.ui.rename.as_ref().filter(|_| renaming) {
+    let renaming = state.ui.rename_asset.as_ref() == Some(&asset.id);
+    if renaming {
         name = name.child(
             submit_input(
                 "result-name",
-                draft,
+                &state.ui.rename_draft,
                 "Result name",
                 UiAction::RenameResult,
-                |s| &mut s.ui.rename.as_mut().unwrap().1,
+                |s| &mut s.ui.rename_draft,
             )
             .grow(1.),
         );
@@ -476,7 +469,8 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
                 Icon::Edit,
                 true,
                 move |s, tx| {
-                    s.ui.rename = Some((id.clone(), rune::TextEdit::new(&current)));
+                    s.ui.rename_asset = Some(id.clone());
+                    s.ui.rename_draft = rune::TextEdit::new(&current);
                     tx.focus("result-name", true);
                 },
             ));
@@ -521,7 +515,7 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
         .fill(if active {
             sage()
         } else if selected {
-            color("#EDF2E8")
+            color([0xED, 0xF2, 0xE8])
         } else {
             paper()
         })
@@ -570,11 +564,7 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
         );
     }
     if renaming {
-        let valid = state
-            .ui
-            .rename
-            .as_ref()
-            .is_some_and(|(_, d)| !d.text.trim().is_empty());
+        let valid = !state.ui.rename_draft.text.trim().is_empty();
         return item.child(
             row()
                 .gap(6.)
@@ -591,7 +581,7 @@ fn asset_row(state: &AppState, asset: &AssetView, depth: usize, has_children: bo
                 )
                 .child(
                     quiet_button("cancel-result-name", "Cancel", false, |s, _| {
-                        s.ui.rename = None
+                        s.ui.rename_asset = None
                     })
                     .h(30.),
                 ),
