@@ -93,7 +93,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `control` | Cancel, pause or resume a job; close a handle; reload tool definitions or restart the worker |
 | `python` | Run Python in the worker, with the live handles and `tj` in scope |
 
-Tools that accept `dry_run` report what a call would do without running it: the method and grid a reconstruction would use and its memory estimate, the files an export would create, or the shapes a simulation would produce. Use `describe` before setting expert keys in `config`.
+Tools that accept `dry_run` report what a call would do without running it: the method and grid a reconstruction would use and its memory estimate, the files an export would create, or the shapes a simulation would produce. Use `describe` before setting expert keys in `config`. A call with a malformed argument returns an error that shows the shape the argument should have, so the agent can correct it on the next try.
 
 ## Handles and references
 
@@ -117,7 +117,7 @@ The server runs one worker process with one queue, so GPU jobs run one after ano
 
 ## Point at a feature
 
-An agent can show you exactly what it means instead of describing it. `view` takes `marks`: points, arrows, boxes, circles, polylines, polygons and text, each with an optional label and colour. A position is either array indices of the source, `[z, y, x]` for a volume or `[view, v, u]` for projections, or a pixel in an image an earlier `view` returned, `{"pixel": [x, y], "image": "render-12"}` with the origin at the top left, which the server converts to indices. Either way a mark lands on the same voxel in every plane, ROI and zoom; a circle is a sphere, and each plane shows its cross-section. Index ticks along the image edges, or a pixel grid with `grid`, help the agent aim. The result reports, for each mark, its positions in array indices and, for each plane, whether it was drawn, its pixel in the image, the value under it, and that value's percentile in the plane and place within the display limits, so a mark on background reads as a miss.
+An agent can show you exactly what it means instead of describing it. `view` takes `marks`: points, arrows, boxes, circles, polylines, polygons and text, each with an optional label and colour. A position is either array indices of the source, `[z, y, x]` for a volume or `[view, v, u]` for projections, or a pixel in an image an earlier `view` returned, `{"pixel": [x, y], "image": "render-12"}` with the origin at the top left, which the server converts to indices. Either way a mark lands on the same voxel in every plane, ROI and zoom; a circle is a sphere, and each plane shows its cross-section. Index ticks along the image edges, or a pixel grid with `grid`, help the agent aim. The result reports, for each mark, its positions in array indices and, for each plane, whether it was drawn, its pixel in the image, the value under it, and that value's percentile in the plane and place within the display limits, so a mark on background reads as a miss. A point with `snap` set to `peak`, `trough` or `edge` moves, on each plane, to the brightest or darkest sample or the steepest edge within `within` index units (5 by default), and the report gives where it moved to and how far.
 
 `view` images stay within 1568 pixels on the long edge and 1.15 megapixels, so a model sees them unscaled and its pixel positions match the server's. Give `source` a list to show several candidates side by side on the same planes, with the same marks and outlines, and `limits` to fix the display range.
 
