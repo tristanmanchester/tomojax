@@ -1,0 +1,76 @@
+name: Site
+
+# Builds tomojax.dev and deploys it to Cloudflare Pages when a push to main changes
+# anything the site is built from: the guides (every Markdown file, with their images),
+# the docstrings behind the API pages (the package source), and the site itself.
+# `gh workflow run Site` deploys main on demand.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**/*.md"
+      - "docs/**"
+      - "images/**"
+      - "site/**"
+      - "src/tomojax/**"
+      - "tools/docs_sync.py"
+      - "tools/docs_api.py"
+      - ".github/workflows/site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time; a newer push replaces a deploy still waiting, not one under way.
+concurrency:
+  group: site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: site
+      url: https://tomojax.dev
+    defaults:
+      run:
+        working-directory: site
+
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26"
+
+      # The same three steps as `just site`.
+      - name: Generate guides and API pages
+        working-directory: .
+        run: |
+          python3 tools/docs_sync.py
+          uv run --no-project --with "griffe>=1.14" python tools/docs_api.py
+
+      - name: Build
+        run: |
+          npm install --global pnpm@12
+          pnpm install --frozen-lockfile
+          pnpm build
+
+      - name: Check the search index
+        run: pnpm test
+
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: >
+          npx wrangler@4.158.0 pages deploy out --project-name tomojax --branch main
+          --commit-hash "$GITHUB_SHA" --commit-dirty=true

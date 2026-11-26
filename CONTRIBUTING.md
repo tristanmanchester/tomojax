@@ -31,7 +31,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just test-cov` | The same tests with branch coverage |
 | `just docstrings` | Validate NumPy-style public API docstrings |
 | `just docs` | Build the Python reference HTML into `.artifacts/docs/` |
-| `just site` | Sync Markdown guides, generate API pages with `griffe`, and build `tomojax.dev` in `site/` |
+| `just site` | Sync Markdown guides, generate API pages with `griffe`, and build `tomojax.dev` in `site/`. The Site workflow runs the same steps and deploys on a push to `main` that changes a guide, an image, the package source or `site/` |
 | `just typecheck` | Run `basedpyright` on the configured public API, IO, CLI, and tools |
 | `just imports` | Check dependency layers and public-import guardrails |
 | `just examples` | Run the public projection and reconstruction example |
