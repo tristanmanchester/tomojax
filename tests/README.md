@@ -24,7 +24,9 @@ ordering, physical metadata, and deterministic simulation.
 Numerical tests check independent analytic or dense references, forward/adjoint
 consistency, physical geometry, interpolation boundaries, gradients, iterative
 convergence, active alignment parameters, bordered solves, and geometry replay. GPU tests compare
-real CUDA implementations with their references. Benchmarks and their retained
+real CUDA implementations with their references. `test_properties.py` checks the exact transpose,
+file round trips and the automatic method choice on geometries Hypothesis draws, and
+`test_surface_parity.py` runs one scenario table through `tj.*`, the CLI, `tomojax serve` and MCP. Benchmarks and their retained
 failures are described separately in [bench/README.md](../bench/README.md).
 
 The source and installed-wheel smoke checks exercise the same useful CLI path:
