@@ -237,8 +237,8 @@ def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: i
     d_angle = trans.create_dataset("rotation_angle", data=angles)
     d_angle.attrs["units"] = "degree"
     write_string_attr(d_angle, "transformation_type", "rotation")
-    # The public NX fields must agree with the saved tilted/arbitrary-axis model.
-    # If that model is incomplete, do not manufacture an axial direction.
+    # The NX axis restates the saved tilted/arbitrary-axis model, so it is
+    # written only when that model determines the axis.
     inputs = dict(meta.geometry_meta or {})
     gtype = normalize_geometry_type(meta.geometry_type)
     inputs["geometry_type"] = "lamino" if gtype == "cone" else gtype

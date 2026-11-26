@@ -232,7 +232,7 @@ def _solve(
         # conjugate recurrence below roundoff can amplify arithmetic noise.
         # Check each voxel: a global volume norm can hide meaningful updates
         # to weak regions when another region contains much larger values.
-        # Report this separately; do not silently relax the requested tolerance.
+        # Report this separately, as a roundoff limit.
         roundoff = jnp.all(
             jnp.abs(alpha * state.direction)
             <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
@@ -244,7 +244,7 @@ def _solve(
         # Atomic transpose reductions can keep a noisy conjugate recurrence
         # moving even after it reaches the FP32 cancellation floor. Check the
         # true residual periodically once its norm is small, before that noise
-        # gets amplified. This does not relax the requested stopping tolerance.
+        # gets amplified.
         near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
         check_due = ((state.iteration + 1) % 16 == 0) | state.residual_verified
         verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
