@@ -24,6 +24,11 @@ registered scalar data. A display operation never mutates a numerical input.
 | `volume/` | Scalar image shaders, transfer textures and volume ray casting within Rune |
 | `ui/` | Native layout, controls, scientific overlays and presentation-only drafts |
 
+[STATECHART.md](STATECHART.md) charts the preview channel, job control,
+checkpoint lease and save state machines. Under `cargo test`,
+`tests/protocol_model.rs` checks every interleaving of each one with the
+worker, within small bounds.
+
 `UiModel` is a presentation snapshot derived from the project and live service
 state. `UiAction` is the view's route to application effects. It does not contain
 an independent copy of the scientific workflow. `UiState` owns editable drafts
@@ -122,8 +127,9 @@ carry generations so an older save cannot clear a newer dirty state. The writer
 holds an OS lock for its lifetime. An unsupported manifest version is rejected
 without rewriting it. Both reading and writing enforce the existing 32 MiB
 manifest limit. Oversized metadata remains in memory with a visible save error;
-it does not replace the last valid file. An older successful write cannot clear
-a newer save error.
+it does not replace the last valid file. Only the latest generation's
+acknowledgement sets or clears the save error: an older successful write cannot
+clear a newer error, and an older failed write cannot fail a newer save.
 
 Managed data uses relative project paths. Referenced acquisitions stay external
 unless the user selects copying. Captured job inputs retain their original paths

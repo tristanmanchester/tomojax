@@ -28,6 +28,9 @@ glam = "0.30"
 tempfile = "3"
 blake3 = "1"
 
+[dev-dependencies]
+stateright = "0.31"
+
 [patch.crates-io]
 wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
 winit = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16" }
