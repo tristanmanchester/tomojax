@@ -345,7 +345,7 @@ def test_auto_reconstruct_allows_devices_and_rejects_warm_start_false(cylinder_s
         tj.reconstruct(cylinder_scan, warm_start=False)
     with pytest.raises(ValueError, match="takes them: cgls, fista, spdhg, sirt, mlem$"):
         tj.reconstruct(cylinder_scan, iterations=5)
-    with pytest.raises(ValueError, match="takes them: fbp$"):
+    with pytest.raises(ValueError, match="takes them: fbp, fourier$"):
         tj.reconstruct(cylinder_scan, filter="hann")
     with pytest.raises(ValueError, match="no one method takes all of them$"):
         tj.reconstruct(cylinder_scan, filter="hann", iterations=5)
