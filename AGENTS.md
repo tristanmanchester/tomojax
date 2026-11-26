@@ -7,29 +7,38 @@ real scans while `tj.load`, `tj.reconstruct` and `tj.align` just work.
 
 ## Constraints
 
-- The backprojector stays the exact transpose of the forward projector; an
-  approximate one is out of scope.
+- Keep the backprojector the exact transpose of the forward projector.
 - Improvements must be general, not tuned to one benchmark, phantom or dataset.
-- Breaking changes are fine before 1.0; no compatibility shims.
+- Breaking changes are fine before 1.0. Omit compatibility shims.
 - A faster or lower-residual result only counts once the reconstruction or pose
   error has been checked too.
 - Real data is within a few orders of magnitude of 1 in sensible units; do not
   engineer for values like 1e-30 or 1e30.
-- Invalid input that already gives an obviously broken result (all NaN, an
-  exception) does not need a new guard.
-- Fix a method that gets a case wrong; do not detect the case and bypass it
-  (see "Fix the method, don't wrap it" in CONTRIBUTING.md).
+- Fix failures in the method itself. Prefer deletion or simplification over
+  defensive guards, especially when bad inputs already fail clearly.
+- Start review with deterministic checks. Limit prose review to one or two rounds.
 
 ## Checks
 
-`just ci` is the CPU gate (about 4 minutes); `just test-cuda` runs everything on
-a CUDA GPU (8 to 9 minutes on an 8 GB card), including the slow alignment fits
-the CPU gate leaves to it. A change is ready when the tests it touches
-pass, on the GPU if it touches GPU code. The maintainer runs `just ci` and the
-full GPU suite when merging into main, so a ready commit on a branch is the
-whole hand-off.
-Conventions are in CONTRIBUTING.md, measured numbers in docs/measurements.md,
-and the comparisons with ASTRA and TIGRE in bench/.
+- Start with `just surface-check` for Ruff, public imports and surface tests.
+  Use `just typecheck` (basedpyright), `just imports` (import-linter) and
+  `tests/test_architecture.py` for targeted static and architecture checks.
+- Run `just guardrails` after intentional API changes or ratchet decreases.
+  Regenerate wire files in order with `uv run python tools/build_wire_options.py`
+  then `uv run python tools/build_wire_schemas.py`.
+- Run the tests your change touches, on GPU for GPU changes. The maintainer runs
+  the CPU gate (`just ci`) and full GPU suite (`just test-cuda`, including slow
+  alignment fits) when merging into main. Hand off a ready commit.
+
+## Studio
+
+Use Rust 1.99.1. From [`studio/`](studio/), run `cargo fmt --check`,
+`cargo clippy --locked --all-targets -- -D warnings` and `cargo test --locked`.
+Verify visual changes with a headless `--snap` capture.
+[Studio verification](studio/README.md#verification) · [Studio architecture](studio/ARCHITECTURE.md)
+
+See the [architecture map](docs/architecture-map.md), [conventions](CONTRIBUTING.md),
+[measurements](docs/measurements.md) and [benchmark drivers](bench/).
 
 Say what changed and how it was checked in a few plain sentences. Evidence
 (logs, scripts, archived results) stays out of the repository.
