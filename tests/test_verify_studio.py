@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 from pathlib import Path
 
 import msgspec
@@ -12,7 +13,8 @@ from tools import verify_studio
 import tomojax as tj
 
 pytestmark = pytest.mark.surface
-STUDIO_BINARY = verify_studio.locate_binary()
+# A binary found on disk may be another checkout's or an older build, so name the one to test.
+STUDIO_BINARY = os.environ.get("TOMOJAX_TEST_STUDIO")
 
 
 def test_fixture_registers_a_scan_and_two_distinct_volumes(tmp_path: Path) -> None:
@@ -128,7 +130,7 @@ def test_capture_requires_a_fresh_png_even_if_the_renderer_exits_zero(
     assert {path.name for path in output.iterdir()} == {"start.png"}
 
 
-@pytest.mark.skipif(STUDIO_BINARY is None, reason="requires a compiled Studio binary")
+@pytest.mark.skipif(STUDIO_BINARY is None, reason="set TOMOJAX_TEST_STUDIO to a Studio binary")
 def test_native_studio_captures_all_six_views(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

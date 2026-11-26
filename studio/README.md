@@ -156,13 +156,15 @@ Press **Ctrl+K** or click **Search commands** to run any command or open any ope
 
 ## Verification
 
-From the repository root:
+From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio and captures the Start screen and each workspace of a small simulated project into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
 
 ```sh
 export RUSTUP_TOOLCHAIN=1.99.1
 cargo fmt --manifest-path studio/Cargo.toml --check
+cargo clippy --locked --manifest-path studio/Cargo.toml --all-targets -- -D warnings
 cargo test --release --locked --manifest-path studio/Cargo.toml
 TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml -- --ignored
+uv run --no-sync python tools/verify_studio.py --build
 ```
 
 The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.

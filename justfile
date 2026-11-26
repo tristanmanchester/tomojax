@@ -69,6 +69,12 @@ studio-wheel:
 studio-check: studio-lint
     cargo test --locked --manifest-path studio/Cargo.toml
 
+# Build Studio and capture every workspace headless into .artifacts/studio-snap.
+[env("CARGO_TARGET_DIR", studio_target_dir)]
+[env("RUSTUP_TOOLCHAIN", studio_toolchain)]
+studio-verify:
+    uv run --no-sync python tools/verify_studio.py --build
+
 [private]
 [env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]

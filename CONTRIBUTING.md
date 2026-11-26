@@ -14,7 +14,7 @@ The script installs the locked development dependencies with `cuda12` when `nvid
 
 In T3 Code, add a project script with `./tools/worktree_setup.sh` as its command and enable `runOnWorktreeCreate` to run it when T3 creates a worktree.
 
-The script uses `$HOME/.cache/tomojax-tmp` as `TMPDIR` for the sync unless you supply a non-empty `TMPDIR`. On Linux it also creates `$HOME/.cache/tomojax-studio-target`. Set `CARGO_TARGET_DIR` to that path in your shell or Studio build command to share Cargo build outputs across worktrees.
+The script uses `$HOME/.cache/tomojax-tmp` as `TMPDIR` for the sync unless you supply a non-empty `TMPDIR`. On Linux it also creates `$HOME/.cache/tomojax-studio-target`, the Cargo target directory that `just studio-check` and `just studio-verify` share across worktrees; set `CARGO_TARGET_DIR` to use another. The justfile sets the same `TMPDIR` default for its recipes.
 
 To install optional groups, run `uv sync --locked --extra cpu --dev --group examples` for figures or use `--group benchmark` for comparison libraries. Use `--extra cuda12` for a CUDA environment. See [bench/README.md](bench/README.md).
 
@@ -25,6 +25,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | Command | Purpose |
 | --- | --- |
 | `just format` | Format and auto-fix lint issues with Ruff |
+| `just fast-check` | Read-only format, lint, type-error, and import checks and the architecture tests, in parallel |
 | `just surface-check` | Read-only format, lint, and import checks, CLI and accelerator smoke checks, and surface tests (excluding numerical and GPU markers) |
 | `just test` | Every CPU test, in parallel, including the alignment fits marked `slow` |
 | `just test-cov` | The same tests with branch coverage |
@@ -36,8 +37,10 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just examples` | Run the public projection and reconstruction example |
 | `just package` | Build sdist and wheel, run `twine check --strict`, and smoke-test the installed wheel |
 | `just ci` | CPU gate: static checks, package build and smoke test, example, the CPU tests except those marked `slow`, and small analytic benchmarks |
-| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it |
+| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it. A per-user lock makes a second run wait for the first |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
+| `just studio-check` | Studio's `cargo fmt --check`, Clippy with `-D warnings`, and `cargo test` on Rust 1.99.1 |
+| `just studio-verify` | Build Studio and capture each workspace headless into `.artifacts/studio-snap/`, failing on a missing or blank image |
 
 `just check` formats files before running checks; use `just ci` for read-only validation. Mark a test that takes more than about 10 s on a CPU `slow`: it starts first in a parallel run, and `just ci` leaves it to `just test-cuda`, where the same fit takes seconds. Package recipes overwrite `dist/`, so store release artifacts elsewhere. Run `just test-cuda` on NVIDIA hardware whenever a change touches GPU kernels or accelerator paths.
 
