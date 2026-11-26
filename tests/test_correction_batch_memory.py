@@ -1,4 +1,4 @@
-"""Automatic raw-frame batches account for padded FFT arrays before reading data."""
+"""Automatic raw-frame batches account for padded FFT arrays before the device sees data."""
 
 from __future__ import annotations
 
@@ -6,11 +6,12 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax import progress
 from tomojax.corrections import Paganin
 
 
 class ConstantViews:
-    """Lazy per-view constant fields, logging which data the correction reads."""
+    """Lazy per-view constant fields, logging how many views each read asks for."""
 
     dtype = np.dtype(np.float32)
 
@@ -28,7 +29,7 @@ class ConstantViews:
 @pytest.mark.parametrize("shape", [(256, 256), (192, 512)])
 @pytest.mark.parametrize("phase", [False, True])
 @pytest.mark.parametrize("batch", [None, 11])
-def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
+def test_phase_retrieval_limits_automatic_batches_and_preserves_explicit_ones(
     shape: tuple[int, int], phase: bool, batch: int | None
 ) -> None:
     rows, cols = shape
@@ -37,17 +38,23 @@ def test_phase_retrieval_limits_automatic_reads_and_preserves_explicit_batches(
         tj.Grid(8, 8, 2, 1.0, 1.0, 1.0), tj.Detector(cols, rows, 1.0, 1.0), np.arange(65)
     )
     steps = [Paganin(300.0, 0.001, 20.0, 1e-6)] if phase else []
-    actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(
-        *steps, views_per_batch=batch
-    )
+    events: list[progress.Event] = []
+    with progress.watch(events.append):
+        actual = tj.Frames(counts, geometry, white_level=1000.0).corrected(
+            *steps, views_per_batch=batch
+        )
 
+    # Reads come in blocks of whole batches, so the batches show in the reported work.
+    batches = next(
+        e.total for e in events if isinstance(e, progress.Started) and e.unit == "view batches"
+    )
     if batch is not None:
-        assert max(counts.requests) == batch
+        assert batches == -(-counts.shape[0] // batch)
     elif phase:
         # The small unpadded input fits one batch; its padded FFT arrays do not.
-        assert max(counts.requests) < counts.shape[0]
+        assert batches is not None and batches > 1
     else:
-        assert counts.requests == [counts.shape[0]]
+        assert batches == 1
     assert sum(counts.requests) == counts.shape[0]
     expected = -np.log(counts.levels / 1000.0)[:, None, None]
     np.testing.assert_allclose(
