@@ -59,7 +59,6 @@ fn durable_commands_request_checkpoints_only_for_a_connected_consumer() {
 fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomputing() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
-    state.started = true;
     state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     let path = directory.path().join("preview.npy");
@@ -188,16 +187,16 @@ fn background_result_does_not_retarget_an_active_interactive_preview() {
     state.ui.workspace = Workspace::Reconstruct;
     state.preview_context.active = Some(crate::previews::PreviewKind::Slice);
     let preview = plane(Path::new("live-preview.npy"));
-    state
-        .preview_context
-        .arrays
-        .insert("plane".into(), preview.clone());
+    state.preview_context.shown = super::super::previewing::Shown::Result {
+        request: "preview-1".into(),
+        arrays: [("plane".into(), preview.clone())].into(),
+    };
     state.ui.display.indices = [7, 8, 9];
     state.ui.display.sinogram_row = 1;
     state.center_sinogram = false;
-    state.applied_window = Some([-3., 8.]);
-    state.ui.display.window_low.replace_text("-3");
-    state.ui.display.window_high.replace_text("8");
+    state.window.field_mut(0).replace_text("-3");
+    state.window.field_mut(1).replace_text("8");
+    state.window.apply().unwrap();
     let job = Job::new("reconstruct", json!({"method":"cgls"}), vec![input]);
     let id = job.id.clone();
     state.project.as_mut().unwrap().document.jobs.push(job);
@@ -221,10 +220,10 @@ fn background_result_does_not_retarget_an_active_interactive_preview() {
     assert_eq!(state.ui.display.indices, [7, 8, 9]);
     assert_eq!(state.ui.display.sinogram_row, 1);
     assert!(!state.center_sinogram);
-    assert_eq!(state.applied_window, Some([-3., 8.]));
-    assert_eq!(state.ui.display.window_low.text, "-3");
+    assert_eq!(state.window.applied(), Some([-3., 8.]));
+    assert_eq!(state.window.field(0).text, "-3");
     assert_eq!(
-        serde_json::to_value(&state.preview_context.arrays["plane"]).unwrap(),
+        serde_json::to_value(&state.preview_context.shown.arrays().unwrap()["plane"]).unwrap(),
         serde_json::to_value(preview).unwrap()
     );
     let project = state.project.as_ref().unwrap();
@@ -240,7 +239,6 @@ fn background_result_does_not_retarget_an_active_interactive_preview() {
 fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
-    state.started = true;
     state.demo = crate::app::Demo::Off;
     let input = source(&mut state, directory.path());
     // The input stays selected, as it is when the job is submitted.
@@ -289,11 +287,11 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     state.project.as_mut().unwrap().document.jobs.push(job);
     state.center_sinogram = false;
     state.ui.display.sinogram_row = 0;
-    state.applied_window = Some([-100., 100.]);
-    state.ui.display.window_low.replace_text("-100");
-    state.ui.display.window_high.replace_text("100");
-    // The user typed the window: the fields no longer show what Studio wrote.
-    state.window_prefill = Default::default();
+    state.window.field_mut(0).replace_text("-100");
+    state.window.field_mut(1).replace_text("100");
+    state.window.apply().unwrap();
+    // A pending draft belongs to the image it was typed for.
+    state.window.field_mut(1).replace_text("99");
     state.complete_asset(&id, result);
     let until = Instant::now() + Duration::from_secs(3);
     while state.imaging.plane(5).is_none() || state.imaging.plane(4).is_none() {
@@ -303,14 +301,14 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     }
     assert_eq!(state.imaging.plane(5).unwrap().index, 2);
     assert!(state.imaging.plane(5).unwrap().statistics.max > 0.);
-    assert!(state.applied_window.is_none());
+    assert!(state.window.applied().is_none());
     let window = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text,
+        state.window.field(0).text,
         crate::ui::compact_number(f64::from(window[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text,
+        state.window.field(1).text,
         crate::ui::compact_number(f64::from(window[1]))
     );
 }
@@ -323,7 +321,6 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     let mut state = AppState::init();
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.project.as_mut().unwrap().document.name = "Alignment checkpoint verification".into();
-    state.started = true;
     state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
@@ -442,7 +439,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
         );
     }
     state.ui.workspace = Workspace::Jobs;
-    state.ui.activity = crate::ui::model::Activity::Closed;
+    state.ui.activity.close();
     state.ui.selected_job = Some(id.clone());
     state.refresh_model();
     for mark in [40, 41, 42] {

@@ -27,3 +27,6 @@ memmap2 = "0.9"
 half = { version = "2", features = ["bytemuck"] }
 glam = "0.30"
 tempfile.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

@@ -8,6 +8,8 @@
 mod responses;
 mod sources;
 #[cfg(test)]
+mod supersession_tests;
+#[cfg(test)]
 mod tests;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};

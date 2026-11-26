@@ -15,4 +15,5 @@ tempfile.workspace = true
 blake3 = "1"
 
 [dev-dependencies]
+proptest.workspace = true
 stateright = "0.31"

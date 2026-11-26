@@ -115,7 +115,7 @@ impl AppState {
             .map(|job| job.id.clone())
             .collect();
         self.mark_dirty();
-        self.open_activity(queued);
+        self.ui.activity.follow(queued);
         self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())

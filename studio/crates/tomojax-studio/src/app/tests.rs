@@ -6,7 +6,7 @@ use super::*;
 pub(crate) fn capture_native(mut state: AppState, path: &Path) {
     // Match the ordinary actions a reviewer would take before inspecting the
     // result. Numerical values and observed worker state remain untouched.
-    state.ui.activity = crate::ui::model::Activity::Closed;
+    state.ui.activity.close();
     if let Some(control) = state
         .model
         .validation
@@ -190,7 +190,10 @@ fn worker_disconnect_unbinds_temporary_preview_files() {
     state.set_operation("correction_preview", None);
     state.ui.workspace = Workspace::Prepare;
     state.preview_context.active = Some(crate::previews::PreviewKind::Corrections);
-    state.preview_context.arrays.insert("after".into(), array);
+    state.preview_context.shown = super::previewing::Shown::Result {
+        request: "preview-1".into(),
+        arrays: [("after".into(), array)].into(),
+    };
     state.preview_context.signature = "old-worker-session".into();
     state.model.preview = Some(PreviewView {
         operation: "correction_preview".into(),
@@ -204,7 +207,7 @@ fn worker_disconnect_unbinds_temporary_preview_files() {
         reason: "Test worker exited".into(),
         unfinished: vec![],
     });
-    assert!(state.preview_context.arrays.is_empty());
+    assert!(state.preview_context.shown.arrays().is_none());
     assert!(state.preview_context.signature.is_empty());
     assert!(state.model.preview.is_none());
     assert!(
@@ -218,19 +221,19 @@ fn window_fields_show_the_rendered_range_without_overwriting_unfinished_edits() 
     let (_directory, mut state) = registered_projection_fixture();
     let current = state.imaging.plane(4).unwrap().statistics.window;
     assert_eq!(
-        state.ui.display.window_low.text,
+        state.window.field(0).text,
         crate::ui::compact_number(f64::from(current[0]))
     );
     assert_eq!(
-        state.ui.display.window_high.text,
+        state.window.field(1).text,
         crate::ui::compact_number(f64::from(current[1]))
     );
-    state.ui.display.window_low.replace_text("-");
-    state.ui.display.window_high.replace_text("2.5");
+    state.window.field_mut(0).replace_text("-");
+    state.window.field_mut(1).replace_text("2.5");
     state.refresh_plane_model();
-    assert_eq!(state.ui.display.window_low.text, "-");
-    assert_eq!(state.ui.display.window_high.text, "2.5");
-    assert!(state.applied_window.is_none());
+    assert_eq!(state.window.field(0).text, "-");
+    assert_eq!(state.window.field(1).text, "2.5");
+    assert!(state.window.applied().is_none());
 }
 
 /// A z-ramp float32 volume of `depth` × 4 × 4 samples, registered as a result.
@@ -653,7 +656,7 @@ fn a_copied_import_opens_with_its_own_kind_and_a_fresh_window() {
     state.model.active_asset = Some(previous_id);
     state.set_operation("open", None);
     assert_eq!(state.ui.parameter_choices["kind"], "reconstruction");
-    state.applied_window = Some([0., 0.01]);
+    state.window.restore(Some([0., 0.01]));
     let copy = directory.path().join("copied.nxs");
     std::fs::write(&copy, b"copied scan").unwrap();
     let mut scan = Asset::input(copy.clone(), true);
@@ -666,7 +669,7 @@ fn a_copied_import_opens_with_its_own_kind_and_a_fresh_window() {
         selection,
     });
     assert_eq!(state.model.active_asset.as_deref(), Some(id.as_str()));
-    assert_eq!(state.applied_window, None);
+    assert_eq!(state.window.applied(), None);
     assert_eq!(state.ui.parameter_choices["kind"], "scan");
 
     // A copy that finishes after the user moved on is added, not opened.
@@ -932,7 +935,6 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |s| s.model.backend.ready);
     state.set_operation("simulate", Some(&json!({"size":16,"n_views":24,"seed":3})));
@@ -1146,8 +1148,8 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
         Some(&json!({"method":"cgls","iterations":7})),
     );
     state.ui.display.indices = [3, 4, 5];
-    state.ui.display.window_low.replace_text("0.05");
-    state.ui.display.window_high.replace_text("1.2");
+    state.window.field_mut(0).replace_text("0.05");
+    state.window.field_mut(1).replace_text("1.2");
     state
         .ui
         .parameter_edits
@@ -1182,7 +1184,6 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     state.project.as_mut().unwrap().document.name = "Interactive preview verification".into();
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.started = true;
     state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
     drive(&mut state, |state| state.model.backend.ready);
     state.set_operation("simulate", Some(&json!({"size":64,"n_views":96,"seed":3})));
@@ -1660,7 +1661,6 @@ fn the_palette_opens_every_operation_in_its_own_workspace() {
 
 #[test]
 fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
-    use crate::ui::model::Activity;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("project");
     let open = |create: bool| {
@@ -1673,14 +1673,14 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
         let job = project::Job::new("simulate", serde_json::json!({}), vec![]);
         let id = job.id.clone();
         state.project.as_mut().unwrap().document.jobs.push(job);
-        state.open_activity(vec![id.clone()]);
+        state.ui.activity.follow(vec![id.clone()]);
         state.refresh_model();
         assert!(
             state.ui.activity.is_open(),
             "Activity stays open while its job is queued"
         );
         if close_early {
-            state.ui.activity = Activity::Closed;
+            state.ui.activity.close();
         }
         let job = state
             .project
@@ -1726,10 +1726,7 @@ fn activity_closes_after_the_work_it_opened_for_succeeds_and_shows_a_failure() {
 
     // Activity the user opened is theirs: success never closes it, a failure is listed.
     let mut state = open(false);
-    state.ui.activity = Activity::Open {
-        jobs: Vec::new(),
-        closes_itself: false,
-    };
+    state.ui.activity.show(Vec::new());
     run(&mut state, JobStatus::Completed, false);
     assert!(
         state.ui.activity.is_open(),
@@ -1807,7 +1804,7 @@ fn activity_lists_every_failure_it_opened_for() {
         ids.push(job.id.clone());
         state.project.as_mut().unwrap().document.jobs.push(job);
     }
-    state.open_activity(ids);
+    state.ui.activity.follow(ids);
     state.refresh_model();
     let mut runtime = rune::Runtime::new(
         state,
@@ -1862,7 +1859,7 @@ fn demo_projects_are_numbered_so_earlier_demos_are_kept() {
 
 #[test]
 fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
-    use super::viewing::window_text;
+    use super::window::window_text;
     assert_eq!(window_text(-0.020069934, 0.9726638), ["-0.0201", "0.9727"]);
     // Four decimals would read 1 and 1: an empty window the fields could not apply.
     assert_eq!(window_text(1.0, 1.00002), ["1", "1.00002"]);
@@ -1873,9 +1870,9 @@ fn window_fields_round_for_reading_but_keep_narrow_windows_applicable() {
 fn applying_the_window_the_fields_show_keeps_it_exact() {
     let exact = [-0.020069934_f32, 0.9726638];
     let mut state = AppState::init();
-    state.applied_window = Some(exact);
-    state.prefill_window();
-    assert_eq!(state.ui.display.window_low.text, "-0.0201");
+    state.window.restore(Some(exact));
+    state.window.follow(Some(exact));
+    assert_eq!(state.window.field(0).text, "-0.0201");
     let mut runtime = rune::Runtime::new(
         state,
         crate::ui::view,
@@ -1883,30 +1880,30 @@ fn applying_the_window_the_fields_show_keeps_it_exact() {
         rune::Env::new(false, 1.),
     );
     runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
-    assert_eq!(runtime.state.applied_window, Some(exact));
+    assert_eq!(runtime.state.window.applied(), Some(exact));
     // An edited field applies what was typed.
-    runtime.state.ui.display.window_high.replace_text("0.5");
+    runtime.state.window.field_mut(1).replace_text("0.5");
     runtime.update(|state, tx| state.dispatch(UiAction::ApplyWindow, tx));
-    assert_eq!(runtime.state.applied_window, Some([-0.020069934, 0.5]));
+    assert_eq!(runtime.state.window.applied(), Some([-0.020069934, 0.5]));
 
     // Editing one limit keeps the other exact: 1.000051 reads as 1.0001, but an upper
     // limit of 1.00008 still lies above it.
+    let committed = [1.000051, 1.5];
     let mut state = AppState::init();
-    state.applied_window = Some([1.000051, 1.5]);
-    state.prefill_window();
-    assert_eq!(state.ui.display.window_low.text, "1.0001");
-    state.ui.display.window_high.replace_text("1.00008");
-    state.prefill_window(); // a viewer refresh while the edit is pending
-    assert_eq!(state.ui.display.window_high.text, "1.00008");
-    assert_eq!(state.valid_window(), Ok(Some([1.000051, 1.00008])));
+    state.window.restore(Some(committed));
+    state.window.follow(Some(committed));
+    assert_eq!(state.window.field(0).text, "1.0001");
+    state.window.field_mut(1).replace_text("1.00008");
+    state.window.follow(Some(committed)); // a viewer refresh while the edit is pending
+    assert_eq!(state.window.field(1).text, "1.00008");
+    assert_eq!(state.window.parse(), Ok(Some([1.000051, 1.00008])));
 
     // Reopening the project restores the pending edit with the exact untouched limit.
     let saved = state.capture_workspace();
     let mut reopened = AppState::init();
-    reopened.applied_window = Some([1.000051, 1.5]);
     reopened.restore_workspace(&saved);
-    assert_eq!(reopened.ui.display.window_high.text, "1.00008");
-    assert_eq!(reopened.valid_window(), Ok(Some([1.000051, 1.00008])));
+    assert_eq!(reopened.window.field(1).text, "1.00008");
+    assert_eq!(reopened.window.parse(), Ok(Some([1.000051, 1.00008])));
 }
 
 #[test]

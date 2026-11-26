@@ -214,8 +214,6 @@ pub struct DisplayState {
     pub indices: [usize; 3],
     pub projection_index: usize,
     pub sinogram_row: usize,
-    pub window_low: TextEdit,
-    pub window_high: TextEdit,
     pub colormap: String,
     pub invert: bool,
     pub zoom: f32,
@@ -236,8 +234,6 @@ impl Default for DisplayState {
             indices: [0; 3],
             projection_index: 0,
             sinogram_row: 0,
-            window_low: TextEdit::default(),
-            window_high: TextEdit::default(),
             colormap: "bone".into(),
             invert: false,
             zoom: 1.0,
@@ -520,29 +516,76 @@ pub struct Choice {
     pub value: String,
     pub label: String,
 }
-/// The Activity popover over the jobs panel.
+/// The Activity popover over the jobs panel. Each open state lists the jobs it has shown
+/// or opened for; a failed one stays listed with its error until Activity closes.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Activity {
     #[default]
     Closed,
-    Open {
-        /// Jobs it has shown or opened for. A failed one stays listed with its error until
-        /// Activity closes.
-        jobs: Vec<String>,
-        /// Opened for queued work rather than by the user, so it closes once that work
-        /// succeeds.
-        closes_itself: bool,
-    },
+    /// Opened by the user; it stays open until they close it.
+    Shown { jobs: Vec<String> },
+    /// Opened for queued work; it closes once that work has finished without a failure.
+    Following { jobs: Vec<String> },
 }
 
 impl Activity {
     pub fn is_open(&self) -> bool {
-        matches!(self, Self::Open { .. })
+        match self {
+            Self::Closed => false,
+            Self::Shown { .. } | Self::Following { .. } => true,
+        }
     }
 
     /// Whether open Activity has shown, or opened for, the job `id`.
     pub fn tracks(&self, id: &str) -> bool {
-        matches!(self, Self::Open { jobs, .. } if jobs.iter().any(|job| job == id))
+        match self {
+            Self::Closed => false,
+            Self::Shown { jobs } | Self::Following { jobs } => jobs.iter().any(|job| job == id),
+        }
+    }
+
+    /// Opens Activity as the user's choice, over the `active` jobs.
+    pub fn show(&mut self, active: Vec<String>) {
+        *self = Self::Shown { jobs: active };
+    }
+
+    /// Lists newly `queued` jobs, opening Activity for them when it is closed.
+    pub fn follow(&mut self, queued: Vec<String>) {
+        match self {
+            Self::Closed => *self = Self::Following { jobs: queued },
+            Self::Shown { jobs } | Self::Following { jobs } => jobs.extend(queued),
+        }
+    }
+
+    pub fn close(&mut self) {
+        *self = Self::Closed;
+    }
+
+    /// Lists every active job of `all`, and closes Activity opened for queued work once
+    /// every job it lists has finished without a failure.
+    pub fn observe(&mut self, all: &[crate::project::Job]) {
+        use crate::project::JobStatus;
+        let listed = match self {
+            Self::Closed => return,
+            Self::Shown { jobs } | Self::Following { jobs } => jobs,
+        };
+        for job in all.iter().filter(|job| job.status.active()) {
+            if !listed.contains(&job.id) {
+                listed.push(job.id.clone());
+            }
+        }
+        let finished = all
+            .iter()
+            .filter(|job| listed.contains(&job.id))
+            .all(|job| match job.status {
+                JobStatus::Completed | JobStatus::Canceled | JobStatus::Interrupted => true,
+                JobStatus::Queued | JobStatus::Running | JobStatus::Paused | JobStatus::Failed => {
+                    false
+                }
+            });
+        if finished && matches!(self, Self::Following { .. }) {
+            self.close();
+        }
     }
 }
 

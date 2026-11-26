@@ -40,6 +40,9 @@
   `cargo build --release --manifest-path studio/Cargo.toml -p tomojax-studio --features
   static-hdf5`. `cargo test --manifest-path studio/Cargo.toml -p studio-core` runs the
   protocol, manifest and state-machine tests without building the native libraries.
+- In Studio, an untouched display-window field follows the image on screen even while
+  the other field holds an edit, so **Apply window** no longer commits a limit left over
+  from the previous plane, slice or relinked file.
 
 ## 1.0.0rc5 (2026-11-25)
 
