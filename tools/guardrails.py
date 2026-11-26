@@ -3,9 +3,9 @@
 ``tests/guardrails/api_surface.txt`` lists every public name of the user-facing
 packages with its signature, so an API change shows up as a diff in review.
 ``tests/guardrails/ratchets.json`` records measures of debt (configuration
-fields, exported names, CLI flags, lines per package, CUDA kernels and their
-compile-time switches, environment reads, long files, lint suppressions,
-complex functions, single-use helpers...) that may fall but not rise.
+fields, exported names, CLI flags, CUDA kernels and their compile-time switches,
+Python typing debt, Studio Rust debt, long files, and other measures) that may
+fall but not rise. The console report also shows informational lines per package.
 
 After an intended change run ``python tools/guardrails.py --write`` and commit
 the updated files with it; ``tests/test_architecture.py`` fails until then.
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from bisect import bisect_left, bisect_right
 from collections import Counter
 import dataclasses
 import importlib
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "tomojax"
+STUDIO_SRC = ROOT / "studio" / "src"
 OUT = ROOT / "tests" / "guardrails"
 SURFACE_FILE = OUT / "api_surface.txt"
 RATCHET_FILE = OUT / "ratchets.json"
@@ -85,6 +87,18 @@ HELPER_CHAIN_DEPTH = 2
 POSITIONAL_OPTIONS_ALLOWED = {"tomojax.reconstruct": ("method",), "tomojax.simulate": ("phantom",)}
 # Preprocessor conditionals in kernel source; Python comments carry a space.
 CUDA_SWITCH = re.compile(r"^\s*#if(?:n?def)?\b", re.MULTILINE)
+
+# Keep literals as single opaque tokens. A Rust lifetime such as 'a is distinct
+# from a character literal, and raw strings close with the opening hash count.
+RUST_TOKEN = re.compile(
+    r'//[^\n]*|/\*|(?:br|cr|r)(?P<hashes>\#*)".*?"(?P=hashes)'
+    r'|"(?:\\.|[^"\\])*"'
+    r"|'(?:\\(?:u\{[\da-fA-F_]+\}|x[\da-fA-F]{2}|.)|[^'\\\n])'"
+    r"|(?:r\#)?[^\W\d]\w*|->|\S",
+    re.DOTALL,
+)
+RUST_BLOCK_COMMENT = re.compile(r"/\*|\*/")
+RUST_GROUP_END = {"(": ")", "[": "]", "{": "}"}
 
 
 # ----------------------------------------------------------------------- surface
@@ -266,7 +280,7 @@ def _file_lines() -> dict[str, int]:
 
 
 def _code_lines() -> dict[str, int]:
-    """Lines of each top-level package, excluding Python docstrings."""
+    """Report lines per top-level package, excluding Python docstrings."""
     counts: dict[str, int] = {}
     for path in _source_files():
         parts = path.relative_to(SRC).parts
@@ -275,6 +289,79 @@ def _code_lines() -> dict[str, int]:
         lines = _code_line_count(source) if path.suffix == ".py" else len(source.splitlines())
         counts[package] = counts.get(package, 0) + lines
     return dict(sorted(counts.items()))
+
+
+def _pyright_warnings() -> dict[str, int]:
+    """Count warnings per rule in the locked CPU dev environment used by CI."""
+    # Optional dependencies such as CuPy change both import and inference warnings.
+    # Give pyright the isolated interpreter explicitly so it cannot find .venv instead.
+    command = [
+        "uv",
+        "run",
+        "--isolated",
+        "--locked",
+        "--extra",
+        "cpu",
+        "--dev",
+        "--python",
+        "3.12",
+        "sh",
+        "-c",
+        'exec basedpyright --outputjson --pythonpath "$(command -v python)"',
+    ]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+    if result.returncode:
+        raise RuntimeError(f"basedpyright warning scan failed:\n{result.stderr}{result.stdout}")
+    counts: Counter[str] = Counter()
+    for diagnostic in json.loads(result.stdout)["generalDiagnostics"]:
+        if diagnostic["severity"] != "warning":
+            continue
+        path = Path(diagnostic["file"])
+        if path.is_relative_to(SRC) or path.is_relative_to(ROOT / "tools"):
+            counts[diagnostic["rule"]] += 1
+    return dict(sorted(counts.items()))
+
+
+def _typing_reference(node: ast.AST, name: str, aliases: set[str], modules: set[str]) -> bool:
+    if isinstance(node, ast.Name):
+        return isinstance(node.ctx, ast.Load) and node.id in aliases
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, ast.Load)
+        and isinstance(node.value, ast.Name)
+        and node.value.id in modules
+        and node.attr == name
+    )
+
+
+def _python_debt(sources: Iterable[str]) -> dict[str, int]:
+    """Count explicit typing escape hatches and broad handlers in source ASTs."""
+    counts = {"explicit_any": 0, "type_casts": 0, "broad_except": 0}
+    for source in sources:
+        nodes = list(ast.walk(ast.parse(source)))
+        typing_modules = {"typing", "typing_extensions"}
+        modules = typing_modules.copy()
+        names = {"Any": {"Any"}, "cast": {"cast"}}
+        for node in nodes:
+            if isinstance(node, ast.Import):
+                modules.update(
+                    a.asname for a in node.names if a.name in typing_modules and a.asname
+                )
+            elif isinstance(node, ast.ImportFrom) and node.module in typing_modules:
+                for alias in node.names:
+                    if alias.name in names:
+                        names[alias.name].add(alias.asname or alias.name)
+
+        for node in nodes:
+            counts["explicit_any"] += _typing_reference(node, "Any", names["Any"], modules)
+            if isinstance(node, ast.Call):
+                counts["type_casts"] += _typing_reference(node.func, "cast", names["cast"], modules)
+            elif isinstance(node, ast.ExceptHandler):
+                caught = node.type.elts if isinstance(node.type, ast.Tuple) else [node.type]
+                counts["broad_except"] += node.type is None or any(
+                    isinstance(kind, ast.Name) and kind.id == "Exception" for kind in caught
+                )
+    return counts
 
 
 def _function_lines() -> dict[str, int]:
@@ -295,6 +382,176 @@ def _function_lines() -> dict[str, int]:
         source = p.read_text(encoding="utf-8")
         visit(ast.parse(source), "", _relative(p), source)
     return dict(sorted(found.items()))
+
+
+def _rust_tokens(source: str) -> list[re.Match[str]]:
+    """Read Rust tokens and their offsets, dropping line and nested block comments."""
+    tokens: list[re.Match[str]] = []
+    offset = 0
+    while (match := RUST_TOKEN.search(source, offset)) is not None:
+        offset = match.end()
+        if match[0] == "/*":
+            depth = 1
+            for marker in RUST_BLOCK_COMMENT.finditer(source, offset):
+                depth += 1 if marker[0] == "/*" else -1
+                if depth == 0:
+                    offset = marker.end()
+                    break
+        elif not match[0].startswith("//"):
+            tokens.append(match)
+    return tokens
+
+
+def _rust_groups(tokens: list[str]) -> dict[int, int]:
+    """Map opening delimiters to their matching token indices."""
+    groups: dict[int, int] = {}
+    stack: list[int] = []
+    for index, token in enumerate(tokens):
+        if token in RUST_GROUP_END:
+            stack.append(index)
+        elif stack and token == RUST_GROUP_END[tokens[stack[-1]]]:
+            groups[stack.pop()] = index
+    return groups
+
+
+def _rust_item_end(
+    tokens: list[str], groups: dict[int, int], start: int, *, statement: bool = False
+) -> int | None:
+    """Find an item's terminal semicolon or closing body brace."""
+    index = start
+    angles = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == ";":
+            return index
+        if token in {"}", ")", "]"}:
+            break
+        if index in groups:
+            end = groups[index]
+            if token == "{" and angles == 0 and not statement:
+                return end
+            index = end
+        elif not statement:
+            # Grouped const expressions in generic arguments are part of the
+            # signature. Parentheses and brackets above skip their contents.
+            if token == "<":
+                angles += 1
+            elif token == ">" and angles:
+                angles -= 1
+        index += 1
+    return None
+
+
+def _rust_test_items(tokens: list[str], groups: dict[int, int]) -> dict[int, int]:
+    """Find spans of items guarded by an outer cfg(test) attribute."""
+    items: dict[int, int] = {}
+    index = 0
+    while index < len(tokens):
+        start = index
+        test_only = False
+        while tokens[index : index + 2] == ["#", "["] and index + 1 in groups:
+            end = groups[index + 1]
+            test_only |= tokens[index + 2 : end] == ["cfg", "(", "test", ")"]
+            index = end + 1
+        if test_only and index < len(tokens):
+            head = index
+            if tokens[head] == "pub":
+                head = groups.get(head + 1, head) + 1
+            keyword = tokens[head]
+            statement = keyword in {"use", "type", "static", "let"} or (
+                keyword == "const" and tokens[head + 1] not in {"fn", "unsafe", "extern"}
+            )
+            end = _rust_item_end(tokens, groups, index, statement=statement)
+            if end is not None:
+                items[start] = end
+                index = end + 1
+        elif index == start:
+            index += 1
+    return items
+
+
+def _rust_production_debt(
+    source: str, matches: list[re.Match[str]], tokens: list[str]
+) -> tuple[int, int, dict[str, list[int]]]:
+    """Return production lines, panic calls and long function lengths by name."""
+    groups = _rust_groups(tokens)
+    test_items = _rust_test_items(tokens, groups)
+    newlines = [match.start() for match in re.finditer("\n", source)]
+    excluded_lines: set[int] = set()
+    for start, end in test_items.items():
+        start_offset = matches[start].start()
+        end_offset = matches[end].end()
+        first = bisect_left(newlines, start_offset)
+        last = bisect_left(newlines, end_offset)
+        # A line shared with production text still counts toward its length.
+        line_start = newlines[first - 1] + 1 if first else 0
+        line_end = newlines[last] if last < len(newlines) else len(source)
+        first += bool(source[line_start:start_offset].strip())
+        last -= bool(source[end_offset:line_end].strip())
+        excluded_lines.update(range(first, last + 1))
+    excluded = sorted(excluded_lines)
+
+    unwraps = 0
+    functions: dict[str, list[int]] = {}
+    index = 0
+    while index < len(tokens):
+        if index in test_items:
+            index = test_items[index] + 1
+            continue
+        if tokens[index] == ".":
+            unwraps += tokens[index + 1 : index + 4] == ["unwrap", "(", ")"]
+            unwraps += tokens[index + 1 : index + 3] == ["expect", "("]
+        elif tokens[index] == "fn" and tokens[index + 2 : index + 3] in (["("], ["<"]):
+            name = tokens[index + 1]
+            end = (
+                _rust_item_end(tokens, groups, index)
+                if name.removeprefix("r#").isidentifier()
+                else None
+            )
+            if end is not None and tokens[end] == "}":
+                first = bisect_left(newlines, matches[index].start())
+                last = bisect_left(newlines, matches[end].start())
+                length = last - first + 1
+                length -= bisect_right(excluded, last) - bisect_left(excluded, first)
+                if length > LONG_FUNCTION_LINES:
+                    functions.setdefault(name, []).append(length)
+        index += 1
+    return len(source.splitlines()) - len(excluded), unwraps, functions
+
+
+def _studio_debt() -> dict[str, object]:
+    """Measure Studio lint allows everywhere and the other debt in production Rust."""
+    allows = unwraps = 0
+    long_files: dict[str, int] = {}
+    long_functions: dict[str, int] = {}
+    for path in sorted(STUDIO_SRC.rglob("*.rs")):
+        source = path.read_text(encoding="utf-8")
+        matches = _rust_tokens(source)
+        tokens = [match[0] for match in matches]
+        allows += sum(
+            tokens[i : i + 3] == ["[", "allow", "("]
+            or tokens[i : i + 4] == ["!", "[", "allow", "("]
+            for i, token in enumerate(tokens, start=1)
+            if token == "#"
+        )
+        if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
+            continue
+        length, calls, functions = _rust_production_debt(source, matches, tokens)
+        unwraps += calls
+        relative = _relative(path)
+        if length > LONG_FILE_LINES:
+            long_files[relative] = length
+        for name, lengths in functions.items():
+            # A file can implement the same method in several impl blocks.
+            for rank, length in enumerate(sorted(lengths, reverse=True), start=1):
+                suffix = f"#{rank}" if rank > 1 else ""
+                long_functions[f"{relative}::{name}{suffix}"] = length
+    return {
+        "studio_unwraps": unwraps,
+        "studio_allows": allows,
+        "studio_long_files": long_files,
+        "studio_long_functions": dict(sorted(long_functions.items())),
+    }
 
 
 def _config_fields() -> dict[str, int]:
@@ -444,8 +701,9 @@ def ratchets() -> dict[str, object]:
         "cli_flags": _cli_flags(),
         "long_files": _file_lines(),
         "long_functions": _function_lines(),
-        # These may rise only in a commit that says why next to the new number.
-        "code_lines": _code_lines(),
+        "pyright_warnings": _pyright_warnings(),
+        **_python_debt(p.read_text(encoding="utf-8") for p in _python_files()),
+        **_studio_debt(),
         "cuda_kernels": _count(r"__global__", _source_files()),
         "cuda_switches": _count(CUDA_SWITCH, _source_files()),
         # Each is a setting that bypasses the public configuration.
@@ -475,9 +733,11 @@ def ratchets() -> dict[str, object]:
 
 def write() -> None:
     """Rewrite the recorded surface and ratchets from the current code."""
+    surface = api_surface()
+    measures = ratchets()
     OUT.mkdir(parents=True, exist_ok=True)
-    _ = SURFACE_FILE.write_text(api_surface(), encoding="utf-8")
-    _ = RATCHET_FILE.write_text(json.dumps(ratchets(), indent=2) + "\n", encoding="utf-8")
+    _ = SURFACE_FILE.write_text(surface, encoding="utf-8")
+    _ = RATCHET_FILE.write_text(json.dumps(measures, indent=2) + "\n", encoding="utf-8")
 
 
 def main() -> int:
@@ -490,7 +750,7 @@ def main() -> int:
         write()
         print(f"wrote {_relative(SURFACE_FILE)} and {_relative(RATCHET_FILE)}")
         return 0
-    print(json.dumps(ratchets(), indent=2))
+    print(json.dumps({**ratchets(), "code_lines": _code_lines()}, indent=2))
     return 0
 
 

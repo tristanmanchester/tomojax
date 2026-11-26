@@ -77,7 +77,7 @@ TomoJAX should feel like one small, consistent tool. Check API changes against t
 `tests/test_architecture.py` enforces the mechanical checks:
 
 - The public API matches `tests/guardrails/api_surface.txt`, so API changes appear in diff review.
-- The ratchets in `tests/guardrails/ratchets.json` may decrease but never rise: `*Config` fields, exported names, CLI flags, files over 800 lines, functions over 100 lines (excluding docstrings), per-package line counts, CUDA kernels and compile-time switches, environment-variable reads, lint suppressions, complexity counts, single-use private helpers, untyped module errors, positional options on public APIs, first-device assumptions, and private imports in tests.
+- The ratchets in `tests/guardrails/ratchets.json` may decrease but never rise: `*Config` fields, exported names, CLI flags, files over 800 lines, functions over 100 lines (excluding docstrings), `basedpyright` warnings by rule, explicit `Any`, `cast()` calls, broad `except` handlers, CUDA kernels and compile-time switches, environment-variable reads, lint suppressions, complexity counts, single-use private helpers, untyped module errors, positional options on public APIs, first-device assumptions, private imports in tests, and in Studio's Rust sources, lint `allow` attributes, files over 800 lines and functions over 100 lines. `python tools/guardrails.py` also prints lines per package, for information.
 - CLI flags map cleanly to Python keywords, and `--help` stays concise.
 
 After an intentional change (or when a ratchet drops), run `just guardrails` and commit the updated records. Do not raise a ratchet to make a change pass; fix the code instead, or explain why the debt is justified in the commit message.

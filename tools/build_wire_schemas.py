@@ -77,11 +77,15 @@ def documents() -> dict[str, dict[str, Any]]:
     return documents
 
 
+class _Options(argparse.Namespace):
+    check: bool = False
+
+
 def main() -> int:
     """Write generated schemas or verify the checked-in copies."""
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--check", action="store_true", help="Check for drift without writing.")
-    check = parser.parse_args().check is True
+    check = parser.parse_args(namespace=_Options()).check
 
     drifted: list[str] = []
     schemas = documents()
