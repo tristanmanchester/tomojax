@@ -49,8 +49,6 @@ def _source_rows(positions: np.ndarray, rows: int) -> tuple[int, int]:
 def _finish[T](item: tuple[ReconstructionSlab[T], PendingSlab]) -> ReconstructionSlab[T]:
     slab, pending = item
     slab.volume = pending.wait()
-    if not np.isfinite(slab.volume).all():
-        raise ValueError("fourier reconstruction must be finite in FP32")
     return slab
 
 
@@ -188,8 +186,6 @@ def _run_plan[T](
                 if stop - at < plan.depth:
                     raw = np.pad(raw, ((0, plan.depth - (stop - at)), (0, 0), (0, 0)))
                 slab.volume = plan.reconstruct(raw, count=stop - at)
-                if not np.isfinite(slab.volume).all():
-                    raise ValueError("fourier reconstruction must be finite in FP32")
                 yield slab
         for item in pending:
             yield _finish(item)

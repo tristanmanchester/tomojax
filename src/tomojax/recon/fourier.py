@@ -183,10 +183,7 @@ def fourier(
         )
 
     def write(start: int, volume: np.ndarray) -> None:
-        stop = min(start + depth, grid.nz)
-        if not np.isfinite(volume).all():
-            raise ValueError("fourier_reconstruct: reconstructed slab must be finite in FP32")
-        output[start:stop] = volume
+        output[start : min(start + depth, grid.nz)] = volume
 
     while True:
         progress.check_canceled()
@@ -417,4 +414,4 @@ def _run_host_pipeline(
             # Drain GPU work even if an output write fails. Buffer owners stay
             # alive through their completion event; executors join host workers.
             for _, job in pending:
-                _ = job.wait()
+                job.synchronize()

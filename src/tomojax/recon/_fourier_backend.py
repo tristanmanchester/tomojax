@@ -299,14 +299,31 @@ def _inverse_fft_plan(shape: tuple[int, int], depth: int) -> tuple[int, CuPyValu
     )
 
 
+_NONFINITE = "fourier reconstruction must be finite in FP32"
+
+
 @dataclass
 class PendingSlab:
     output: np.ndarray
+    finite: np.ndarray  # whether every value of output is finite, downloaded with it
     event: Any
     owners: tuple[Any, ...]
 
-    def wait(self) -> np.ndarray:
+    def synchronize(self) -> None:
+        """Wait until the slab and its finite flag are on the host."""
         self.event.synchronize()
+
+    def wait(self) -> np.ndarray:
+        """The downloaded slab, once its copy is complete.
+
+        Raises
+        ------
+        ValueError
+            If any value of the slab is not finite.
+        """
+        self.synchronize()
+        if not self.finite:
+            raise ValueError(_NONFINITE)
         return self.output
 
 
@@ -491,6 +508,7 @@ class FourierPlan:
         return xp.multiply(volume[:count, cy : cy + self.grid.ny, cx : cx + self.grid.nx], scale)
 
     def reconstruct(self, host: np.ndarray | ProjectionRows, *, count: int) -> np.ndarray:
+        """The first ``count`` slices of the slab, on the host; ValueError unless finite."""
         xp = self.xp
         with self.compute if self.compute is not None else nullcontext():
             # NumPy must also copy: deapodization must not mutate caller storage.
@@ -502,13 +520,18 @@ class FourierPlan:
                 raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
             volume = self._compute_volume(raw, count)
             if self.cuda:
-                import cupy
-
-                return cupy.asnumpy(volume)
-            return volume.astype(np.float32)
+                device: CuPyValue = volume
+                output: np.ndarray = device.get()
+            else:
+                output = volume.astype(np.float32)
+            if not np.isfinite(output).all():
+                raise ValueError(_NONFINITE)
+            return output
 
     def enqueue(self, host: np.ndarray | ProjectionRows, *, count: int) -> PendingSlab:
         import cupy as xp
+
+        from ._fourier_cuda import all_finite_kernel
 
         assert self.upload is not None
         assert self.compute is not None
@@ -542,18 +565,22 @@ class FourierPlan:
                 if isinstance(host, ProjectionRows):
                     raw, owners = interpolate_projection_rows(host, source, self.depth, xp)
                 volume: CuPyValue = self._compute_volume(raw, count)
+                finite = all_finite_kernel()(volume)
                 computed = xp.cuda.Event()
                 computed.record()
             output = self._pinned.empty(volume.shape)
+            flag = self._pinned.empty((), np.bool_)
             self.download.wait_event(computed)
             with self.download:
                 volume.get(out=output, stream=self.download, blocking=False)
+                finite.get(out=flag, stream=self.download, blocking=False)
                 downloaded = xp.cuda.Event()
                 downloaded.record()
             # Keep the asynchronous upload input and output device storage alive
             # until the final copy event, including every cross-stream use.
             return PendingSlab(
                 output,
+                flag,
                 downloaded,
                 (
                     *(
@@ -565,6 +592,7 @@ class FourierPlan:
                     source,
                     raw,
                     volume,
+                    finite,
                     uploaded,
                     computed,
                     *owners,
@@ -581,6 +609,8 @@ class FourierPlan:
     ) -> PendingSlab:
         """Borrow device source rows, making an owned FFT slab and output download."""
         import jax
+
+        from ._fourier_cuda import all_finite_kernel
 
         xp: Any = self.xp
         assert self.compute is not None
@@ -608,16 +638,21 @@ class FourierPlan:
                 # The ordered rows were allocated and last used on this compute stream.
                 del rows, source
                 volume: CuPyValue = self._compute_volume(raw, len(positions))
+                finite = all_finite_kernel()(volume)
                 computed = xp.cuda.Event()
                 computed.record()
             assert self._pinned is not None
             host = self._pinned.empty(volume.shape)
+            flag = self._pinned.empty((), np.bool_)
             self.download.wait_event(computed)
             with self.download:
                 volume.get(out=host, stream=self.download, blocking=False)
+                finite.get(out=flag, stream=self.download, blocking=False)
                 downloaded = xp.cuda.Event()
                 downloaded.record()
-            return PendingSlab(host, downloaded, (data, raw, volume, computed, *metadata))
+            return PendingSlab(
+                host, flag, downloaded, (data, raw, volume, finite, computed, *metadata)
+            )
         except BaseException:
             self.synchronize()
             raise

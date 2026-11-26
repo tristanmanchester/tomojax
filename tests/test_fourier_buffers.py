@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 # check-public-imports: allow-private
-from tomojax.recon._pinned import PinnedPool
+from tomojax.recon import _fourier_backend, _pinned
 
 
 @pytest.mark.parametrize(
@@ -20,7 +20,7 @@ def test_pool_waits_for_every_view_and_does_not_escape_with_output(view):
         allocated.append(size)
         return bytearray(size)
 
-    pool = PinnedPool(allocate)
+    pool = _pinned.PinnedPool(allocate)
     first = pool.empty((3, 5))
     first.fill(7)
     retained = view(first)
@@ -44,7 +44,7 @@ def test_pool_waits_for_every_view_and_does_not_escape_with_output(view):
 
 
 def test_pool_allocation_can_collect_a_preceding_buffer():
-    pool = PinnedPool(lambda size: (gc.collect(), bytearray(size))[1])
+    pool = _pinned.PinnedPool(lambda size: (gc.collect(), bytearray(size))[1])
     previous = [pool.empty((3, 5))]
     previous.append(previous)
     del previous
@@ -57,12 +57,9 @@ def test_async_fourier_owns_upload_and_retained_outputs_without_global_watchers(
     pytest.importorskip("cupy")
     from tomojax.geometry import Detector, Grid
 
-    # check-public-imports: allow-private
-    from tomojax.recon._fourier_backend import FourierPlan
-
     grid, detector = Grid(11, 13, 2, 1, 1, 1), Detector(17, 2, 1, 1)
     angles = tuple(np.linspace(0, np.pi, 17, endpoint=False))
-    plan = FourierPlan(
+    plan = _fourier_backend.FourierPlan(
         grid, detector, 17, np.zeros(17, np.int8), angles, 2, "cupy", async_transfers=True
     )
     first = plan.enqueue(np.ones((2, 17, 17), np.float32), count=2)
@@ -135,3 +132,42 @@ def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch
     ) as slabs:
         assert [section.stop for section, _ in slabs] == [2, 4, 6]
     assert len(checks) == 3
+
+
+@pytest.mark.parametrize(
+    "backend",
+    ["numpy", *(pytest.param(name, marks=pytest.mark.gpu) for name in ("cupy", "async", "rows"))],
+)
+def test_a_slab_with_a_nonfinite_value_is_refused_when_collected(backend):
+    from tomojax.geometry import Detector, Grid
+
+    grid, detector = Grid(11, 13, 2, 1, 1, 1), Detector(17, 2, 1, 1)
+    angles = tuple(np.linspace(0, np.pi, 17, endpoint=False))
+    plan = _fourier_backend.FourierPlan(
+        grid,
+        detector,
+        17,
+        np.zeros(17, np.int8),
+        angles,
+        2,
+        "numpy" if backend == "numpy" else "cupy",
+        async_transfers=backend in {"async", "rows"},
+    )
+    finite = np.ones((2, 17, 17), np.float32)
+    bad = finite.copy()
+    bad[1, 3, 4] = np.inf
+    if backend in {"numpy", "cupy"}:
+        assert np.isfinite(plan.reconstruct(finite, count=2)).all()
+        with pytest.raises(ValueError, match="finite"):
+            _ = plan.reconstruct(bad, count=2)
+        return
+    if backend == "async":
+        first, second = plan.enqueue(finite, count=2), plan.enqueue(bad, count=2)
+    else:
+        order = plan.xp.arange(17)
+        rows = np.array([0.0, 1.0])
+        first = plan.enqueue_rows(finite.transpose(1, 0, 2), order, rows)
+        second = plan.enqueue_rows(bad.transpose(1, 0, 2), order, rows)
+    assert np.isfinite(first.wait()).all()
+    with pytest.raises(ValueError, match="finite"):
+        _ = second.wait()

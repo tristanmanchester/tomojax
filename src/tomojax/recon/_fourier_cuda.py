@@ -194,6 +194,16 @@ def interpolation_kernel(
 
 
 @functools.lru_cache(maxsize=1)
+def all_finite_kernel() -> CuPyValue:
+    """Whether every value of an array is finite, reduced without an array of flags."""
+    import cupy
+
+    return cupy.ReductionKernel(
+        "T x", "bool y", "isfinite(x)", "a && b", "y = a", "true", "tomojax_all_finite"
+    )
+
+
+@functools.lru_cache(maxsize=1)
 def mass_deapod_kernel() -> CuPyValue:
     """Sum each measured profile in FP64 while deapodizing its owned FP32 copy."""
     import cupy

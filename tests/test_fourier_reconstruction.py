@@ -308,8 +308,11 @@ def test_host_pipeline_drains_pending_transfers_after_output_failure():
         def __init__(self, start):
             self.start = start
 
-        def wait(self):
+        def synchronize(self):
             waited.append(self.start)
+
+        def wait(self):
+            self.synchronize()
             return np.zeros((4, 2, 2), np.float32)
 
     class Plan:
