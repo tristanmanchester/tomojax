@@ -51,7 +51,6 @@ class _Args(InputArgs):
     paganin: tuple[float, ...] | None
     zingers: float | None
     reject_views: float | None
-    stripes: int | None
     rings: bool
     epsilon: float
 
@@ -64,7 +63,6 @@ _PUBLIC = (
     "--crop",
     "--reject-views",
     "--zingers",
-    "--stripes",
     "--rings",
     "--binning",
     "--preview",
@@ -81,7 +79,6 @@ def _settings() -> dict[str, object]:
         "paganin_distance": (None, "Paganin effective propagation distance in meters"),
         "paganin_energy_kev": (None, "Paganin X-ray energy in keV"),
         "paganin_pixel": (None, "Paganin effective pixel size at the sample in meters"),
-        "stripes_varying": (False, "Use slow-varying stripe removal with --stripes"),
         "zingers_size": (3, "Median-filter neighborhood size for --zingers (odd int >= 3)"),
     }
 
@@ -94,13 +91,13 @@ def build_parser() -> ProgressParser:
             "Import, convert or correct a scan, with optional view selection, cropping and "
             "binning. On raw frames (HDF5 with image_key, Nikon, SkyScan, Zeiss, ESRF, a TIFF "
             "stack), runs dark subtraction, flat division and -log plus any requested steps; on "
-            "saved line integrals, converts formats or runs line-integral steps (--stripes, "
+            "saved line integrals, converts formats or runs line-integral steps ("
             "--rings, --reject-views). The scan written records each step."
         ),
         epilog=(
             "Examples:\n"
             "  tomojax correct scan/scan.xtekct -o scan.nxs --darks 0\n"
-            "  tomojax correct raw.nxs -o scan.nxs --stripes 9 --zingers --reject-views\n"
+            "  tomojax correct raw.nxs -o scan.nxs --rings --zingers --reject-views\n"
             "  tomojax correct scan.nxs -o rings.nxs --rings\n"
             "  tomojax correct raw.nxs -o scan.nxs --crop 100:900,50:1950 --views ::4 --binning 2"
         ),
@@ -149,12 +146,6 @@ def build_parser() -> ProgressParser:
         metavar="THRESHOLD",
         help="Replace specks brighter than their neighbors' median by THRESHOLD "
         "(a fraction of the open beam; 0.1)",
-    )
-    _ = parser.add_argument(
-        "--stripes",
-        type=int,
-        metavar="WIDTH",
-        help="Remove rings: each pixel's offset against a median over WIDTH columns (e.g. 9)",
     )
     _ = parser.add_argument(
         "--rings",
@@ -301,18 +292,14 @@ def _resolve_paganin(
 
 def _steps(args: _Args, settings: Mapping[str, object]) -> list[Step]:
     """The correction steps the options and TOML settings ask for, in run order."""
-    from tomojax.corrections import Paganin, RejectViews, Stripes, Zingers
+    from tomojax.corrections import Paganin, RejectViews, Zingers
 
     zingers = args.zingers
     paganin = _resolve_paganin(args.paganin, settings)
     outliers = args.reject_views
-    stripes = args.stripes
     zingers_size = settings.get("zingers_size", 3)
     if isinstance(zingers_size, bool) or not isinstance(zingers_size, int):
         raise ValueError("zingers_size must be an odd integer >= 3")
-    stripes_varying = settings.get("stripes_varying", False)
-    if not isinstance(stripes_varying, bool):
-        raise ValueError("stripes_varying must be a boolean")
     steps: list[Step] = []
     if zingers is not None:
         steps.append(Zingers(threshold=zingers, size=zingers_size))
@@ -320,8 +307,6 @@ def _steps(args: _Args, settings: Mapping[str, object]) -> list[Step]:
         steps.append(Paganin(*paganin))
     if outliers is not None:
         steps.append(RejectViews(z=outliers))
-    if stripes is not None:
-        steps.append(Stripes(width=stripes, varying=stripes_varying))
     return steps
 
 

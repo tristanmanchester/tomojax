@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
-from tomojax.corrections import Step, Stripes
+from tomojax.corrections import Rings, Step
 
 # (row, column, side) of each enlarged region, in slice pixels.
 CROPS = {
@@ -36,8 +36,8 @@ CROPS = {
 
 # The ring correction each slice needs; panels without rings take none.
 RINGS: dict[str, tuple[Step, ...]] = {
-    "ESRF NXtomo": (Stripes(9), Stripes(51, varying=True)),
-    "Diamond I13": (Stripes(201),),
+    "ESRF NXtomo": (Rings(),),
+    "Diamond I13": (Rings(),),
 }
 
 

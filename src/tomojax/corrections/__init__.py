@@ -24,7 +24,6 @@ from ._steps import (
     RadialDistortion,
     RejectViews,
     Step,
-    Stripes,
     Zingers,
 )
 
@@ -37,7 +36,6 @@ __all__ = [
     "RejectViews",
     "Rings",
     "Step",
-    "Stripes",
     "Zingers",
     "correct_frames",
     "correct_projections",

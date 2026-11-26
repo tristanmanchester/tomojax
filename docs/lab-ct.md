@@ -36,10 +36,10 @@ Without a recorded grid, cone scans default to one voxel per detector pixel at t
 
 ### Artifact corrections
 
-Pass `--stripes WIDTH`, `--rings`, or `--zingers` to `tomojax correct` (or `Stripes`, `Rings`, `Zingers`, `BeamHardening` to `frames.corrected(...)` in Python). To try settings before correcting the whole scan, add `--dry-run --preview band.png`: it corrects a band of rows, writes their sinograms before and after the steps and the difference, and writes no scan.
+Pass `--rings` or `--zingers` to `tomojax correct` (or `Rings`, `Zingers`, `BeamHardening` to `frames.corrected(...)` in Python). To try settings before correcting the whole scan, add `--dry-run --preview band.png`: it corrects a band of rows, writes their sinograms before and after the steps and the difference, and writes no scan.
 
 ```bash
-tomojax correct scan/scan.xtekct --darks 0 --stripes 9 --rings --dry-run --preview band.png
+tomojax correct scan/scan.xtekct --darks 0 --rings --dry-run --preview band.png
 ```
 
 For beam-hardening linearization with an explicit polynomial or X-ray spectrum, see [beam hardening](../src/tomojax/corrections/README.md#beam-hardening); vendor beam-hardening parameters are kept in metadata unapplied.

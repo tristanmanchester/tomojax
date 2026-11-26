@@ -19,7 +19,7 @@ from tomojax.corrections import (
     Correction,
     Paganin,
     RejectViews,
-    Stripes,
+    Rings,
     Zingers,
 )
 from tomojax.io.api import locate_frames, read_tiff_frames
@@ -353,10 +353,11 @@ def test_big_endian_counts_are_corrected_like_native_ones() -> None:
     np.testing.assert_allclose(scan.projections, expected, rtol=2e-6)
 
 
-def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
+def test_rings_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
     views, nv, nu = 40, 3, 64
     u = np.arange(nu)[None, None, :]
-    center = 32 + 12 * np.sin(np.linspace(0, 2 * np.pi, views))[:, None, None]
+    angles = np.linspace(0.0, 360.0, views, endpoint=False)
+    center = (nu - 1) / 2 + 12 * np.sin(np.deg2rad(angles))[:, None, None]
     truth = 2.0 * np.maximum(0.0, 1.0 - ((u - center) / 18.0) ** 2) * np.ones((1, nv, 1))
     gain = np.ones(nu)
     gain[[10, 31, 45]] = [0.97, 1.03, 0.98]  # pixels the flats do not describe
@@ -366,26 +367,27 @@ def test_stripes_removes_pixel_offsets_the_flats_miss(tmp_path: Path) -> None:
         iio.imwrite(stack / f"p_{i:03d}.tif", image.astype(np.float32))
     frames = tj.load_frames(
         stack,
-        angles=np.linspace(0.0, 360.0, views, endpoint=False),
+        angles=angles,
         flats=np.full((nv, nu), 1000.0),
         darks=0,
         detector=tj.Detector(nu, nv, 1, 1),
     )
     plain = np.asarray(frames.corrected().projections)
-    cleaned = frames.corrected(Stripes(9))
-    # Columns 10 and 31 stand out from their neighbors; column 45's offset is
-    # smaller than the gradient across it and stays.
-    error = np.abs(np.asarray(cleaned.projections) - truth).max(axis=(0, 1))
-    assert error[[10, 31]].max() < 2e-3
-    assert np.abs(plain - truth).max(axis=(0, 1))[[10, 31]].min() > 0.02
-    assert np.delete(error, [10, 31, 45]).max() < 2e-3
-    assert cleaned.corrections[-1] == Correction("stripes", {"width": 9, "varying": False})
+    cleaned = frames.corrected(Rings())
+    error = np.asarray(cleaned.projections) - truth
+    damaged = [10, 31, 45]
+    assert np.sqrt(np.mean(error[..., damaged] ** 2)) < 0.1 * np.sqrt(
+        np.mean((plain - truth)[..., damaged] ** 2)
+    )
+    assert np.sqrt(np.mean(error**2)) < np.sqrt(np.mean((plain - truth) ** 2))
+    assert np.max(np.abs(np.delete(error, damaged, axis=2))) < 2e-3
+    assert cleaned.corrections[-1] == Rings(frames.geometry).record()
     # A step after a whole-row step runs on its result.
-    both = frames.corrected(Stripes(9), HARD, views_per_batch=7)
+    both = frames.corrected(Rings(), HARD, views_per_batch=7)
     p = np.asarray(cleaned.projections)
     np.testing.assert_allclose(np.asarray(both.projections), HARD.inverse(p), rtol=1e-5, atol=1e-6)
-    with pytest.raises(ValueError, match=">= 3"):
-        Stripes(2)
+    with pytest.raises(ValueError, match="at least 2"):
+        Rings(views=1)
 
 
 def test_reject_views_drops_outliers_and_their_geometry(tmp_path: Path) -> None:
@@ -719,7 +721,7 @@ def test_pixels_without_a_resolved_flat_take_no_absorption() -> None:
 
 @pytest.mark.parametrize("views_per_batch", [None, 1])
 @pytest.mark.parametrize("factor", [1, 2])
-@pytest.mark.parametrize("steps", [(), (Stripes(3),)])
+@pytest.mark.parametrize("steps", [(), (Rings(),)])
 def test_unmeasured_interior_pixels_keep_interpolated_angular_variation(
     views_per_batch: int | None, factor: int, steps: tuple[Step, ...]
 ) -> None:
@@ -746,7 +748,7 @@ def test_unmeasured_interior_pixels_keep_interpolated_angular_variation(
 
 
 @pytest.mark.parametrize("source", ["array", "hdf5", "tiff"])
-@pytest.mark.parametrize("steps", [(), (Stripes(5),), (Stripes(5), RejectViews())])
+@pytest.mark.parametrize("steps", [(), (Rings(),), (Rings(), RejectViews())])
 @pytest.mark.parametrize("factor", [1, 2])
 def test_row_slabs_match_view_batches_and_optional_binning(
     tmp_path: Path,
@@ -785,7 +787,7 @@ def test_row_slabs_match_view_batches_and_optional_binning(
     np.testing.assert_allclose(actual.projections, expected.projections, rtol=1e-5, atol=1e-6)
     assert actual.detector == expected.detector and actual.corrections == expected.corrections
     np.testing.assert_array_equal(actual.angles, expected.angles)
-    streamed = steps == (Stripes(5),) and (source != "tiff" or factor > 1)
+    streamed = steps == (Rings(),) and (source != "tiff" or factor > 1)
     assert slabs == ([4] if streamed else [])
 
 

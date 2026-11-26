@@ -230,13 +230,6 @@ class Rings(Record, tag="Rings"):
     views: int | None = 512
 
 
-class Stripes(Record, tag="Stripes"):
-    """Wire fields of Stripes."""
-
-    width: int = 9
-    varying: bool = False
-
-
 class Zingers(Record, tag="Zingers"):
     """Wire fields of Zingers."""
 

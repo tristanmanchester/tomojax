@@ -179,7 +179,6 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--progress": "progress.watch and its command-line rendering",
         "--reject-views": "the RejectViews step",
         "--zingers": "the Zingers step",
-        "--stripes": "the Stripes step",
         "--rings": "the Rings step",
         "--preview": "file output",
     },

@@ -9,7 +9,7 @@ import pytest
 
 import tomojax as tj
 from tomojax.cli.main import main
-from tomojax.corrections import Paganin, RejectViews, Rings, Stripes, Zingers
+from tomojax.corrections import Paganin, RejectViews, Rings, Zingers
 from tomojax.interactive import correction_preview
 
 pytestmark = pytest.mark.surface
@@ -34,10 +34,9 @@ _RAW_STEPS = [
     (),
     (Zingers(threshold=0.1),),
     (Paganin(100.0, 0.1, 20.0, 1e-6),),
-    (Stripes(width=5),),
     (Rings(),),
     (RejectViews(z=3.0),),
-    (Zingers(threshold=0.1), RejectViews(z=3.0), Stripes(width=5)),
+    (Zingers(threshold=0.1), RejectViews(z=3.0), Rings()),
 ]
 
 
@@ -60,10 +59,9 @@ def test_a_raw_band_equals_the_same_rows_of_the_full_correction(steps, binning, 
 
 
 _SCAN_STEPS = [
-    (Stripes(width=5),),
     (Rings(),),
     (RejectViews(z=3.0),),
-    (RejectViews(z=3.0), Stripes(width=5)),
+    (RejectViews(z=3.0), Rings()),
 ]
 
 
@@ -105,7 +103,7 @@ def test_a_dry_run_writes_no_scan_and_bounds_what_rejection_may_drop(tmp_path, s
     text = capsys.readouterr().out
     assert not out.exists()
     assert "at most 24 views of 10 x 12 pixels" in text and "read every detector row" in text
-    assert main(["correct", str(scan_path), "--stripes", "5", "--dry-run"]) == 0
+    assert main(["correct", str(scan_path), "--rings", "--dry-run"]) == 0
     text = capsys.readouterr().out
     assert "24 views" in text and "at most" not in text and "read only its band" in text
 
@@ -113,12 +111,12 @@ def test_a_dry_run_writes_no_scan_and_bounds_what_rejection_may_drop(tmp_path, s
 @pytest.mark.parametrize("preview", [False, True])
 def test_a_json_dry_run_ends_with_its_plan(tmp_path, scan_path, capsys, preview):
     png = tmp_path / "band.png"
-    argv = ["correct", str(scan_path), "--stripes", "5", "--dry-run", "--progress", "json"]
+    argv = ["correct", str(scan_path), "--rings", "--dry-run", "--progress", "json"]
     assert main([*argv, *(["--preview", str(png)] if preview else [])]) == 0
     result = json.loads(capsys.readouterr().out.splitlines()[-1])
     summary = result["info"]["summary"]
     assert summary["shape"] == [24, 10, 12] and summary["bytes"] == 4 * 24 * 10 * 12
-    assert summary["steps"] == ["stripes(width=5, varying=False)"]
+    assert summary["steps"] == ["rings(views=512)"]
     assert summary["upper_bound"] is False and summary["full_rows"] is False
     assert result["outputs"] == ([str(png)] if preview else [])
     assert png.exists() is preview
@@ -126,7 +124,7 @@ def test_a_json_dry_run_ends_with_its_plan(tmp_path, scan_path, capsys, preview)
 
 def test_a_full_run_writes_the_panel_too(tmp_path, scan_path):
     png, out = tmp_path / "band.png", tmp_path / "out.nxs"
-    argv = ["correct", str(scan_path), "-o", str(out), "--stripes", "5", "--preview", str(png)]
+    argv = ["correct", str(scan_path), "-o", str(out), "--rings", "--preview", str(png)]
     assert main([*argv, "--views", "0:24:2", "--preview-rows", "2:4", "--progress", "none"]) == 0
     assert out.exists() and png.exists()
 

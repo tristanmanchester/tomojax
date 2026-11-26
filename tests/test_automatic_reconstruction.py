@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import Rings, Stripes
+from tomojax.corrections import Rings
 from tomojax.geometry import RotationAxisGeometry
 from tomojax.io import ProjectionDataset
 from tomojax.recon import FBPConfig
@@ -14,7 +14,7 @@ from tomojax.recon import FBPConfig
 
 @pytest.mark.parametrize(
     ("complete", "raw"),
-    [(True, False), (False, False), (True, True), (True, "rings"), (True, "stripes")],
+    [(True, False), (False, False), (True, True), (True, "rings")],
 )
 def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     complete, raw, tmp_path
@@ -25,7 +25,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     geometry = tj.ParallelGeometry(grid, detector, angles)
     u = np.arange(detector.nu) - (detector.nu - 1) / 2 + detector.center[0]
     data = np.broadcast_to(np.exp(-(u**2) / 10), (32, 2, 20)).astype(np.float32).copy()
-    steps = {"rings": (Rings(geometry=geometry),), "stripes": (Stripes(),)}.get(raw, ())
+    steps = (Rings(geometry=geometry),) if raw == "rings" else ()
     scan = (
         tj.Frames(np.exp(-data), geometry, white_level=1).corrected(*steps)
         if raw
@@ -40,7 +40,7 @@ def test_default_reconstruction_matches_explicit_inverse_and_reports_coverage(
     assert bool(actual.info["automatic"]["reasons"]) == limited
     if raw:
         reasons = actual.info["automatic"]["reasons"]
-        assert any("stripe correction" in reason for reason in reasons) == (raw is True)
+        assert any("Rings()" in reason for reason in reasons) == (raw is True)
     assert actual.info["automatic"]["center_status"] is None  # nothing recorded it either way
     tj.save(tmp_path / "reconstruction.nxs", actual)
     loaded = tj.load_reconstruction(tmp_path / "reconstruction.nxs")

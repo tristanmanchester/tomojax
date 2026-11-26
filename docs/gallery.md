@@ -57,7 +57,7 @@ uv run python examples/gallery/chip_laminography.py DATA chip-laminography.png
 
 ![Diamond I12 slice reconstructed without and with stripe correction beside the authors' reconstruction, with close-ups of the rotation axis.](../images/gallery/diamond-rings.png)
 
-Diamond I12 scan of Vo et al. (Zenodo 3339629, 1801 views on a 2560-pixel detector) from raw counts. `tj.align(method="opposite-views")` locates the rotation axis; `Stripes()` clears tight rings near the axis and `Stripes(51, varying=True)` removes the broad ring from an intensity-dependent column without altering rock features, raising correlation with the authors' Savu slice from 0.863 to 0.870.
+Diamond I12 scan of Vo et al. (Zenodo 3339629, 1801 views on a 2560-pixel detector) from raw counts. `tj.align(method="opposite-views")` locates the rotation axis. The figure used the earlier sorting-based correction, which raised correlation with the authors' Savu slice from 0.863 to 0.870. The example below now fits the detector response with `Rings()`.
 
 ```bash
 uv run python examples/gallery/diamond_rings.py full_rows1048-1111.nxs Before_correction/rec_01050.tif diamond-rings.png

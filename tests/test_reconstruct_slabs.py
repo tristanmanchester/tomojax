@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import RejectViews, Stripes
+from tomojax.corrections import RejectViews, Rings
 from tomojax.geometry import ConeSegments, grid_volume_origin
 from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig, api
 
@@ -41,7 +41,7 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, met
     frames = replace(frames, flat_positions=np.array([0, 0, 25, 25])).cropped(
         slice(1, 8), slice(None)
     )
-    step = Stripes(5, varying=True)
+    step = Rings()
     expected = tj.reconstruct(frames.corrected(step), method, grid=grid, config=cfg).volume
     with tj.reconstruct_slabs(frames, method, grid=grid, corrections=[step], config=cfg) as slabs:
         collected = list(slabs)
@@ -184,7 +184,7 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
     )
     requests = []
     frames = replace(eager, counts=Windowed(raw, requests))
-    cfg, step = FBPConfig(backend=backend), Stripes(5, varying=True)
+    cfg, step = FBPConfig(backend=backend), Rings()
     expected = tj.reconstruct(eager.corrected(step), "fbp", config=cfg).volume
     with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step]) as slabs:
         collected = list(slabs)

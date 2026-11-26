@@ -28,7 +28,7 @@ narrower than the missing span.
 
 `Frames.corrected(..., binning=f)` averages blocks of the corrected line
 integrals on the device, so no unbinned stack reaches the host. When only
-whole-row steps (`Stripes`) follow the `-log` and the source reads row windows
+whole-row steps (`Rings`) follow the `-log` and the source reads row windows
 cheaply (NumPy, uncompressed TIFF, unfiltered HDF5), it corrects slabs of rows
 read straight from the source; otherwise the steps that need full frames run
 unbinned first.
@@ -45,7 +45,6 @@ Steps, each a frozen dataclass of its settings:
 | `Zingers(threshold=0.1, size=3)` | transmission | specks brighter than their neighbors' median by `threshold` (a fraction of the open beam) | `--zingers [THRESHOLD]` |
 | `RadialDistortion(center, coefficients)` | transmission | calibrated backward radial polynomial in zero-based `(column, row)` pixels, as in Algotom; bilinear, on normalized transmission before the log | Python only |
 | `Paganin(delta_beta, distance, energy_kev, pixel_size)` | transmission | single-material phase retrieval; distance and pixel size at the sample in meters, energy in keV | `--paganin DELTA_BETA,DISTANCE,ENERGY_KEV,PIXEL` (expert) |
-| `Stripes(width=9, varying=False)` | line integrals | constant pixel offsets, or selected intensity-dependent responses with `varying=True` | `--stripes WIDTH` (constant offsets) |
 | `Rings(geometry=None)` | line integrals | each column's offset and transmission-dependent response, separated from object structure statistically or by full-turn parallel geometry | `--rings` |
 | `RejectViews(z=6.0)` | line integrals | drops the views between an abrupt step in the mean line integral and the step back (a beam loss, a missed frame), and their geometry; smooth changes of the object are kept | `--reject-views [Z]` |
 | `BeamHardening(rates, weights, energy_kev=None)` | line integrals | single-material linearization, see below | Python only |
@@ -63,33 +62,22 @@ Also exported:
 See the [quickstart](../../../docs/quickstart.md#correct-raw-detector-frames)
 for loading frames and choosing steps.
 
-`Stripes(width)` costs the same time and memory at any width; widen it to
-about twice the widest rings. A wide window can leave a faint ring or dot on
-the rotation axis of a compact sample.
+`Rings()` fits each detector column's offset and transmission-dependent
+response, then inverts that response for every view. The local slope fit
+compares a column with its neighbors and uses independent neighboring views
+to estimate how much of the difference follows the detector.
 
-`Stripes(..., varying=True)` fits gain and offset only at pixels whose
-view-to-view differences are anomalous. Unselected centered features are
-preserved, but their constant-offset stripes are left too; sparse views or
-sharp moving edges can cause false detections. Selected dead pixels receive
-only the neighboring mean; their missing angular information is not recovered.
+On a half turn, ranked transmissions across angular arcs measure offsets.
+Persistent jumps between columns locate the edges of wider defects. The
+variation between arcs sets the weight of both measurements. On a stationary
+parallel-beam full turn, opposed columns measure the same lines through the
+sample. Their differences constrain offsets across a wider neighborhood. The
+offset fit takes a weighted median over views, giving less weight to a view
+where narrow and wide references disagree. Symmetric sample features and
+symmetric detector offsets can still give the same data.
+The step records the mirror axis it used. The CLI applies `--rings` with the
+selected and cropped geometry before view rejection and detector binning.
 
-`Rings` models each detector column as reporting `q + a + b (1 - exp(-q))`
-and fits `a` and `b` against a reference built from the neighboring columns,
-then inverts the model (two passes). Given the scan's geometry, it checks for
-a stationary parallel-beam scan over one evenly sampled full turn. There each
-unsorted view is compared with a local quadratic through 30 columns either side,
-narrowed toward 6 where the sample changes faster, so sample edges are not taken
-for stripes. Opposed columns see the same lines over a full turn. The difference
-between a fitted response and its reflection measures detector error and sets
-the power available for the symmetric correction at each spatial scale. The record says
-which axis was used, if any. The CLI binds `--rings` to the selected and cropped
-acquisition geometry and applies it before view rejection and detector binning.
-Otherwise it uses unsorted local quadratics, independent neighboring-view
-instruments and spectral regularization by angular covariance and object power.
-The offset prior compares ranked transmission profiles across neighboring columns
-in disjoint angular arcs. Persistent jumps in the unsorted data locate the
-boundaries of wider defects. Variation between arcs limits how much each
-measurement contributes.
 Built-in angular geometries supply the view ordering and angular interpolation
 weights within each trajectory; cone segments stay separate. Without such
 geometry, supply views in continuous acquisition order. At least two views per
@@ -192,7 +180,6 @@ the workflow modules, which sit above it in the import layers
   view selection and cropping, and the saved records.
 - `tests/test_radial_distortion.py` checks the lens map against SciPy's
   interpolation.
-- `tests/test_correction_medians.py` checks the zinger and stripe medians
-  against SciPy and NumPy references.
+- `tests/test_correction_medians.py` checks zinger medians against SciPy and wide-offset recovery under moving features.
 - `tests/test_correction_batch_memory.py` covers automatic batch sizing for
   phase retrieval.

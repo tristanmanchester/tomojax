@@ -181,7 +181,7 @@ def test_save_reopen_plan_edit_and_export(worker, simulation, tmp_path):
         (
             dict(
                 type="correct",
-                corrections=[dict(type="Stripes"), dict(type="Zingers", threshold=-1)],
+                corrections=[dict(type="Rings"), dict(type="Zingers", threshold=-1)],
             ),
             "corrections[1].threshold",
         ),
@@ -1314,7 +1314,7 @@ def test_operator_path_source_uses_its_geometry_without_loading_pixels(tmp_path,
 def test_correction_preview_of_a_scan_labels_its_input_as_line_integrals(
     worker, tmp_path, binning, by
 ):
-    from tomojax.corrections import Stripes
+    from tomojax.corrections import Rings
 
     grid = tj.Grid(8, 8, 6, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(8, 6, 1, 1), np.arange(12) * 15.0)
@@ -1326,13 +1326,9 @@ def test_correction_preview_of_a_scan_labels_its_input_as_line_integrals(
     else:
         opened = output(worker("open", kind="scan", path=str(path)))["value"]["handle"]
         source = dict(type="member", handle=opened, member="self")
-    args = dict(
-        source=source, rows=[1, 2], binning=binning, corrections=[dict(type="Stripes", width=3)]
-    )
+    args = dict(source=source, rows=[1, 2], binning=binning, corrections=[dict(type="Rings")])
     value = output(worker("correction_preview", **args))["value"]
     before, after = value["before"], value["after"]
     assert (before["domain"], before["unit"]) == ("line_integrals", "1")
-    expected = (
-        tj.Scan(data, geometry).corrected(Stripes(width=3)).binned(binning).projections[:, 1:2]
-    )
+    expected = tj.Scan(data, geometry).corrected(Rings()).binned(binning).projections[:, 1:2]
     np.testing.assert_allclose(np.load(after["storage"]["path"]), expected, rtol=1e-6, atol=1e-6)

@@ -609,8 +609,6 @@ class tomojax.corrections.Step() -> None
     ) -> 'tuple[np.ndarray, dict[str, Json]]'
     .statistic(self, batch: 'jax.Array') -> 'jax.Array'
     .workspace_pixels(self, rows: 'int', cols: 'int') -> 'int'
-class tomojax.corrections.Stripes(width: 'int' = 9, *, varying: 'bool' = False) -> None
-    .apply(self, batch: 'jax.Array') -> 'jax.Array'
 class tomojax.corrections.Zingers(threshold: 'float' = 0.1, size: 'int' = 3) -> None
     .apply(self, batch: 'jax.Array') -> 'jax.Array'
 def tomojax.corrections.correct_frames(

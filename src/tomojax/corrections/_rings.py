@@ -364,9 +364,9 @@ def _row_response(
             # Opposed rays constrain wider offsets too. Use the adaptive
             # reference for the level, keeping the slope's known transfer.
             narrow, ref = ref, _reference(q)
-            beta = regularize(beta, axis, "significance")
+            beta = regularize(beta, axis)
             adjacent = (q[neighbors] * weights[:, :, None]).sum(1)
-            alpha = regularize(_turn_offset(q, narrow, ref, beta, adjacent), axis, "significance")
+            alpha = regularize(_turn_offset(q, narrow, ref, beta, adjacent), axis)
         alpha, beta = _feasible_response(q, ref, alpha, beta, lowest)
         responses.append((alpha, beta))
         q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)

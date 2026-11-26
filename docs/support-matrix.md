@@ -13,7 +13,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
 | Load already-corrected TIFF line integrals | `tj.Scan(read_tiff_frames(path), geometry)` |
 | Lazy cropping, view selection, and custom correction steps | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `scan.corrected(*steps)` |
-| Artifact removal and phase retrieval | `--stripes WIDTH`, `--rings`, `--zingers`, `--reject-views`, `--paganin` (expert); `BeamHardening`, `RadialDistortion` in Python |
+| Artifact removal and phase retrieval | `--rings`, `--zingers`, `--reject-views`, `--paganin` (expert); `BeamHardening`, `RadialDistortion` in Python |
 | Analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, FISTA-TV, SPDHG-TV, SIRT, MLEM) | `tomojax reconstruct corrected.nxs -o recon.nxs [--method ...]` or `tj.reconstruct(scan, method, config=...)` |
 | Nikon `.xtekct` cone-beam import | `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` or `tj.load_frames("scan/part.xtekct", darks=0).corrected()` |
 | Zeiss `.txrm` projection acquisitions | `tj.load("scan.txrm")` or `tj.load_frames("scan.txrm", flats="reference_Front.xrm").corrected(...)` ([CPU preview](lab-ct.md#zeiss-xradia-preview)) |

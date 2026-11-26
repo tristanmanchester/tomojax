@@ -95,7 +95,7 @@ Uncompressed (unfiltered) HDF5 frames, chunked or contiguous and including exter
 ```python
 import numpy as np
 import tomojax as tj
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 
 frames = tj.load_frames("raw.nxs")
 grid = frames.geometry.grid
@@ -103,7 +103,7 @@ volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
 with tj.reconstruct_slabs(
-    frames, "fbp", corrections=[Stripes(), Stripes(51, varying=True)]
+    frames, "fbp", corrections=[Rings()]
 ) as slabs:
     for z_slice, block in slabs:
         volume[z_slice] = block.volume
@@ -118,7 +118,7 @@ The full Zeiss CuO_2 tomo-B scan (3201 views of 2028 × 2028 pixels, 52 GB corre
 uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 ```
 
-Only whole-row line-integral corrections (such as `Stripes`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
+Only whole-row line-integral corrections (such as `Rings`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
 
 ## Bin detectors finer than the grid
 

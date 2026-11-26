@@ -33,14 +33,14 @@ def test_local_variance_matches_dense_reflection_covariance(size: int) -> None:
 def test_parity_prior_preserves_odd_fields_and_units(size: int, axis: float) -> None:
     u = np.arange(size) - axis
     odd = jnp.asarray(np.sin(u / 3), jnp.float32)
-    np.testing.assert_array_equal(regularize(odd, axis, "significance"), odd)
+    np.testing.assert_array_equal(regularize(odd, axis), odd)
     rng = np.random.default_rng(8647)
     profile = jnp.asarray(
         0.02 * rng.normal(size=size) + 0.1 * np.exp(-((u / 12) ** 2)), jnp.float32
     )
-    fixed = np.asarray(regularize(profile, axis, "significance"))
+    fixed = np.asarray(regularize(profile, axis))
     for scale in [0.01, 100]:
-        rescaled = np.asarray(regularize(profile * scale, axis, "significance")) / scale
+        rescaled = np.asarray(regularize(profile * scale, axis)) / scale
         assert np.linalg.norm(rescaled - fixed) < 2e-6 * np.linalg.norm(fixed)
 
 
@@ -109,7 +109,7 @@ def test_parity_scales_match_scalar_reference():
         scale = np.exp(np.interp(np.log(degrees), log_df, log_critical))
         expected += np.minimum(scale * variance / coefficient**2, 1) * coefficient
     np.testing.assert_allclose(
-        regularize(jnp.asarray(profile), 63.5, "significance"),
+        regularize(jnp.asarray(profile), 63.5),
         expected,
         atol=4 * np.finfo(np.float32).eps * np.max(np.abs(profile)),
     )

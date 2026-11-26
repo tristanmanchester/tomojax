@@ -246,8 +246,6 @@ def _automatic_axial_setup(scan: Scan, *, method: Method, reasons: list[str]) ->
         reasons.append(
             "Use reconstruct_slabs on raw Frames to avoid storing all corrected projections."
         )
-        if not any(step.name in {"stripes", "rings"} for step in scan.corrections):
-            reasons.append(
-                "Apply stripe correction if detector rings appear in the reconstruction."
-            )
+        if not any(step.name == "rings" for step in scan.corrections):
+            reasons.append("Apply Rings() if detector rings appear in the reconstruction.")
     return status

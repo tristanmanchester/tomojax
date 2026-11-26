@@ -70,13 +70,12 @@ def _uniform_interp(x: jax.Array, knots: jax.Array, values: jax.Array) -> jax.Ar
     return jnp.where(x < knots[0], values[0], jnp.where(x > knots[-1], values[-1], interpolated))
 
 
-def regularize(profile: jax.Array, axis: float, keep_even: str) -> jax.Array:
+def regularize(profile: jax.Array, axis: float) -> jax.Array:
     """Retain odd detector response and locally supported even response.
 
     A complete paired interval avoids a half-profile FFT boundary at the axis.
     The undecimated filters have no privileged spatial origin and sum to one.
-    Fine corrections use simultaneous significance; broad corrections use a
-    Wiener gain. Even scene/response separation remains a statistical prior.
+    The odd component sets a simultaneous significance threshold at each scale.
     """
     n = profile.size
     lo, hi = max(0, int(2 * axis - n + 1)), min(n, int(2 * axis) + 1)
@@ -94,20 +93,18 @@ def regularize(profile: jax.Array, axis: float, keep_even: str) -> jax.Array:
     coefficients = jnp.fft.irfft(fe * jnp.asarray(filters, profile.dtype), n=size, axis=1)
     terms = jnp.asarray(weights, profile.dtype) * spectra[None, :, None]
     variance = terms.sum(1)
-    scale: float | jax.Array = 1.0
-    if keep_even != "wiener":
-        # All frequencies in a band share one estimated PSD. Collapse its
-        # location-dependent weights before computing effective degrees.
-        fractions = terms / jnp.where(variance > 0, variance, 1)[:, None, :]
-        inverse_df = (fractions**2 / jnp.asarray(counts[:, None], profile.dtype)).sum(1)
-        degrees = jnp.clip(1 / jnp.where(inverse_df > 0, inverse_df, 1), 1, size // 2 + 1)
-        scale = jnp.exp(
-            _uniform_interp(
-                jnp.log(degrees),
-                jnp.asarray(log_degrees, profile.dtype),
-                jnp.asarray(log_critical, profile.dtype),
-            )
+    # All frequencies in a band share one estimated PSD. Collapse its
+    # location-dependent weights before computing effective degrees.
+    fractions = terms / jnp.where(variance > 0, variance, 1)[:, None, :]
+    inverse_df = (fractions**2 / jnp.asarray(counts[:, None], profile.dtype)).sum(1)
+    degrees = jnp.clip(1 / jnp.where(inverse_df > 0, inverse_df, 1), 1, size // 2 + 1)
+    scale = jnp.exp(
+        _uniform_interp(
+            jnp.log(degrees),
+            jnp.asarray(log_degrees, profile.dtype),
+            jnp.asarray(log_critical, profile.dtype),
         )
+    )
     squared = coefficients * coefficients
     gain = jnp.minimum(scale * variance / jnp.where(squared > 0, squared, 1), 1)
     # Preserve the scale accumulation order: tiny changes in the corrected

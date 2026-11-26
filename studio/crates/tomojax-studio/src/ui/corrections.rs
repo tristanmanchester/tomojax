@@ -51,23 +51,6 @@ const PRESETS: &[Preset] = &[
         ],
     },
     Preset {
-        name: "Stripes",
-        title: "Suppress stripes",
-        help: "Correct detector-column artifacts before reconstruction.",
-        fields: &[
-            Field {
-                name: "width",
-                title: "Filter width",
-                unit: "px",
-            },
-            Field {
-                name: "varying",
-                title: "Varying stripes",
-                unit: "",
-            },
-        ],
-    },
-    Preset {
         name: "Rings",
         title: "Suppress rings",
         help: "Fit detector response over angular bins, then correct every view. Enter null to fit every view.",

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use `Rings()` or `tomojax correct --rings` for fine and wide detector rings.
+  The `Stripes` step, `--stripes WIDTH` and `stripes_varying` setting have been removed.
 - Fourier reconstruction accepts `filter="ramp"`, `"hann"`, or `"shepp-logan"`
   in `tj.reconstruct`, `tj.reconstruct_slabs` (via `FourierConfig(filter=...)`),
   the CLI (`--filter`), and wire options. Passing a filter applies FBP's linear

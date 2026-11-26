@@ -20,7 +20,7 @@ class Correction:
     Parameters
     ----------
     name : str
-        Correction name, such as ``"flat_dark"`` or ``"stripes"``.
+        Correction name, such as ``"flat_dark"`` or ``"rings"``.
     settings : dict, optional
         JSON-compatible settings used by the correction. Defaults to an empty dict.
     found : dict, optional

@@ -78,7 +78,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `inspect` | Report on a file, list the datasets in a directory, or show an HDF5 tree |
 | `open` | Load a scan, raw frames or a saved result as a handle, with metadata overrides |
 | `describe` | Expert settings for an operation or solver, with defaults and units |
-| `correct` | Flat/dark correction, zingers, phase retrieval, stripes, rings, beam hardening and binning |
+| `correct` | Flat/dark correction, zingers, phase retrieval, rings, beam hardening and binning |
 | `reconstruct` | Reconstruct with an automatic or named method; returns central planes |
 | `reconstruct_slabs` | Reconstruct raw frames slab by slab straight into a file, for volumes too large to hold |
 | `align` | Fit the center, setup angles or per-view motion; returns a pose plot and slices |

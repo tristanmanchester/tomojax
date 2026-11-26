@@ -20,13 +20,7 @@ class Rings(Record, tag="Rings"):
 
 
 type Steps = tuple[
-    w.BeamHardening
-    | w.Paganin
-    | w.RadialDistortion
-    | w.RejectViews
-    | Rings
-    | w.Stripes
-    | w.Zingers,
+    w.BeamHardening | w.Paganin | w.RadialDistortion | w.RejectViews | Rings | w.Zingers,
     ...,
 ]
 DETAIL = ("detail", Literal["summary", "full"], "summary")

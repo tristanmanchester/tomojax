@@ -912,13 +912,13 @@ mod tests {
             &catalog,
             "correct",
             Some(&serde_json::json!({"corrections":[
-                {"type":"Stripes"}, {"type":"Rings"}, {"type":"Zingers","threshold":-1.0}
+                {"type":"Rings"}, {"type":"Zingers","threshold":-1.0}
             ]})),
         );
         let guided = field_issue(
             &ui,
             &fields,
-            DraftError::new("corrections[2].threshold", "must be positive"),
+            DraftError::new("corrections[1].threshold", "must be positive"),
         );
         assert_eq!(
             guided.control.as_deref(),
@@ -927,10 +927,10 @@ mod tests {
         let nested = field_issue(
             &ui,
             &fields,
-            DraftError::new("corrections[2].alpha", "invalid value"),
+            DraftError::new("corrections[1].alpha", "invalid value"),
         );
         assert_eq!(nested.control.as_deref(), Some("corrections-json"));
-        assert_eq!(nested.path, "corrections[2].alpha");
+        assert_eq!(nested.path, "corrections[1].alpha");
         assert!(
             field_issue(
                 &ui,

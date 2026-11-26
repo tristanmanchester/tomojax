@@ -32,12 +32,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from _walnut import load_scan
 
-RINGS = (Stripes(9), Stripes(51, varying=True))  # the I12 scan's ring correction
+RINGS = (Rings(),)  # the I12 scan's ring correction
 
 
 def object_crop(image: np.ndarray, margin: float = 0.06) -> np.ndarray:

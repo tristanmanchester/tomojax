@@ -158,14 +158,14 @@ def test_steps_from_the_command_line(tmp_path: Path, rings: bool) -> None:
     write_angle_csv(tmp_path / "angles.csv", list(np.linspace(0.0, 360.0, views, endpoint=False)))
     out = tmp_path / "scan.nxs"
     assert _preprocess(tmp_path / "frames", "-o", out, "--darks", 0, "--flats", 1000, "--angles", tmp_path / "angles.csv",
-                       "--zingers", "--stripes", 9, *(["--rings"] if rings else []),
+                       "--zingers", *(["--rings"] if rings else []),
                        "--reject-views", *DETECTOR) == 0  # fmt: skip
     scan = tj.load(out)
     names = [c.name for c in scan.corrections]
     if rings:
         assert scan.corrections[3].settings == {"mirror_axis": (nu - 1) / 2, "views": 512}
         names.remove("rings")
-    assert names == ["flat_dark", "zingers", "log", "reject_views", "stripes"]
+    assert names == ["flat_dark", "zingers", "log", "reject_views"]
     assert np.isfinite(np.asarray(scan.projections)).all()
 
 
@@ -174,8 +174,8 @@ def test_correct_on_a_dataset_takes_only_its_line_integral_steps(tmp_path, capsy
     # which must run before the log, is refused with what to run instead.
     write_projection_dataset(tmp_path / "scan.nxs")
     out = tmp_path / "corrected.nxs"
-    assert _preprocess(tmp_path / "scan.nxs", "-o", out, "--stripes", 3, "--views", "0:2") == 0
-    assert [c.name for c in tj.load(out).corrections][-2:] == ["selected", "stripes"]
+    assert _preprocess(tmp_path / "scan.nxs", "-o", out, "--rings", "--views", "0:2") == 0
+    assert [c.name for c in tj.load(out).corrections][-2:] == ["selected", "rings"]
     assert _preprocess(tmp_path / "scan.nxs", "-o", tmp_path / "z.nxs", "--zingers") == 1
     assert "acts on transmission" in capsys.readouterr().err
     assert not (tmp_path / "z.nxs").exists()

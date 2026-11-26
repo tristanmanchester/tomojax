@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.corrections import BeamHardening, RadialDistortion, RejectViews, Stripes, Zingers
+from tomojax.corrections import BeamHardening, RadialDistortion, RejectViews, Rings, Zingers
 from tomojax.geometry import ConeBeam, ConeGeometry
 from tomojax.interactive import center_sweep, correction_preview, reconstruct_slice
 from tomojax.recon import CGLSConfig, FBPConfig
@@ -97,7 +97,7 @@ def test_correction_band_preserves_complete_blocks_halos_and_view_ids(rows, reje
     steps = [
         Zingers(size=3, threshold=1.3),
         RadialDistortion(center=(6.25, 7.75), coefficients=(0.99, 0.008)),
-        Stripes(3),
+        Rings(),
         BeamHardening(),
     ]
     if reject:
@@ -184,7 +184,7 @@ def test_sweep_preserves_calibration_and_view_poses():
 
 
 @pytest.mark.parametrize(
-    ("step", "expected"), [(Zingers(size=5, threshold=1.3), (4, 10)), (Stripes(3), (6, 8))]
+    ("step", "expected"), [(Zingers(size=5, threshold=1.3), (4, 10)), (Rings(), (6, 8))]
 )
 def test_raw_preview_reads_only_required_native_rows(step, expected):
     data = np.random.default_rng(512).uniform(2, 6, (9, 15, 13)).astype("f")

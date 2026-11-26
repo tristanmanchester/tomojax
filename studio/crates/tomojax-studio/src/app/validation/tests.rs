@@ -385,15 +385,18 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
     });
 
     state.ui.workspace = Workspace::Prepare;
-    state.set_operation("correct", Some(&json!({"corrections":[
-        {"type":"Stripes","width":3}, {"type":"Rings","views":null}, {"type":"Zingers","threshold":-1.0}
-    ]})));
+    state.set_operation(
+        "correct",
+        Some(&json!({"corrections":[
+            {"type":"Rings","views":null}, {"type":"Zingers","threshold":-1.0}
+        ]})),
+    );
     state.poll();
     drive(&mut state, |state| {
         state.model.validation.phase == Phase::Invalid
     });
     let issue = &state.model.validation.issues[0];
-    assert_eq!(issue.path, "corrections[2].threshold");
+    assert_eq!(issue.path, "corrections[1].threshold");
     assert_eq!(
         issue.control.as_deref(),
         Some("correction-Zingers.threshold")

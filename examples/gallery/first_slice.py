@@ -7,7 +7,7 @@ r"""A first slice from a raw synchrotron scan, as the quickstart reaches it.
 
 The script follows the quickstart on an NXtomo file of raw counts with its
 flats and darks: ``tj.load_frames``, a crop to 16 detector rows,
-``corrected(Stripes(9), Stripes(51, varying=True))`` for the rings, then FBP.
+``corrected(Rings())`` for the rings, then FBP.
 The rotation center is the recorded one given by ``--center`` (in pixels),
 or without it ``tj.align(method="opposite-views")`` finds it.
 The figure shows one raw frame with the cropped rows marked, the corrected
@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import tomojax as tj
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 
 CROP = 400
 
@@ -59,7 +59,7 @@ def main() -> None:
         detector = tj.Detector(d.nu, d.nv, d.du, d.dv, center=(args.center * d.du, 0.0))
         frames = tj.load_frames(args.input, detector=detector)
     raw = np.asarray(frames.selected([0]).counts, np.float32)[0]
-    scan = frames.cropped(rows, slice(None)).corrected(Stripes(9), Stripes(51, varying=True))
+    scan = frames.cropped(rows, slice(None)).corrected(Rings())
     if args.center is None:
         scan = tj.align(scan, method="opposite-views").scan
     print("detector center:", scan.detector.center)

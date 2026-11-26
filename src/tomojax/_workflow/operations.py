@@ -693,7 +693,7 @@ def reconstruct_slabs(
     volume and its corrected source rows in memory.
 
     This supports cone-beam FDK, unposed axial parallel beams and whole-row line-integral
-    corrections such as Stripes or Rings (geometry-dependent steps bind to
+    corrections such as Rings (geometry-dependent steps bind to
     ``frames.geometry`` automatically), not Paganin or view rejection. SIRT/OSEM
     also require matching detector and voxel planes; ``warm_start=True`` uses FBP.
     Method configurations retain the same meaning as in ``reconstruct``.

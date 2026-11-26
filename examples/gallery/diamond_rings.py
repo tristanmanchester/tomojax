@@ -4,8 +4,7 @@ Diamond I12 (Vo et al., Zenodo 3339629): 1801 parallel-beam views of a rock
 sample at 54 keV, full-resolution detector rows. A miscalibrated detector
 column whose response varies with intensity leaves a large ring, and pixels
 near the rotation axis with small constant offsets leave tight rings round it.
-``Stripes()`` subtracts the constant offsets and ``Stripes(51, varying=True)``
-fits the intensity-dependent pixels to their neighbors. The authors' own
+``Rings()`` fits both detector errors. The authors' own
 reconstruction (Savu) is shown at the same slice, with each slice's
 correlation with it inside the sample.
 
@@ -18,7 +17,6 @@ correlation with it inside the sample.
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
 from pathlib import Path
 
 from _common import save, style
@@ -27,7 +25,7 @@ import numpy as np
 import tifffile
 
 import tomojax as tj
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 
 
 def main() -> None:
@@ -40,8 +38,7 @@ def main() -> None:
 
     frames = tj.load_frames(args.raw)
     plain = tj.align(frames.corrected(), method="opposite-views").scan
-    steps = (Stripes(), Stripes(51, varying=True))
-    cleaned = replace(frames.corrected(*steps), geometry=plain.geometry)
+    cleaned = plain.corrected(Rings())
     reference = tifffile.imread(args.reference).astype(np.float32)
     n = reference.shape[0]
     centers = np.arange(n) - n / 2 + 0.5
@@ -53,7 +50,7 @@ def main() -> None:
     slices = {}
     for title, scan in (
         ("TomoJAX FBP", plain),
-        ("with Stripes() and Stripes(51, varying=True)", cleaned),
+        ("with Rings()", cleaned),
     ):
         image = np.asarray(tj.reconstruct(scan, "fbp").volume[args.row], np.float32)
         slices[f"{title}\ncorrelation {correlation(image):.3f}"] = image

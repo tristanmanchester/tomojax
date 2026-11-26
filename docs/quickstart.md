@@ -33,7 +33,7 @@ tomojax correct raw.nxs -o corrected.nxs
 tomojax inspect corrected.nxs
 ```
 
-`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--stripes 9`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
+`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
 When an external file omits metadata:
 
@@ -45,34 +45,36 @@ In Python, `tj.load("raw.nxs")` runs the default flat/dark/`-log` correction. Fo
 
 ```python
 import tomojax as tj
-from tomojax.corrections import RejectViews, Stripes
+from tomojax.corrections import RejectViews, Rings
 
 frames = tj.load_frames("raw.nxs")  # also works on TIFFs (with angles=) or Nikon .xtekct
-scan = frames.cropped(slice(100, 900), slice(None)).corrected(RejectViews(), Stripes(9))
+scan = frames.cropped(slice(100, 900), slice(None)).corrected(Rings(), RejectViews())
 print(scan)
 tj.save("corrected.nxs", scan)
 ```
 
-HDF5 and TIFF sample, flat, and dark stacks are read lazily during correction, so call `.cropped(...)` or `.selected(...)` before `.corrected(...)` to avoid reading unused pixels (`np.asarray(frames.counts)` materializes the selection). Selection accepts a forward slice, increasing integer indices, or a boolean mask, preserving each view's geometry and its position between flat sets. Call `scan.corrected(...)` to apply line-integral steps (`Stripes`, `Rings`, `BeamHardening`, `RejectViews`) to an already-corrected `Scan`.
+HDF5 and TIFF sample, flat, and dark stacks are read lazily during correction, so call `.cropped(...)` or `.selected(...)` before `.corrected(...)` to avoid reading unused pixels (`np.asarray(frames.counts)` materializes the selection). Selection accepts a forward slice, increasing integer indices, or a boolean mask, preserving each view's geometry and its position between flat sets. Call `scan.corrected(...)` to apply line-integral steps (`Rings`, `BeamHardening`, `RejectViews`) to an already-corrected `Scan`.
 
-### Ring and stripe removal
+### Ring removal
 
-If rings remain after `Stripes(9)`, a defective pixel's response may vary with intensity rather than by a constant offset. Chain `Stripes(51, varying=True)` after `Stripes(9)` on densely sampled views (crop detector rows to save memory rather than thinning views first, because wide angular gaps can confuse moving sample edges with bad pixels):
+Use `Rings()` for fine and wide rings. It fits each column's offset and
+transmission-dependent response. Crop detector rows for a quick preview so
+every view still contributes to the fit.
 
 ```python
-import tomojax as tj
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 
 frames = tj.load_frames("raw.nxs").cropped(slice(100, 116), slice(None))
-scan = frames.corrected(Stripes(9), Stripes(51, varying=True))
-preview = scan.selected(slice(None, None, 4))  # thin views only after stripe correction
+scan = frames.corrected(Rings())
 ```
 
-Widths are in detector columns. Use the narrowest width that covers the stripes, since wide windows can alter stationary centered sample features. For full statistical/full-turn detector-response modeling, see `Rings` in [tomojax.corrections](../src/tomojax/corrections/README.md).
+A detector defect can give the same measurements as a circular feature centered
+on the rotation axis. Compare corrected and uncorrected slices there.
+See [detector-response correction](../src/tomojax/corrections/README.md).
 
 ![A raw detector frame of a sandstone plug with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i12-first-slice.png)
 
-Diamond I12 sandstone (Vo et al., Zenodo 3339629; 1801 views of 2560-pixel rows): raw frame with 16 cropped rows marked, middle-row sinogram after `Stripes(9)` and `Stripes(51, varying=True)`, and FBP slice at axis column 1417.5:
+Diamond I12 sandstone (Vo et al., Zenodo 3339629; 1801 views of 2560-pixel rows): raw frame with 16 cropped rows marked, middle-row sinogram after the earlier sorting-based ring correction, and FBP slice at axis column 1417.5:
 
 ```bash
 uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-slice.png \

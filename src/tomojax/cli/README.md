@@ -54,7 +54,7 @@ released in the same joint solver; it takes one or more of `center`, `translatio
 - `correct`: import raw acquisitions or datasets, supply missing metadata (`--flats`,
   `--darks`, `--angles`, `--pixel-size`, `--detector-center`, `--geometry`, `--tilt`
   and cone parameters), and apply optional corrections (`--zingers`, `--paganin`,
-  `--stripes`, `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`.
+  `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`.
   On raw frames every step runs; on a dataset of line integrals only the steps that
   act on them do. `--detector-center U V` sets the first detector's center, in the
   pixel size's unit, after everything else has loaded, and moves every segment of a

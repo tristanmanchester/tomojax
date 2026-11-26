@@ -511,9 +511,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -525,7 +522,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -731,30 +727,6 @@
       ],
       "additionalProperties": false
     },
-    "Stripes": {
-      "title": "Stripes",
-      "description": "Wire fields of Stripes.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "Stripes"
-          ]
-        },
-        "width": {
-          "type": "integer",
-          "default": 9
-        },
-        "varying": {
-          "type": "boolean",
-          "default": false
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "additionalProperties": false
-    },
     "Zingers": {
       "title": "Zingers",
       "description": "Wire fields of Zingers.",
@@ -869,9 +841,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -883,7 +852,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -2537,9 +2505,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -2551,7 +2516,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -4406,9 +4370,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -4420,7 +4381,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }

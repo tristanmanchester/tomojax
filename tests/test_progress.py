@@ -759,13 +759,13 @@ def test_psi_reads_report_written_batches_and_release_owned_mapping(
 
 
 def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
-    from tomojax.corrections import BeamHardening, RejectViews, Stripes
+    from tomojax.corrections import BeamHardening, RejectViews, Rings
 
     grid = tj.Grid(8, 8, 4, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(11))
     frames = tj.Frames(np.full((11, 4, 8), 500, np.uint16), geometry, white_level=1000)
     monkeypatch.setattr("tomojax.corrections._engine._BATCH_BYTES", 8 * 11 * 8)
-    steps = (Stripes(3), RejectViews(), BeamHardening((1.0,)), BeamHardening((1.0,)))
+    steps = (Rings(), RejectViews(), BeamHardening((1.0,)), BeamHardening((1.0,)))
     events, owner = [], get_ident()
 
     def observe(event):
@@ -779,7 +779,7 @@ def test_corrections_report_each_executed_group_on_the_caller(monkeypatch):
     groups = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert [(e.label, e.unit) for e in groups] == [
         ("flat dark, log", "view batches"),
-        ("stripes", "row batches"),
+        ("rings", "row batches"),
         ("reject views", "view batches"),
         ("beam hardening, beam hardening", "view batches"),
     ]
@@ -923,7 +923,7 @@ def test_observer_oom_during_a_slab_read_reaches_caller_without_retry(tmp_path):
 def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkeypatch, at):
     import threading
 
-    from tomojax.corrections import Stripes
+    from tomojax.corrections import Rings
 
     grid = tj.Grid(8, 8, 4, 1, 1, 1)
     geometry = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(11))
@@ -941,14 +941,14 @@ def test_fused_row_correction_counts_completed_rows_and_joins_its_workers(monkey
     with progress.watch(observe, control=token):
         if at == 1:
             with pytest.raises(progress.Canceled):
-                frames.corrected(Stripes(3))
+                frames.corrected(Rings())
         else:
-            result = frames.corrected(Stripes(3))
+            result = frames.corrected(Rings())
             np.testing.assert_allclose(result.projections, np.log(2), rtol=1e-6)
     validate_tree(events)
     assert len([e for e in work_events(events) if isinstance(e, progress.Started)]) == 1
     assert (events[0].label, events[0].unit, events[0].total) == (
-        "flat dark, log, stripes",
+        "flat dark, log, rings",
         "row batches",
         4,
     )

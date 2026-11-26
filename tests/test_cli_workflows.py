@@ -691,7 +691,7 @@ def test_correct_cli_supports_config_slices_and_open_crop(tmp_path: Path, capsys
     raw = tmp_path / "raw.nxs"
     write_raw_nxtomo(raw)
     cfg = tmp_path / "correct.toml"
-    cfg.write_text("zingers_size = 3\nstripes_varying = true\n", encoding="utf-8")
+    cfg.write_text("zingers_size = 3\n", encoding="utf-8")
     out = tmp_path / "scan.nxs"
 
     with pytest.raises(SystemExit) as info:
@@ -714,8 +714,6 @@ def test_correct_cli_supports_config_slices_and_open_crop(tmp_path: Path, capsys
                 "--crop",
                 "0:2,:1",
                 "--zingers",
-                "--stripes",
-                "3",
             ]
         )
         == 0

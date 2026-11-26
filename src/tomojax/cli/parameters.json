@@ -594,9 +594,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -608,7 +605,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -852,33 +848,6 @@
       ],
       "additionalProperties": false
     },
-    "Stripes": {
-      "title": "Stripes",
-      "description": "Correct detector stripes that reconstruct as rings.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "Stripes"
-          ]
-        },
-        "width": {
-          "type": "integer",
-          "default": 9,
-          "description": "Neighborhood width in detector columns, at least 3. Default is 9.",
-          "x-unit": "pixel"
-        },
-        "varying": {
-          "type": "boolean",
-          "default": false,
-          "description": "Fit gain and offset at anomalous pixels instead of subtracting constant offsets at all pixels. Default is False."
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "additionalProperties": false
-    },
     "Zingers": {
       "title": "Zingers",
       "description": "Replace bright specks (zingers) with the median of the pixels around them.",
@@ -997,9 +966,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -1011,7 +977,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -2923,9 +2888,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -2937,7 +2899,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }
@@ -5123,9 +5084,6 @@
                 "$ref": "#/$defs/Rings"
               },
               {
-                "$ref": "#/$defs/Stripes"
-              },
-              {
                 "$ref": "#/$defs/Zingers"
               }
             ],
@@ -5137,7 +5095,6 @@
                 "RadialDistortion": "#/$defs/RadialDistortion",
                 "RejectViews": "#/$defs/RejectViews",
                 "Rings": "#/$defs/Rings",
-                "Stripes": "#/$defs/Stripes",
                 "Zingers": "#/$defs/Zingers"
               }
             }

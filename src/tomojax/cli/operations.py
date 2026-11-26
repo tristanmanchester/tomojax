@@ -10,15 +10,7 @@ from tomojax._parameters import AlignMethod, GeometryName, Method, Phantom, Regi
 from tomojax.cli import wire_options as w
 from tomojax.wire.arrays import Count, Id, Member, Npy, Record, Storage
 
-type Step = (
-    w.BeamHardening
-    | w.Paganin
-    | w.RadialDistortion
-    | w.RejectViews
-    | w.Rings
-    | w.Stripes
-    | w.Zingers
-)
+type Step = w.BeamHardening | w.Paganin | w.RadialDistortion | w.RejectViews | w.Rings | w.Zingers
 type Config = (
     w.FBPConfig
     | w.FourierConfig

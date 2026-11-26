@@ -14,7 +14,7 @@ from scipy.spatial.transform import Rotation
 from tests.worker_adapter import Stage, admitted
 import tomojax as tj
 from tomojax.cli import operations as op, wire_options
-from tomojax.corrections import Stripes
+from tomojax.corrections import Rings
 from tomojax.evaluation import Split
 from tomojax.recon import api
 from tomojax.wire.arrays import Member
@@ -50,15 +50,15 @@ def test_dry_run_validates_partitions_without_reading_detector(tmp_path, monkeyp
 
     monkeypatch.setattr(tj.Scan, "corrected", forbid)
     monkeypatch.setattr(tj.Frames, "corrected", forbid)
-    assert validate(wire_options.Stripes(width=3)).details["test_views"] == 3
-    with pytest.raises(ValueError, match="width"):
-        validate(wire_options.Stripes(width=0))
+    assert validate(wire_options.Rings()).details["test_views"] == 3
+    with pytest.raises(ValueError, match="views"):
+        validate(wire_options.Rings(views=1))
     with pytest.raises(ValueError, match="counts|transmission"):
         validate(wire_options.Zingers())
     with pytest.raises(ValueError, match="motion|poses"):
-        validate(wire_options.Stripes(), op.AlignSettings(fit="rotations"))
+        validate(wire_options.Rings(), op.AlignSettings(fit="rotations"))
     with pytest.raises(ValueError, match="guard"):
-        validate(wire_options.Stripes(), split=op.Interleaved(stride=2, guard=1))
+        validate(wire_options.Rings(), split=op.Interleaved(stride=2, guard=1))
     save_dataset(path, _labeled_dataset([8, *([4] * 24), 2], [1, *([0] * 24), 2]))
     assert validate(wire_options.Zingers()).details["test_views"] == 4
     assert reads == []
@@ -151,12 +151,12 @@ def test_fits_ignore_every_excluded_observation(tmp_path, monkeypatch, predictio
         op.AlignSettings(method="opposite-views"),
         op.AlignSettings(fit="translations", motion="smooth", iterations=1, image_iterations=2),
     )
-    args = dict(candidates=candidates, corrections=(wire_options.Stripes(width=3),))
+    args = dict(candidates=candidates, corrections=(wire_options.Rings(),))
     before = evaluate(scan, tmp_path, **args)
     after = evaluate(replace(scan, projections=x), tmp_path, **args)
     a, b, altered, held = corrected
     np.testing.assert_array_equal(a, altered)
-    np.testing.assert_allclose(a, correct(scan.selected(ids[train]), Stripes(width=3)).projections)
+    np.testing.assert_allclose(a, correct(scan.selected(ids[train]), Rings()).projections)
     assert not np.allclose(b, held)
     for first, second in zip(fits[:2], fits[2:], strict=True):
         np.testing.assert_allclose(first, second, atol=1e-7)

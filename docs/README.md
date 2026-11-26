@@ -4,7 +4,7 @@ TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab 
 
 ![Four reconstructed slices, one per geometry: a sandstone plug from Diamond I12 in parallel beam, a layer of glass spheres from Diamond K11 laminography, a copper oxide specimen from a Zeiss Xradia cone-beam scan, and a FIPS walnut from three cone-beam orbits.](images/geometry-montage.png)
 
-Four real scans reconstructed at native detector resolution and cropped to the sample: Diamond I12 sandstone (parallel beam, `Stripes(9)` + `Stripes(51, varying=True)`, FBP), Diamond K11 scan 54286 (laminography, aligned with `tj.align(scan)`, FBP at 2.16 µm), Zeiss Xradia CuO_2 tomo-B (cone beam, FDK at 1.13 µm using recorded center and shifts), and FIPS walnut 1 (three cone orbits, CGLS on the authors' 0.1 mm grid).
+Four real scans reconstructed at native detector resolution and cropped to the sample: Diamond I12 sandstone (parallel beam, earlier sorting-based ring correction, FBP), Diamond K11 scan 54286 (laminography, aligned with `tj.align(scan)`, FBP at 2.16 µm), Zeiss Xradia CuO_2 tomo-B (cone beam, FDK at 1.13 µm using recorded center and shifts), and FIPS walnut 1 (three cone orbits, CGLS on the authors' 0.1 mm grid).
 
 ```bash
 uv run python examples/gallery/geometry_montage.py DATA geometry-montage.png
@@ -53,7 +53,7 @@ Import through public package roots or their `.api` facades; modules starting wi
 - [Geometry](../src/tomojax/geometry/README.md): grids, detectors, coordinate frames, and poses.
 - [Forward projection](../src/tomojax/forward/README.md): Joseph projection and derivatives.
 - [Reconstruction](../src/tomojax/recon/README.md): solvers and configuration classes.
-- [Corrections](../src/tomojax/corrections/README.md): flat/dark, phase retrieval, ring/stripe removal, and beam hardening.
+- [Corrections](../src/tomojax/corrections/README.md): flat/dark, phase retrieval, ring removal, and beam hardening.
 - [IO](../src/tomojax/io/README.md): dataset formats, metadata readers, and TIFF angle files.
 - [Alignment](../src/tomojax/alignment/README.md): joint alignment solver and convergence criteria.
 - [Architecture map](architecture-map.md): subsystem ownership, shared vocabulary, and sources of truth.
