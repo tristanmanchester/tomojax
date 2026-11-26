@@ -325,6 +325,23 @@ def snapped(
     return (float(top + best[0]), float(left + best[1]))
 
 
+def snap(
+    mark: AnyMark, shape: Shape, pixels: np.ndarray, frame: Frame
+) -> tuple[Shape, dict[str, object]]:
+    """Move a snapping point mark on one plane, and report where it went."""
+    r0, c0 = shape.points[0]
+    h, w = pixels.shape[:2]
+    if not (isinstance(mark, PointMark) and mark.snap):
+        return shape, {}
+    if not (-0.5 <= r0 < h - 0.5 and -0.5 <= c0 < w - 0.5):
+        return shape, {}
+    steps = (frame.rows[2], frame.cols[2])
+    r1, c1 = snapped(pixels, (r0, c0), mark, steps)
+    moved = float(np.hypot((r1 - r0) * steps[0], (c1 - c0) * steps[1]))
+    report = {"snapped": [round(v, 2) for v in frame.index(r1, c1)], "moved": round(moved, 2)}
+    return replace(shape, points=((r1, c1),)), report
+
+
 def anchor(shape: Shape) -> tuple[float, float]:
     """The sample-grid position a mark's reported pixel and value refer to."""
     if shape.kind == "arrow":
@@ -506,21 +523,7 @@ def draw(
             distance = round(shape.distance or 0.0, 3)
             reports.append({"drawn": False, "reason": "off_plane", "distance": distance})
             continue
-        moved: dict[str, object] = {}
-        r0, c0 = shape.points[0]
-        if (
-            isinstance(mark, PointMark)
-            and mark.snap
-            and -0.5 <= r0 < size[0] - 0.5
-            and -0.5 <= c0 < size[1] - 0.5
-        ):
-            steps = (overlay.frame.rows[2], overlay.frame.cols[2])
-            r1, c1 = snapped(pixels, (r0, c0), mark, steps)
-            shape = replace(shape, points=((r1, c1),))
-            moved = {
-                "snapped": [round(v, 2) for v in overlay.frame.index(r1, c1)],
-                "moved": round(float(np.hypot((r1 - r0) * steps[0], (c1 - c0) * steps[1])), 2),
-            }
+        shape, moved = snap(mark, shape, pixels, overlay.frame)
         row, col = anchor(shape)
         covered = footprint(shape, size)
         extended = shape.kind in ("box", "circle", "polyline", "polygon")
