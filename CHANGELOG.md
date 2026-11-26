@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Spelling is US English everywhere, with no aliases for the old names. Renamed:
+  `tj.simulate(artifacts=)`, `SimConfig.artifacts` and `datasets.SimulationArtifacts`
+  (were `artefacts`); `interactive.center_sweep(centers=)` and the worker's `center_sweep`
+  operation (were `centre_sweep`); `progress.Canceled`, `Control.canceled`,
+  `check_canceled()` and the `"canceled"` status and error kind (were `cancelled`); the
+  Skill reference `find-the-center`. A saved simulation records `simulation_artifacts`;
+  files written before this keep their data and poses but load without that record.
 - The MCP server lets an agent point: `view` draws marks (points, arrows, boxes, circles,
   polygons, text) given as array indices of the source, on every plane they reach, with
   index ticks, and reports each mark's pixel and the value under it. A new `feature` tool

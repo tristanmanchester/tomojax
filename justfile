@@ -19,8 +19,8 @@ parallel := "-n " + `echo $(( ($(nproc) + 1) / 2 ))` + " --maxschedchunk 1"
 # context takes 0.3 GB and its JAX pool is capped at its share of the rest (tests/conftest.py).
 gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk 'NR == 1 { print int($1 / 1300) }'` + " --maxschedchunk 1"
 
-setup:
-    uv sync --locked --extra cpu --dev
+setup *flags:
+    ./tools/worktree_setup.sh {{flags}}
 
 format:
     uv run --no-sync ruff format src tests tools examples {{benchmark_scripts}}
