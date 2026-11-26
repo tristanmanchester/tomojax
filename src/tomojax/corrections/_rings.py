@@ -160,24 +160,6 @@ def _reference_jax(ranked: jax.Array, gamma: float = 2.0, local: int = 64) -> ja
     return out
 
 
-def _fit(ranked: jax.Array, ref: jax.Array) -> tuple[jax.Array, jax.Array, jax.Array]:
-    """Per column, the rank differences' offset, slope on ``1 - T`` and mean ``1 - T``.
-
-    Centered weighted least squares with weights ``T`` against ``ref``.
-    """
-    x = -jnp.expm1(-ref)
-    w = jnp.exp(-jnp.minimum(ref, 50.0))
-    d = ranked - ref
-    sw = w.sum(0)
-    xm, dm = (w * x).sum(0) / sw, (w * d).sum(0) / sw
-    xc = x - xm
-    # a slope is measured only over the spread of 1 - T the column sees (a ridge for columns that
-    # see one transmission), and a detector response stays monotone only for beta > -1
-    beta = (w * xc * (d - dm)).sum(0) / ((w * xc * xc).sum(0) + 1e-4 * sw)
-    beta = jnp.maximum(beta, -0.5)
-    return dm - beta * xm, beta, xm
-
-
 def _feasible_response(
     q: jax.Array, ref: jax.Array, alpha: jax.Array, beta: jax.Array, lowest: jax.Array | None = None
 ) -> tuple[jax.Array, jax.Array]:
@@ -342,63 +324,10 @@ def _unsorted_response(
     return jnp.stack(alphas), jnp.stack(betas), q
 
 
-def _sorted_values(x: jax.Array) -> jax.Array:
-    """Sort the first axis, omitting unused tie bookkeeping on CUDA."""
-    return jax.lax.platform_dependent(
-        x,
-        cuda=lambda x: jnp.sort(x, axis=0, stable=False),
-        default=lambda x: jnp.sort(x, axis=0),
-    )
-
-
-def _large_stripes(q: jax.Array, axis: float, window: int = 100, ratio: float = 3.0) -> jax.Array:
-    """Vo et al. 2018, algorithms 4 and 5, with our response model as the correction offset.
-
-    Each column's level (mean of its sorted values, 5% of the views cut at either end) less its
-    median over +-window columns is sorted, a line fitted through the middle half, and the values
-    beyond the fitted ends by more than ``ratio``/2 spans flagged on each side whose extreme lies
-    beyond them by ``ratio`` spans. Only the flagged columns, grown by two, lose their level
-    against the +-window quadratic of their neighbors, faded out over eight more columns.
-    The flagged response uses the reflection-aware significance prior too: an even scene
-    contrast alone is not evidence of a detector calibration error.
-    """
-    views, n = q.shape
-    ranked = _sorted_values(q)
-    cut = int(0.05 * views)
-    level = ranked[cut : views - cut].mean(0)
-    padded = jnp.pad(level, window, mode="edge")
-    stack = jnp.stack([padded[k : k + n] for k in range(2 * window + 1)])
-    dev = level - _sorted_values(stack)[window]
-    s = _sorted_values(dev)
-    i = np.arange(n, dtype=np.float64)[n // 4 : n - n // 4]
-    y = s[n // 4 : n - n // 4]
-    slope = ((i - i.mean()) * (y - y.mean())).sum() / float(((i - i.mean()) ** 2).sum())
-    first = y.mean() - slope * i.mean()
-    last = first + slope * (n - 1)
-    span = jnp.maximum(last - first, 1e-12 * jnp.maximum(jnp.abs(s).max(), 1e-30))
-    upper = ((s[-1] - last) / span > ratio) & (dev > last + 0.5 * ratio * span)
-    lower = ((first - s[0]) / span > ratio) & (dev < first - 0.5 * ratio * span)
-    grown = jnp.pad((upper | lower).astype(q.dtype), 10)
-    mask = jnp.max(jnp.stack([grown[8 + j : 8 + j + n] for j in range(5)]), axis=0)
-    wide = jnp.pad(mask, 8)
-    weight = jnp.max(
-        jnp.stack([wide[8 + j : 8 + j + n] * (1 - abs(j) / 9) for j in range(-8, 9)]), axis=0
-    )
-    alpha, beta, xm = _fit(ranked, _correlate(ranked, _quadratic_taps(window, 1)))
-    return regularize(weight * (alpha + beta * xm), axis, "significance")
-
-
 def _turn_response(
     q: jax.Array, lowest: jax.Array, axis: float, neighbors: jax.Array, weights: jax.Array
 ) -> tuple[jax.Array, ...]:
-    """A full-turn row's large-stripe offset, three responses and ``q`` corrected.
-
-    Each response is fitted after the ones before. The fine fits keep the spatial smoothness
-    at the axis that sorting would lose; the last, broad one fits the sorted views.
-    ``lowest`` is as for ``_unsorted_response``.
-    """
-    stripes = _large_stripes(q, axis)
-    q, lowest = q - stripes, lowest - stripes
+    """Fit the spatial response twice, using opposed columns to estimate detector power."""
     responses = []
     for _ in range(2):
         ref = _reference(q)
@@ -408,14 +337,8 @@ def _turn_response(
         beta = regularize(beta, axis, "significance")
         responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
         q, lowest = (_invert(x, *responses[-1]) for x in (q, lowest))
-    ranked = _sorted_values(q)
-    ref = _correlate(ranked, _quadratic_taps(100, 1))
-    alpha, beta, xm = _fit(ranked, ref)
-    level = regularize(alpha + beta * xm, axis, "wiener")
-    beta = regularize(beta, axis, "wiener")
-    responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
     alphas, betas = zip(*responses, strict=True)
-    return stripes, jnp.stack(alphas), jnp.stack(betas), _invert(q, *responses[-1])
+    return jnp.stack(alphas), jnp.stack(betas), q
 
 
 @dataclass(frozen=True)
@@ -599,11 +522,10 @@ def correct_rings(
         passes = 1
     rows = (jnp.swapaxes(fitted, 0, 1), batch.min(0))
     if axis is not None:
-        stripes, alpha, beta, corrected = jax.lax.map(
+        alpha, beta, corrected = jax.lax.map(
             lambda row: _turn_response(row[0], row[1], axis, neighbors, weights),
             rows,
         )
-        batch = batch - stripes[None]
     else:
         alpha, beta, corrected = jax.lax.map(
             lambda row: _unsorted_response(row[0], neighbors, weights, groups, row[1], passes),
@@ -658,18 +580,12 @@ class Rings(Step):
     side, narrowed toward 6 where the object changes faster. Independent
     neighboring views provide the instrument for the response fit. Keeping
     these references unsorted preserves their spatial smoothness at the axis.
-    The fine fits use cyclic angular neighbors (bins, when ``views`` bins them)
-    and average a repeated closing phase. Large stripes are detected first using
-    the sorted-column procedure of Vo, Atwood and Drakopoulos (2018, Opt. Express
-    26, 28396, algorithms 4 and 5); a last sorted fit over 100 columns either side
-    addresses broad rings.
+    The fits use cyclic angular neighbors and average a repeated closing phase.
 
-    Opposed columns see the same lines over a full turn. Their fitted odd
-    component therefore supplies a stationary detector-field spectrum; the
-    even component is regularized locally in an undecimated multiscale frame,
-    accounting for correlation between reflected neighbors. Flagged large and
-    fine corrections use per-scale simultaneous significance; the final broad
-    correction uses a Wiener gain.
+    Opposed columns see the same lines over a full turn. The difference
+    between a fitted response and its reflection measures detector error.
+    Its power at each spatial scale sets the allowed size of the symmetric
+    correction, accounting for correlation between reflected neighbors.
     The variance and effective degrees are estimated, not a calibrated
     scan-wide confidence bound. DC power is inferred from the lowest measured
     odd-frequency band. Purely even detector errors and rotationally symmetric

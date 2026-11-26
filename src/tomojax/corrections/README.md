@@ -79,12 +79,9 @@ then inverts the model (two passes). Given the scan's geometry, it checks for
 a stationary parallel-beam scan over one evenly sampled full turn. There each
 unsorted view is compared with a local quadratic through 30 columns either side,
 narrowed toward 6 where the sample changes faster, so sample edges are not taken
-for stripes; unsorted references stay spatially smooth at the axis. Mirror
-columns about the rotation axis see the same lines, so the odd part of the fitted
-errors estimates detector error, and large stripes (detected in sorted columns
-as in Vo, Atwood and Drakopoulos 2018, algorithms 4 and 5) and broad rings (a
-last sorted fit) are corrected too, each kept only as far as that odd part
-supports. Interpolating over bad pixels belongs to calibration. The record says
+for stripes. Opposed columns see the same lines over a full turn. The difference
+between a fitted response and its reflection measures detector error and sets
+the power available for the symmetric correction at each spatial scale. The record says
 which axis was used, if any. The CLI binds `--rings` to the selected and cropped
 acquisition geometry and applies it before view rejection and detector binning.
 Otherwise it uses unsorted local quadratics, independent neighboring-view
