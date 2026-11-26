@@ -7,4 +7,6 @@ autodoc_member_order = "bysource"
 numpydoc_show_class_members = False  # Autodoc's members directive includes them once.
 numpydoc_class_members_toctree = False
 html_theme = "alabaster"
+html_logo = "../../assets/brand/tomojax-logo.svg"
+html_favicon = "../../assets/brand/tomojax-favicon.ico"
 exclude_patterns = []

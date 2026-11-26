@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="8 8 112 112" role="img" aria-labelledby="tomojax-favicon-title tomojax-favicon-desc">
+  <title id="tomojax-favicon-title">TomoJAX favicon</title>
+  <desc id="tomojax-favicon-desc">Single-cut optical variant for 16-pixel use. Colour follows the preferred light or dark scheme.</desc>
+  <style>:root { color: #265B49; } @media (prefers-color-scheme: dark) { :root { color: #DDEADB; } }</style>
+  <g transform="rotate(-32 64 64)" fill="currentColor">
+    <path d="M 19.307 58.750 A 45 45 0 0 1 108.693 58.750 Z"/>
+    <path d="M 19.307 69.250 H 108.693 A 45 45 0 0 1 19.307 69.250 Z"/>
+  </g>
+</svg>

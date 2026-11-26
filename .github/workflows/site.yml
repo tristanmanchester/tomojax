@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - "**/*.md"
+      - "assets/brand/**"
       - "docs/**"
       - "images/**"
       - "site/**"

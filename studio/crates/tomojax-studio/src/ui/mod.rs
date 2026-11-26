@@ -100,7 +100,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
         .gap(12.)
         .items_center()
         .fill(paper())
-        .child(icon(Icon::Layers, 27., forest()))
+        .child(brand_mark(28.))
         .child(strong("TomoJAX", 19., ink()).min_w(94.));
     if state.model.project.is_some() {
         bar = bar.child(icon_button(
@@ -608,7 +608,7 @@ fn welcome(state: &AppState) -> El {
         .w(520.)
         .max_w(650.)
         .gap(20.)
-        .child(icon(Icon::Layers, 42., forest()))
+        .child(brand_mark(46.))
         .child(strong("TomoJAX Studio", 30., ink()))
         .child(
             row()
