@@ -3190,7 +3190,11 @@
           "tolerance": "tolerance",
           "interpolation": "interpolation",
           "resolution": "resolution",
-          "config": "config"
+          "config": "config",
+          "checkpoint": {
+            "owner": "python",
+            "description": "Directory of the fit's saved state, created if absent; None saves nothing."
+          }
         }
       }
     },

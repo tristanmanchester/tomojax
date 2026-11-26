@@ -475,3 +475,32 @@ def test_slabs_from_frames_left_early_keep_their_checkpoint(tmp_path: Path) -> N
         next(s)
     with tj.reconstruct_slabs(frames, "fourier", config=config, checkpoint=tmp_path / "run") as s:
         assert next(s)[0].start == 4  # the first slab was finished; the second was not
+
+
+@pytest.mark.slow
+@pytest.mark.usefixtures("every_boundary")
+@pytest.mark.parametrize(
+    ("saves", "of"),
+    [(2, "level-0/steps"), (1, "level-1/steps"), (1, "refine")],
+    ids=["first-level", "second-level", "refinement"],
+)
+def test_a_stopped_alignment_resumes_to_the_uninterrupted_fit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, saves: int, of: str
+) -> None:
+    scan = tj.simulate(
+        "shepp", size=16, n_views=24, geometry="parallel", translation_sigma=0.5
+    ).scan
+    path = tmp_path / "run"
+    plain = tj.align(scan)
+    with monkeypatch.context() as patched:
+        _terminate_after(patched, saves, of)
+        with pytest.raises(Canceled):
+            tj.align(scan, checkpoint=path)
+    resumed = tj.align(scan, checkpoint=path)
+
+    np.testing.assert_array_equal(np.asarray(resumed.poses), np.asarray(plain.poses))
+    np.testing.assert_array_equal(np.asarray(resumed.image), np.asarray(plain.image))
+    assert [level["steps"] for level in resumed.info["levels"]] == [
+        level["steps"] for level in plain.info["levels"]
+    ]
+    assert not path.exists()

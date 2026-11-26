@@ -177,6 +177,7 @@ def tomojax.align(
         interpolation: "Literal['linear', 'cubic'] | None" = None,
         resolution: 'int | None' = None,
         config: 'AlignConfig | None' = None,
+        checkpoint: 'str | PathLike[str] | None' = None,
     ) -> 'Alignment'
 def tomojax.backproject(
         geometry: 'ScanGeometry',

@@ -24,6 +24,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 from tomojax.core.registration import planes
 from tomojax.wire.metrics import Metric
 
@@ -612,6 +613,10 @@ class _Level:
         # expose or populate them; this is not a permanent active-set constraint.
         return self._write("x", _Volumes.observed_only, observed)
 
+    def restore(self, x: np.ndarray) -> jax.Array:
+        """Hold a checkpoint's volume as the level's, unchanged, for the steps after it."""
+        return self._write("x", _Volumes.start, x)
+
     def accept(self, x: jax.Array, previous: jax.Array) -> None:
         """Hold an accepted step's volume as the level's, and the previous one beside it."""
         self.stacks.update([("x", x), ("other", previous)])
@@ -931,6 +936,12 @@ def _pose_weight(
     return (weight, photon) if len(translations) < len(local) else weight, s, fisher
 
 
+class _Finished(NamedTuple):
+    """What a checkpoint keeps of a finished level besides its volume and poses."""
+
+    record: LevelRecord
+
+
 def solve(
     y: np.ndarray,
     precision: np.ndarray | None,
@@ -955,34 +966,95 @@ def solve(
     "device" or "host" by name. Returns the volume, compact free parameters, the
     data and a record of the steps, the stacks' placement and the level's time.
     """
-    start = time.perf_counter()
-    c = (
-        jnp.zeros(prior.size, jnp.float64)
-        if p0 is None
-        else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
-    )
-    level = _Level(
-        ops,
-        prior,
-        lam=weight,
-        eps=eps,
-        scales=scales,
-        delta=delta,
-        inner=budget.image_iterations,
-        image_tolerance=budget.image_tolerance,
-    )
-    stacks = level.place(y, precision, placement, x0=x0)
-    try:
-        _, c, record = _descend(level, c, x0, budget, pose_sigma, weight)
-        x = stacks.take("x")  # the caller's now: the level's other storage is released
-    except jax.errors.JaxRuntimeError as err:
-        if progress.handler_failed(err):
-            raise
-        raise unplaced(err, stacks) from err
-    finally:
-        stacks.close()
-    stacks_record: StorageRecord = {**stacks.record(), "transients": dict(level.transients)}
-    return x, c, y, {**record, "seconds": time.perf_counter() - start, "stacks": stacks_record}
+    with checkpoint.loop("level") as done, checkpoint.scope(done.key):
+        if done.saved is not None:  # a finished level: its volume, poses and record
+            x, c = (jnp.asarray(value) for value in done.saved.arrays)
+            return x, c, y, done.saved.scalars(_Finished).record
+        start = time.perf_counter()
+        c = (
+            jnp.zeros(prior.size, jnp.float64)
+            if p0 is None
+            else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
+        )
+        level = _Level(
+            ops,
+            prior,
+            lam=weight,
+            eps=eps,
+            scales=scales,
+            delta=delta,
+            inner=budget.image_iterations,
+            image_tolerance=budget.image_tolerance,
+        )
+        stacks = level.place(y, precision, placement, x0=x0)
+        try:
+            _, c, descent = _descend(level, c, x0, budget, pose_sigma, weight)
+            x = stacks.take("x")  # the caller's now: the level's other storage is released
+        except jax.errors.JaxRuntimeError as err:
+            if progress.handler_failed(err):
+                raise
+            raise unplaced(err, stacks) from err
+        finally:
+            stacks.close()
+        stacks_record: StorageRecord = {**stacks.record(), "transients": dict(level.transients)}
+        record: LevelRecord = {
+            **descent,
+            "seconds": time.perf_counter() - start,
+            "stacks": stacks_record,
+        }
+        done.save((x, c), _Finished(record))
+    return x, c, y, record
+
+
+class _Descent(NamedTuple):
+    """What a checkpoint keeps of a level's steps besides its volume and poses."""
+
+    history: list[dict[str, _StepMetric]]
+    lm: float
+    stable: int
+    objective: float
+    initial_objective: float
+    pose_stats: tuple[PoseWeight, float | None, float] | None
+
+
+def _step_metrics(
+    result: _AcceptedStep, objective: float, rho: float, obstats: jax.Array
+) -> dict[str, _StepMetric]:
+    """The record of an accepted step that reached ``objective`` with gain ratio ``rho``."""
+    valid, down = map(float, np.asarray(obstats))
+    return {
+        Metric.objective.name: objective,
+        Metric.pose_step_rms.name: result.pose_step_rms,
+        Metric.line_step.name: result.line_step,
+        Metric.pose_fraction.name: result.pose_fraction,
+        Metric.lm.name: result.lm,
+        Metric.gain_ratio.name: rho,
+        Metric.predicted_reduction.name: result.predicted,
+        Metric.cg_iterations.name: result.cg_steps,
+        Metric.cg_relative_residual.name: result.cg_residual,
+        Metric.proposed_pose_step_rms.name: result.proposed_rms,
+        **result.linear_record,
+        Metric.fraction_downweighted.name: down / max(valid, 1),
+    }
+
+
+def _started(
+    level: _Level,
+    c: jax.Array,
+    x0: jax.Array | np.ndarray | None,
+    budget: Budget,
+    saved: checkpoint.Saved | None,
+) -> tuple[jax.Array, jax.Array, _Descent]:
+    """The level's volume, poses and step state: from ``x0`` and ``c``, or a checkpoint's."""
+    if saved is None:
+        x = level.start(c, x0, budget.initial_image_iterations)
+        return x, c, _Descent([], budget.lm_initial, 0, 0.0, 0.0, None)
+    descent = saved.scalars(_Descent)
+    if descent.pose_stats is not None:  # JSON holds the rotation weight pair as a list
+        held, noise, fisher = descent.pose_stats
+        held = tuple(held) if isinstance(held, list) else held
+        descent = descent._replace(pose_stats=(held, noise, fisher))
+    return level.restore(saved.arrays[0]), jnp.asarray(saved.arrays[1]), descent
 
 
 def _descend(
@@ -993,73 +1065,61 @@ def _descend(
     pose_sigma: float,
     weight: float,
 ) -> tuple[jax.Array, jax.Array, _DescentRecord]:
-    """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA)."""
-    prior = level.prior
-    x = level.start(c, x0, budget.initial_image_iterations)
-    history: list[dict[str, _StepMetric]]
-    history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
-    initial_objective = f = 0.0
-    pose_stats: tuple[PoseWeight, float | None, float] | None = None
-    level_task = progress.for_unit("steps")
-    for it in range(max(1, budget.iterations)):
-        with (
-            progress.task("step", f"Gauss-Newton step {it + 1}", None, "")
-            if budget.iterations
-            else nullcontext()
-        ):
-            gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
-            linear = (gx0, dd, sw, j, gr, gram, residual, common)
-            previous_weight = None if pose_stats is None else pose_stats[0]
-            pose_weight, _, _ = pose_stats = _pose_weight(level, linear, pose_sigma)
-            if previous_weight is not None:
-                f += float(prior.value(c, pose_weight)) - float(prior.value(c, previous_weight))
-            else:
-                f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
-                initial_objective = f
-                if not budget.iterations:
+    """The level's damped Gauss-Newton steps from poses ``c`` and volume ``x0`` (None: FISTA).
+
+    A checkpoint's volume, poses and step state replace the start and the steps it holds.
+    """
+    prior, status = level.prior, "step_budget_reached"
+    with checkpoint.loop("steps") as saves:
+        x, c, descent = _started(level, c, x0, budget, saves.saved)
+        history, lm, stable, f, initial_objective, pose_stats = descent
+        level_task = progress.for_unit("steps")
+        for it in range(len(history), max(1, budget.iterations)):
+            with (
+                progress.task("step", f"Gauss-Newton step {it + 1}", None, "")
+                if budget.iterations
+                else nullcontext()
+            ):
+                gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
+                linear = (gx0, dd, sw, j, gr, gram, residual, common)
+                previous_weight = None if pose_stats is None else pose_stats[0]
+                pose_weight, _, _ = pose_stats = _pose_weight(level, linear, pose_sigma)
+                if previous_weight is not None:
+                    f += float(prior.value(c, pose_weight)) - float(prior.value(c, previous_weight))
+                else:
+                    f = float(data + level.image_penalty(x) + prior.value(c, pose_weight))
+                    initial_objective = f
+                    if not budget.iterations:
+                        break
+                result = level.step(x, c, linear, lm, pose_weight, f)
+                if result is None:
+                    status = "line_search_stalled"
                     break
-            result = level.step(x, c, linear, lm, pose_weight, f)
-            if result is None:
-                status = "line_search_stalled"
+                x0, c0 = x, c
+                fn, x, c = result.trial
+                level.accept(x, x0)
+                rho = _gain_ratio(f - fn, result.predicted)
+                history.append(_step_metrics(result, fn, rho, obstats))
+                f, lm = fn, result.lm
+                if rho > 0.75 and result.line_step == 1:
+                    lm = max(_LM_MIN, lm / 2)
+                elif rho < 0.25 or result.line_step < 0.5:
+                    lm = min(lm * 3, 1e6)
+                undamped = _undamped_proposal(level, result, x0, c0, linear, budget, pose_weight)
+                history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
+                # Two sets of linearized view stacks would exceed the placement budget.
+                del gx0, dd, sw, j, gr, gram, residual, common, linear
+            if level_task is not None:
+                jax.block_until_ready((x, c))
+                level_task.advance(len(history), history[-1])
+                progress.preview(lambda x=x, c=c: level.ops.preview(x, c))
+            stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
+            if stable >= 2 and it + 1 >= budget.min_iterations:
+                status = "pose_steps_below_tolerance"
                 break
-            x0, c0 = x, c
-            fn, x, c = result.trial
-            level.accept(x, x0)
-            rho = _gain_ratio(f - fn, result.predicted)
-            valid, down = map(float, np.asarray(obstats))
-            history.append(
-                {
-                    Metric.objective.name: fn,
-                    Metric.pose_step_rms.name: result.pose_step_rms,
-                    Metric.line_step.name: result.line_step,
-                    Metric.pose_fraction.name: result.pose_fraction,
-                    Metric.lm.name: result.lm,
-                    Metric.gain_ratio.name: rho,
-                    Metric.predicted_reduction.name: result.predicted,
-                    Metric.cg_iterations.name: result.cg_steps,
-                    Metric.cg_relative_residual.name: result.cg_residual,
-                    Metric.proposed_pose_step_rms.name: result.proposed_rms,
-                    **result.linear_record,
-                    Metric.fraction_downweighted.name: down / max(valid, 1),
-                }
-            )
-            f, lm = fn, result.lm
-            if rho > 0.75 and result.line_step == 1:
-                lm = max(_LM_MIN, lm / 2)
-            elif rho < 0.25 or result.line_step < 0.5:
-                lm = min(lm * 3, 1e6)
-            undamped = _undamped_proposal(level, result, x0, c0, linear, budget, pose_weight)
-            history[-1][Metric.undamped_proposed_pose_step_rms.name] = undamped
-            # Two sets of linearized view stacks would exceed the placement budget.
-            del gx0, dd, sw, j, gr, gram, residual, common, linear
-        if level_task is not None:
-            jax.block_until_ready((x, c))
-            level_task.advance(len(history), history[-1])
-            progress.preview(lambda x=x, c=c: level.ops.preview(x, c))
-        stable = stable + 1 if undamped is not None and undamped < budget.tolerance else 0
-        if stable >= 2 and it + 1 >= budget.min_iterations:
-            status = "pose_steps_below_tolerance"
-            break
+            if saves.due():
+                state = _Descent(history, lm, stable, f, initial_objective, pose_stats)
+                saves.save((x, c), state)
     if history:
         progress.preview(lambda: level.ops.preview(x, c), final=True)
     assert pose_stats is not None  # Even a zero-step budget measures the prior.

@@ -14,7 +14,7 @@ and lets an inconsistent view move.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NamedTuple, NotRequired, TypedDict
 
 import jax
 import jax.numpy as jnp
@@ -22,6 +22,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.alignment._config import AlignConfig
+from tomojax.core import checkpoint
 from tomojax.core.robust import MAD_TO_SD
 
 from ._operators import column_gram, column_score, robust_batch, robust_value
@@ -437,6 +438,14 @@ def _transients(
     return out
 
 
+class _Refined(NamedTuple):
+    """What a checkpoint keeps of the refinement besides its poses."""
+
+    objective: float
+    lm: float
+    steps: list[dict[str, float]]
+
+
 def _refine(
     x: jax.Array,
     p: jax.Array | np.ndarray,
@@ -460,29 +469,31 @@ def _refine(
         fisher = float(jnp.median(jnp.trace(problem.first[1], axis1=1, axis2=2)))
         scale = float(np.sqrt(fisher * last["pose_fisher"] * 2 * np.log(ops.n)))
         problem.weight = (last["translation_noise"] * scale, problem.photon_weight)
-    stats = problem.first
-    f, lm, status, steps = (
-        float(stats[2] + problem.penalty(c)),
-        _LM_INITIAL,
-        "step_budget_reached",
-        [],
-    )
-    for it in range(iterations):
-        progress.check_canceled()
-        if it:
-            stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
-        result = problem.step(c, stats, f, lm)
-        if isinstance(result, str):
-            status = result
-            break
-        c, f, alpha, dc, lm = result
-        step = _rms(alpha * prior.expand(dc))
-        steps.append({"objective": f, "pose_step_rms": step, "line_step": alpha, "lm": lm})
-        if (task := progress.for_unit("updates")) is not None:
-            jax.block_until_ready(c)
-            task.advance(len(steps), {})
-            progress.preview(lambda c=c: ops.preview(x, c))
-        lm = max(1e-5, lm * 0.5)
+    stats, status = problem.first, "step_budget_reached"
+    with checkpoint.loop("refine") as saves:
+        if saves.saved is None:
+            f, lm, steps = float(stats[2] + problem.penalty(c)), _LM_INITIAL, []
+        else:
+            c = jnp.asarray(saves.saved.arrays[0])
+            f, lm, steps = saves.saved.scalars(_Refined)
+        for it in range(len(steps), iterations):
+            progress.check_canceled()
+            if it:
+                stats = problem.objective.stats(ops.pad_poses(c), x, y, precision, problem.delta)
+            result = problem.step(c, stats, f, lm)
+            if isinstance(result, str):
+                status = result
+                break
+            c, f, alpha, dc, lm = result
+            step = _rms(alpha * prior.expand(dc))
+            steps.append({"objective": f, "pose_step_rms": step, "line_step": alpha, "lm": lm})
+            if (task := progress.for_unit("updates")) is not None:
+                jax.block_until_ready(c)
+                task.advance(len(steps), {})
+                progress.preview(lambda c=c: ops.preview(x, c))
+            lm = max(1e-5, lm * 0.5)
+            if saves.due():
+                saves.save((c,), _Refined(f, lm, steps))
     if steps:
         progress.preview(lambda: ops.preview(x, c), final=True)
     return c, {"status": status, "steps": steps, "delta": problem.delta}

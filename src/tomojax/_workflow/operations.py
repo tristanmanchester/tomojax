@@ -1022,6 +1022,7 @@ def align(
     interpolation: Literal["linear", "cubic"] | None = None,
     resolution: int | None = None,
     config: AlignConfig | None = None,
+    checkpoint: str | PathLike[str] | None = None,
 ) -> Alignment:
     """Estimate geometry errors and per-view motion for ``scan``.
 
@@ -1063,6 +1064,16 @@ def align(
     ambiguous under strong defects or repetitive structure and records its pair
     diagnostics in ``info["diagnostics"]``.
 
+    ``checkpoint`` names a directory where the fit keeps its state, so a run
+    that is killed resumes when it is run again with the same directory, scan
+    and settings, and returns the alignment it would have returned
+    uninterrupted. Each finished resolution level is saved, and within a level
+    and the refinement the poses and volume are saved at most every 10 minutes
+    and at most 5% of the run's time apart; on SIGTERM the fit saves after the
+    current step and raises :class:`tomojax.errors.Canceled`. The directory is
+    deleted when the call returns. A directory holding another run's
+    checkpoint is refused.
+
     Parameters
     ----------
     scan : Scan
@@ -1088,6 +1099,8 @@ def align(
     config : tomojax.alignment.AlignConfig or None, optional
         Every setting of the joint fit (imported from :mod:`tomojax.alignment`);
         None uses the defaults.
+    checkpoint : str or path-like or None, optional
+        Directory of the fit's saved state, created if absent; None saves nothing.
 
     Returns
     -------
@@ -1143,7 +1156,7 @@ def align(
             resolution=resolution,
             config=config,
         )
-        return align_resolved(scan, plan)
+        return align_resolved(scan, plan, checkpoint=checkpoint)
 
 
 def alignment_task(
@@ -1154,34 +1167,47 @@ def alignment_task(
     return progress.task("align", label, None, "fit")
 
 
-def align_resolved(scan: Scan, plan: CenterSelection | JointSelection) -> Alignment:
-    """Execute the selected center or joint-image fit."""
+def align_resolved(
+    scan: Scan,
+    plan: CenterSelection | JointSelection,
+    *,
+    checkpoint: str | PathLike[str] | None = None,
+) -> Alignment:
+    """Execute the selected center or joint-image fit, in the checkpoint at ``checkpoint``."""
     from tomojax._workflow.smooth_alignment import CenterSelection, align_poses
+    from tomojax.core.checkpoint import checkpointing
 
-    if isinstance(plan, CenterSelection):
-        with registration(scan), progress.runtime() as actual:
-            alignment = _align_center(scan, plan)
-        return replace(
-            alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
+    settings = plan if isinstance(plan, CenterSelection) else replace(plan, info={})
+    with checkpointing(
+        checkpoint,
+        operation="align",
+        settings=(settings, scan.geometry),
+        input=(scan.projections, scan.view_positions),
+    ):
+        if isinstance(plan, CenterSelection):
+            with registration(scan), progress.runtime() as actual:
+                alignment = _align_center(scan, plan)
+            return replace(
+                alignment, info={**alignment.info, "placement": actual.record(slabbed=False)}
+            )
+        radius = None if plan.cylinder is None else plan.cylinder.radius
+        with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
+            result = align_poses(scan, plan)
+        slabbed = any(
+            "host" in level["stacks"]["placement"].values()
+            for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
         )
-    radius = None if plan.cylinder is None else plan.cylinder.radius
-    with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
-        result = align_poses(scan, plan)
-    slabbed = any(
-        "host" in level["stacks"]["placement"].values()
-        for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
-    )
-    grid, cylinder = plan.grid, plan.cylinder
-    assert result.scan is not None  # the alignment's corrected scan
-    image = result.volume
-    if cylinder is not None and image is not None and result.grid is not None:
-        from tomojax._workflow.field_of_view import zero_outside_cylinder
+        grid, cylinder = plan.grid, plan.cylinder
+        assert result.scan is not None  # the alignment's corrected scan
+        image = result.volume
+        if cylinder is not None and image is not None and result.grid is not None:
+            from tomojax._workflow.field_of_view import zero_outside_cylinder
 
-        image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
-    # The fit's working grid belongs to its image; the scan keeps the caller's grid.
-    corrected = with_grid(result.scan, scan.grid if grid is None else grid)
-    info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
-    return Alignment(corrected, info, image, result.grid)
+            image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
+        # The fit's working grid belongs to its image; the scan keeps the caller's grid.
+        corrected = with_grid(result.scan, scan.grid if grid is None else grid)
+        info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
+        return Alignment(corrected, info, image, result.grid)
 
 
 def _align_center(scan: Scan, selection: CenterSelection) -> Alignment:

@@ -60,6 +60,7 @@ def test_alignment_has_one_fit_argument_and_an_optional_grid():
         "motion",
         *("iterations", "image_iterations", "tolerance", "interpolation", "resolution"),
         "config",
+        "checkpoint",
     )
     assert parameters["fit"].default is None  # the method's own fit
     assert parameters["fit"].kind == inspect.Parameter.KEYWORD_ONLY
