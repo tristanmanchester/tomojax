@@ -47,9 +47,12 @@ class View(op.Window, kw_only=True):
     Point with marks at array indices of the source (z, y, x or view, v, u), or at
     {"pixel": [x, y], "image": render} in an image a view returned (origin top-left);
     each mark's report gives its indices, pixel, value, and the value's percentile in the
-    plane, so a miss shows. Images stay within 1568 px and 1.15 MP, so their pixels are
-    the pixels you see. Outline feature handles on any source on the same grid. For
-    sweeps or custom measures, use python with the same handles.
+    plane. A point or arrow on flat ground, with no peak, trough or edge within 2 samples,
+    also gets a warning and the nearest structure's indices. A point with snap locks onto
+    the brightest or darkest sample or strongest edge within reach. Images stay within
+    1568 px and 1.15 MP, so their pixels are the pixels you see. Outline feature handles
+    on any source on the same grid. For sweeps or custom measures, use python with the
+    same handles.
     """
 
     source: str | tuple[str, ...]

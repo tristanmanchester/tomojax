@@ -61,7 +61,8 @@ class PointMark(Mark, tag="point", kw_only=True):
     ``snap`` moves the dot, on each plane it is drawn on, to the brightest
     (``peak``) or darkest (``trough``) sample or the strongest edge (``edge``)
     within ``within`` index units, after light smoothing; the report says where
-    it went.
+    it went. A point that lands on flat ground is reported with the nearest
+    structure, which is the position to snap from.
     """
 
     at: Position
@@ -291,6 +292,86 @@ def project(mark: AnyMark, frame: Frame) -> Shape:
     return Shape(kind, tuple(grid(p) for p in points), distance=worst)
 
 
+def smoothed(pixels: np.ndarray) -> np.ndarray:
+    """Samples smoothed by one sample, with non-finite ones replaced by the finite median."""
+    from scipy import ndimage
+
+    values = np.asarray(pixels, float)
+    finite = np.isfinite(values)
+    values = np.where(finite, values, np.median(values[finite]) if finite.any() else 0.0)
+    return ndimage.gaussian_filter(values, 1.0)
+
+
+def percentile(ordered: np.ndarray, value: float) -> float:
+    """The share of a plane's sorted finite samples below ``value``, in percent."""
+    return round(100 * float(np.searchsorted(ordered, value) / ordered.size), 1)
+
+
+REACH = 2  # samples: a pointing mark this close to a structure is on it
+
+
+def nearby(
+    smooth: np.ndarray,
+    pixels: np.ndarray,
+    ordered: np.ndarray,
+    at: tuple[float, float],
+    frame: Frame,
+) -> dict[str, object]:
+    """Warn when a pointing mark sits on flat ground, and say where the nearest structure is.
+
+    Contrast is measured on the smoothed plane: a quarter of its 1 to 99 percentile
+    range, and at least eight times its noise, estimated from neighboring raw samples.
+    A mark is on flat ground when the samples within ``REACH`` of it span less than
+    that: it is on no peak, trough or edge. Its report then gets a ``warning`` and,
+    unless nothing on the plane differs from the value under the mark by that much,
+    ``nearest``: the closest sample that does, moved up to ``REACH + 1`` samples further
+    along the line from the mark to the most extreme raw sample of that structure.
+    ``ordered`` holds the plane's sorted finite samples, for the percentile.
+    """
+    h, w = smooth.shape
+    r0, c0 = (min(max(round(v), 0), n - 1) for v, n in zip(at, (h, w), strict=True))
+    lo, hi = np.percentile(smooth, (1, 99))
+    if hi == lo:
+        lo, hi = smooth.min(), smooth.max()
+    jumps = np.abs(np.diff(np.asarray(pixels, float), axis=1))
+    jumps = jumps[np.isfinite(jumps)]
+    # The median absolute difference of white noise is 0.954 sigma, and smoothing by
+    # one sample leaves 1 / (2 sqrt(pi)) of it.
+    noise = float(np.median(jumps)) / 0.954 / (2 * np.sqrt(np.pi)) if jumps.size else 0.0
+    contrast, level = max((hi - lo) / 4, 8 * noise), smooth[r0, c0]
+    top, left = max(r0 - REACH, 0), max(c0 - REACH, 0)
+    rows, cols = np.ogrid[top : min(r0 + REACH + 1, h), left : min(c0 + REACH + 1, w)]
+    around = smooth[rows, cols][np.hypot(rows - r0, cols - c0) <= REACH]
+    if contrast > 0 and np.ptp(around) >= contrast:
+        return {}
+    flat = f"Flat: nothing within {REACH} samples stands out from the value under this mark"
+    rows, cols = np.nonzero((np.abs(smooth - level) >= contrast) & (contrast > 0))
+    if not rows.size:
+        return {"warning": f"{flat}, and nothing on this plane does."}
+    gaps = np.hypot(rows - r0, cols - c0)
+    k = int(np.argmin(gaps))
+    # Follow the line from the mark through that sample across the structure.
+    along = np.arange(REACH + 2)
+    line_r = np.clip(np.round(rows[k] + along * (rows[k] - r0) / gaps[k]), 0, h - 1).astype(int)
+    line_c = np.clip(np.round(cols[k] + along * (cols[k] - c0) / gaps[k]), 0, w - 1).astype(int)
+    raw = np.asarray(pixels[line_r, line_c], float)
+    profile = np.sign(smooth[rows[k], cols[k]] - level) * (np.nan_to_num(raw, nan=level) - level)
+    r1, c1 = int(line_r[np.argmax(profile)]), int(line_c[np.argmax(profile)])
+    steps = (frame.rows[2], frame.cols[2])
+    distance = round(float(np.hypot((r1 - at[0]) * steps[0], (c1 - at[1]) * steps[1])), 2)
+    where = [round(v, 2) for v in frame.index(r1, c1)]
+    value = float(f"{float(pixels[r1, c1]):.6g}")
+    rank = percentile(ordered, value)
+    return {
+        "nearest": {"at": where, "distance": distance, "value": value, "percentile": rank},
+        "warning": (
+            f"{flat}, so it is not on a peak, trough or edge. The nearest structure is "
+            f"{distance:g} index units away at {where} (value {value:g}, percentile "
+            f"{rank:g}); mark nearest.at if that is what you meant."
+        ),
+    }
+
+
 def snapped(
     pixels: np.ndarray, at: tuple[float, float], mark: PointMark, steps: tuple[int, int]
 ) -> tuple[float, float]:
@@ -298,10 +379,11 @@ def snapped(
 
     Searches the samples within ``mark.within`` index units of ``at`` (``steps``
     converts index units to samples along rows and columns) on a copy smoothed
-    by one sample, for the largest or smallest value or gradient magnitude.
+    by one sample, for the largest or smallest value or gradient magnitude. A peak
+    or trough then moves to the most extreme raw sample within one sample of it,
+    since smoothing pulls the crest of a structure one sample thin towards the
+    brighter or darker of its sides.
     """
-    from scipy import ndimage
-
     h, w = pixels.shape[:2]
     reach = (mark.within / steps[0], mark.within / steps[1])
     r0, c0 = round(at[0]), round(at[1])
@@ -309,9 +391,7 @@ def snapped(
     bottom, right = min(r0 + ceil(reach[0]) + 3, h), min(c0 + ceil(reach[1]) + 3, w)
     if top >= bottom or left >= right:
         return at
-    crop = np.asarray(pixels[top:bottom, left:right], float)
-    crop = np.where(np.isfinite(crop), crop, np.nanmedian(crop) if np.isfinite(crop).any() else 0)
-    smooth = ndimage.gaussian_filter(crop, 1.0)
+    smooth = smoothed(pixels[top:bottom, left:right])
     if mark.snap == "edge":
         rise, run = np.gradient(smooth)
         score = np.hypot(rise, run)
@@ -322,6 +402,10 @@ def snapped(
     if not near.any():
         return at
     best = np.unravel_index(np.argmax(np.where(near, score, -np.inf)), score.shape)
+    if mark.snap != "edge":
+        raw = np.asarray(pixels[top:bottom, left:right], float) * (1 if mark.snap == "peak" else -1)
+        close = near & (np.abs(rows - top - best[0]) <= 1) & (np.abs(cols - left - best[1]) <= 1)
+        best = np.unravel_index(np.nanargmax(np.where(close, raw, -np.inf)), raw.shape)
     return (float(top + best[0]), float(left + best[1]))
 
 
@@ -493,7 +577,8 @@ def draw(
 
     A drawn mark's report places its value in the plane: ``percentile`` is the share
     of the plane's samples below it and ``display`` its position between the display
-    limits (0 the lower, 1 the upper), so a mark on background reads as a miss.
+    limits (0 the lower, 1 the upper). A point or arrow head on flat ground also gets
+    a ``warning`` and the ``nearest`` structure (see :func:`nearby`).
     """
     finite = np.sort(np.asarray(pixels, float)[np.isfinite(pixels)])
     lo, hi = scale
@@ -517,6 +602,7 @@ def draw(
     layer = Image.new("RGBA", image.size, (0, 0, 0, 0))
     shapes = ImageDraw.Draw(layer)
     reports = []
+    smooth = None
     for mark in overlay.marks:
         shape = project(mark, overlay.frame)
         if shape.reason is not None:
@@ -545,9 +631,11 @@ def draw(
             **moved,
         }
         if value is not None and finite.size:
-            below = np.searchsorted(finite, value) / finite.size
-            report["percentile"] = round(100 * float(below), 1)
+            report["percentile"] = percentile(finite, value)
             report["display"] = round((value - lo) / (hi - lo), 2) if hi > lo else None
+        if shape.kind in ("point", "arrow"):
+            smooth = smoothed(pixels) if smooth is None else smooth
+            report.update(nearby(smooth, pixels, finite, (row, col), overlay.frame))
         reports.append(report)
     box = (
         round(cell.x),

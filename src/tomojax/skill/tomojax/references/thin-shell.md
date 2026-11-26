@@ -2,19 +2,20 @@
 
 The user asks you to segment "the bright thin shell" of a sample and tune the reconstruction for it. The shell is a few voxels thick and touches two materials: air outside and a core inside. Both matter: a region grown from a seed leaks along partial-volume voxels into the core, and a single band around the shell mixes air with core.
 
-## 1. Measure, then mark
+## 1. Mark, then check
 
-Find the shell in the data first. A profile along one row through the middle of the volume shows it as a narrow peak between the air and the core:
+Mark where you see the shell with a snapping point, on the slice you are looking at:
 
 ```json
-{"source": "@recon-…", "mode": "profile", "roi": [[64, 65], [64, 65], [0, 128]]}
+{"source": "@recon-…", "axis": "z", "index": 64,
+ "marks": [{"type": "point", "at": [64, 64, 30], "snap": "peak", "label": "shell?"}]}
 ```
 
-Take the index of the peak as the shell's position on that row, and read the core and air levels from the same profile. Then mark it with `view` (`"at": [64, 64, x]`, or a pixel of the image you are looking at) and check the report: the value should be near the peak and its `percentile` high. Show the user and ask; never ask about a mark whose value is near the core or air level.
+On the shell, the report's `value` is near the shell's peak and has no `warning`. A mark that landed in the air or the core beside the shell comes back with a `warning` and the shell as `nearest`; mark `nearest.at` with `snap` and check again. Take the confirmed mark's `snapped` indices as the shell's position. Show the user and ask; never ask about a mark with a warning or a value near the core or air level.
 
 ## 2. Segment by threshold, and check it is stable
 
-Set `recon_id` to the volume, `shell_at` to the confirmed shell position (the profile's peak), and `core_at` and `air_at` to positions well inside the core and in the air. The core and air levels are medians of a small neighborhood; the shell level is the peak value itself, since a neighborhood around a shell one or two voxels thick is mostly core and air. The block keeps the bright voxels connected to the shell above a threshold between the core and shell levels, and checks the mask hardly changes when the threshold moves:
+Set `recon_id` to the volume, `shell_at` to the confirmed shell position (the mark's `snapped` indices), and `core_at` and `air_at` to positions well inside the core and in the air. The core and air levels are medians of a small neighborhood; the shell level is the peak value itself, since a neighborhood around a shell one or two voxels thick is mostly core and air. The block keeps the bright voxels connected to the shell above a threshold between the core and shell levels, and checks the mask hardly changes when the threshold moves:
 
 ```python
 from scipy import ndimage
