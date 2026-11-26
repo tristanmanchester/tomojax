@@ -457,8 +457,8 @@ def test_slice_and_sweep_publish_fixed_input_registration(worker, tmp_path):
     fixed = tj.reconstruct(tj.load(path), "fbp", region="bbox").grid
     for i, centre in enumerate(offsets):
         shifted = tj.Scan(data, replace(geom, detector=replace(det, center=(centre, 0))))
-        np.testing.assert_array_equal(
-            pixels[i], tj.reconstruct(shifted, "fbp", grid=fixed).volume[2]
+        np.testing.assert_allclose(
+            pixels[i], tj.reconstruct(shifted, "fbp", grid=fixed).volume[2], rtol=1e-6, atol=2e-7
         )
     for stored in (sweep["storage"], plane["storage"], coord["coordinates"]["values"]):
         output(worker("release", artifact=stored["artifact"]))

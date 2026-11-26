@@ -34,7 +34,7 @@ def _run_on_a_terminal(code: str) -> tuple[bytes, bytes]:
             stderr=stderr,
             stdout=subprocess.PIPE,
             check=True,
-            env={**os.environ, "COLUMNS": "120", "JAX_PLATFORMS": "cpu"},
+            env={**os.environ, "TERM": "xterm", "COLUMNS": "120", "JAX_PLATFORMS": "cpu"},
         )
         chunks = []
         while True:

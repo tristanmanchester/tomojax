@@ -367,7 +367,7 @@ def test_fixed_update_solvers_preserve_the_schedule(monkeypatch, method, seconds
 @pytest.mark.parametrize("failure", ["cancel", "handler"])
 def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
     import os
-    from pathlib import Path
+    import stat
     import threading
 
     from tomojax.geometry import ConeBeam, ConeGeometry
@@ -380,18 +380,18 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
     data = np.random.default_rng(56).uniform(size=(7, 11, 8)).astype(np.float32)
     out = np.memmap(tmp_path / "output", np.float32, "w+", shape=(9, 4, 5))
 
-    def mapped_files():
+    def unlinked_files():
         files = []
-        for path in Path("/proc/self/fd").iterdir():
+        for fd in os.listdir("/dev/fd"):
             try:
-                name = os.readlink(path)
-            except FileNotFoundError:
+                info = os.fstat(int(fd))
+            except OSError:  # The descriptor for the directory listing is already closed.
                 continue
-            if str(tmp_path) in name:
-                files.append(name)
+            if stat.S_ISREG(info.st_mode) and info.st_nlink == 0:
+                files.append((info.st_dev, info.st_ino))
         return sorted(files)
 
-    before = mapped_files()
+    before = unlinked_files()
     workers = set(threading.enumerate())
     failure_object = jax.errors.JaxRuntimeError("RESOURCE_EXHAUSTED: out of memory")
     token = progress.Control()
@@ -401,7 +401,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
         events.append(event)
         if isinstance(event, progress.Advanced):
             assert event.done == 1
-            assert any("(deleted)" in name for name in mapped_files())
+            assert set(unlinked_files()) - set(before)
             if failure == "handler":
                 raise failure_object
             token.cancel()
@@ -422,7 +422,7 @@ def test_host_slab_exit_joins_workers_and_closes_work_files(tmp_path, failure):
     else:
         assert events[-1].status == "cancelled"
     validate_tree(events, interrupted=failure == "handler")
-    assert mapped_files() == before
+    assert unlinked_files() == before
     assert not (set(threading.enumerate()) - workers)
     assert np.any(out != 0)
 

@@ -402,12 +402,17 @@ def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
     install_overlay(tmp_path)
     with connection(tmp_path, overlay=True, exit_code=-signal.SIGTERM) as c:
         assert c.call("status")["structuredContent"]["devices"]
-        children = Path(f"/proc/{c.process.pid}/task/{c.process.pid}/children")
-        (worker,) = map(int, children.read_text().split())
+        processes = subprocess.check_output(["ps", "-A", "-o", "pid=,ppid="], text=True)
+        (worker,) = (
+            pid
+            for pid, parent in (map(int, row.split()) for row in processes.splitlines())
+            if parent == c.process.pid
+        )
         os.kill(worker, signal.SIGSTOP)
         c.process.terminate()
         assert c.process.wait(timeout=10) == -signal.SIGTERM
-        assert not Path(f"/proc/{worker}").exists()
+        with pytest.raises(ProcessLookupError):
+            os.kill(worker, 0)
         assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
 
 

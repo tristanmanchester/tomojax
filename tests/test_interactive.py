@@ -32,8 +32,9 @@ def test_plane_is_the_requested_full_result(geometry, axis, index):
         scan = scan.with_poses(poses)
     reference = tj.reconstruct(scan, "fbp").volume
     result = reconstruct_slice(scan, axis, index, method="fbp")
-    np.testing.assert_array_equal(
-        result, np.take(np.asarray(reference), index, axis="zyx".index(axis))
+    # Restricting the reconstruction to a plane can change FFT batch sizes.
+    np.testing.assert_allclose(
+        result, np.take(np.asarray(reference), index, axis="zyx".index(axis)), rtol=1e-6, atol=2e-7
     )
 
 
@@ -75,7 +76,8 @@ def test_sweep_fixes_input_region_for_every_signed_offset_and_duplicate():
         expected.append(tj.reconstruct(shifted, "fbp", grid=fixed).volume[2])
     result = centre_sweep(scan, "z", 2, [0, 3, 0], method="fbp", region="bbox")
     assert result.shape == (3, 25, 25) and not np.array_equal(expected[0], expected[1])
-    np.testing.assert_array_equal(result, np.stack(expected))
+    np.testing.assert_allclose(result, np.stack(expected), rtol=1e-6, atol=2e-7)
+    np.testing.assert_array_equal(result[0], result[2])
 
 
 @pytest.mark.parametrize("rows", [(0, 1), (2, 4), (5, 6)])

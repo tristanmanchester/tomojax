@@ -65,7 +65,14 @@ def test_normal_equations_match_explicit_per_view_jacobians(backend, interpolati
     for a, b in zip(actual, expected, strict=True):
         np.testing.assert_allclose(a, b, rtol=4e-5, atol=4e-5)
     hessian = np.asarray(actual[2])
-    np.testing.assert_array_equal(hessian, hessian.transpose(0, 2, 1))
+    transposed = hessian.transpose(0, 2, 1)
+    if backend == "cuda":
+        np.testing.assert_array_equal(hessian, transposed)
+    else:
+        # JAX's batched dot can accumulate mirrored entries in different orders.
+        np.testing.assert_allclose(
+            hessian, transposed, rtol=8 * np.finfo(hessian.dtype).eps, atol=0
+        )
     eig = np.linalg.eigvalsh(hessian.astype(np.float64))
     assert np.min(eig) > -3e-6 * np.max(eig)
 

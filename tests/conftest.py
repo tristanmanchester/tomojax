@@ -11,12 +11,13 @@ if os.environ.get("JAX_PLATFORMS") == "cpu":
     os.environ.setdefault("JAX_NUM_CPU_DEVICES", "4")
 
 if worker := os.environ.get("PYTEST_XDIST_WORKER"):
-    # Each parallel worker keeps to its own share of the cores. XLA sizes its thread
-    # pool to the CPUs the process may run on, so unpinned workers each start a pool
-    # for the whole machine and spend their time contending for it.
-    cores = sorted(os.sched_getaffinity(0))
-    index, count = int(worker.removeprefix("gw")), int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
-    os.sched_setaffinity(0, cores[index % len(cores) :: count] or cores)
+    count = int(os.environ["PYTEST_XDIST_WORKER_COUNT"])
+    if sys.platform == "linux":
+        # XLA sizes its thread pool to the CPUs the process may run on. Give each
+        # Linux worker a share of the cores so its pool leaves room for its peers.
+        cores = sorted(os.sched_getaffinity(0))
+        index = int(worker.removeprefix("gw"))
+        os.sched_setaffinity(0, cores[index % len(cores) :: count] or cores)
     if os.environ.get("JAX_PLATFORMS") != "cpu":
         # Workers share the GPU, and a JAX pool only grows: uncapped, the pools fill the
         # device until XLA cannot create a cuFFT plan, which leaves that worker's CUDA

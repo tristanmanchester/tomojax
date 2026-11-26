@@ -1,5 +1,7 @@
 """Feature handles: masks made from shapes, seeds and bands, outlined and reused."""
 
+import sys
+
 import numpy as np
 import pytest
 
@@ -205,7 +207,8 @@ def test_features_on_a_diamond_size_volume_touch_only_their_windows(tmp_path):
         assert not shown["isError"], shown["content"][0]["text"]
         assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
         peak = python(c, "import resource\nresource.getrusage(resource.RUSAGE_SELF).ru_maxrss")
-        assert peak["value"] < 4 << 20  # kB: the worker never held more than 4 GB
+        peak_bytes = peak["value"] if sys.platform == "darwin" else peak["value"] * 1024
+        assert peak_bytes < 4 << 30
 
 
 def test_a_feature_saves_reopens_and_exports(session, tmp_path):
