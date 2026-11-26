@@ -8,8 +8,8 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 
 use crate::imaging::{PlaneData, read_checkpoint_plane, read_pose_table};
-use crate::protocol::ArrayDescriptor;
-use crate::sync::Locked;
+use studio_core::protocol::ArrayDescriptor;
+use studio_core::sync::Locked;
 
 pub use crate::imaging::TableData as PoseTable;
 
@@ -438,9 +438,9 @@ mod tests {
             unit: "steps".into(),
         })
     }
-    use crate::protocol::{Axis, Coordinates, Storage};
     use npyz::WriterBuilder;
     use std::time::{Duration, Instant};
+    use studio_core::protocol::{Axis, Coordinates, Storage};
 
     fn npy(path: &std::path::Path, shape: &[u64], values: &[f64]) {
         let mut writer = npyz::WriteOptions::new()
@@ -708,7 +708,7 @@ mod tests {
             origin: -2.,
             spacing: 0.5,
         };
-        image.fixed.push(crate::protocol::Fixed {
+        image.fixed.push(studio_core::protocol::Fixed {
             name: "z".into(),
             frame: "world".into(),
             unit: "mm".into(),
@@ -747,7 +747,7 @@ mod tests {
         poses.columns = ["alpha", "beta", "phi", "x", "z", "y"]
             .into_iter()
             .enumerate()
-            .map(|(i, name)| crate::protocol::Column {
+            .map(|(i, name)| studio_core::protocol::Column {
                 name: name.into(),
                 unit: if i < 3 { "degree" } else { "mm" }.into(),
             })

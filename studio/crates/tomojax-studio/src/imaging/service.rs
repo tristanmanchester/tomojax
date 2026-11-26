@@ -5,8 +5,8 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use super::{PlaneData, VolumeData, reader};
-use crate::protocol::ArrayDescriptor;
-use crate::sync::Locked;
+use studio_core::protocol::ArrayDescriptor;
+use studio_core::sync::Locked;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ImagingStatus {

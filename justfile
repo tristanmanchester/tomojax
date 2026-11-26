@@ -60,14 +60,14 @@ package:
 # Built in this checkout: the shared target directory holds whichever worktree's binary was built last.
 studio-wheel:
     rm -rf dist-studio
-    cargo build --locked --release --manifest-path studio/Cargo.toml --features static-hdf5 --target-dir studio/target
+    cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --features static-hdf5 --target-dir studio/target
     uv run --no-sync python tools/build_studio_wheel.py --out-dir dist-studio --check-static
     uv run --no-sync twine check --strict dist-studio/*.whl
 
 [env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-check: studio-lint
-    cargo test --locked --manifest-path studio/Cargo.toml
+    cargo test --locked --manifest-path studio/Cargo.toml --workspace
 
 # Build Studio and capture every workspace headless into .artifacts/studio-snap.
 [env("CARGO_TARGET_DIR", studio_target_dir)]
@@ -79,8 +79,8 @@ studio-verify:
 [env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-lint:
-    cargo fmt --manifest-path studio/Cargo.toml --check
-    cargo clippy --locked --manifest-path studio/Cargo.toml --all-targets -- -D warnings
+    cargo fmt --all --manifest-path studio/Cargo.toml --check
+    cargo clippy --locked --manifest-path studio/Cargo.toml --workspace --all-targets -- -D warnings
 
 # Rewrites the ratchet and API-surface records; tests/test_architecture.py is what checks them.
 guardrails:

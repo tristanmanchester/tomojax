@@ -150,14 +150,14 @@ pub struct AppState {
 
 impl AppState {
     pub fn init() -> Self {
-        let catalog =
-            serde_json::from_str(include_str!("../../../src/tomojax/cli/parameters.json"))
-                .map_err(|error| error.to_string())
-                .and_then(SchemaCatalog::new)
-                .unwrap_or_else(|error| {
-                    eprintln!("Could not load the bundled parameter schema: {error}");
-                    std::process::exit(1);
-                });
+        let schema = include_str!("../../../../../src/tomojax/cli/parameters.json");
+        let catalog = serde_json::from_str(schema)
+            .map_err(|error| error.to_string())
+            .and_then(SchemaCatalog::new)
+            .unwrap_or_else(|error| {
+                eprintln!("Could not load the bundled parameter schema: {error}");
+                std::process::exit(1);
+            });
         let (local_send, local_receive) = mpsc::channel();
         let preference_result = Preferences::load();
         let preference_error = preference_result.as_ref().err().cloned();

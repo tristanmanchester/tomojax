@@ -4,8 +4,8 @@ use std::sync::{Arc, mpsc};
 use std::time::{Duration, Instant};
 
 use super::{Imaging, ImagingStatus, reader};
-use crate::protocol::{ArrayDescriptor, Axis, Coordinates, Storage};
 use npyz::WriterBuilder;
+use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Storage};
 
 fn descriptor(storage: Storage, shape: [usize; 3]) -> ArrayDescriptor {
     ArrayDescriptor {

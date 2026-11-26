@@ -6,12 +6,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tomojax_studio::engine::{Engine, EngineEvent};
-use tomojax_studio::live::LiveCheckpoints;
-use tomojax_studio::progress::JobProgress;
-use tomojax_studio::protocol::{
+use studio_core::engine::{Engine, EngineEvent};
+use studio_core::progress::JobProgress;
+use studio_core::protocol::{
     ArrayDescriptor, Coordinates, Output, Progress, Response, ResultValue, Storage,
 };
+use tomojax_studio::live::LiveCheckpoints;
 
 struct Client {
     engine: Engine,

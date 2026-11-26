@@ -443,7 +443,7 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
 fn planning_support_comes_from_the_public_union() {
     let catalog = SchemaCatalog::new(
         serde_json::from_str(include_str!(
-            "../../../../docs/protocol/operations.schema.json"
+            "../../../../../../docs/protocol/operations.schema.json"
         ))
         .unwrap(),
     )

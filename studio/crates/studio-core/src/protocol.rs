@@ -618,12 +618,12 @@ mod tests {
     #[test]
     fn official_transcripts_preserve_registered_arrays() {
         for transcript in [
-            include_str!("../../docs/protocol/transcripts/session.jsonl"),
-            include_str!("../../docs/protocol/transcripts/simulation.jsonl"),
-            include_str!("../../docs/protocol/transcripts/saved-volume.jsonl"),
-            include_str!("../../docs/protocol/transcripts/alignment-scan.jsonl"),
-            include_str!("../../docs/protocol/transcripts/raw-slabs.jsonl"),
-            include_str!("../../docs/protocol/transcripts/edit-combine.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/session.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/simulation.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/saved-volume.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/alignment-scan.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/raw-slabs.jsonl"),
+            include_str!("../../../../docs/protocol/transcripts/edit-combine.jsonl"),
         ] {
             for line in transcript.lines() {
                 let json: Value = serde_json::from_str(line).unwrap();
@@ -648,9 +648,10 @@ mod tests {
 
     #[test]
     fn scalar_form_metadata_comes_from_declared_schema() {
-        let schema: Value =
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap();
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../../../docs/protocol/operations.schema.json"
+        ))
+        .unwrap();
         let catalog = SchemaCatalog::new(schema).unwrap();
         let parameters = catalog.parameters("Reconstruct");
         let method = parameters.iter().find(|p| p.name == "method").unwrap();

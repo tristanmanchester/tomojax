@@ -5,8 +5,8 @@ use std::sync::{
 };
 
 use super::{AxisScale, PlaneData, Statistics, VolumeData, npy::Npy};
-use crate::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
 use hdf5::{Hyperslab, SliceOrIndex};
+use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
 
 pub(super) fn identity() -> u64 {
     static ID: AtomicU64 = AtomicU64::new(1);

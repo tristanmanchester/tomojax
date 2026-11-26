@@ -8,11 +8,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tomojax_studio::engine::{Engine, EngineEvent};
-use tomojax_studio::protocol::{
-    ErrorKind, Output, Product, Progress, Response, ResultValue, Storage,
-};
-use tomojax_studio::{metadata, project};
+use studio_core::engine::{Engine, EngineEvent};
+use studio_core::project;
+use studio_core::protocol::{ErrorKind, Output, Product, Progress, Response, ResultValue, Storage};
+use tomojax_studio::metadata;
 
 struct Client {
     engine: Engine,
@@ -320,7 +319,7 @@ fn paused_real_work_holds_queue_and_cancellation_has_a_terminal() {
         assert!(matches!(
             client.terminal(target),
             Response::Error {
-                error: tomojax_studio::protocol::WorkerError {
+                error: studio_core::protocol::WorkerError {
                     kind: ErrorKind::Canceled,
                     ..
                 },

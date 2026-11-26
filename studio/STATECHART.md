@@ -2,14 +2,14 @@
 
 These charts show how Studio and `tomojax serve` exchange requests, controls,
 artifact leases and saves. Each one matches a model in
-[`tests/protocol_model.rs`](tests/protocol_model.rs). The test explores every
+[`crates/studio-core/tests/protocol_model.rs`](crates/studio-core/tests/protocol_model.rs). The test explores every
 interleaving of Studio, the worker, the pipes between them and Studio's reader
 threads, and checks the listed properties in every reachable state. Every
 property also has a test that reintroduces a plausible bug and checks that the
 model finds it.
 
 ```sh
-cargo test --manifest-path studio/Cargo.toml --test protocol_model -- --nocapture
+cargo test --manifest-path studio/Cargo.toml -p studio-core --test protocol_model -- --nocapture
 ```
 
 `--nocapture` prints how many states each model visited and the shortest

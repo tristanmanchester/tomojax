@@ -18,7 +18,7 @@ pub struct MetricDefinition {
 pub fn metric_registry() -> &'static BTreeMap<String, MetricDefinition> {
     static REGISTRY: OnceLock<BTreeMap<String, MetricDefinition>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
-        include_str!("../../docs/progress-metrics.md")
+        include_str!("../../../../docs/progress-metrics.md")
             .lines()
             .filter_map(|line| {
                 let cells: Vec<_> = line.split('|').map(str::trim).collect();

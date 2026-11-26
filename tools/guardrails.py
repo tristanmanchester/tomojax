@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "tomojax"
-STUDIO_SRC = ROOT / "studio" / "src"
+STUDIO_CRATES = ROOT / "studio" / "crates"
 OUT = ROOT / "tests" / "guardrails"
 SURFACE_FILE = OUT / "api_surface.txt"
 RATCHET_FILE = OUT / "ratchets.json"
@@ -516,11 +516,12 @@ def _rust_production_debt(
 
 
 def _studio_debt() -> dict[str, object]:
-    """Measure Studio lint opt-outs everywhere and long files and functions in production Rust."""
+    """Measure lint opt-outs in every Studio crate and long files and functions in production."""
     allows = 0
     long_files: dict[str, int] = {}
     long_functions: dict[str, int] = {}
-    for path in sorted(STUDIO_SRC.rglob("*.rs")):
+    sources = (*STUDIO_CRATES.glob("*/src/**/*.rs"), *STUDIO_CRATES.glob("*/tests/**/*.rs"))
+    for path in sorted(sources):
         source = path.read_text(encoding="utf-8")
         matches = _rust_tokens(source)
         tokens = [match[0] for match in matches]
@@ -528,7 +529,11 @@ def _studio_debt() -> dict[str, object]:
             if token == "#":
                 start = i + (tokens[i : i + 1] == ["!"])
                 allows += tokens[start : start + 3] in (["[", "allow", "("], ["[", "expect", "("])
-        if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
+        if (
+            path.name == "tests.rs"
+            or path.name.endswith("_tests.rs")
+            or path.relative_to(STUDIO_CRATES).parts[1] == "tests"
+        ):
             continue
         length, functions = _rust_production_debt(source, matches, tokens)
         relative = _relative(path)

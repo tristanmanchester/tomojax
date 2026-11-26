@@ -7,7 +7,7 @@ pub struct TableData {
     pub values: Arc<[f64]>,
     pub shape: [usize; 2],
     pub axes: [AxisScale; 2],
-    pub columns: Vec<crate::protocol::Column>,
+    pub columns: Vec<studio_core::protocol::Column>,
     pub domain: String,
 }
 impl TableData {
@@ -100,7 +100,7 @@ pub struct PlaneData {
     pub shape: [usize; 2],
     pub source_shape: [usize; 2],
     pub axes: [AxisScale; 2],
-    pub fixed: Vec<crate::protocol::Fixed>,
+    pub fixed: Vec<studio_core::protocol::Fixed>,
     pub index: usize,
     pub count: usize,
     pub value_unit: String,
