@@ -35,40 +35,48 @@ stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
 Validation of recognized raw acquisitions reports missing detector/axis metadata
-and flat/dark references, using the same requirements as frame loading. A file
-that records pitches without an axial center loads with the center at the
-middle of the detector and `detector_center_status="not_recorded"`; fit it with
-`tj.align(scan, fit="center")` or supply `detector=`. CLI errors name `--flats`,
-`--darks`, `--angles`, or `--pixel-size` where those flags supply the missing input.
+and flat/dark references, using the same requirements as frame loading. A
+parallel-beam file without a recorded pixel size loads in pixel units (pitch 1,
+`length_unit: "pixel"`); pass `pixel_size=`, `detector=`, or `--pixel-size` for
+physical units. A file without a recorded axial center loads with the center at
+the middle of the detector and `detector_center_status="not_recorded"`; fit it
+with `tj.align(scan, fit="center")` or supply `detector=`. CLI errors name
+`--flats`, `--darks`, `--angles`, or `--pixel-size` where those flags supply the
+missing input.
 
 Both raw-frame and processed NXtomo loading convert rotation angles labeled
-`rad`, `radian` or `radians` to degrees. `deg`, `degree`, `degrees` and missing
-units mean degrees at the format-defined NXtomo/Data Exchange angular paths;
-generic unitless motors require an explicit `angles=` override. Angles must be a
-real one-dimensional vector with one
-entry per frame and finite sample-view angles (calibration frames may have
-NaN angles); unknown units fail rather than being guessed. An
-`image_key` must be a numeric vector with one entry per frame and exact labels in
-`{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked before conversion, including floating-point exports.
+`rad`, `radian`, or `radians` to degrees. `deg`, `degree`, `degrees`, and
+missing units mean degrees at format-defined NXtomo and Data Exchange angular
+paths; unitless generic motors (or an explicit `angles_path=` pointing to a
+unitless dataset) require an explicit `angles=` override unless structural
+discovery finds matching angular units on same-named fields in the same entry.
+Angles must be a real one-dimensional vector with finite sample-view angles
+(calibration frames may have NaN angles); unknown units raise an error instead
+of being guessed. An `image_key` must be a numeric one-dimensional vector with
+exact labels in `{0, 1, 2, 3}` (sample, flat, dark, other); labels are checked
+before conversion, including floating-point exports.
+
 Raw NXtomo entries may be nested and link to external detector files; keep those
 files beside the metadata file. Repeated links to one dataset are not ambiguous.
-For other HDF5 layouts, the NeXus structure comes first: the frames are the
-default plot's (root and entry `@default` to an NXdata `@signal`), the
-`image_key` is the one in the NXdetector holding those frames, and the angles are
-the NXdata coordinate along the frames (`@axes`, `<name>_indices`) with angular
-units. A coordinate without units takes those of the same-named fields recorded
-elsewhere in its entry when they agree, as GDA records each positioner once per
-scan; the record names them in `angle_units_path`. Several angular coordinates
-resolve to the scan axis (`@axes`) or ask for `angles_path`. After that,
-per-frame shape disambiguates named angle/key datasets from different detectors.
-A sole named dataset with an invalid shape is rejected, not treated as absent.
-Ambiguous candidates require an explicit metadata path.
+After fixed NXtomo, Data Exchange, and GDA paths, discovery follows the NeXus
+structure: frames come from the default plot (root and entry `@default` to an
+`NXdata` `@signal`), `image_key` comes from the `NXdetector` holding those
+frames, and rotation angles come from the `NXdata` coordinate along the frames
+(`@axes`, `<name>_indices`) with angular units. When that coordinate has no
+units attribute, discovery uses the units recorded on same-named fields
+elsewhere in the same entry if they agree (as GDA records each positioner once
+per scan) and stores the source in `angle_units_path`. Multiple angular
+coordinates resolve to the scan axis (`@axes`) or ask for `angles_path`. If
+structure does not locate a dataset, per-frame shape disambiguates named angle
+and key datasets from different detectors; a sole named dataset with an invalid
+shape is rejected, and ambiguous candidates require an explicit metadata path.
 
-A key or angles that the path or the structure pairs with the frames may be
-longer or shorter than the stack: writers append frames, labels and positions in
-separate streams, so a scan stopped early leaves them at different lengths. The
-frames read are those, from the first, that all of them cover; a warning gives
-the counts and the acquisition record keeps them as `frame_records`.
+When an `image_key` or angle dataset is paired with the frames by path or
+structure, it may be longer or shorter than the frame stack (for example when a
+scan stops early and separate writer streams end at different counts). TomoJAX
+reads the common prefix from frame 0 covered by all of them, logs a warning with
+the counts, and records the counts in `frame_records`. A key or angle dataset
+found only by name is paired by shape and must match the stack length exactly.
 
 `tomojax.load` of a processed file leaves out frames that `image_key` marks as
 other than sample views. Saving a scan retains every pose update, including an

@@ -10,7 +10,7 @@ tomojax inspect scan.nxs
 
 Confirm view count and order, angles in degrees, detector and voxel pitches, and geometry type. For laminography, verify `tilt` and `tilt_about` (`tilt` is the angle of the rotation axis away from the perpendicular tomography axis, not the angle to the beam). When laminography tilt is missing from the file, supply an explicit `geometry=`.
 
-For raw NXtomo or Data Exchange frames with flats and darks, start with [correct raw detector frames](quickstart.md#correct-raw-detector-frames); for nonstandard HDF5 layouts, pass `--data-path`, `--angles-path`, and `--image-key-path` (or `data_path=` etc. in `tj.load_frames`).
+For raw NXtomo, NeXus, or Data Exchange frames with flats and darks, start with [correct raw detector frames](quickstart.md#correct-raw-detector-frames); for other HDF5 layouts, pass `--data-path`, `--angles-path`, and `--image-key-path` (or `data_path=`, `angles_path=`, and `image_key_path=` in `tj.load_frames`).
 
 ## Prepare TIFF data
 
@@ -100,7 +100,7 @@ FBP streams projections from host memory and switches automatically to host slab
 
 ## Automatic NeXus laminography
 
-Recognized Diamond/GDA NeXus layouts need no dataset path overrides, though raw frames omit laminography tilt and often pixel pitch. Supply the nominal geometry before aligning, as in [examples/align_laminography.py](../examples/align_laminography.py):
+NeXus scan files (including Diamond/GDA layouts) need no dataset path overrides when they declare a default plot, detector `image_key`, and angular coordinate, though raw frames omit laminography tilt and often pixel pitch (parallel scans without a recorded pitch load in pixel units unless you pass `pixel_size=` or `detector=`). Supply the nominal geometry before aligning, as in [examples/align_laminography.py](../examples/align_laminography.py):
 
 ```python
 geometry = tj.LaminographyGeometry(grid, tj.Detector(nu, nv, pitch, pitch), angles, tilt=35)

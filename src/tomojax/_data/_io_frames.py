@@ -263,26 +263,28 @@ def locate_frames(
     image_key_path: str | None = None,
     angles_path: str | None = None,
 ) -> LocatedFrames:
-    """Find the stack of frames in an HDF5 file, and its ``image_key`` and angles.
+    """Find the stack of frames in an HDF5 file, along with its ``image_key`` and angles.
 
-    Each is read from the path given, else the NXtomo (or Data Exchange) path,
-    else where the NeXus structure puts it, else the file's only dataset of that
-    name (``data`` of two or three dimensions, ``image_key``, ``rotation_angle``)
-    with one entry per frame. The NeXus structure gives the frames of the
-    default plot (``@default`` to an NXdata group's ``@signal``), the
-    ``image_key`` of the NXdetector holding them, and the rotation as the
-    NXdata coordinate along the frames with angular units: its own, or those
-    recorded for the positioner field of the same name in its entry. A uniquely
-    named key or angle dataset with the wrong shape is rejected, not treated as
-    missing. Flats and darks kept beside the frames (``data_white``,
-    ``data_dark``) are found when ``image_key`` marks none of that kind, and so
-    are angles there (``theta``). Angles in radians (a ``units`` attribute) are
+    Each dataset is resolved in order from an explicit path argument, fixed
+    NXtomo, Data Exchange, or paired GDA paths, the NeXus structure, and
+    finally a unique dataset named ``data`` (2-D or 3-D), ``image_key``, or
+    ``rotation_angle``. NeXus structural discovery reads frames from the
+    default plot (``@default`` to an ``NXdata`` ``@signal``), ``image_key``
+    from the ``NXdetector`` holding those frames, and rotation angles from the
+    ``NXdata`` coordinate along the frames with angular units. When a
+    discovered coordinate has no ``units`` attribute, it uses the units
+    recorded on same-named fields in the same entry if they agree (recorded in
+    ``angle_units_path``). A uniquely named key or angle dataset with the
+    wrong shape is rejected. Separate ``data_white`` and ``data_dark`` stacks
+    beside the frames are used when ``image_key`` marks no flats or darks, and
+    ``theta`` beside the frames supplies angles. Angles in radians are
     converted to degrees.
 
-    A key or angles paired with the frames by path or structure may hold more
-    or fewer entries than the stack holds frames, as when a scan stops early:
-    the frames they all cover are read, from the first, with a warning, and the
-    acquisition record keeps each count (``frame_records``).
+    When an ``image_key`` or angle dataset paired by path or structure has
+    more or fewer entries than the frame stack (as when a scan stops early),
+    the common prefix from frame 0 is read with a warning and the counts are
+    recorded in ``frame_records``. A key or angle dataset matched only by name
+    is not truncated and must match the frame count.
 
     Parameters
     ----------

@@ -119,8 +119,9 @@ def load(
 ) -> Scan:
     """Load line integrals from a dataset or recognized raw acquisition.
 
-    A file of raw detector frames (an NXtomo ``image_key`` marking flats or
-    darks, or a Nikon, SkyScan, Zeiss or ESRF acquisition, or a TIFF stack) is
+    A file of raw detector frames (an NXtomo or NeXus scan file with an
+    ``image_key`` marking flats or darks, Data Exchange, a Nikon, SkyScan,
+    Zeiss or ESRF acquisition, or a TIFF stack) is
     corrected with the standard chain, as ``load_frames(path, ...).corrected()``:
     dark subtraction, flat division and ``-log``; :attr:`Scan.corrections`
     records it. For other corrections, load the frames with :func:`load_frames`.
@@ -717,14 +718,18 @@ def load_frames(
     """Load detector frames and acquisition metadata from supported scan formats.
 
     An HDF5 file's ``image_key`` marks its flats (1) and darks (2), and its
-    sample, flat and dark frames are read only as they are corrected. The
-    frames, key and angles are found at their NXtomo paths, their paired GDA imaging
-    paths, where the NeXus structure puts them (the default plot's frames, the
-    ``image_key`` of their NXdetector, the plot's coordinate with angular units) or as
-    the file's only datasets of that name (``data``, ``image_key``, ``rotation_angle``);
-    ``data_path``, ``image_key_path`` and ``angles_path`` name them otherwise. When the
-    key or angles run past the frames or stop short of them, as in a scan stopped
-    early, the frames they all cover are read, from the first, with a warning.
+    sample, flat, and dark frames are read only as they are corrected.
+    Discovery checks fixed NXtomo, Data Exchange, and paired GDA imaging
+    paths, then the NeXus structure (the default plot's frames, the
+    ``image_key`` of their ``NXdetector``, and the plotted angular coordinate
+    along the frames), and finally unique datasets named ``data``,
+    ``image_key``, or ``rotation_angle``; pass ``data_path``,
+    ``image_key_path``, or ``angles_path`` to override discovery. When a key
+    or angle dataset paired by path or structure has more or fewer entries
+    than the frame stack (as in a scan stopped early), the common prefix from
+    frame 0 is read with a warning and the counts are stored in
+    ``frame_records``; datasets matched only by name must match the stack
+    length.
     Nikon, SkyScan, Zeiss and ESRF acquisitions are recognized by content and
     supply their own geometry and calibration. SkyScan logs require geometrically
     and flat-field corrected TIFF exports; their storage bit depth is not a
@@ -734,11 +739,12 @@ def load_frames(
     A GDA command mislabeled as mm is read in degrees with a warning; discovered
     paths and this correction stay in source metadata.
     Generic TIFF stacks without acquisition metadata need ``angles`` (degrees) and
-    ``flats`` (frames or one level). A parallel-beam file that records no pixel size
-    loads in pixel units (a pitch of one; its record says ``length_unit`` "pixel"), and
-    ``pixel_size`` gives the physical one; a cone-beam file needs one, since its
-    distances fix the unit. A file that records the pitch but not the rotation center
-    gives the middle of the detector, and its record says the center was not recorded.
+    ``flats`` (frames or one level). A parallel-beam file with no recorded pixel
+    size loads in pixel units (pitch 1, ``length_unit`` "pixel"), and
+    ``pixel_size`` sets physical units; a cone-beam file requires a physical
+    pixel size because its distances fix the unit. When the rotation center is
+    not recorded, it defaults to the middle of the detector with
+    ``detector_center_status`` "not_recorded".
     Missing dark fields require ``darks=``; use ``darks=0`` only for already
     dark-corrected counts.
 

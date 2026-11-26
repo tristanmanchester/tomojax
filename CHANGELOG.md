@@ -32,13 +32,18 @@
   V100S, warm per-iteration time drops from 2.66 s to 0.58 s on 16 rows × 1,000 views
   (4.6×) and from 20.03 s to 4.90 s on 64 rows × 2,000 views (4.1×); host-slab CGLS and
   FISTA run about 2× faster per iteration.
-- `tj.load_frames` reads NeXus scan files by their structure: the frames of the default
-  plot, the `image_key` of the detector holding them, and the rotation as the plotted
-  coordinate with angular units, its own or those recorded for its positioner. Diamond
-  DIAD (K11) scans, whose NXtomo entry records no angles, load with no arguments.
-- A scan stopped early loads: when the key or angles run past the frames or stop short
-  of them, the frames they all cover are read, with a warning and the counts in the
-  acquisition record (`frame_records`). Before, a key longer than the frames was an error.
+- `tj.load_frames` reads NeXus scan files by their structure: frames from the default
+  plot (`@default` to an `NXdata` `@signal`), `image_key` from the `NXdetector` holding
+  them, and rotation angles from the plotted `NXdata` coordinate with angular units (its
+  own, or matching units recorded on same-named positioner fields in the same entry,
+  stored in `angle_units_path`). Parallel scans with no recorded pixel size load in pixel
+  units (`length_unit: "pixel"`). Diamond DIAD (K11) scans with flats, darks, and an
+  `image_key` load with no path arguments even when their NXtomo entry records no angles.
+- Scans stopped early now load: when an `image_key` or angle dataset paired by path or
+  structure is longer or shorter than the frame stack, TomoJAX reads the common prefix
+  covered by all records from frame 0, logs a warning, and stores the counts in
+  `frame_records` (previously a mismatched key raised an error). Records matched only by
+  name must still match the stack length.
 
 ## 1.0.0rc6 (2026-11-26)
 

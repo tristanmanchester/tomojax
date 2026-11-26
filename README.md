@@ -4,7 +4,7 @@
   <img alt="TomoJAX" src="https://github.com/tristanmanchester/tomojax/raw/main/assets/brand/tomojax-logo.svg" width="320">
 </picture>
 
-TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab cone-beam CT in JAX with CUDA kernels. It provides differentiable forward projectors with exact transposes, fast analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, SIRT/OS-SART, MLEM/OSEM, FISTA-TV, SPDHG-TV), joint volume-and-pose alignment, a CLI, an MCP server for AI agents, and a native desktop workspace for NXtomo, APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, ESRF, SkyScan, and TIFF data.
+TomoJAX reconstructs and aligns parallel-beam tomography, laminography, and lab cone-beam CT in JAX with CUDA kernels. It provides differentiable forward projectors with exact transposes, fast analytical and iterative reconstruction (Fourier, FBP/FDK, CGLS, SIRT/OS-SART, MLEM/OSEM, FISTA-TV, SPDHG-TV), joint volume-and-pose alignment, a CLI, an MCP server for AI agents, and a native desktop workspace for NXtomo and NeXus scan files, APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, ESRF, SkyScan, and TIFF data.
 
 Full documentation is at [tomojax.dev](https://tomojax.dev).
 

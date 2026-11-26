@@ -9,7 +9,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Inspect, validate, and preview datasets (including slice previews and center sweeps) | `tomojax inspect scan.nxs [--json] [--preview-dir DIR] [--slice AXIS=INDEX] [--centers SPEC]` |
 | Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax correct scan.npz -o scan.nxs` |
 | Preview corrections on a row band before writing | `tomojax correct raw.nxs --dry-run --preview band.png` or `tomojax.interactive.correction_preview` |
-| Load and correct HDF5 raw frames (NXtomo, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
+| Load and correct HDF5 raw frames (NXtomo, NeXus scan files, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
 | Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
 | Load already-corrected TIFF line integrals | `tj.Scan(read_tiff_frames(path), geometry)` |
 | Lazy cropping, view selection, and custom correction steps | `tj.load_frames(path).cropped(...).selected(...).corrected(*steps)`; `scan.corrected(*steps)` |
@@ -43,7 +43,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Format | Frames and calibration | Angles and geometry metadata |
 | --- | --- | --- |
 | External NXtomo (ESRF, Diamond, generic) | Group declaring `NXtomo` (`instrument/detector/data`, `image_key`); ESRF return frames (`image_key_control = -1`) excluded; single-row `(view, u)` sinograms stay lazy as `(view, 1, u)` | `sample/rotation_angle` (or `sample/transformations/rotation_angle`) with units (default degrees); `x_pixel_size`/`y_pixel_size` with length units |
-| NeXus scan files (Diamond GDA, generic) | The default plot's frames (`@default`, NXdata `@signal`), in this or a linked file; the `image_key` of their NXdetector; a scan stopped early reads the frames its key and angles cover | The NXdata coordinate along the frames with angular units, or with the units recorded for its positioner; no pixel size recorded loads in pixel units |
+| NeXus scan files (Diamond GDA, generic) | Default plot frames (`@default`, NXdata `@signal`), local or externally linked; `image_key` of their `NXdetector`; scans stopped early read the common prefix covered by frames, key, and angles with a warning | NXdata coordinate along frames with angular units, or units recorded on the same-named positioner field in the entry; loads in pixel units (`length_unit: "pixel"`) when no pixel size is recorded |
 | Data Exchange (APS, PSI TOMCAT, Elettra SYRMEP) | `/exchange/data`, `data_white`, `data_dark`, or interleaved `image_key` | `/exchange/theta`; `/measurement/instrument/detector/actual_pixel_size_x`/`_y`; facility labels kept |
 | ESRF raw Bliss HDF5 | Sequence-owned detector blocks, image keys, and flat positions (synthetic-tested; all linked files required) | Unit-labeled angular commands; `technique/optic/sample_pixel_size`; distances from `technique/scan` |
 | ESRF SPEC EDF | Ordered single-image EDFs, references, accumulated darks divided by `DARK_N` | `.info`/XML `PixelSize` and `Distance`; supply `angles=` explicitly |

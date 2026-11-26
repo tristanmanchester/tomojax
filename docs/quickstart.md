@@ -8,7 +8,7 @@ This guide walks through inspecting, correcting, reconstructing, and exporting a
 tomojax inspect scan.nxs
 ```
 
-`inspect` prints the projection count and shape, angles, detector and voxel pitches, geometry type, and any recorded corrections, then exits 0 with `Valid: yes` (or lists problems and exits 1). Pass `--json` for machine-readable output. It recognizes NXtomo, APS Data Exchange, Diamond/GDA, Nikon `.xtekct`, Zeiss `.txrm`, and ESRF acquisitions and inspects raw frames without applying corrections.
+`inspect` prints the projection count and shape, angles, detector and voxel pitches, geometry type, and any recorded corrections, then exits 0 with `Valid: yes` (or lists problems and exits 1). Pass `--json` for machine-readable output. It recognizes NXtomo, NeXus scan files (including Diamond/GDA), APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, and ESRF acquisitions and inspects raw frames without applying corrections.
 
 Reconstruction expects line integrals (log attenuation), not raw counts or normalized transmission. TomoJAX applies flat/dark correction and `-log` automatically when the file marks raw frames (NXtomo `image_key`, Data Exchange `data_white`/`data_dark`, Nikon, Zeiss, or ESRF). If flats or darks are absent, supply `flats=` (frames or a single white level) and `darks=` to `tj.load_frames` (pass `darks=0` only when counts are already dark-subtracted).
 
@@ -33,7 +33,7 @@ tomojax correct raw.nxs -o corrected.nxs
 tomojax inspect corrected.nxs
 ```
 
-`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo and Data Exchange; use `--data-path`, `--image-key-path`, and `--angles-path` for nonstandard HDF5 layouts. Add `--zingers`, `--stripes 9`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
+`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--stripes 9`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
 When an external file omits metadata:
 
