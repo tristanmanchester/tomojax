@@ -8,26 +8,47 @@ application owns projects, durable asset identities, parameter drafts, the local
 job queue and display preferences. The renderer owns GPU resources derived from
 registered scalar data. A display operation never mutates a numerical input.
 
-| Module | Responsibility |
+Studio is a Cargo workspace of two crates. `studio-core` holds the state that
+needs no window, GPU or HDF5 library. `tomojax-studio` depends on it and adds
+native array reading, rendering, the Rune views and the `tomojax-studio` binary.
+`tests/test_architecture.py` reads `Cargo.lock` and fails if `studio-core` comes
+to depend on Rune, wgpu, winit or HDF5, so its tests build and run without them:
+
+```sh
+cargo test --manifest-path studio/Cargo.toml -p studio-core
+```
+
+| `studio-core` module | Responsibility |
 | --- | --- |
 | `protocol.rs` | Typed official protocol responses and parameter schema |
 | `engine.rs` | Bounded asynchronous JSONL transport, request correlation, process lifecycle |
 | `project.rs` | Versioned manifest, captured inputs, job records, single writer and atomic autosave |
+| `operations.rs` | Operation names, groups and method titles shared by projects and forms |
+| `previews.rs` | Temporary per-control requests, warm sources and supersession |
+| `progress.rs` | Durable task trees, metric histories, registry units and notes |
+
+| `tomojax-studio` module | Responsibility |
+| --- | --- |
 | `app/` | Workflow scheduling, dialogs, project actions, presentation model and view coordination |
 | `forms.rs`, `app/validation.rs` | Schema-derived drafts, exact field paths, debounced worker validation and plans |
 | `app/projection.rs` | Which selected inputs a forward or back projection reads (geometry, volume or projections), chosen once for preflight, the worker command and the result's parent |
-| `previews.rs`, `app/previewing.rs` | Temporary per-control requests, warm sources, supersession and explicit Keep |
+| `app/previewing.rs` | Edit intents to preview requests, and explicit Keep |
 | `live.rs` | Coherent registered solver checkpoints, pose tables and artifact read leases |
-| `progress.rs` | Durable task trees, metric histories, registry units and notes |
 | `metadata.rs` | Native stored-array registration and official inspection/product interpretation |
 | `imaging/` | Numeric NPY/HDF5 readers, bounded scalar cache, coalescing requests and prefetch |
 | `volume/` | Scalar image shaders, transfer textures and volume ray casting within Rune |
+| `preferences.rs` | Recent projects and keyboard shortcuts |
 | `ui/` | Native layout, controls, scientific overlays and presentation-only drafts |
+
+The library target holds `imaging`, `live`, `metadata` and `volume`; the binary
+holds `app`, `forms`, `preferences` and `ui`. `forms.rs` keeps its drafts in
+Rune `TextEdit`s inside `UiState`, shortcuts are Rune chords, and `live.rs` reads
+checkpoints through `imaging`, so these stay out of `studio-core`.
 
 [STATECHART.md](STATECHART.md) charts the preview channel, job control,
 checkpoint lease and save state machines. Under `cargo test`,
-`tests/protocol_model.rs` checks every interleaving of each one with the
-worker, within small bounds.
+`crates/studio-core/tests/protocol_model.rs` checks every interleaving of each
+one with the worker, within small bounds.
 
 `UiModel` is a presentation snapshot derived from the project and live service
 state. `UiAction` is the view's route to application effects. It does not contain

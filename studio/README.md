@@ -160,12 +160,14 @@ From the repository root, `just studio-check` runs formatting, Clippy and the te
 
 ```sh
 export RUSTUP_TOOLCHAIN=1.99.1
-cargo fmt --manifest-path studio/Cargo.toml --check
-cargo clippy --locked --manifest-path studio/Cargo.toml --all-targets -- -D warnings
-cargo test --release --locked --manifest-path studio/Cargo.toml
-TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml -- --ignored
+cargo fmt --all --manifest-path studio/Cargo.toml --check
+cargo clippy --locked --manifest-path studio/Cargo.toml --workspace --all-targets -- -D warnings
+cargo test --release --locked --manifest-path studio/Cargo.toml --workspace
+TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml --workspace -- --ignored
 uv run --no-sync python tools/verify_studio.py --build
 ```
+
+Studio is two crates: `studio-core` (projects, the worker protocol, jobs and previews) and `tomojax-studio` (native I/O, rendering, views and the binary). `studio-core` builds without Rune, wgpu or HDF5, so `cargo test --manifest-path studio/Cargo.toml -p studio-core` checks the protocol, manifest and state-machine logic in seconds.
 
 The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.
 

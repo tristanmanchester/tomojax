@@ -112,8 +112,8 @@ space, alignment and quiet seams.
 - Compact native controls with visible focus and explicit labels.
 - Tabular values and descriptive states rather than decorative metrics.
 
-This document records the implementation in [tokens.rs](src/ui/tokens.rs),
-[controls.rs](src/ui/controls.rs) and the adjacent native views. Measurements in
+This document records the implementation in [tokens.rs](crates/tomojax-studio/src/ui/tokens.rs),
+[controls.rs](crates/tomojax-studio/src/ui/controls.rs) and the adjacent native views. Measurements in
 the interface are logical desktop points. The token format uses `px` to preserve
 the same numeric values in portable design tooling.
 

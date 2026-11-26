@@ -6,8 +6,8 @@ use std::path::Path;
 use std::process::Command;
 
 use serde_json::Value;
+use studio_core::protocol::{ArrayDescriptor, Coordinates, Storage};
 use tomojax_studio::metadata;
-use tomojax_studio::protocol::{ArrayDescriptor, Coordinates, Storage};
 
 /// Writes the corpus into the directory given, and beside it `expected.json`: for each
 /// file, what TomoJAX reads back from it.

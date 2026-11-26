@@ -1,6 +1,6 @@
 # Terrarium workspace
 
-Mode: **Operate**. Target: `studio/src/ui/` and the native application shell.
+Mode: **Operate**. Target: `studio/crates/tomojax-studio/src/ui/` and the native application shell.
 The brief provides the audience, task, persistent-project model, light visual
 world and creative authorization. This is a code-led native implementation.
 The Impeccable launcher is unavailable; its source playbooks are applied directly.

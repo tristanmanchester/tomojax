@@ -7,10 +7,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
-use tomojax_studio::engine::{Engine, EngineEvent};
-use tomojax_studio::previews::{PreviewKind, PreviewPhase, Previews};
-use tomojax_studio::project::{Asset, CapturedInput};
-use tomojax_studio::protocol::{ErrorKind, Output, Product, Response, ResultValue, Storage};
+use studio_core::engine::{Engine, EngineEvent};
+use studio_core::previews::{PreviewKind, PreviewPhase, Previews};
+use studio_core::project::{Asset, CapturedInput};
+use studio_core::protocol::{ErrorKind, Output, Product, Response, ResultValue, Storage};
 
 struct Client {
     engine: Engine,

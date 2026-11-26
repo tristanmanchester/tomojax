@@ -34,6 +34,12 @@
 - `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
   `tomojax align --method opposite-views` and the worker's `align` operation fit the center
   without `fit="center"`; joint alignment still defaults to `"translations"`.
+- Studio's source is a Cargo workspace of two crates: `studio-core` (projects, the worker
+  protocol, jobs and previews, with no window, GPU or HDF5 dependency) and `tomojax-studio`
+  (native I/O, rendering, views and the binary). A static-HDF5 build names the package:
+  `cargo build --release --manifest-path studio/Cargo.toml -p tomojax-studio --features
+  static-hdf5`. `cargo test --manifest-path studio/Cargo.toml -p studio-core` runs the
+  protocol, manifest and state-machine tests without building the native libraries.
 
 ## 1.0.0rc5 (2026-11-25)
 

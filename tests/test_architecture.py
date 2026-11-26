@@ -94,7 +94,7 @@ def test_package_line_growth_passes_but_new_debt_fails(tmp_path, monkeypatch):
     src.mkdir(parents=True)
     monkeypatch.setattr(guardrails, "ROOT", tmp_path)
     monkeypatch.setattr(guardrails, "SRC", src)
-    monkeypatch.setattr(guardrails, "STUDIO_SRC", tmp_path / "studio" / "src")
+    monkeypatch.setattr(guardrails, "STUDIO_CRATES", tmp_path / "studio" / "crates")
     monkeypatch.setattr(guardrails, "_pyright_warnings", dict)
     module = src / "example.py"
     module.write_text("pi = 3.14\n", encoding="utf-8")
@@ -363,12 +363,48 @@ except:
     assert debt == {"explicit_any": 4, "type_casts": 3, "broad_except": 3}
 
 
+def _locked_closure(lock: dict[str, list[dict[str, object]]], package: str) -> set[str]:
+    """Names of ``package`` and every package it depends on, in any profile, per Cargo.lock."""
+    found: set[str] = set()
+    pending = [package]
+    while pending:
+        name = pending.pop()
+        if name in found:
+            continue
+        found.add(name)
+        for entry in lock["package"]:
+            if entry["name"] == name:
+                dependencies = entry.get("dependencies", [])
+                assert isinstance(dependencies, list)
+                pending += [str(dependency).split()[0] for dependency in dependencies]
+    return found
+
+
+def test_studio_core_builds_without_window_gpu_or_hdf5_libraries() -> None:
+    """studio-core's state and protocol tests must not compile or link Rune, wgpu, winit or HDF5."""
+    lock = tomllib.loads((ROOT / "studio" / "Cargo.lock").read_text(encoding="utf-8"))
+    native = ("rune", "wgpu", "winit", "hdf5")
+
+    def linked(package: str) -> set[str]:
+        closure = _locked_closure(lock, package)
+        return {prefix for prefix in native if any(n.startswith(prefix) for n in closure)}
+
+    assert linked("tomojax-studio") == set(native)
+    assert not linked("studio-core"), (
+        "studio-core depends on native window, GPU or HDF5 crates; "
+        "move that code into studio/crates/tomojax-studio"
+    )
+
+
 def test_studio_debt_ignores_prose_and_excludes_test_items(tmp_path, monkeypatch):
     guardrails = _guardrails()
-    studio = tmp_path / "studio" / "src"
+    crates = tmp_path / "studio" / "crates"
+    studio = crates / "app" / "src"
+    contracts = crates / "core" / "tests"
     studio.mkdir(parents=True)
+    contracts.mkdir(parents=True)
     monkeypatch.setattr(guardrails, "ROOT", tmp_path)
-    monkeypatch.setattr(guardrails, "STUDIO_SRC", studio)
+    monkeypatch.setattr(guardrails, "STUDIO_CRATES", crates)
     source = r"""
 #![allow(dead_code)]
 // .unwrap() .expect("no") #[allow(dead_code)] #[cfg(test)]
@@ -399,8 +435,12 @@ mod inline {
         (studio / name).write_text(
             "#[allow(dead_code)]\nfn long_test() {\n" + body + "}\n", encoding="utf-8"
         )
+    # An integration test's opt-outs count; its length is test code, so it does not.
+    (contracts / "worker_contract.rs").write_text(
+        "#[allow(dead_code)]\nfn long_test() {\n" + body + "}\n", encoding="utf-8"
+    )
     assert guardrails._studio_debt() == {
-        "studio_allows": 5,
+        "studio_allows": 6,
         "studio_long_files": {},
         "studio_long_functions": {},
     }
@@ -409,7 +449,10 @@ mod inline {
 def test_studio_long_functions_track_braces_and_thresholds(tmp_path, monkeypatch):
     guardrails = _guardrails()
     monkeypatch.setattr(guardrails, "ROOT", tmp_path)
-    monkeypatch.setattr(guardrails, "STUDIO_SRC", tmp_path)
+    crates = tmp_path / "crates"
+    studio = crates / "app" / "src"
+    studio.mkdir(parents=True)
+    monkeypatch.setattr(guardrails, "STUDIO_CRATES", crates)
     head = r"""fn render<'a>(text: &'a str) -> Fixed<{ 1 }> {
     let _ = r##" } "#
         fn fake() { .unwrap() }
@@ -423,8 +466,8 @@ def test_studio_long_functions_track_braces_and_thresholds(tmp_path, monkeypatch
     test_item = "    #[cfg(test)]\n    { nested(); }\n"
     source = head + test_item + "    nested();\n" * 92 + "}\n" + boundary
     source += "// filler\n" * 600
-    (tmp_path / "large.rs").write_text(source, encoding="utf-8")
-    (tmp_path / "boundary.rs").write_text("// filler\n" * 800, encoding="utf-8")
+    (studio / "large.rs").write_text(source, encoding="utf-8")
+    (studio / "boundary.rs").write_text("// filler\n" * 800, encoding="utf-8")
     debt = guardrails._studio_debt()
-    assert debt["studio_long_files"] == {"large.rs": 801}
-    assert debt["studio_long_functions"] == {"large.rs::render": 101}
+    assert debt["studio_long_files"] == {"crates/app/src/large.rs": 801}
+    assert debt["studio_long_functions"] == {"crates/app/src/large.rs::render": 101}

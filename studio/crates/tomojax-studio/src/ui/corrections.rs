@@ -426,7 +426,7 @@ mod tests {
     fn catalog() -> SchemaCatalog {
         SchemaCatalog::new(
             serde_json::from_str(include_str!(
-                "../../../docs/protocol/operations.schema.json"
+                "../../../../../docs/protocol/operations.schema.json"
             ))
             .unwrap(),
         )

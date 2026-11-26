@@ -8,7 +8,7 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
-use crate::protocol::{ArrayDescriptor, Axis, Coordinates, Grid, Product, Storage};
+use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Grid, Product, Storage};
 
 pub const PROJECTIONS: &str = "/entry/instrument/detector/data";
 pub const VOLUME: &str = "/entry/processing/tomojax/volume";

@@ -593,7 +593,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -616,7 +616,8 @@ mod tests {
     fn opposite_views_shows_and_sends_only_its_own_settings() {
         let catalog = SchemaCatalog::new(
             // The description the worker sends: the wire schema with help, units and defaults.
-            serde_json::from_str(include_str!("../../src/tomojax/cli/parameters.json")).unwrap(),
+            serde_json::from_str(include_str!("../../../../src/tomojax/cli/parameters.json"))
+                .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -645,7 +646,8 @@ mod tests {
     fn a_blank_setting_shows_the_value_tomojax_will_use() {
         let catalog = SchemaCatalog::new(
             // The description the worker sends: the wire schema with help, units and defaults.
-            serde_json::from_str(include_str!("../../src/tomojax/cli/parameters.json")).unwrap(),
+            serde_json::from_str(include_str!("../../../../src/tomojax/cli/parameters.json"))
+                .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -670,7 +672,7 @@ mod tests {
     fn catalog_refresh_preserves_unfinished_drafts_and_initializes_only_new_fields() {
         let mut described: Value = serde_json::from_str(
             // The description the worker sends: the wire schema with help, units and defaults.
-            include_str!("../../src/tomojax/cli/parameters.json"),
+            include_str!("../../../../src/tomojax/cli/parameters.json"),
         )
         .unwrap();
         described["$defs"]["Reconstruct"]["properties"]["seed"]["default"] = 17.into();
@@ -730,7 +732,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -780,7 +782,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -795,8 +797,10 @@ mod tests {
     #[test]
     fn a_string_or_list_field_takes_a_list() {
         let catalog = SchemaCatalog::new(
-            serde_json::from_str(include_str!("../../docs/protocol/operations.schema.json"))
-                .unwrap(),
+            serde_json::from_str(include_str!(
+                "../../../../docs/protocol/operations.schema.json"
+            ))
+            .unwrap(),
         )
         .unwrap();
         let mut ui = UiState::default();
@@ -817,7 +821,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -856,7 +860,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -889,7 +893,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
@@ -943,7 +947,7 @@ mod tests {
         let catalog = SchemaCatalog::new(
             serde_json::from_str(
                 // The description the worker sends: the wire schema with help, units and defaults.
-                include_str!("../../src/tomojax/cli/parameters.json"),
+                include_str!("../../../../src/tomojax/cli/parameters.json"),
             )
             .unwrap(),
         )
