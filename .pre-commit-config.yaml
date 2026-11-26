@@ -37,3 +37,10 @@ repos:
         entry: uv run python tools/check_public_imports.py
         language: system
         pass_filenames: false
+
+      - id: studio-lint
+        name: Studio format and Clippy
+        entry: just studio-lint
+        language: system
+        files: ^studio/
+        pass_filenames: false
