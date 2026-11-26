@@ -167,15 +167,11 @@ def _moments(
     return mean, np.maximum(0.0, squares - total * mean) / (count * (count - 1))
 
 
-def batch_fields(
-    fields: Fields, resident: np.ndarray | jax.Array | None, lo: np.ndarray, hi: np.ndarray
-) -> tuple[np.ndarray | jax.Array, np.ndarray, np.ndarray]:
-    """Only the bracketing calibrations for the views about to be corrected."""
-    if resident is not None:
-        return resident, lo, hi
-    selected, inv = np.unique(np.stack((lo, hi)), return_inverse=True)
-    a, b = inv.reshape(2, -1).astype(np.int32)
-    return fields.flats[selected], a, b
+def bracketing_sets(lo: np.ndarray, hi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """The flat sets that bracket a batch of views, and each view's two indices among them."""
+    sets, inverse = np.unique(np.stack((lo, hi)), return_inverse=True)
+    a, b = inverse.reshape(2, -1).astype(np.int32)
+    return sets, a, b
 
 
 def set_moments(

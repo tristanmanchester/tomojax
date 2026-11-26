@@ -90,3 +90,23 @@ def test_nonfinite_counts_are_rejected_not_read_as_zero_absorption(views_per_bat
     )
     with pytest.raises(ValueError, match="not finite"):
         frames.corrected(views_per_batch=views_per_batch)
+
+
+@pytest.mark.parametrize("views_per_batch", [1, 3])
+def test_each_view_divides_by_the_flat_sets_either_side_of_it(views_per_batch: int) -> None:
+    # Three flat sets of distinct levels: a batch given the sets of the batch
+    # before it divides by the wrong flat field.
+    levels = np.array([1000.0, 2000.0, 4000.0])
+    flats = np.repeat(levels, 2)[:, None, None] * np.ones((6, 2, 3))
+    counts = np.full((8, 2, 3), 500.0, np.float32)
+    flat_at = np.interp(np.arange(8) + 0.5, [0.0, 4.0, 8.0], levels)
+    geometry = tj.ParallelGeometry(
+        tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), tj.Detector(3, 2, 1.0, 1.0), np.arange(8) * 22.5
+    )
+    actual = tj.Frames(
+        counts, geometry, flats=flats, flat_positions=np.repeat([0.0, 4.0, 8.0], 2)
+    ).corrected(views_per_batch=views_per_batch)
+    expected = -np.log(500.0 / flat_at)[:, None, None]
+    np.testing.assert_allclose(
+        actual.projections, np.broadcast_to(expected, counts.shape), rtol=2e-6, atol=2e-7
+    )

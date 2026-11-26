@@ -28,7 +28,7 @@ from tomojax.core.host_volume import discard_failed_outputs, release_planes
 from tomojax.core.registration import correction_images
 
 from ._batches import HostCopies, copy_projections, correction_group, view_batches
-from ._fields import CalibrationFrames, Fields, batch_fields, flat_fields
+from ._fields import CalibrationFrames, Fields, bracketing_sets, flat_fields
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 from ._validation import check_scan_steps, positive_finite, validated_views_per_batch
@@ -543,8 +543,8 @@ def correct_view_batches(
 ) -> np.ndarray:
     """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
-    resident = jax.device_put(fields.flats) if fields.flats.nbytes <= _SIMPLE_FRAME_BYTES else None
     lo, hi, t, exposure_scale = interpolation
+    loaded: tuple[np.ndarray, jax.Array] | None = None  # flat sets on the device, and which
     tally = np.zeros(3, np.int64)  # non-positive transmission, non-finite, above linear limit
     fill_gaps = not bool(fields.usable.all())
 
@@ -577,10 +577,13 @@ def correct_view_batches(
                 load.advance(stop, {})
             progress.check_canceled()
             with progress.preparing("correct view batch", start):
-                flats, a, b = batch_fields(fields, resident, lo[start:stop], hi[start:stop])
+                sets, a, b = bracketing_sets(lo[start:stop], hi[start:stop])
+                # Consecutive batches mostly lie between the same sets: upload them once.
+                if loaded is None or not np.array_equal(loaded[0], sets):
+                    loaded = sets, jax.device_put(fields.flats[sets])
                 done = first_pass(
                     jnp.asarray(raw), a, b, t[start:stop],
-                    exposure_scale[start:stop], flats, dark, usable,
+                    exposure_scale[start:stop], loaded[1], dark, usable,
                     fill_gaps=fill_gaps,
                     **settings,
                 )  # fmt: skip
