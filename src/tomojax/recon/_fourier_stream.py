@@ -114,6 +114,7 @@ def fourier_slabs[T](
                 angles,
                 depth,
                 backend,
+                filter=config.filter,
                 async_transfers=backend == "cupy",
             )
             with closing(

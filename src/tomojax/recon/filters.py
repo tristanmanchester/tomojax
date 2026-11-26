@@ -5,22 +5,11 @@ from __future__ import annotations
 import functools
 import math
 import operator
-from typing import cast, get_args
 
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax._parameters import Filter
-from tomojax.errors import InvalidParameter
-
-
-def normalize_filter(name: str | None) -> Filter:
-    """Normalize filter names and preserve the default ramp fallback."""
-    normalized = str(name or "").strip().lower()
-    normalized = normalized or "ramp"
-    if normalized not in get_args(Filter.__value__):
-        raise InvalidParameter("filter", f"Unknown filter {name}")
-    return cast("Filter", normalized)
+from tomojax._parameters import normalize_filter
 
 
 @functools.lru_cache(maxsize=16)

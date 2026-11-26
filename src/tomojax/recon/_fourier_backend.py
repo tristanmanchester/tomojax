@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import Filter
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
@@ -22,6 +23,7 @@ from ._pinned import PinnedPool
 if TYPE_CHECKING:
     import jax
 
+    from tomojax._typed_arrays import Float64Array
     from tomojax.core.cuda_types import CuPyValue
 
 
@@ -87,6 +89,7 @@ class _Geometry:
         flipped: np.ndarray | tuple[int, ...],
         angles: tuple[float, ...] | np.ndarray,
         backend: Literal["numpy", "cupy"],
+        filter: Filter | None = None,
     ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
@@ -98,6 +101,7 @@ class _Geometry:
         else:
             xp = np
         self.xp = xp
+        self.filter = filter
         self.grid, self.detector = grid, detector
         angles, starts, counts = np.unique(angles, return_index=True, return_counts=True)
         self.nviews = len(angles)
@@ -123,7 +127,7 @@ class _Geometry:
         self.coordinates = self._coordinates(angles)
         self.y_boundary = None
         stop = qx - 1 if px % 2 == 0 else qx
-        if py % 2 == 0 and grid.vy > detector.du and stop > 1:
+        if py % 2 == 0 and (filter is not None or grid.vy > detector.du) and stop > 1:
             # At y Nyquist, -ky maps to the same stored bin. If its line is
             # inside the detector's disk, conjugate symmetry needs the missing
             # opposite-x sample, not just conjugation of the current sample.
@@ -135,7 +139,7 @@ class _Geometry:
             )
 
     def _coordinates(
-        self, angles: np.ndarray, *, mirror: bool = False
+        self, angles: Float64Array, *, mirror: bool = False
     ) -> tuple[
         np.ndarray | CuPyValue,
         np.ndarray | CuPyValue,
@@ -144,38 +148,48 @@ class _Geometry:
     ]:
         if self.cuda:
             return self._cuda_coordinates(angles, mirror=mirror)
-        xp, grid, detector = self.xp, self.grid, self.detector
+        grid, detector = self.grid, self.detector
         py, px = self.shape
-        fy = xp.fft.fftfreq(py, d=grid.vy)[:, None]
+        fy = np.fft.fftfreq(py, d=grid.vy)[:, None]
         # Retain the full transform's negative x Nyquist frequency, including
         # the opposite-x samples needed at the y boundary of an anisotropic grid.
-        fx = xp.fft.fftfreq(px, d=grid.vx)[None, : px // 2 + 1]
+        fx = np.fft.fftfreq(px, d=grid.vx)[None, : px // 2 + 1]
         if mirror:
             stop = px // 2 if px % 2 == 0 else px // 2 + 1
             fy, fx = fy[py // 2 : py // 2 + 1], -fx[:, 1:stop]
-        real = xp.float32 if self.cuda else xp.float64
-        complex_dtype = xp.complex64 if self.cuda else xp.complex128
-        radial = xp.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
-        direction = xp.mod(xp.arctan2(-fy, fx) - angles[0], 2 * np.pi)
+        radial = np.sqrt(fx * fx + fy * fy) * (self.nfft * detector.du)
+        first_angle = float(angles[0])
+        direction = np.mod(np.arctan2(-fy, fx) - first_angle, 2 * np.pi)
         if self.uniform:
             angle = direction * (self.nviews / np.pi)
         else:
             # Interpolate in measured angle, not view index. Include the opposing
             # half turn and periodic endpoint, retaining FP64 angular fractions.
-            knots = np.asarray(angles) - angles[0]
-            knots = xp.asarray(np.concatenate((knots, knots + np.pi, [2 * np.pi])))
-            angle = xp.interp(direction, knots, xp.arange(2 * self.nviews + 1))
-        detector_phase = xp.exp(
+            knots = angles - first_angle
+            knots = np.concatenate((knots, knots + np.pi, [2 * np.pi]))
+            angle = np.interp(direction, knots, np.arange(2 * self.nviews + 1))
+        detector_phase = np.exp(
             -2j * np.pi * radial * detector.center[0] / (self.nfft * detector.du)
-        ).astype(complex_dtype)
+        )
         ox, oy, _ = grid_volume_origin(grid)
-        phase = xp.exp(
+        phase = np.exp(
             2j * np.pi * (fx * (ox - self.crop[1] * grid.vx) + fy * (oy - self.crop[0] * grid.vy))
-        ).astype(complex_dtype)
-        return angle, radial.astype(real), phase, detector_phase
+        )
+        if self.filter is not None:
+            # The ramp acts at the folded detector frequency, the tent and
+            # the polar Jacobian at the physical Cartesian radius.
+            f = radial / self.nfft
+            folded = np.abs(f - np.rint(f))
+            gain = np.sinc(f) ** 2 * np.divide(folded, f, out=np.ones_like(f), where=f != 0)
+            if self.filter == "hann":
+                gain *= np.cos(np.pi * folded) ** 2
+            elif self.filter == "shepp-logan":
+                gain *= np.sinc(folded)
+            phase *= gain
+        return angle, radial, phase, detector_phase
 
     def _cuda_coordinates(
-        self, angles: np.ndarray, *, mirror: bool
+        self, angles: Float64Array, *, mirror: bool
     ) -> tuple[CuPyValue, CuPyValue, CuPyValue, CuPyValue]:
         from ._fourier_cuda import coordinates_kernel
 
@@ -211,6 +225,7 @@ class _Geometry:
                 np.float64(detector.du),
                 np.float64(detector.center[0]),
                 np.int32(self.nfft),
+                np.int32((None, "ramp", "hann", "shepp-logan").index(self.filter)),
                 np.float64(angles[0]),
                 np.int64(arrays[0].size),
             ),
@@ -226,12 +241,13 @@ def _cached_geometry(
     flipped: tuple[int, ...],
     angles: tuple[float, ...],
     device: int,
+    filter: Filter | None,
 ) -> tuple[_Geometry, CuPyValue]:
     """Retain small immutable geometry arrays; no mutable slab buffers."""
     import cupy
 
     with cupy.cuda.Device(device):
-        geometry = _Geometry(grid, detector, nviews, flipped, angles, "cupy")
+        geometry = _Geometry(grid, detector, nviews, flipped, angles, "cupy", filter)
         ready = cupy.cuda.Event()
         ready.record()
     return geometry, ready
@@ -244,6 +260,7 @@ def _plan_geometry(
     flipped: np.ndarray | tuple[int, ...],
     angles: tuple[float, ...],
     backend: Literal["numpy", "cupy"],
+    filter: Filter | None,
 ) -> _Geometry:
     """Acquire immutable geometry and make its initialization visible to this stream."""
     shape, _ = transform_grid(grid, detector)
@@ -251,11 +268,17 @@ def _plan_geometry(
         import cupy
 
         geometry, ready = _cached_geometry(
-            grid, detector, nviews, tuple(map(int, flipped)), angles, cupy.cuda.runtime.getDevice()
+            grid,
+            detector,
+            nviews,
+            tuple(map(int, flipped)),
+            angles,
+            cupy.cuda.runtime.getDevice(),
+            filter,
         )
         cupy.cuda.get_current_stream().wait_event(ready)
         return geometry
-    return _Geometry(grid, detector, nviews, flipped, angles, backend)
+    return _Geometry(grid, detector, nviews, flipped, angles, backend, filter)
 
 
 _STREAMS_LOCK = Lock()
@@ -338,6 +361,7 @@ class FourierPlan:
         depth: int,
         backend: Literal["numpy", "cupy"],
         *,
+        filter: Filter | None = None,
         async_transfers: bool = False,
         shifts: np.ndarray | None = None,
     ) -> None:
@@ -353,6 +377,7 @@ class FourierPlan:
             xp = np
             progress.placed(("cpu:0",))
         self.xp = xp
+        self.filter = filter
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
         self.upload = self.compute = self.download = None
@@ -370,7 +395,7 @@ class FourierPlan:
             progress.preparing("plan fourier transform"),
             self.compute if self.compute is not None else nullcontext(),
         ):
-            geometry = _plan_geometry(grid, detector, nviews, flipped, angles, backend)
+            geometry = _plan_geometry(grid, detector, nviews, flipped, angles, backend, filter)
             self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
@@ -427,6 +452,7 @@ class FourierPlan:
             self.view_weights,
             np.float64(self.detector.du),
             np.int32(1),
+            np.int32(self.filter is not None),
         )
         if self.shifts is not None:
             args += (self.shifts,)
@@ -473,6 +499,7 @@ class FourierPlan:
                 self.period_phase,
                 self.groups,
                 self.shifts,
+                replicas=self.filter is not None,
             )
             self.frequencies[:, 0, 0] = mass
             if self.y_boundary is not None:
@@ -486,6 +513,7 @@ class FourierPlan:
                     self.period_phase,
                     self.groups,
                     self.shifts,
+                    replicas=self.filter is not None,
                 )
                 row = self.frequencies[:, self.shape[0] // 2, 1:stop]
                 row[:] = 0.5 * (row + mirror[:, 0, :].conj())

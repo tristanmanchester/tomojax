@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, ClassVar, Literal
 
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax.backends.api import is_oom_error
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_projection_stack
@@ -67,6 +67,9 @@ class FourierConfig:
     ----------
     slices_per_batch : int | None, optional
         Positive slab depth, or None to choose automatically as described above.
+    filter : Filter or None, optional
+        FBP detector response ("ramp", "hann" or "shepp-logan"). None uses
+        the native Fourier response with a detector-Nyquist disk cutoff.
     backend : Literal['auto', 'numpy', 'cupy'], optional
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
@@ -75,9 +78,12 @@ class FourierConfig:
     method: ClassVar[Literal["fourier"]] = "fourier"
 
     slices_per_batch: int | None = None
+    filter: _parameters.Filter | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"
 
     def __post_init__(self) -> None:
+        if self.filter is not None:
+            object.__setattr__(self, "filter", _parameters.normalize_filter(self.filter))
         if self.backend not in ("auto", "numpy", "cupy"):
             raise InvalidParameter(
                 "backend", "fourier_reconstruct: backend must be 'auto', 'numpy' or 'cupy'"
@@ -112,8 +118,10 @@ def fourier(
     detector-v rows retain their physical coordinates.
 
     This approximate inverse uses six-point Kaiser--Bessel radial interpolation,
-    linear interpolation in measured angle, a detector-Nyquist disk cutoff and
-    a padded Cartesian inverse FFT. DC uses periodic angular trapezoid weights.
+    linear interpolation in measured angle and a padded Cartesian inverse FFT.
+    The native response cuts off at detector Nyquist. Selecting an FBP filter
+    includes the detector interpolation response and its radial replicas inside
+    the Cartesian frequency grid. DC uses periodic angular trapezoid weights.
     Missing detector data are zero. Truncation or angular undersampling can cause
     artifacts; no amplitude fitting, clipping or truncation correction is applied.
 
@@ -203,6 +211,7 @@ def fourier(
                 backend,
                 async_transfers=overlap,
                 shifts=sampling.shifts,
+                filter=cfg.filter,
             )
             if overlap:
                 _run_host_pipeline(plan, grid.nz, depth, prepare, write)

@@ -106,6 +106,7 @@ class FourierConfig(Record, tag="FourierConfig"):
     """Wire fields of FourierConfig."""
 
     slices_per_batch: int | None = None
+    filter: str | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"
 
 

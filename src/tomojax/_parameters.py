@@ -2,7 +2,7 @@
 
 from importlib import import_module
 from types import ModuleType
-from typing import Any, Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from tomojax.errors import InvalidParameter
 
@@ -17,6 +17,15 @@ type GeometryName = Literal["parallel", "lamino", "cone"]
 type TiltAbout = Literal["x", "z"]
 
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
+
+
+def normalize_filter(name: str | None) -> Filter:
+    """Normalize filter names and preserve the default ramp fallback."""
+    normalized = str(name or "").strip().lower()
+    normalized = normalized or "ramp"
+    if normalized not in get_args(Filter.__value__):
+        raise InvalidParameter("filter", f"Unknown filter {name}")
+    return cast("Filter", normalized)
 
 
 def method_fit(method: str | None, fit: str | tuple[str, ...] | None) -> tuple[str, ...]:

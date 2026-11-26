@@ -121,7 +121,7 @@ def build_parser() -> ProgressParser:
         "--filter",
         choices=get_args(Filter.__value__),
         default=None,
-        help="FBP filter (default ramp)",
+        help="FBP detector response (optional for Fourier, default ramp for FBP)",
     )
     _ = p.add_argument(
         "--iterations",

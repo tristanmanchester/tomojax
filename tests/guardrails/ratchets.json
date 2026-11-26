@@ -7,7 +7,7 @@
     "FDKConfig": 4,
     "FDKHostConfig": 2,
     "FISTAConfig": 17,
-    "FourierConfig": 2,
+    "FourierConfig": 3,
     "MLEMConfig": 5,
     "SIRTConfig": 9,
     "SPDHGConfig": 16,
@@ -61,12 +61,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5371,
+    "reportAny": 5368,
     "reportMissingImports": 57,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 916,
-    "reportUnknownMemberType": 1641,
-    "reportUnknownVariableType": 1010,
+    "reportUnknownArgumentType": 904,
+    "reportUnknownMemberType": 1622,
+    "reportUnknownVariableType": 996,
     "reportUnusedCallResult": 142
   },
   "explicit_any": 462,

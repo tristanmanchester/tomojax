@@ -138,6 +138,13 @@ volume = fourier(
 )
 ```
 
+Set `FourierConfig(filter="ramp")` to approximate the detector response of
+default FBP. The linear detector interpolant attenuates high frequencies and
+contributes spectral replicas in the corners of the Cartesian frequency grid.
+The `hann` and `shepp-logan` choices also apply the corresponding FBP window.
+Fourier still interpolates in angle, so noisy and sparsely sampled scans can
+differ from discrete backprojection.
+
 Install `tomojax[fourier-cuda12]` for the optional CuPy implementation on a host
 with a working CUDA 12 runtime/toolkit and NVIDIA driver. The default
 `backend="auto"` uses CUDA when it matches the selected JAX device, otherwise

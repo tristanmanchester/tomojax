@@ -739,6 +739,7 @@ class tomojax.recon.FISTAConfig(
 class tomojax.recon.FourierConfig(
         *,
         slices_per_batch: 'int | None' = None,
+        filter: '_parameters.Filter | None' = None,
         backend: "Literal['auto', 'numpy', 'cupy']" = 'auto',
     ) -> None
 class tomojax.recon.MLEMConfig(

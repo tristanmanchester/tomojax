@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
-from tomojax._parameters import Filter, check_backend
+from tomojax._parameters import Filter, check_backend, normalize_filter
 from tomojax._typed_arrays import Device
 from tomojax.backends.api import is_oom_error
 from tomojax.core.devices import BatchRanges, announce, as_devices, sum_batches, view_split
@@ -30,7 +30,7 @@ from tomojax.errors import InvalidParameter
 from ._backend import reconstruction_backend
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
-from .filters import fft_filter_rows, normalize_filter, rfft_filter_array
+from .filters import fft_filter_rows, rfft_filter_array
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

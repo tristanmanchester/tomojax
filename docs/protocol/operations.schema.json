@@ -1263,6 +1263,17 @@
           ],
           "default": null
         },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "backend": {
           "enum": [
             "auto",

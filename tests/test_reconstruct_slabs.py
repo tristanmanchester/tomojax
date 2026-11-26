@@ -13,7 +13,7 @@ from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig, api
 
 CASES = [
     ("fourier", FourierConfig(backend="numpy", slices_per_batch=4)),
-    ("fourier", FourierConfig(backend="auto")),
+    ("fourier", FourierConfig(backend="auto", filter="ramp")),
     ("fbp", FBPConfig(backend="jax")),
     pytest.param(
         "fourier", FourierConfig(backend="cupy", slices_per_batch=4), marks=pytest.mark.gpu

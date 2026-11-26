@@ -569,7 +569,8 @@ def reconstruct(
     config : reconstruction config or None, optional
         Method-specific settings; explicit keywords replace its fields.
     filter : str or None, optional
-        FBP filter: ramp, shepp-logan or hann; None uses the configuration.
+        FBP detector response for FBP or Fourier: ramp, shepp-logan or hann.
+        None uses the configuration or method default.
     iterations : int or None, optional
         Iteration count; None uses the method default or configuration.
     tv_weight : float or None, optional

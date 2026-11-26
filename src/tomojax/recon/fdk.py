@@ -30,7 +30,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
-from tomojax._parameters import check_backend
+from tomojax._parameters import check_backend, normalize_filter
 from tomojax.core.cone import ConeModel
 from tomojax.core.devices import BatchRanges, announce, as_devices, sum_batches, view_split
 from tomojax.core.geometry.base import grid_volume_origin
@@ -43,7 +43,7 @@ from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._host_arrays import validate_host_arrays
-from tomojax.recon.filters import get_fbp_filter_np, normalize_filter
+from tomojax.recon.filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence

@@ -55,7 +55,31 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
     assert np.linalg.norm(actual.volume[0] - truth) / np.linalg.norm(truth) < 0.02
 
 
-@pytest.mark.parametrize("options", [{"filter": "ramp"}, {"iterations": 1}, {"warm_start": True}])
+@pytest.mark.parametrize("filter", ["ramp", "hann", "shepp-logan"])
+def test_fourier_detector_response_matches_fbp_on_offset_gaussian(filter):
+    scan = _scan()
+    expected = np.asarray(tj.reconstruct(scan, "fbp", filter=filter).volume)
+    native = tj.reconstruct(scan, "fourier").volume
+    actual = tj.reconstruct(scan, "fourier", filter=filter).volume
+    assert np.linalg.norm(actual - expected) < 0.25 * np.linalg.norm(native - expected)
+
+
+@pytest.mark.parametrize("nu", [30, 31])
+def test_fine_fourier_grid_includes_multiple_shifted_detector_replicas(nu):
+    angles = np.linspace(0, 180, 360, endpoint=False)
+    grid = tj.Grid(41, 45, 1, 0.2, 0.24, 1, vol_center=(0.12, -0.21, 0))
+    detector = tj.Detector(nu, 1, 1, 1, center=(0.35, 0))
+    data = np.zeros((len(angles), 1, nu), np.float32)
+    data[:, 0, nu // 2] = 1
+    poses = np.zeros((len(angles), 6), np.float32)
+    poses[:, 3] = 0.5 * np.sin(2 * np.deg2rad(angles))
+    scan = tj.Scan(data, tj.ParallelGeometry(grid, detector, angles)).with_poses(poses)
+    expected = np.asarray(tj.reconstruct(scan, "fbp").volume)
+    actual = tj.reconstruct(scan, "fourier", filter="ramp").volume
+    assert np.linalg.norm(actual - expected) < 0.05 * np.linalg.norm(expected)
+
+
+@pytest.mark.parametrize("options", [{"iterations": 1}, {"warm_start": True}])
 def test_fourier_refuses_inapplicable_workflow_options(options):
     with pytest.raises(ValueError, match="method 'fourier' does not take"):
         tj.reconstruct(_scan(), "fourier", **options)
@@ -85,6 +109,8 @@ def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
                 str(output),
                 "--method",
                 "fourier",
+                "--filter",
+                "hann",
                 "--config",
                 str(settings),
             ]
@@ -93,7 +119,7 @@ def test_cli_fourier_uses_config_and_round_trips_context(tmp_path):
     )
     actual = tj.load_reconstruction(output)
     expected = tj.reconstruct(
-        scan, "fourier", config=FourierConfig(backend="numpy", slices_per_batch=1)
+        scan, "fourier", config=FourierConfig(filter="hann", backend="numpy", slices_per_batch=1)
     )
     np.testing.assert_allclose(actual.volume, expected.volume, atol=1e-6)
     assert actual.method == "fourier" and actual.grid == scan.grid

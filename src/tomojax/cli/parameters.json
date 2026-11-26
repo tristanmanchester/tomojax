@@ -1422,6 +1422,23 @@
           "default": null,
           "description": "Positive slab depth, or None to choose automatically as described above."
         },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "FBP detector response (\"ramp\", \"hann\" or \"shepp-logan\"). None uses the native Fourier response with a detector-Nyquist disk cutoff.",
+          "x-choices": [
+            "ramp",
+            "hann",
+            "shepp-logan"
+          ]
+        },
         "backend": {
           "enum": [
             "auto",
@@ -2679,7 +2696,7 @@
             }
           ],
           "default": null,
-          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
           "x-choices": [
             "ramp",
             "hann",
@@ -4696,7 +4713,7 @@
             }
           ],
           "default": null,
-          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
           "x-choices": [
             "ramp",
             "hann",
@@ -4949,7 +4966,7 @@
             }
           ],
           "default": null,
-          "description": "FBP filter: ramp, shepp-logan or hann; None uses the configuration.",
+          "description": "FBP detector response for FBP or Fourier: ramp, shepp-logan or hann. None uses the configuration or method default.",
           "x-choices": [
             "ramp",
             "hann",

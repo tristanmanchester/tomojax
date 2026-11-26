@@ -23,7 +23,7 @@ __device__ __forceinline__ float2 polar_value(
     const float2* phase, const float2* detector_phase, long long m, long long z,
     int nviews, int nsource, const int* groups, int nr, int nfft,
     float qr, float qi, const float* table,
-    const signed char* flipped
+    const signed char* flipped, int replicas
     #ifdef TRANSLATED_VIEWS
     , const float* shifts
     #endif
@@ -33,12 +33,17 @@ __device__ __forceinline__ float2 polar_value(
     double a = angle[m];
     float r = radial[m];
     float2 total = make_float2(0, 0);
-    if (r <= nfft * 0.5f) {
+    if (replicas || r <= nfft * 0.5f) {
+        float physical_r = r;
+        float periods = replicas ? nearbyintf(r / nfft) : 0;
+        float signed_r = r - periods * nfft;
+        r = fabsf(signed_r);
         int ai = (int)floor(a), ri = (int)floorf(r);
         float weights[6];
         #pragma unroll
         for (int j = 0; j < 6; j++) weights[j] = radial_weight(r - (ri + j - 2), table);
         float2 dp = detector_phase[m];
+        if (((int)periods & 1) && qr < 0) { dp.x = -dp.x; dp.y = -dp.y; }
         #pragma unroll
         for (int da = 0; da <= 1; da++) {
             int view = ai + da;
@@ -70,10 +75,11 @@ __device__ __forceinline__ float2 polar_value(
                     row.x += weights[j] * value.x;
                     row.y += weights[j] * value.y;
                 }
+                if (signed_r < 0) row.y = -row.y;
                 float2 shifted_dp = dp;
                 #ifdef TRANSLATED_VIEWS
                 float sn, cs;
-                sincosf(6.283185307179586f * r * shifts[source] / nfft, &sn, &cs);
+                sincosf(6.283185307179586f * physical_r * shifts[source] / nfft, &sn, &cs);
                 shifted_dp = make_float2(dp.x * cs - dp.y * sn, dp.x * sn + dp.y * cs);
                 #endif
                 float real = row.x * shifted_dp.x - row.y * shifted_dp.y;
@@ -93,7 +99,7 @@ extern "C" __global__ void polar(
     int nviews, int nsource, const int* groups, int nr, int nfft,
     float qr, float qi, const float* table,
     const float2* detector_phase, const signed char* flipped,
-    const double* row_mass, const double* view_weights, double du, int replace_dc
+    const double* row_mass, const double* view_weights, double du, int replace_dc, int replicas
     #ifdef TRANSLATED_VIEWS
     , const float* shifts
     #endif
@@ -134,7 +140,8 @@ extern "C" __global__ void polar(
         float2 current = polar_value(
             spectrum, opposite ? mirror_angle : angle, opposite ? mirror_radial : radial,
             opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
-            opposite ? x - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
+            opposite ? x - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi,
+            table, flipped, replicas
             #ifdef TRANSLATED_VIEWS
             , shifts
             #endif
@@ -146,7 +153,7 @@ extern "C" __global__ void polar(
     #else
     out[i] = polar_value(
         spectrum, angle, radial, phase, detector_phase, m, z,
-        nviews, nsource, groups, nr, nfft, qr, qi, table, flipped
+        nviews, nsource, groups, nr, nfft, qr, qi, table, flipped, replicas
             #ifdef TRANSLATED_VIEWS
             , shifts
             #endif
@@ -216,7 +223,7 @@ extern "C" __global__ void coordinates(
     double* angle, float* radial, float2* phase, float2* detector_phase,
     const double* knots, int nviews, int uniform, int px, int py, int mirror,
     double vx, double vy, double ox, double oy, double du, double center, int nfft,
-    double first_angle, long long count)
+    int filter, double first_angle, long long count)
 {
     long long m = (long long)blockIdx.x * blockDim.x + threadIdx.x;
     if (m >= count) return;
@@ -242,6 +249,14 @@ extern "C" __global__ void coordinates(
     radial[m] = (float)r;
     double p = 2 * pi * (fx * ox + fy * oy);
     phase[m] = make_float2((float)cos(p), (float)sin(p));
+    if (filter && r > 0) {
+        double f = r / nfft, folded = fabs(f - nearbyint(f));
+        double tent = sinpi(f) / (pi * f);
+        double gain = tent * tent * folded / f;
+        if (filter == 2) gain *= cospi(folded) * cospi(folded);
+        if (filter == 3 && folded > 0) gain *= sinpi(folded) / (pi * folded);
+        phase[m] = make_float2((float)(gain * cos(p)), (float)(gain * sin(p)));
+    }
     p = -2 * pi * r * center / (nfft * du);
     detector_phase[m] = make_float2((float)cos(p), (float)sin(p));
 }

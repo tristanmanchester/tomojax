@@ -15,6 +15,9 @@ from ._directions import group_repeats
 
 if TYPE_CHECKING:
     import jax
+    from numpy.typing import NDArray
+
+    from tomojax._typed_arrays import Float64Array
 
 
 def next_fast_len(target: int) -> int:
@@ -252,6 +255,8 @@ def interpolate_numpy(
     period_phase: complex,
     groups: np.ndarray | None = None,
     shifts: np.ndarray | None = None,
+    *,
+    replicas: bool = False,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation.
 
@@ -260,7 +265,7 @@ def interpolate_numpy(
     """
     angle, radial, phase, detector_phase = np.broadcast_arrays(angle, radial, phase, detector_phase)
     inside = radial <= nfft / 2
-    if np.all(inside):
+    if replicas or np.all(inside):
         return _interpolate_inside(
             spectrum,
             angle,
@@ -273,6 +278,7 @@ def interpolate_numpy(
             period_phase,
             groups,
             shifts,
+            replicas=replicas,
         )
     result = np.zeros((spectrum.shape[0], *angle.shape), dtype=np.complex128)
     if np.any(inside):
@@ -288,27 +294,39 @@ def interpolate_numpy(
             period_phase,
             groups,
             shifts,
+            replicas=replicas,
         )
     return result
 
 
 def _interpolate_inside(
-    spectrum: np.ndarray,
-    angle: np.ndarray,
-    radial: np.ndarray,
+    spectrum: np.ndarray[tuple[int, int, int], np.dtype[np.complex128]],
+    angle: Float64Array,
+    radial: Float64Array,
     phase: np.ndarray,
     detector_phase: np.ndarray,
-    flipped: np.ndarray,
+    flipped: NDArray[np.int8],
     table: np.ndarray,
     nfft: int,
     period_phase: complex,
-    groups: np.ndarray | None = None,
+    groups: NDArray[np.int32] | None = None,
     shifts: np.ndarray | None = None,
+    *,
+    replicas: bool = False,
 ) -> np.ndarray:
     """Vectorized reference for linear angular and Kaiser radial interpolation."""
     layers, sources, _ = spectrum.shape
     nviews = sources if groups is None else len(groups) - 1
-    ai, ri = np.floor(angle).astype(np.int64), np.floor(radial).astype(np.int64)
+    ai = np.floor(angle).astype(np.int64)
+    lookup = radial
+    signed = radial
+    if replicas:
+        # Centered detector samples acquire a parity phase each whole period.
+        periods = np.rint(radial / nfft)
+        signed = radial - periods * nfft
+        lookup = np.abs(signed)
+        detector_phase = detector_phase * np.where(periods % 2, period_phase.real, 1)
+    ri = np.floor(lookup).astype(np.int64)
     result = np.zeros((layers, *angle.shape), dtype=np.complex128)
     repeats = 1 if groups is None else int(np.max(np.diff(groups)))
     for da in (0, 1):
@@ -327,8 +345,10 @@ def _interpolate_inside(
             source = view if groups is None else np.minimum(groups[view] + repeat, sources - 1)
             conjugate = opposing != flipped[source].astype(bool)
             row = _radial_values(
-                spectrum, source[active], radial[active], ri[active], table, nfft, period_phase
+                spectrum, source[active], lookup[active], ri[active], table, nfft, period_phase
             )
+            if replicas:
+                row = np.conjugate(row, out=row, where=signed[active] < 0)
             row *= detector_phase[active]
             if shifts is not None:
                 # Shift at the query frequency, AFTER radial interpolation: a
