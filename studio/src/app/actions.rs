@@ -265,10 +265,7 @@ impl AppState {
                 self.ui.display.projection_index = 0;
                 self.ui.display.sinogram_row = 0;
                 self.center_sinogram = true;
-                self.ui.display.window_low.replace_text("");
-                self.ui.display.window_high.replace_text("");
-                self.applied_window = None;
-                self.window_prefill = Default::default();
+                self.window.restore(None);
             }
             UiAction::Simulate => self.open_operation("simulate"),
             UiAction::SetOperation(operation) => self.set_operation(&operation, None),
@@ -439,25 +436,16 @@ impl AppState {
                 }
             }
             UiAction::ApplyWindow => {
-                let fields = [
-                    self.ui.display.window_low.text.clone(),
-                    self.ui.display.window_high.text.clone(),
-                ];
-                let window = self.valid_window()?;
+                // An invalid draft is reported before it can enter the view history.
+                self.window.parse()?;
                 self.remember_view();
-                self.applied_window = window;
-                self.window_prefill = [0, 1].map(|i| viewing::Prefilled {
-                    text: fields[i].clone(),
-                    exact: window.map(|limits| limits[i]),
-                });
+                self.window.apply()?;
+                self.window.follow(self.current_window());
             }
             UiAction::AutoWindow => {
                 self.remember_view();
-                self.applied_window = None;
-                self.ui.display.window_low.replace_text("");
-                self.ui.display.window_high.replace_text("");
-                self.window_prefill = Default::default();
-                self.prefill_window();
+                self.window.restore(None);
+                self.window.follow(self.current_window());
             }
             UiAction::SetColormap(map) => {
                 self.remember_view();
@@ -794,7 +782,7 @@ impl AppState {
             let id = job.id.clone();
             project.document.jobs.push(job);
             self.mark_dirty();
-            self.open_activity(vec![id]);
+            self.ui.activity.follow(vec![id]);
             self.refresh_model();
         }
     }

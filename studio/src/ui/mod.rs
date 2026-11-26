@@ -194,7 +194,7 @@ fn topbar(state: &AppState, narrow: bool) -> El {
                     state.ui.activity.is_open(),
                     |s, _| {
                         if s.ui.activity.is_open() {
-                            s.ui.activity = Activity::Closed;
+                            s.ui.activity.close();
                         } else {
                             s.show_activity();
                         }

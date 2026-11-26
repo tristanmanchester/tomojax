@@ -7,13 +7,55 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct PreviewContext {
     pub active: Option<PreviewKind>,
-    previous: Option<(String, PlaneKind, std::sync::Arc<crate::imaging::PlaneData>)>,
-    pub arrays: BTreeMap<String, ArrayDescriptor>,
+    pub(super) shown: Shown,
     pub(super) signature: String,
     retained: String,
-    displayed: Option<String>,
     suppressed: Option<String>,
     plan: Option<(Value, Value, Grid)>,
+}
+
+/// What the viewer shows for the active preview's current settings.
+#[derive(Default)]
+pub(super) enum Shown {
+    /// Nothing yet.
+    #[default]
+    Nothing,
+    /// The settings changed: until their result arrives, the image last shown of
+    /// `source` in `view` stays on screen.
+    Holding {
+        source: String,
+        view: PlaneKind,
+        data: std::sync::Arc<crate::imaging::PlaneData>,
+    },
+    /// The arrays of the result of worker request `request`.
+    Result {
+        request: String,
+        arrays: BTreeMap<String, ArrayDescriptor>,
+    },
+}
+
+impl Shown {
+    pub(super) fn arrays(&self) -> Option<&BTreeMap<String, ArrayDescriptor>> {
+        match self {
+            Self::Nothing | Self::Holding { .. } => None,
+            Self::Result { arrays, .. } => Some(arrays),
+        }
+    }
+
+    fn has_image(&self) -> bool {
+        self.arrays().is_some_and(|arrays| !arrays.is_empty())
+    }
+
+    /// New settings replace a shown result with `held`, the image on screen when the
+    /// result was of the same source, until their own result arrives. A held image
+    /// stays held through further edits.
+    fn supersede(&mut self, held: Option<Self>) {
+        *self = match std::mem::take(self) {
+            Self::Result { .. } => held.unwrap_or_default(),
+            Self::Nothing => Self::Nothing,
+            holding @ Self::Holding { .. } => holding,
+        };
+    }
 }
 
 pub(crate) fn kind(operation: &str) -> Option<PreviewKind> {
@@ -30,7 +72,9 @@ impl AppState {
     pub(crate) fn pending_preview_plane(
         &self,
     ) -> Option<&std::sync::Arc<crate::imaging::PlaneData>> {
-        let (source, view, data) = self.preview_context.previous.as_ref()?;
+        let Shown::Holding { source, view, data } = &self.preview_context.shown else {
+            return None;
+        };
         let preview = self.model.preview.as_ref()?;
         (self.model.active_asset.as_ref() == Some(source)
             && *view == self.ui.main_view
@@ -46,8 +90,7 @@ impl AppState {
     }
     pub(super) fn disconnect_interactive(&mut self) {
         self.previews.disconnected();
-        self.preview_context.arrays.clear();
-        self.preview_context.displayed = None;
+        self.preview_context.shown = Shown::Nothing;
         self.preview_context.signature.clear();
         self.preview_context.retained.clear();
         self.preview_context.plan = None;
@@ -96,10 +139,8 @@ impl AppState {
             if let Some(previous) = self.preview_context.active {
                 self.previews.clear(previous);
             }
-            self.preview_context.previous = None;
             self.preview_context.active = active;
-            self.preview_context.arrays.clear();
-            self.preview_context.displayed = None;
+            self.preview_context.shown = Shown::Nothing;
             self.preview_context.signature.clear();
             self.preview_context.suppressed = None;
             self.model.preview = None;
@@ -155,20 +196,18 @@ impl AppState {
             if let (Some(input), Ok(parameters)) = (input, parameters) {
                 let signature = json!([input, parameters, kind.operation()]).to_string();
                 if signature != self.preview_context.signature {
-                    if self.preview_context.displayed.is_some()
-                        && self
-                            .previews
-                            .current(kind)
-                            .is_some_and(|c| c.input.asset == input.asset)
-                    {
-                        self.preview_context.previous = self
-                            .imaging
-                            .plane(self.ui.main_view.mark())
-                            .map(|data| (input.asset.clone(), self.ui.main_view, data.clone()));
-                    }
+                    let held = self
+                        .previews
+                        .current(kind)
+                        .filter(|current| current.input.asset == input.asset)
+                        .and_then(|_| self.imaging.plane(self.ui.main_view.mark()))
+                        .map(|data| Shown::Holding {
+                            source: input.asset.clone(),
+                            view: self.ui.main_view,
+                            data: data.clone(),
+                        });
+                    self.preview_context.shown.supersede(held);
                     self.preview_context.signature = signature.clone();
-                    self.preview_context.arrays.clear();
-                    self.preview_context.displayed = None;
                     // The pending image has no pixels from a previous parameter value.
                     self.ui.main_view = if kind == PreviewKind::Corrections {
                         PlaneKind::Projection
@@ -210,9 +249,10 @@ impl AppState {
                     && self.previews.status(kind).phase == PreviewPhase::Ready
                     && current.parameters == parameters
                     && current.input.asset == input.asset
-                    && self.preview_context.displayed.as_deref() != Some(&current.request)
+                    && !matches!(&self.preview_context.shown,
+                        Shown::Result { request, .. } if *request == current.request)
                 {
-                    self.preview_context.arrays = match &current.output.value {
+                    let arrays = match &current.output.value {
                         Product::Plane { plane } => {
                             BTreeMap::from([("plane".into(), plane.clone())])
                         }
@@ -231,8 +271,10 @@ impl AppState {
                         Product::Region { arrays, .. } => arrays.clone(),
                         _ => BTreeMap::new(),
                     };
-                    self.preview_context.previous = None;
-                    self.preview_context.displayed = Some(current.request.clone());
+                    self.preview_context.shown = Shown::Result {
+                        request: current.request.clone(),
+                        arrays,
+                    };
                     self.ui.display.indices = [0; 3];
                     self.center_sinogram = true;
                     self.refresh_images();
@@ -267,8 +309,8 @@ impl AppState {
                     phase: status.phase,
                     revision: status.revision,
                     can_keep: status.phase == PreviewPhase::Ready
-                        && !self.preview_context.arrays.is_empty(),
-                    has_image: !self.preview_context.arrays.is_empty(),
+                        && self.preview_context.shown.has_image(),
+                    has_image: self.preview_context.shown.has_image(),
                     index: parameters["index"].as_u64().unwrap_or(0) as usize,
                     count,
                     center: parameters["centers"].as_array().and_then(|values| {
@@ -280,13 +322,11 @@ impl AppState {
                 self.model.preview = Some(model);
             } else {
                 if !self.preview_context.signature.is_empty()
-                    || !self.preview_context.arrays.is_empty()
-                    || self.preview_context.displayed.is_some()
+                    || matches!(self.preview_context.shown, Shown::Result { .. })
                 {
                     self.previews.clear(kind);
                     self.preview_context.signature.clear();
-                    self.preview_context.arrays.clear();
-                    self.preview_context.displayed = None;
+                    self.preview_context.shown = Shown::Nothing;
                     self.refresh_images();
                     changed = true;
                 }
@@ -324,8 +364,7 @@ impl AppState {
             .ok_or("No interactive preview is selected")?;
         let preview = self.previews.take_for_keep(kind)?;
         self.preview_context.suppressed = Some(self.preview_context.signature.clone());
-        self.preview_context.arrays.clear();
-        self.preview_context.displayed = None;
+        self.preview_context.shown = Shown::Nothing;
         self.preview_context.active = None;
         self.model.preview = None;
         self.ui.workspace = Workspace::Explore;
@@ -339,8 +378,7 @@ impl AppState {
         if let Some(kind) = self.preview_context.active {
             self.previews.clear(kind);
             self.preview_context.suppressed = Some(self.preview_context.signature.clone());
-            self.preview_context.arrays.clear();
-            self.preview_context.displayed = None;
+            self.preview_context.shown = Shown::Nothing;
             self.refresh_images();
         }
     }

@@ -29,6 +29,7 @@ tempfile = "3"
 blake3 = "1"
 
 [dev-dependencies]
+proptest = { version = "1", default-features = false, features = ["std"] }
 stateright = "0.31"
 
 [patch.crates-io]

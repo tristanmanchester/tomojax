@@ -34,6 +34,9 @@
 - `fit` now defaults to the method's own fit: `tj.align(scan, method="opposite-views")`,
   `tomojax align --method opposite-views` and the worker's `align` operation fit the center
   without `fit="center"`; joint alignment still defaults to `"translations"`.
+- In Studio, an untouched display-window field follows the image on screen even while
+  the other field holds an edit, so **Apply window** no longer commits a limit left over
+  from the previous plane, slice or relinked file.
 
 ## 1.0.0rc5 (2026-11-25)
 

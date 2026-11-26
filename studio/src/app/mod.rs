@@ -7,9 +7,12 @@ mod local;
 mod previewing;
 mod projection;
 #[cfg(test)]
+mod state_machine_tests;
+#[cfg(test)]
 mod tests;
 pub(crate) mod validation;
 mod viewing;
+pub(crate) mod window;
 
 use crate::{
     engine::{Engine, EngineEvent},
@@ -26,7 +29,6 @@ use local::{CANCELED, LocalMessage, LocalTask, check_cancel};
 
 /// The local-task key of copies into a project, which **Cancel copy** stops.
 const IMPORT_COPY: &str = "import-copy";
-use rune::TextEdit;
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -126,8 +128,8 @@ pub struct AppState {
     shutting_down: bool,
     pub(crate) copying: usize,
     metadata_pending: usize,
-    started: bool,
     demo: Demo,
+    /// A scan passed at launch, waiting for the user's own project.
     startup_input: Option<PathBuf>,
     last_context: Value,
     difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
@@ -135,8 +137,7 @@ pub struct AppState {
     split: Option<(SplitKey, std::sync::Arc<crate::imaging::PlaneData>)>,
     /// Project names read once from each recent project's manifest.
     recent_names: std::collections::HashMap<PathBuf, String>,
-    applied_window: Option<[f32; 2]>,
-    window_prefill: [viewing::Prefilled; 2],
+    pub(crate) window: window::DisplayWindow,
     center_sinogram: bool,
     form_context: editing::FormContext,
     last_autosave: Instant,
@@ -184,7 +185,6 @@ impl AppState {
             shutting_down: false,
             copying: 0,
             metadata_pending: 0,
-            started: false,
             demo: if std::env::var_os("TOMOJAX_STUDIO_DEMO").is_some() {
                 Demo::Create
             } else {
@@ -195,8 +195,7 @@ impl AppState {
             difference: None,
             split: None,
             recent_names: Default::default(),
-            applied_window: None,
-            window_prefill: Default::default(),
+            window: window::DisplayWindow::default(),
             center_sinogram: true,
             form_context: editing::FormContext::default(),
             last_autosave: Instant::now(),
@@ -220,6 +219,14 @@ impl AppState {
             if let Err(error) = state.open_project(&path, false) {
                 state.model.error = Some(error);
             }
+        }
+        if let Some(path) = &state.startup_input
+            && state.model.error.is_none()
+        {
+            state.model.error = Some(format!(
+                "Create or open a project, then import {}",
+                path.display()
+            ));
         }
         state.refresh_model();
         // Headless captures still read the actual project arrays through the native
@@ -359,16 +366,6 @@ impl AppState {
                 .collect_retired(engine, |tokens| self.imaging.artifacts_in_use(tokens));
         }
         if self.model.backend.ready && !self.shutting_down {
-            if !self.started {
-                self.started = true;
-                if let Some(path) = self.startup_input.take() {
-                    self.model.error = Some(format!(
-                        "Create or open a project, then import {}",
-                        path.display()
-                    ));
-                    self.startup_input = Some(path);
-                }
-            }
             if self.demo == Demo::Create {
                 self.demo = match self.open_demo_project() {
                     Ok(()) => Demo::Simulate,
@@ -379,7 +376,7 @@ impl AppState {
                 };
                 self.refresh_model();
             }
-            if self.demo == Demo::Simulate && self.project.is_some() {
+            if self.demo == Demo::Simulate {
                 self.demo = Demo::Off;
                 self.set_operation("simulate", None);
                 let _ = self

@@ -1,7 +1,6 @@
 use super::*;
 use crate::imaging::{ColorMap, DisplaySettings, ImagingStatus};
 use crate::protocol::{ArrayDescriptor, Coordinates, Storage};
-use crate::ui::model::Activity;
 use crate::volume::{RenderItem, VolumeSettings};
 
 impl AppState {
@@ -16,7 +15,7 @@ impl AppState {
     }
     fn spatial_preview(&self, plane: PlaneKind) -> Option<&ArrayDescriptor> {
         let arrays = if self.preview_context.active.is_some() {
-            &self.preview_context.arrays
+            self.preview_context.shown.arrays()?
         } else {
             &self
                 .model
@@ -71,7 +70,11 @@ impl AppState {
     }
     pub(super) fn active_projections(&self) -> Option<&ArrayDescriptor> {
         if self.preview_context.active == Some(crate::previews::PreviewKind::Corrections) {
-            return self.preview_context.arrays.get(&self.ui.preview_array);
+            return self
+                .preview_context
+                .shown
+                .arrays()?
+                .get(&self.ui.preview_array);
         }
         let project = self.project.as_ref()?;
         let asset = project.document.asset(self.model.active_asset.as_ref()?)?;
@@ -117,10 +120,7 @@ impl AppState {
         self.ui.rename_asset = None;
         self.model.active_asset = Some(id);
         self.image_key.clear();
-        self.applied_window = None;
-        self.ui.display.window_low.replace_text("");
-        self.ui.display.window_high.replace_text("");
-        self.window_prefill = Default::default();
+        self.window.restore(None);
         self.center_sinogram = true;
         self.ui.display.indices = self
             .volume_dimensions()
@@ -578,7 +578,7 @@ impl AppState {
         } else {
             self.split = None;
         }
-        self.prefill_window();
+        self.window.follow(self.current_window());
     }
 
     pub(crate) fn split_ready(&self) -> bool {
@@ -598,7 +598,7 @@ impl AppState {
         Some(if slot == 7 {
             data.statistics.window
         } else {
-            self.applied_window.unwrap_or(data.statistics.window)
+            self.window.applied().unwrap_or(data.statistics.window)
         })
     }
 
@@ -606,7 +606,7 @@ impl AppState {
         if self.ui.workspace == Workspace::Compare {
             return self.compare_window(6);
         }
-        self.applied_window.or_else(|| {
+        self.window.applied().or_else(|| {
             if self.ui.main_view == PlaneKind::Volume {
                 self.imaging.volume(8).map(|data| data.statistics.window)
             } else {
@@ -616,58 +616,9 @@ impl AppState {
             }
         })
     }
-    /// Whether both window fields still show what Studio last wrote into them.
-    fn window_untouched(&self) -> bool {
-        self.window_prefill[0].text == self.ui.display.window_low.text
-            && self.window_prefill[1].text == self.ui.display.window_high.text
-    }
-
-    pub(super) fn prefill_window(&mut self) {
-        // An unfinished edit belongs to the user, even when it is invalid; the prefill stays
-        // so an untouched field keeps its exact limit.
-        if !self.window_untouched() {
-            return;
-        }
-        if let Some(window) = self.current_window() {
-            let values = window_text(window[0], window[1]);
-            self.ui.display.window_low.replace_text(values[0].clone());
-            self.ui.display.window_high.replace_text(values[1].clone());
-            self.window_prefill = [0, 1].map(|i| Prefilled {
-                text: values[i].clone(),
-                exact: Some(window[i]),
-            });
-        }
-    }
-
-    pub(super) fn valid_window(&self) -> Result<Option<[f32; 2]>, String> {
-        let fields = [
-            &self.ui.display.window_low.text,
-            &self.ui.display.window_high.text,
-        ];
-        if fields.iter().all(|text| text.trim().is_empty()) {
-            return Ok(None);
-        }
-        // A field still showing the prefilled window, rounded for reading, stands for the
-        // exact limit; only the fields the user edited are read as typed.
-        let limit = |i: usize, name: &str| match &self.window_prefill[i] {
-            Prefilled {
-                text,
-                exact: Some(exact),
-            } if text == fields[i] => Ok(*exact),
-            _ => fields[i]
-                .trim()
-                .parse::<f32>()
-                .map_err(|_| format!("Enter a finite {name} window limit")),
-        };
-        let (low, high) = (limit(0, "lower")?, limit(1, "upper")?);
-        if !low.is_finite() || !high.is_finite() || low >= high {
-            return Err("Display window limits must be finite, with minimum below maximum".into());
-        }
-        Ok(Some([low, high]))
-    }
     fn display_settings(&self) -> DisplaySettings {
         DisplaySettings {
-            window: self.applied_window,
+            window: self.window.applied(),
             colormap: match self.ui.display.colormap.as_str() {
                 "viridis" => ColorMap::Viridis,
                 "magma" => ColorMap::Magma,
@@ -926,13 +877,6 @@ impl AppState {
 
     pub(super) fn capture_workspace(&self) -> project::Workspace {
         let mut draft_choices = self.ui.parameter_choices.clone();
-        // Each window field's prefill, so an untouched field keeps its exact limit on reopening.
-        for (side, prefill) in ["low", "high"].into_iter().zip(&self.window_prefill) {
-            draft_choices.insert(format!("studio:prefill_{side}"), prefill.text.clone());
-            if let Some(exact) = prefill.exact {
-                draft_choices.insert(format!("studio:exact_{side}"), exact.to_string());
-            }
-        }
         draft_choices.insert("studio:preview_array".into(), self.ui.preview_array.clone());
         draft_choices.insert(
             "studio:compare_linked".into(),
@@ -963,14 +907,7 @@ impl AppState {
                     .map(|(key, edit)| (format!("correction:{key}"), edit.text.clone())),
             )
             .collect();
-        draft_edits.insert(
-            "studio:window_low".into(),
-            self.ui.display.window_low.text.clone(),
-        );
-        draft_edits.insert(
-            "studio:window_high".into(),
-            self.ui.display.window_high.text.clone(),
-        );
+        self.window.save(&mut draft_edits, &mut draft_choices);
         project::Workspace {
             active: self.model.active_asset.clone(),
             selected: self.model.selected_assets.clone(),
@@ -983,7 +920,7 @@ impl AppState {
             indices: self.ui.display.indices,
             projection: self.ui.display.projection_index,
             sinogram: self.ui.display.sinogram_row,
-            window: self.applied_window,
+            window: self.window.applied(),
             colormap: self.ui.display.colormap.clone(),
             invert: self.ui.display.invert,
             camera: [self.ui.display.azimuth, self.ui.display.elevation],
@@ -1025,19 +962,7 @@ impl AppState {
         self.ui.display.projection_index = context.projection;
         self.ui.display.sinogram_row = context.sinogram;
         self.center_sinogram = false;
-        self.applied_window = context.window;
-        self.ui.display.window_low.replace_text("");
-        self.ui.display.window_high.replace_text("");
-        if let Some([low, high]) = context.window {
-            self.ui.display.window_low = TextEdit::new(low.to_string());
-            self.ui.display.window_high = TextEdit::new(high.to_string());
-        }
-        self.window_prefill = [0, 1].map(|i| Prefilled {
-            text: [&self.ui.display.window_low, &self.ui.display.window_high][i]
-                .text
-                .clone(),
-            exact: context.window.map(|window| window[i]),
-        });
+        self.window.restore(context.window);
         if !context.colormap.is_empty() {
             self.ui.display.colormap = context.colormap.clone();
         }
@@ -1119,23 +1044,8 @@ impl AppState {
                 *choice = value.clone();
             }
         }
-        if let Some(value) = context.draft_edits.get("studio:window_low") {
-            self.ui.display.window_low.replace_text(value.clone());
-        }
-        if let Some(value) = context.draft_edits.get("studio:window_high") {
-            self.ui.display.window_high.replace_text(value.clone());
-        }
-        for (i, side) in ["low", "high"].into_iter().enumerate() {
-            if let Some(text) = context.draft_choices.get(&format!("studio:prefill_{side}")) {
-                self.window_prefill[i] = Prefilled {
-                    text: text.clone(),
-                    exact: context
-                        .draft_choices
-                        .get(&format!("studio:exact_{side}"))
-                        .and_then(|value| value.parse().ok()),
-                };
-            }
-        }
+        self.window
+            .load(&context.draft_edits, &context.draft_choices);
         if let Some(value) = context.draft_choices.get("studio:preview_array")
             && matches!(value.as_str(), "before" | "after")
         {
@@ -1178,24 +1088,7 @@ impl AppState {
             .filter(|job| job.status.active())
             .map(|job| job.id.clone())
             .collect();
-        self.ui.activity = Activity::Open {
-            jobs,
-            closes_itself: false,
-        };
-    }
-
-    /// Show Activity for newly queued jobs; when it opens for them, it closes once they
-    /// succeed.
-    pub(super) fn open_activity(&mut self, queued: Vec<String>) {
-        match &mut self.ui.activity {
-            Activity::Open { jobs, .. } => jobs.extend(queued),
-            Activity::Closed => {
-                self.ui.activity = Activity::Open {
-                    jobs: queued,
-                    closes_itself: true,
-                }
-            }
-        }
+        self.ui.activity.show(jobs);
     }
 
     pub(super) fn refresh_model(&mut self) {
@@ -1429,40 +1322,8 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        // Open Activity keeps every job it has shown, so a failure stays listed.
-        if let Activity::Open { jobs, .. } = &mut self.ui.activity
-            && let Some(project) = &self.project
-        {
-            for job in project
-                .document
-                .jobs
-                .iter()
-                .filter(|job| job.status.active())
-            {
-                if !jobs.contains(&job.id) {
-                    jobs.push(job.id.clone());
-                }
-            }
-        }
-        if let Activity::Open {
-            closes_itself: true,
-            ..
-        } = &self.ui.activity
-            && let Some(project) = &self.project
-        {
-            let opened_for = || {
-                project
-                    .document
-                    .jobs
-                    .iter()
-                    .filter(|job| self.ui.activity.tracks(&job.id))
-            };
-            // A failure stays listed, with its error, until the user closes Activity.
-            if opened_for().all(|job| !job.status.active())
-                && !opened_for().any(|job| job.status == project::JobStatus::Failed)
-            {
-                self.ui.activity = Activity::Closed;
-            }
+        if let Some(project) = &self.project {
+            self.ui.activity.observe(&project.document.jobs);
         }
         self.model.commands = crate::preferences::COMMANDS
             .iter()
@@ -1583,25 +1444,5 @@ fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
             std: statistics.std,
             sampled_pixels: statistics.finite_count,
         }),
-    }
-}
-
-/// A display window as field text: rounded for reading while the rounded bounds stay in
-/// order, else the shortest text that reads back as each exact bound.
-/// What Studio last wrote into a display-window field, and the exact limit that text
-/// stands for (None for a blank field, the automatic window).
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Prefilled {
-    pub text: String,
-    pub exact: Option<f32>,
-}
-
-pub(crate) fn window_text(low: f32, high: f32) -> [String; 2] {
-    let rounded = [low, high].map(|v| crate::ui::compact_number(f64::from(v)));
-    let read = |text: &str| text.parse::<f32>().unwrap_or(f32::NAN);
-    if low >= high || read(&rounded[0]) < read(&rounded[1]) {
-        rounded
-    } else {
-        [low.to_string(), high.to_string()]
     }
 }

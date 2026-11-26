@@ -757,17 +757,17 @@ fn display(state: &AppState) -> El {
                 .gap(8.)
                 .child(submit_field(
                     "window-low",
-                    &state.ui.display.window_low,
+                    state.window.field(0),
                     "Minimum",
                     UiAction::ApplyWindow,
-                    |s| &mut s.ui.display.window_low,
+                    |s| s.window.field_mut(0),
                 ))
                 .child(submit_field(
                     "window-high",
-                    &state.ui.display.window_high,
+                    state.window.field(1),
                     "Maximum",
                     UiAction::ApplyWindow,
-                    |s| &mut s.ui.display.window_high,
+                    |s| s.window.field_mut(1),
                 )),
         )
         .child(

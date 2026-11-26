@@ -27,7 +27,12 @@ registered scalar data. A display operation never mutates a numerical input.
 [STATECHART.md](STATECHART.md) charts the preview channel, job control,
 checkpoint lease and save state machines. Under `cargo test`,
 `tests/protocol_model.rs` checks every interleaving of each one with the
-worker, within small bounds.
+worker, within small bounds. Property tests run random action sequences
+through the real code and check invariants after every step:
+`app/state_machine_tests.rs` drives `AppState` through selection, views,
+window edits, jobs, Activity, relinking and reopening, and
+`previews/supersession_tests.rs` drives one preview channel through edits
+and worker admissions, refusals and answers in any order.
 
 `UiModel` is a presentation snapshot derived from the project and live service
 state. `UiAction` is the view's route to application effects. It does not contain
@@ -172,7 +177,8 @@ color or the half-float volume texture.
 
 Display-window text is a draft until **Apply window** succeeds. The renderer uses
 the committed range; invalid edits remain editable and persist without changing
-the image. Untouched window fields follow the actual displayed automatic range.
+the image. An untouched field follows the window on screen, even while the
+other field holds an edit.
 View undo/redo restores display state without rewinding parameter forms
 or scientific jobs.
 

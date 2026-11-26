@@ -56,7 +56,7 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         if state.ui.activity.is_open() {
-            state.ui.activity = crate::ui::model::Activity::Closed;
+            state.ui.activity.close();
             return true;
         }
         return false;

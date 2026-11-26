@@ -229,7 +229,7 @@ fn job_actions(job: &JobView, compact: bool) -> El {
                                 tx,
                             );
                             s.dispatch(UiAction::SetWorkspace(Workspace::Explore), tx);
-                            s.ui.activity = Activity::Closed;
+                            s.ui.activity.close();
                         },
                     )
                     .h(30.),
@@ -402,7 +402,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
                     "Close activity",
                     Icon::Close,
                     true,
-                    |s, _| s.ui.activity = Activity::Closed,
+                    |s, _| s.ui.activity.close(),
                 )),
         )
         .child(separator())
@@ -420,7 +420,7 @@ pub fn jobs_drawer(state: &AppState) -> El {
         .child(separator())
         .child(
             button("all-jobs", "View all jobs", false, true, |s, tx| {
-                s.ui.activity = Activity::Closed;
+                s.ui.activity.close();
                 s.dispatch(UiAction::SetWorkspace(Workspace::Jobs), tx);
             })
             .w_full()
