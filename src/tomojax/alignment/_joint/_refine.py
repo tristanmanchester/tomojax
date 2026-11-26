@@ -94,19 +94,19 @@ class EdgeFilter:
 
     def smooth(self, a: jax.Array) -> jax.Array:
         """Zero-extended separable Gaussian; symmetric, so its own transpose."""
-        shape = a.shape
-        x = a.reshape((-1, 1, *shape[-2:]))
-        for k, axis in ((self.ku, -1), (self.kv, -2)):
-            filt = k.reshape((1, 1, 1, -1) if axis == -1 else (1, 1, -1, 1))
-            x = jax.lax.conv_general_dilated(
-                x,
-                filt,
-                (1, 1),
-                "SAME",
-                dimension_numbers=("NCHW", "OIHW", "NCHW"),
-                precision=jax.lax.Precision.HIGHEST,
-            )
-        return x.reshape(shape)
+        for kernel, axis in ((self.ku, -1), (self.kv, -2)):
+            radius = len(kernel) // 2
+            width = a.shape[axis]
+            reach = min(radius, width - 1)
+            padding = [(0, 0, 0)] * a.ndim
+            padding[axis] = (reach, reach, 0)
+            padded = jax.lax.pad(a, np.float32(0), padding)
+            a = jax.lax.full_like(a, 0)
+            for offset in range(-reach, reach + 1):
+                start = offset + reach
+                neighbor = jax.lax.slice_in_dim(padded, start, start + width, axis=axis)
+                a = a + kernel[radius + offset] * neighbor
+        return a
 
     def forward(self, a: jax.Array, precision: jax.Array | np.ndarray) -> jax.Array:
         """H a."""

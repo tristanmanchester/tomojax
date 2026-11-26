@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from scipy.ndimage import gaussian_filter
 
 import tomojax as tj
 from tomojax.alignment import AlignConfig
@@ -114,6 +115,18 @@ def test_global_pose_solves_match_dense_constrained_systems(dofs):
         expected = _dense_constrained(f + laplacian, c, rhs)
         got = prior.innovation_solve(jnp.asarray(blocks), jnp.asarray(w), jnp.asarray(rhs))
         np.testing.assert_allclose(got, expected, rtol=1e-7, atol=1e-9)
+
+
+def test_edge_smoothing_matches_zero_extended_gaussian_without_gpu_convolutions():
+    shape = (2, 3, 9, 17)
+    a = np.random.default_rng(7).normal(size=shape).astype(np.float32)
+    sigma_u, sigma_v = 1.5, 4.0  # The vertical kernel extends beyond both edges.
+    smooth = jax.jit(EdgeFilter((sigma_u, sigma_v), smoothing=1.0).smooth)
+    expected = gaussian_filter(
+        a, (sigma_u, sigma_v), axes=(-1, -2), radius=(5, 12), mode="constant"
+    )
+    np.testing.assert_allclose(smooth(a), expected, rtol=2e-6, atol=2e-7)
+    assert "stablehlo.convolution" not in smooth.lower(a).as_text()
 
 
 def test_edge_filter_transpose_is_exact_with_masks_and_odd_sizes():
