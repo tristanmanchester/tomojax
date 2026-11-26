@@ -296,13 +296,14 @@ def _response_posterior(
     return jnp.fft.irfft(estimate, n=profile.size).astype(profile.dtype)
 
 
-def _unsorted_response(
+def _row_response(
     q: jax.Array,
     neighbors: jax.Array,
     weights: jax.Array,
     groups: tuple[int, ...],
     lowest: jax.Array,
     passes: int,
+    axis: float | None,
 ) -> tuple[jax.Array, jax.Array, jax.Array]:
     """A row's fitted responses, each after inverting the ones before, and ``q`` corrected.
 
@@ -316,29 +317,22 @@ def _unsorted_response(
         ref = _correlate(q, taps)
         instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
         level, beta, xm, il, ib, ml, mb = _fit_unsorted(q, ref, instrument)
-        offset = offset_prior(q, groups) if k == 0 else None
-        level = _response_posterior(level, il, ml, taps, groups, offset)
-        beta = jnp.maximum(_response_posterior(beta, ib, mb, taps, groups), -0.5)
+        beta = _response_posterior(beta, ib, mb, taps, groups)
+        if axis is None:
+            offset = offset_prior(q, groups) if k == 0 else None
+            level = _response_posterior(level, il, ml, taps, groups, offset)
+            beta = jnp.maximum(beta, -0.5)
+        else:
+            # Opposed rays constrain wider offsets too. Use the adaptive
+            # reference for the level, keeping the slope's known transfer.
+            ref = _reference(q)
+            instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
+            level, _, xm, *_ = _fit_unsorted(q, ref, instrument)
+            level = regularize(level, axis, "significance")
+            beta = regularize(beta, axis, "significance")
         alpha, beta = _feasible_response(q, ref, level - beta * xm, beta, lowest)
         responses.append((alpha, beta))
         q, lowest = _invert(q, alpha, beta), _invert(lowest, alpha, beta)
-    alphas, betas = zip(*responses, strict=True)
-    return jnp.stack(alphas), jnp.stack(betas), q
-
-
-def _turn_response(
-    q: jax.Array, lowest: jax.Array, axis: float, neighbors: jax.Array, weights: jax.Array
-) -> tuple[jax.Array, ...]:
-    """Fit the spatial response twice, using opposed columns to estimate detector power."""
-    responses = []
-    for _ in range(2):
-        ref = _reference(q)
-        instrument = (ref[neighbors] * weights[:, :, None]).sum(1)
-        level, beta, xm, *_ = _fit_unsorted(q, ref, instrument)
-        level = regularize(level, axis, "significance")
-        beta = regularize(beta, axis, "significance")
-        responses.append(_feasible_response(q, ref, level - beta * xm, beta, lowest))
-        q, lowest = (_invert(x, *responses[-1]) for x in (q, lowest))
     alphas, betas = zip(*responses, strict=True)
     return jnp.stack(alphas), jnp.stack(betas), q
 
@@ -521,18 +515,11 @@ def correct_rings(
         # equal weights: the instrument need only be independent of each bin's noise
         weights = jnp.full(bin_neighbors.shape, 0.5, batch.dtype)
         # bin means are quiet enough for one fit to remove what two do on every view
-        passes = 1
+        passes = 1 if axis is None else 2
     rows = (jnp.swapaxes(fitted, 0, 1), batch.min(0))
-    if axis is not None:
-        alpha, beta, corrected = jax.lax.map(
-            lambda row: _turn_response(row[0], row[1], axis, neighbors, weights),
-            rows,
-        )
-    else:
-        alpha, beta, corrected = jax.lax.map(
-            lambda row: _unsorted_response(row[0], neighbors, weights, groups, row[1], passes),
-            rows,
-        )
+    alpha, beta, corrected = jax.lax.map(
+        lambda row: _row_response(row[0], neighbors, weights, groups, row[1], passes, axis), rows
+    )
     if corrected.shape[1] == batch.shape[0]:
         # every view was fitted on its own, so the fits have already corrected them
         out = jnp.swapaxes(corrected, 0, 1)
@@ -578,9 +565,9 @@ class Rings(Step):
     prior where it would otherwise produce a noninvertible response.
 
     On a stationary parallel-beam scan over one evenly sampled full turn,
-    each view is compared with a local quadratic through 30 columns either
-    side, narrowed toward 6 where the object changes faster. Independent
-    neighboring views provide the instrument for the response fit. Keeping
+    the offset fit uses a local quadratic through 30 columns on either side,
+    narrowed toward 6 where the object changes faster. The slope fit uses
+    six neighbors on each side and accounts for angular covariance. Keeping
     these references unsorted preserves their spatial smoothness at the axis.
     The fits use cyclic angular neighbors and average a repeated closing phase.
 
