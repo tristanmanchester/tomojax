@@ -822,7 +822,9 @@ __device__ __forceinline__ void weight_images_boxes(
     }
     #pragma unroll
     for (int r = 0; r < RHS; ++r) {
-        unsigned x = __reduce_max_sync(0xffffffffu, top[r]);
+        // Bits of a magnitude have a clear sign bit, so they order as ints; the shuffle
+        // reduction runs on every GPU (__reduce_max_sync needs compute capability 8.0).
+        unsigned x = (unsigned)warp_max((int)top[r]);
         if (threadIdx.x == 0) warp_top[threadIdx.y][r] = x;
     }
     #pragma unroll
