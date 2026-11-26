@@ -14,17 +14,16 @@ import numpy as np
 from ._engine import (
     Corrected,
     apply_steps,
+    calibration,
     correct_view_batches,
-    exposure_scales,
     first_pass,
-    flat_weights,
     frame_batch_size,
     linear_limit_edge,
     log_batches,
     ordered_steps,
     reject_nonfinite,
 )
-from ._fields import Fields, flat_fields
+from ._fields import Fields
 from ._hardening import BeamHardening
 from ._records import Correction
 from ._steps import RadialDistortion, Step, Zingers, apply_radial_window, radial_coordinates
@@ -147,15 +146,20 @@ class CorrectedRows:
 
 
 class _RowReader:
-    """One current raw block and one prefetched block; requests own their small copies."""
+    """One current raw block and one prefetched block; requests own their small copies.
+
+    The first block is read from the start, while the calibration is computed.
+    """
 
     def __init__(self, counts: Any) -> None:
         self.counts = counts
         views, rows, cols = counts.shape
         self.batch = max(1, min(rows, (1 << 30) // (views * cols * counts.dtype.itemsize)))
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-raw-rows")
-        self.current = self.future = None
-        self.first = self.next_first = -1
+        self.current = None
+        self.first = -1
+        self.future = None if isinstance(counts, np.ndarray) else self.pool.submit(self._read, 0)
+        self.next_first = 0
 
     def _read(self, first: int) -> np.ndarray:
         stop = min(first + self.batch, self.counts.shape[1])
@@ -300,67 +304,71 @@ def corrected_row_source(
         raise TypeError("streamed counts must be NumPy arrays or support detector windows")
     epsilon = positive_finite(epsilon, "epsilon")
     views, rows, cols = counts.shape
-    view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
-    fields, records = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
-        dark_source=dark_source,
-    )  # fmt: skip
-    if flat_scales is not None and exposure_times is not None:
-        records[0].settings["sample_exposure_range_s"] = [
-            float(np.min(exposure_times)),
-            float(np.max(exposure_times)),
-        ]
-    at = (
-        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
-    )
-    if at.shape != (views,) or not np.isfinite(at).all():
-        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
-    limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
-    edge = None
-    if linear_limit is not None:  # each band's record reports its counts above it
-        edge = linear_limit_edge(linear_limit[0], fields, view_scales)
-        records[0].settings["linear_limit"] = float(linear_limit[0])
-        records[0].settings["linear_limit_source"] = linear_limit[1]
-    device_interpolation = None if host else tuple(jax.device_put(v) for v in interpolation)
+    # The first raw rows are read while the calibration is computed.
     reader = None if host else _RowReader(counts)
-    steps = tuple(s for _, s in ordered)
-    line_steps = tuple(s for domain, s in ordered if domain == "line integrals")
-    transmission_steps = tuple(s for domain, s in ordered if domain == "transmission")
-
-    def correct(first: int, stop: int) -> CorrectedRows | Corrected:
-        if host:
-            return _correct_host_rows(
-                counts, fields, interpolation, records[0], first, stop, steps, epsilon, limit, edge
-            )
-        assert reader is not None
-        assert device_interpolation is not None
-        raw = reader.read(first, stop)
-        raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
-        selected = (fields.flats[:, first:stop], fields.dark[first:stop], fields.usable[first:stop])
-        projections, nonpositive, nonfinite, above = first_pass(
-            jax.device_put(raw),
-            *device_interpolation,
-            *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
-            epsilon=epsilon,
-            line_steps=line_steps,
-            transmission_steps=transmission_steps,
-            fill_gaps=not bool(selected[2].all()),
-            limit=limit,
-        )
-        nonpositive.copy_to_host_async()
-        nonfinite.copy_to_host_async()
-        flat = Correction(
-            "flat_dark",
-            records[0].settings,
-            {
-                "pixels_without_light": int(np.count_nonzero(~selected[2])),
-                **_above(above, raw.size, edge),
-            },
-        )
-        return CorrectedRows(projections, flat, steps, epsilon, (nonpositive, nonfinite), raw)
-
     try:
+        fields, records, interpolation, view_scales = calibration(
+            views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
+            white_level=white_level, epsilon=epsilon, view_positions=view_positions,
+            exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
+            dark_source=dark_source,
+        )  # fmt: skip
+        limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
+        edge = None
+        if linear_limit is not None:  # each band's record reports its counts above it
+            edge = linear_limit_edge(linear_limit[0], fields, view_scales)
+            records[0].settings["linear_limit"] = float(linear_limit[0])
+            records[0].settings["linear_limit_source"] = linear_limit[1]
+        device_interpolation = None if host else tuple(jax.device_put(v) for v in interpolation)
+        steps = tuple(s for _, s in ordered)
+        line_steps = tuple(s for domain, s in ordered if domain == "line integrals")
+        transmission_steps = tuple(s for domain, s in ordered if domain == "transmission")
+
+        def correct(first: int, stop: int) -> CorrectedRows | Corrected:
+            if host:
+                return _correct_host_rows(
+                    counts,
+                    fields,
+                    interpolation,
+                    records[0],
+                    first,
+                    stop,
+                    steps,
+                    epsilon,
+                    limit,
+                    edge,
+                )
+            assert reader is not None
+            assert device_interpolation is not None
+            raw = reader.read(first, stop)
+            raw = raw.astype(raw.dtype.newbyteorder("="), copy=False)
+            selected = (
+                fields.flats[:, first:stop],
+                fields.dark[first:stop],
+                fields.usable[first:stop],
+            )
+            projections, nonpositive, nonfinite, above = first_pass(
+                jax.device_put(raw),
+                *device_interpolation,
+                *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
+                epsilon=epsilon,
+                line_steps=line_steps,
+                transmission_steps=transmission_steps,
+                fill_gaps=not bool(selected[2].all()),
+                limit=limit,
+            )
+            nonpositive.copy_to_host_async()
+            nonfinite.copy_to_host_async()
+            flat = Correction(
+                "flat_dark",
+                records[0].settings,
+                {
+                    "pixels_without_light": int(np.count_nonzero(~selected[2])),
+                    **_above(above, raw.size, edge),
+                },
+            )
+            return CorrectedRows(projections, flat, steps, epsilon, (nonpositive, nonfinite), raw)
+
         yield correct
     finally:
         if reader is not None:

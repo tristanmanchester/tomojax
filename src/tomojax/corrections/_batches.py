@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AbstractContextManager, contextmanager, nullcontext, suppress
+import math
 from typing import TYPE_CHECKING, Protocol, TypeGuard
 
 import numpy as np
@@ -12,6 +13,13 @@ from tomojax import progress
 from tomojax.core.devices import announce
 
 from ._steps import step_name
+
+# Raw views read per request: enough frames for a positional reader to read them at once.
+_READ_BYTES = 256 * 2**20
+# Host-memory work (copies, calibration sums) runs in bands on this many threads,
+# with copies of at least _COPY_BYTES a band.
+HOST_THREADS = 8
+_COPY_BYTES = 4 * 2**20
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Sequence
@@ -37,19 +45,33 @@ def _shaped(value: object) -> TypeGuard[_Shaped]:
 
 
 class HostCopies(AbstractContextManager["HostCopies"]):
-    """Join every submitted download before its producer releases its buffers."""
+    """Join every submitted download before its producer releases its buffers.
+
+    Downloads land in their host targets in row bands on several threads: filling
+    a new host stack is bound by first-touch page faults, which one core takes in turn.
+    """
 
     def __init__(self) -> None:
         self.pending: dict[int, jax.Array] = {}
+        self.pool = ThreadPoolExecutor(HOST_THREADS, thread_name_prefix="tomojax-copy")
 
     def start(self, batch: jax.Array) -> None:
         self.pending[id(batch)] = batch
         batch.copy_to_host_async()
 
-    def result(self, batch: jax.Array) -> np.ndarray:
-        host = np.asarray(batch)
+    def into(self, target: np.ndarray, batch: jax.Array) -> None:
+        """Copy the submitted ``batch`` into ``target``, a host array of its shape."""
+        host: np.ndarray = np.asarray(batch)
         del self.pending[id(batch)]
-        return host
+        axis = int(target.shape[1] > target.shape[0])
+        parts = min(HOST_THREADS, host.nbytes // _COPY_BYTES)
+
+        def copy(band: slice) -> None:
+            key = (slice(None),) * axis + (band,)
+            target[key] = host[key]
+
+        for done in [self.pool.submit(copy, b) for b in bands(target.shape[axis], parts)]:
+            done.result()
 
     def __exit__(
         self,
@@ -57,11 +79,18 @@ class HostCopies(AbstractContextManager["HostCopies"]):
         error: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        self.pool.shutdown()
         for batch in self.pending.values():
             # A failed device operation must not mask a handler's exception.
             with suppress(Exception) if error is not None else nullcontext():
                 _ = np.asarray(batch)
         self.pending.clear()
+
+
+def bands(extent: int, parts: int) -> list[slice]:
+    """Up to ``parts`` nonempty, nearly equal slices that together cover ``range(extent)``."""
+    parts = max(1, min(parts, extent))
+    return [slice(extent * i // parts, extent * (i + 1) // parts) for i in range(parts)]
 
 
 @contextmanager
@@ -74,13 +103,21 @@ def correction_group(parts: Sequence[str | Step], batches: range, unit: str) -> 
 
 
 def view_batches(
-    counts: CalibrationFrames, views: int, batch: int
+    counts: CalibrationFrames, views: int, batch: int, indices: np.ndarray | None = None
 ) -> Generator[tuple[int, int, np.ndarray]]:
-    """``(start, stop, frames)`` for each batch of views, the next read while one is used."""
-    starts = list(range(0, views, batch))
+    """``(start, stop, frames)`` for each batch of views, the next read while one is used.
+
+    Views are read in blocks of whole batches of at least ``_READ_BYTES``, so a
+    source that reads many frames at once (positional HDF5 reads) has them to read.
+    With ``indices``, batch ``start:stop`` holds frames ``indices[start:stop]``.
+    """
+    view_bytes = math.prod(counts.shape[1:]) * np.dtype(counts.dtype).itemsize
+    block = max(1, _READ_BYTES // max(1, view_bytes * batch)) * batch
+    starts = list(range(0, views, block))
 
     def read(start: int) -> np.ndarray:
-        frames = np.asarray(counts[start : min(start + batch, views)])
+        which = slice(start, min(start + block, views))
+        frames = np.asarray(counts[which if indices is None else indices[which]])
         # Device arrays use native byte order; leave ordinary batches as views.
         return frames.astype(frames.dtype.newbyteorder("="), copy=False)
 
@@ -92,7 +129,12 @@ def view_batches(
             frames = pending.result()
             if k + 1 < len(starts):
                 pending = reader.submit(read, starts[k + 1])
-            yield start, min(start + batch, views), frames
+            for first in range(0, len(frames), batch):
+                yield (
+                    start + first,
+                    start + min(first + batch, len(frames)),
+                    frames[first : first + batch],
+                )
 
 
 def copy_projections(

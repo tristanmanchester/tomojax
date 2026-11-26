@@ -53,7 +53,7 @@
     "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/reconstruct.py::build_parser": 101,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
-    "src/tomojax/corrections/_engine.py::correct_frames": 129,
+    "src/tomojax/corrections/_engine.py::correct_frames": 119,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
     "src/tomojax/recon/_cgls_jax.py::_solve_streamed": 101,
     "src/tomojax/recon/_cgls_jax.py::cgls": 101,
@@ -61,12 +61,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5378,
+    "reportAny": 5374,
     "reportMissingImports": 59,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 920,
-    "reportUnknownMemberType": 1646,
-    "reportUnknownVariableType": 1015,
+    "reportUnknownArgumentType": 917,
+    "reportUnknownMemberType": 1645,
+    "reportUnknownVariableType": 1014,
     "reportUnusedCallResult": 142
   },
   "explicit_any": 470,
@@ -144,7 +144,6 @@
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",
-    "src/tomojax/corrections/_engine.py::C901::correct_frames",
     "src/tomojax/corrections/_engine.py::PLR0915::correct_frames",
     "src/tomojax/datasets/_impl/artifacts.py::C901::apply_simulation_artifacts",
     "src/tomojax/datasets/_impl/artifacts.py::PLR0915::apply_simulation_artifacts",

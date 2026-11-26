@@ -157,9 +157,10 @@ def correct_frames(
         band, steps = preview_window(steps, (rows, cols), lower, upper, binning)
         selected = slice(lower - band.start // binning, upper - band.start // binning)
     ordered = ordered_steps(steps)
-    view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
-    fields, field_record = flat_fields(
-        flats, flat_positions, darks, white_level, (rows, cols), epsilon, flat_scales=flat_scales,
+    fields, field_record, interpolation, view_scales = calibration(
+        views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
+        white_level=white_level, epsilon=epsilon, view_positions=view_positions,
+        exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
         dark_source=dark_source,
     )  # fmt: skip
     acquisition_fields, acquisition_counts = fields, counts
@@ -169,17 +170,6 @@ def correct_frames(
         )
         fields = fields.window(band)
         rows = counts.shape[1]
-    if flat_scales is not None and exposure_times is not None:
-        field_record[0].settings["sample_exposure_range_s"] = [
-            float(np.min(exposure_times)),
-            float(np.max(exposure_times)),
-        ]
-    at = (
-        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
-    )
-    if at.shape != (views,) or not np.isfinite(at).all():
-        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
-    interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
@@ -253,6 +243,52 @@ def correct_frames(
                     final=True,
                 )
         return Corrected(out, records, kept)
+
+
+class Calibration(NamedTuple):
+    """An acquisition's flat and dark fields, their record and each view's flat weights."""
+
+    fields: Fields
+    records: tuple[Correction, ...]
+    interpolation: tuple[np.ndarray, ...]
+    view_scales: np.ndarray
+
+
+def calibration(
+    views: int,
+    shape: tuple[int, int],
+    *,
+    flats: CalibrationFrames | None,
+    flat_positions: np.ndarray | None,
+    darks: CalibrationFrames | None,
+    white_level: float | None,
+    epsilon: float,
+    view_positions: np.ndarray | None,
+    exposure_times: np.ndarray | float | None,
+    flat_exposure_times: np.ndarray | float | None,
+    dark_source: str | None,
+) -> Calibration:
+    """Flat and dark fields of a whole ``shape`` detector, and where each view lies among them.
+
+    Arguments mean what they do for :func:`correct_frames`.
+    """
+    at = (
+        np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
+    )
+    if at.shape != (views,) or not np.isfinite(at).all():
+        raise ValueError(f"view_positions needs one finite position for each of the {views} views")
+    view_scales, flat_scales = exposure_scales(exposure_times, flat_exposure_times, views, flats)
+    fields, records = flat_fields(
+        flats, flat_positions, darks, white_level, shape, epsilon, flat_scales=flat_scales,
+        dark_source=dark_source,
+    )  # fmt: skip
+    if flat_scales is not None and exposure_times is not None:
+        records[0].settings["sample_exposure_range_s"] = [
+            float(np.min(exposure_times)),
+            float(np.max(exposure_times)),
+        ]
+    interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
+    return Calibration(fields, records, interpolation, view_scales)
 
 
 class Corrected(NamedTuple):
@@ -514,7 +550,7 @@ def correct_view_batches(
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         progress.check_canceled()
-        out[start:stop] = copies.result(result)
+        copies.into(out[start:stop], result)
         release_planes(out, start, stop)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]) if bad else 0, start, stop)
@@ -687,7 +723,7 @@ def _correct_row_slabs(
 
     def collect(start: int, stop: int, result: jax.Array, *bad: jax.Array) -> None:
         progress.check_canceled()
-        out[:, start // factor : stop // factor] = copies.result(result)
+        copies.into(out[:, start // factor : stop // factor], result)
         tally[:] += [int(b) for b in bad]
         reject_nonfinite(int(bad[1]), 0, views)
         progress.step("row batches")
@@ -883,12 +919,12 @@ def _whole_rows(out: np.ndarray, step: Step) -> None:
             done = _apply((step,), jnp.asarray(out[:, r0 : r0 + slab]))
             copies.start(done)
             if pending is not None:
-                out[:, pending[0] : pending[0] + slab] = copies.result(pending[1])
+                copies.into(out[:, pending[0] : pending[0] + slab], pending[1])
                 progress.step("row batches")
             pending = (r0, done)
         if pending is not None:
             progress.check_canceled()
-            out[:, pending[0] : pending[0] + slab] = copies.result(pending[1])
+            copies.into(out[:, pending[0] : pending[0] + slab], pending[1])
             progress.step("row batches")
 
 

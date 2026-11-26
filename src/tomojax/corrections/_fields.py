@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 import logging
 from typing import TYPE_CHECKING
 
@@ -10,6 +12,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.host_volume import host_array, release_planes
 
+from ._batches import HOST_THREADS, bands, view_batches
 from ._records import Correction, Json
 from ._validation import positive_finite
 
@@ -130,19 +133,34 @@ def _moments(
     scales: np.ndarray | None = None,
     offset: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """The mean of frames and the variance of that mean, in float64 over bounded batches."""
+    """The mean of frames and the variance of that mean, in float64 over bounded batches.
+
+    Bands of detector rows accumulate on separate threads; each pixel's sums
+    take the same operations in the same order as on one thread.
+    """
     check_stack(frames, shape, name)
     count = len(frames) if indices is None else len(indices)
     batch = max(1, (32 << 20) // (8 * shape[0] * shape[1]))
     total, squares = np.zeros(shape), np.zeros(shape)
-    for start in range(0, count, batch):
-        progress.check_canceled()
-        which = slice(start, start + batch) if indices is None else indices[start : start + batch]
-        values = np.asarray(frames[which], np.float64)
+    rows_of = bands(shape[0], HOST_THREADS)
+
+    def accumulate(raw: np.ndarray, which: slice | np.ndarray, rows: slice) -> None:
+        values = np.asarray(raw[:, rows], np.float64)
         if scales is not None:
-            values = (values - (0 if offset is None else offset)) * scales[which, None, None]
-        total += values.sum(axis=0)
-        squares += np.einsum("ijk,ijk->jk", values, values)
+            below = 0 if offset is None else offset[rows]
+            values = (values - below) * scales[which, None, None]
+        total[rows] += values.sum(axis=0)
+        squares[rows] += np.einsum("ijk,ijk->jk", values, values)
+
+    with (
+        ThreadPoolExecutor(len(rows_of), thread_name_prefix="tomojax-moments") as pool,
+        closing(view_batches(frames, count, batch, indices)) as batches,
+    ):
+        for start, stop, raw in batches:
+            progress.check_canceled()
+            which = slice(start, stop) if indices is None else indices[start:stop]
+            for done in [pool.submit(accumulate, raw, which, rows) for rows in rows_of]:
+                done.result()
     mean = total / count
     if count == 1:
         return mean, np.zeros(shape)
