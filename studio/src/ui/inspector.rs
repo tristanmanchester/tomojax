@@ -860,7 +860,7 @@ fn histogram(plane: &PlaneView) -> El {
     let shape = Shape::new()
         .view_box(100., 100.)
         .fill(fill, forest().alpha(0.12))
-        .stroke(points, 0.8, color("#688E6E"));
+        .stroke(points, 0.8, color([0x68, 0x8E, 0x6E]));
     col()
         .gap(5.)
         .child(

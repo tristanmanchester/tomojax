@@ -582,12 +582,14 @@ fn a_back_projection_belongs_to_the_projections_it_used() {
             products,
             next_input: 2,
         });
-        let result = state.result_asset(
-            &id,
-            "result-volume",
-            &directory.path().join("v.npy"),
-            &output,
-        );
+        let result = state
+            .result_asset(
+                &id,
+                "result-volume",
+                &directory.path().join("v.npy"),
+                &output,
+            )
+            .unwrap();
         assert_eq!(result.parent.as_ref(), Some(parent));
     }
 }

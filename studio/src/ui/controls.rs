@@ -663,13 +663,13 @@ fn slider_on(
                 .child(
                     el().h_full()
                         .w_frac(value)
-                        .fill(color("#82A68A"))
+                        .fill(color([0x82, 0xA6, 0x8A]))
                         .radius(2.)
                         .child(
                             el().size(12., 12.)
                                 .radius(6.)
                                 .fill(paper())
-                                .border(2., color("#82A68A"))
+                                .border(2., color([0x82, 0xA6, 0x8A]))
                                 .pin(None, Some(-4.), Some(-6.), None),
                         ),
                 ),

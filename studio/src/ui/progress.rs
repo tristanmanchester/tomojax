@@ -511,19 +511,26 @@ fn plot_paths(samples: &[MetricSample], point_budget: usize) -> Vec<Vec<(u64, f6
     let mut path = Vec::new();
     let mut previous = 0;
     for (bucket, chunk) in samples.chunks(width).enumerate() {
-        let finite = || {
-            chunk.iter().enumerate().filter_map(|(index, sample)| {
-                sample
-                    .value
-                    .as_f64()
-                    .filter(|value| value.is_finite())
-                    .map(|value| (index, value))
-            })
-        };
-        let Some(low) = finite().min_by(|a, b| a.1.total_cmp(&b.1)) else {
+        let mut finite = chunk.iter().enumerate().filter_map(|(index, sample)| {
+            sample
+                .value
+                .as_f64()
+                .filter(|value| value.is_finite())
+                .map(|value| (index, value))
+        });
+        let Some(initial) = finite.next() else {
             continue;
         };
-        let high = finite().max_by(|a, b| a.1.total_cmp(&b.1)).unwrap();
+        let mut low = initial;
+        let mut high = initial;
+        for point in finite {
+            if point.1.total_cmp(&low.1).is_lt() {
+                low = point;
+            }
+            if point.1.total_cmp(&high.1).is_ge() {
+                high = point;
+            }
+        }
         let (first, second) = if low.0 <= high.0 {
             (low, high)
         } else {

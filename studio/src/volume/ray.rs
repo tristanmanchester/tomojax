@@ -201,15 +201,18 @@ impl VolumeGpu {
             (canvas[3] * factor).round().max(1.) as u32,
         );
         if self.frame.as_ref().is_none_or(|f| f.size != size) {
-            self.frame = Some(ImageTexture::new(
+            self.frame = None;
+            dirty = true;
+        }
+        let frame = self.frame.get_or_insert_with(|| {
+            ImageTexture::new(
                 device,
                 pipes,
                 active.data.id,
                 size,
                 wgpu::TextureFormat::Rgba16Float,
-            ));
-            dirty = true;
-        }
+            )
+        });
         if self.last_settings.as_ref() != Some(settings) {
             dirty = true;
         }
@@ -236,7 +239,6 @@ impl VolumeGpu {
             );
             let uniform = camera(&active.data, settings, size);
             queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniform));
-            let frame = self.frame.as_ref().unwrap();
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Tomography volume integration"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

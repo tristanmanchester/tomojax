@@ -568,11 +568,18 @@ fn stored_volume(
     // Without a recorded order the axes are unknown; TomoJAX won't guess either.
     let order = string_attribute(&processing, "volume_axes_order")?
         .ok_or("The stored volume records no axis order")?;
-    let mut names: Vec<_> = order.chars().collect();
-    names.sort_unstable();
-    if names != ['x', 'y', 'z'] {
+    let [
+        first @ b'x'..=b'z',
+        second @ b'x'..=b'z',
+        third @ b'x'..=b'z',
+    ] = *order.as_bytes()
+    else {
+        return Err("The stored volume axis order must contain x, y and z exactly once".into());
+    };
+    if first == second || first == third || second == third {
         return Err("The stored volume axis order must contain x, y and z exactly once".into());
     }
+    let coordinates = [first, second, third].map(|axis| usize::from(axis - b'x'));
     let entry = file.group("/entry").map_err(|error| error.to_string())?;
     let recorded_grid = json_attribute(&entry, "grid_meta_json")?;
     let grid_value = if geometry.get("reconstruction_method").is_none() {
@@ -605,8 +612,7 @@ fn stored_volume(
             return Err("Stored voxel origin must be finite".into());
         }
         let mut axes = Vec::new();
-        for (dimension, name) in order.chars().enumerate() {
-            let coordinate = "xyz".find(name).expect("validated axis order");
+        for (dimension, (name, coordinate)) in order.chars().zip(coordinates).enumerate() {
             if shape[dimension] != sizes[coordinate] {
                 return Err("The stored volume shape differs from its recorded voxel grid".into());
             }

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::{ArrayDescriptor, Provenance};
+use crate::sync::Locked;
 
 /// The project's own name, from its manifest, without opening the project.
 pub fn manifest_name(root: &Path) -> Option<String> {
@@ -618,7 +619,7 @@ impl Project {
             let _lock = lock;
             while work.recv().is_ok() {
                 while work.try_recv().is_ok() {}
-                let snapshot = writer_pending.lock().unwrap().take();
+                let snapshot = writer_pending.locked().take();
                 if let Some(snapshot) = snapshot {
                     let error = atomic_write(&manifest, &snapshot.bytes).err();
                     let _ = ack.send(SaveAck {
@@ -627,7 +628,7 @@ impl Project {
                     });
                 }
             }
-            if let Some(snapshot) = writer_pending.lock().unwrap().take() {
+            if let Some(snapshot) = writer_pending.locked().take() {
                 let error = atomic_write(&manifest, &snapshot.bytes).err();
                 let _ = ack.send(SaveAck {
                     generation: snapshot.generation,
@@ -683,7 +684,7 @@ impl Project {
             self.save_error = Some(error.clone());
             return Err(error);
         }
-        *self.pending.lock().unwrap() = Some(Snapshot {
+        *self.pending.locked() = Some(Snapshot {
             generation: self.generation,
             bytes,
         });

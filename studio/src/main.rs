@@ -1,4 +1,11 @@
 //! TomoJAX Studio: native project, processing and scientific viewing workspace.
+#![deny(
+    clippy::dbg_macro,
+    clippy::expect_used,
+    clippy::todo,
+    clippy::unused_self,
+    clippy::unwrap_used
+)]
 mod app;
 mod forms;
 mod preferences;
@@ -45,7 +52,7 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
             state.ui.choice_menu = None;
             return true;
         }
-        if state.ui.rename.take().is_some() {
+        if state.ui.rename_asset.take().is_some() {
             return true;
         }
         if state.ui.activity.is_open() {

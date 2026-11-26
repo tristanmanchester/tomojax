@@ -191,13 +191,20 @@ impl AppState {
                     message = Some(error);
                 }
                 let plan_signature = forms::plan_signature(&self.ui, &self.catalog);
-                let plan_input = serde_json::to_value(&input).expect("captured preview input");
+                let plan_input = match serde_json::to_value(&input) {
+                    Ok(input) => Some(input),
+                    Err(error) => {
+                        message = Some(format!("Could not encode the preview input: {error}"));
+                        None
+                    }
+                };
                 if let Some(Product::ReconstructionPlan { grid, .. }) = &self.model.validation.plan
                     && self.model.validation.plan_signature == plan_signature
-                    && self.model.validation.plan_inputs.as_ref() == Some(&plan_input)
-                    && let Some(signature) = plan_signature.clone()
+                    && let (Some(signature), Some(input)) = (&plan_signature, &plan_input)
+                    && self.model.validation.plan_inputs.as_ref() == Some(input)
                 {
-                    self.preview_context.plan = Some((signature, plan_input.clone(), grid.clone()));
+                    self.preview_context.plan =
+                        Some((signature.clone(), input.clone(), grid.clone()));
                 }
                 if let Some(current) = self.previews.current(kind)
                     && self.previews.status(kind).phase == PreviewPhase::Ready
@@ -238,7 +245,8 @@ impl AppState {
                     .plan
                     .as_ref()
                     .filter(|(signature, source, _)| {
-                        Some(signature) == plan_signature.as_ref() && *source == plan_input
+                        Some(signature) == plan_signature.as_ref()
+                            && Some(source) == plan_input.as_ref()
                     })
                     .map(|(_, _, grid)| match axis {
                         "x" => grid.nx,

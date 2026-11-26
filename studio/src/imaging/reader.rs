@@ -163,10 +163,8 @@ pub(crate) fn plane(
         descriptor.shape[remaining[0]],
         descriptor.shape[remaining[1]],
     ];
-    let stride = source_shape
-        .into_iter()
-        .max()
-        .unwrap()
+    let stride = source_shape[0]
+        .max(source_shape[1])
         .div_ceil(max_edge)
         .max(1);
     let mut start = vec![0; dimensions];
@@ -270,9 +268,9 @@ pub(super) fn volume(
     canceled: &dyn Fn() -> bool,
 ) -> Result<VolumeData, String> {
     validate(descriptor)?;
-    if descriptor.shape.len() != 3 {
+    let &[depth, height, width] = descriptor.shape.as_slice() else {
         return Err("Volume rendering needs a registered 3D array.".into());
-    }
+    };
     let mut axis_order = [0; 3];
     for (i, name) in ["z", "y", "x"].into_iter().enumerate() {
         axis_order[i] = descriptor
@@ -281,13 +279,7 @@ pub(super) fn volume(
             .position(|a| a.name == name)
             .ok_or("Volume rendering needs explicit x, y and z spatial axes.")?;
     }
-    let stride = descriptor
-        .shape
-        .iter()
-        .max()
-        .unwrap()
-        .div_ceil(max_edge)
-        .max(1);
+    let stride = depth.max(height).max(width).div_ceil(max_edge).max(1);
     let count: Vec<_> = descriptor
         .shape
         .iter()

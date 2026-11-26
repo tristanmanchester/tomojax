@@ -372,6 +372,7 @@ def test_studio_debt_ignores_prose_and_excludes_test_items(tmp_path, monkeypatch
     source = r"""
 #![allow(dead_code)]
 // .unwrap() .expect("no") #[allow(dead_code)] #[cfg(test)]
+#[expect(unused_variables)]
 fn production() {
     let _ = "escaped \" // .unwrap() #[allow(dead_code)]";
     let _ = br##" .expect("} #") #[allow(dead_code)] "##;
@@ -399,8 +400,7 @@ mod inline {
             "#[allow(dead_code)]\nfn long_test() {\n" + body + "}\n", encoding="utf-8"
         )
     assert guardrails._studio_debt() == {
-        "studio_unwraps": 2,
-        "studio_allows": 4,
+        "studio_allows": 5,
         "studio_long_files": {},
         "studio_long_functions": {},
     }

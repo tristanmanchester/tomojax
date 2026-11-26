@@ -472,8 +472,8 @@ def _rust_test_items(tokens: list[str], groups: dict[int, int]) -> dict[int, int
 
 def _rust_production_debt(
     source: str, matches: list[re.Match[str]], tokens: list[str]
-) -> tuple[int, int, dict[str, list[int]]]:
-    """Return production lines, panic calls and long function lengths by name."""
+) -> tuple[int, dict[str, list[int]]]:
+    """Return production lines and long function lengths by name."""
     groups = _rust_groups(tokens)
     test_items = _rust_test_items(tokens, groups)
     newlines = [match.start() for match in re.finditer("\n", source)]
@@ -491,17 +491,13 @@ def _rust_production_debt(
         excluded_lines.update(range(first, last + 1))
     excluded = sorted(excluded_lines)
 
-    unwraps = 0
     functions: dict[str, list[int]] = {}
     index = 0
     while index < len(tokens):
         if index in test_items:
             index = test_items[index] + 1
             continue
-        if tokens[index] == ".":
-            unwraps += tokens[index + 1 : index + 4] == ["unwrap", "(", ")"]
-            unwraps += tokens[index + 1 : index + 3] == ["expect", "("]
-        elif tokens[index] == "fn" and tokens[index + 2 : index + 3] in (["("], ["<"]):
+        if tokens[index] == "fn" and tokens[index + 2 : index + 3] in (["("], ["<"]):
             name = tokens[index + 1]
             end = (
                 _rust_item_end(tokens, groups, index)
@@ -516,28 +512,25 @@ def _rust_production_debt(
                 if length > LONG_FUNCTION_LINES:
                     functions.setdefault(name, []).append(length)
         index += 1
-    return len(source.splitlines()) - len(excluded), unwraps, functions
+    return len(source.splitlines()) - len(excluded), functions
 
 
 def _studio_debt() -> dict[str, object]:
-    """Measure Studio lint allows everywhere and the other debt in production Rust."""
-    allows = unwraps = 0
+    """Measure Studio lint opt-outs everywhere and long files and functions in production Rust."""
+    allows = 0
     long_files: dict[str, int] = {}
     long_functions: dict[str, int] = {}
     for path in sorted(STUDIO_SRC.rglob("*.rs")):
         source = path.read_text(encoding="utf-8")
         matches = _rust_tokens(source)
         tokens = [match[0] for match in matches]
-        allows += sum(
-            tokens[i : i + 3] == ["[", "allow", "("]
-            or tokens[i : i + 4] == ["!", "[", "allow", "("]
-            for i, token in enumerate(tokens, start=1)
-            if token == "#"
-        )
+        for i, token in enumerate(tokens, start=1):
+            if token == "#":
+                start = i + (tokens[i : i + 1] == ["!"])
+                allows += tokens[start : start + 3] in (["[", "allow", "("], ["[", "expect", "("])
         if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
             continue
-        length, calls, functions = _rust_production_debt(source, matches, tokens)
-        unwraps += calls
+        length, functions = _rust_production_debt(source, matches, tokens)
         relative = _relative(path)
         if length > LONG_FILE_LINES:
             long_files[relative] = length
@@ -547,7 +540,6 @@ def _studio_debt() -> dict[str, object]:
                 suffix = f"#{rank}" if rank > 1 else ""
                 long_functions[f"{relative}::{name}{suffix}"] = length
     return {
-        "studio_unwraps": unwraps,
         "studio_allows": allows,
         "studio_long_files": long_files,
         "studio_long_functions": dict(sorted(long_functions.items())),

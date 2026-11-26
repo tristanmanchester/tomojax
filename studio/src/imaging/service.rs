@@ -1,11 +1,12 @@
 //! Latest-request scheduling, scalar LRU, and neighbor prefetch. No numerical worker calls.
 use std::collections::{BTreeSet, HashMap, VecDeque};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
 use super::{PlaneData, VolumeData, reader};
 use crate::protocol::ArrayDescriptor;
+use crate::sync::Locked;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ImagingStatus {
@@ -177,7 +178,7 @@ impl Imaging {
     }
 
     pub fn set_waker(&mut self, waker: rune::Waker) {
-        *self.shared.waker.lock().unwrap() = waker;
+        *self.shared.waker.locked() = waker;
     }
 
     pub fn request_plane(
@@ -257,8 +258,8 @@ impl Imaging {
             .then_some(s.asset)
             .flatten()
         });
-        let cached = self.shared.cache.lock().unwrap().get(&key);
-        let mut inbox = self.shared.inbox.lock().unwrap();
+        let cached = self.shared.cache.locked().get(&key);
+        let mut inbox = self.shared.inbox.locked();
         if inbox.desired.len() >= 32 && !inbox.desired.contains_key(&slot) {
             return Err("The workbench already has 32 active image views.".into());
         }
@@ -350,7 +351,7 @@ impl Imaging {
             .map_or(&ImagingStatus::Idle, |s| &s.status)
     }
     pub fn cache_bytes(&self) -> usize {
-        self.shared.cache.lock().unwrap().bytes
+        self.shared.cache.locked().bytes
     }
     pub fn timings(&self) -> &VecDeque<LatencySample> {
         &self.timings
@@ -358,7 +359,7 @@ impl Imaging {
 
     pub fn clear(&mut self, slot: u32) {
         self.slots.remove(&slot);
-        let mut inbox = self.shared.inbox.lock().unwrap();
+        let mut inbox = self.shared.inbox.locked();
         inbox.desired.remove(&slot);
         inbox.pending.remove(&slot);
     }
@@ -371,7 +372,7 @@ impl Imaging {
         if artifacts.is_empty() {
             return false;
         }
-        let inbox = self.shared.inbox.lock().unwrap();
+        let inbox = self.shared.inbox.locked();
         inbox
             .pending
             .values()
@@ -391,11 +392,11 @@ impl Imaging {
         self.epoch += 1;
         self.slots.clear();
         {
-            let mut inbox = self.shared.inbox.lock().unwrap();
+            let mut inbox = self.shared.inbox.locked();
             inbox.pending.clear();
             inbox.desired.clear();
         }
-        let mut cache = self.shared.cache.lock().unwrap();
+        let mut cache = self.shared.cache.locked();
         cache.epoch = self.epoch;
         cache.entries.clear();
         cache.order.clear();
@@ -404,7 +405,7 @@ impl Imaging {
 
     pub fn shutdown(&mut self) {
         {
-            let mut inbox = self.shared.inbox.lock().unwrap();
+            let mut inbox = self.shared.inbox.locked();
             inbox.stopping = true;
             inbox.pending.clear();
         }
@@ -424,12 +425,12 @@ impl Drop for Imaging {
 }
 
 fn current(shared: &Shared, request: &Request) -> bool {
-    let inbox = shared.inbox.lock().unwrap();
+    let inbox = shared.inbox.locked();
     !inbox.stopping && inbox.desired.get(&request.slot) == Some(&request.generation)
 }
 
 fn load(shared: &Shared, request: &Request, key: &Key) -> Result<(Asset, bool), String> {
-    if let Some(asset) = shared.cache.lock().unwrap().get(key) {
+    if let Some(asset) = shared.cache.locked().get(key) {
         return Ok((asset, true));
     }
     let asset = if let Some((axis, index)) = key.plane {
@@ -446,31 +447,29 @@ fn load(shared: &Shared, request: &Request, key: &Key) -> Result<(Asset, bool), 
             &|| !current(shared, request),
         )?))
     };
-    shared
-        .cache
-        .lock()
-        .unwrap()
-        .insert(key.clone(), asset.clone());
+    shared.cache.locked().insert(key.clone(), asset.clone());
     Ok((asset, false))
 }
 
 fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
     loop {
         let request = {
-            let mut inbox = shared.inbox.lock().unwrap();
-            while inbox.pending.is_empty() && !inbox.stopping {
-                inbox = shared.changed.wait(inbox).unwrap();
-            }
+            let inbox = shared.inbox.locked();
+            let mut inbox = shared
+                .changed
+                .wait_while(inbox, |inbox| inbox.pending.is_empty() && !inbox.stopping)
+                .unwrap_or_else(PoisonError::into_inner);
             if inbox.stopping {
                 return;
             }
-            let slot = *inbox
+            let slot = inbox
                 .pending
-                .iter()
-                .max_by_key(|(_, r)| r.generation)
-                .unwrap()
-                .0;
-            let request = inbox.pending.remove(&slot).unwrap();
+                .values()
+                .max_by_key(|request| request.generation)
+                .map(|request| request.slot);
+            let Some(request) = slot.and_then(|slot| inbox.pending.remove(&slot)) else {
+                continue;
+            };
             inbox
                 .active
                 .insert(request.generation, request.descriptor.clone());
@@ -513,7 +512,8 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
             {
                 return;
             }
-            (shared.waker.lock().unwrap().clone())();
+            let wake = shared.waker.locked().clone();
+            wake();
             if failed {
                 break;
             }
@@ -524,7 +524,7 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
                 continue;
             }
             for offset in [1isize, -1, 2, -2] {
-                if !current(&shared, &request) || !shared.inbox.lock().unwrap().pending.is_empty() {
+                if !current(&shared, &request) || !shared.inbox.locked().pending.is_empty() {
                     break;
                 }
                 let neighbor = index as isize + offset;
@@ -545,12 +545,8 @@ struct ActiveRead<'a> {
 }
 impl Drop for ActiveRead<'_> {
     fn drop(&mut self) {
-        self.shared
-            .inbox
-            .lock()
-            .unwrap()
-            .active
-            .remove(&self.generation);
-        (self.shared.waker.lock().unwrap().clone())();
+        self.shared.inbox.locked().active.remove(&self.generation);
+        let wake = self.shared.waker.locked().clone();
+        wake();
     }
 }

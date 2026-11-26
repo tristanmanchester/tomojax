@@ -1,50 +1,55 @@
 //! Terrarium's native UI palette and compact, readable type roles.
 use rune::{Color, El, TextStyle, text};
 
-pub fn color(value: &str) -> Color {
-    rune::color::hex(value).expect("authored Terrarium palette uses valid hex")
+pub fn color(rgb: [u8; 3]) -> Color {
+    let [r, g, b] = rgb.map(|channel| rune::color::srgb_decode(f32::from(channel) / 255.));
+    Color { r, g, b, a: 1. }
 }
 pub fn background() -> Color {
-    color("#F5F6F0")
+    color([0xF5, 0xF6, 0xF0])
 }
 pub fn paper() -> Color {
-    color("#FCFDF9")
+    color([0xFC, 0xFD, 0xF9])
 }
 pub fn panel() -> Color {
-    color("#F0F3EC")
+    color([0xF0, 0xF3, 0xEC])
 }
 pub fn sage() -> Color {
-    color("#E2EADF")
+    color([0xE2, 0xEA, 0xDF])
 }
 pub fn forest() -> Color {
-    color("#315D46")
+    color([0x31, 0x5D, 0x46])
 }
 pub fn ink() -> Color {
-    color("#24382D")
+    color([0x24, 0x38, 0x2D])
 }
 pub fn muted() -> Color {
-    color("#596A5D")
+    color([0x59, 0x6A, 0x5D])
 }
 pub fn line() -> Color {
-    color("#DCE3D8")
+    color([0xDC, 0xE3, 0xD8])
 }
 pub fn canvas_bg() -> Color {
-    color("#111A17")
+    color([0x11, 0x1A, 0x17])
 }
 pub fn canvas_ink() -> Color {
-    color("#EDF2EA")
+    color([0xED, 0xF2, 0xEA])
 }
 pub fn canvas_muted() -> Color {
-    color("#B1BEB4")
+    color([0xB1, 0xBE, 0xB4])
 }
 pub fn warning() -> Color {
-    color("#8B5E27")
+    color([0x8B, 0x5E, 0x27])
 }
 pub fn error() -> Color {
-    color("#A3493B")
+    color([0xA3, 0x49, 0x3B])
 }
 pub fn axis(index: usize) -> Color {
-    [color("#94BE9A"), color("#D6B991"), color("#A9B4D6")][index % 3]
+    [
+        color([0x94, 0xBE, 0x9A]),
+        color([0xD6, 0xB9, 0x91]),
+        color([0xA9, 0xB4, 0xD6]),
+    ][index % 3]
 }
 
 pub fn type_style(size: f32, weight: f32) -> TextStyle {
@@ -70,7 +75,7 @@ mod tests {
 
     #[test]
     fn functional_type_and_muted_color_meet_the_design_floor() {
-        assert_eq!(muted(), color("#596A5D"));
+        assert_eq!(muted(), color([0x59, 0x6A, 0x5D]));
         for (requested, expected) in [(8.5, 11.), (11., 11.), (24., 24.)] {
             let style = type_style(requested, 450.);
             assert_eq!(style.size, expected);

@@ -27,7 +27,7 @@ impl Npy {
         }
         let header_len = match map[6] {
             1 => u16::from_le_bytes([map[8], map[9]]) as usize,
-            2 | 3 => u32::from_le_bytes(map[8..12].try_into().unwrap()) as usize,
+            2 | 3 => u32::from_le_bytes([map[8], map[9], map[10], map[11]]) as usize,
             version => return Err(format!("Unsupported NumPy format version {version}.")),
         };
         if header_len > 1024 * 1024 || header_len > map.len() - 10 {
@@ -119,7 +119,7 @@ impl Npy {
         let data = &self.map[at..at + self.bytes];
         macro_rules! number {
             ($t:ty) => {{
-                let bytes = data.try_into().unwrap();
+                let bytes = std::array::from_fn(|i| data[i]);
                 if self.big {
                     <$t>::from_be_bytes(bytes)
                 } else {
