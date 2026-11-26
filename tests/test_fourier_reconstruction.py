@@ -327,7 +327,14 @@ def test_host_pipeline_drains_pending_transfers_after_output_failure():
             raise OSError("output write failed")
 
     with pytest.raises(OSError, match="output write failed"):
-        _run_host_pipeline(cast(FourierPlan, Plan()), 16, 4, lambda start: np.array([start]), write)
+        _run_host_pipeline(
+            cast(FourierPlan, Plan()),
+            16,
+            4,
+            range(0, 16, 4),
+            lambda start: np.array([start]),
+            write,
+        )
     assert attempted == [0, 4]
     assert set(waited) == set(queued)
 

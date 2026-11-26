@@ -16,6 +16,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.api import is_oom_error
+from tomojax.core import checkpoint
 from tomojax.core.devices import announce, as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.geometry.views import stack_view_poses
@@ -168,16 +169,20 @@ def _stage_rows(
 
 
 class _VolumeWriter:
-    """Keep at most one output transfer/write alive beside the current slab."""
+    """Keep at most one output transfer/write alive beside the current slab.
 
-    def __init__(self, *, enabled: bool) -> None:
+    Each slab is recorded in ``finished`` once its write has landed.
+    """
+
+    def __init__(self, finished: checkpoint.Slabs, *, enabled: bool) -> None:
+        self.finished = finished
         self.pool = ThreadPoolExecutor(max_workers=1) if enabled else None
-        self.pending: Future[None] | None = None
+        self.pending: tuple[Future[None], int, int] | None = None
 
     def __enter__(self) -> _VolumeWriter:
         return self
 
-    def __call__(self, volume: jax.Array, target: np.ndarray, count: int) -> None:
+    def __call__(self, volume: jax.Array, target: np.ndarray, start: int, count: int) -> None:
         def store() -> None:
             # The closure owns the device slab until its synchronous copy ends;
             # no array-sized JAX host mirror outlives that transfer.
@@ -186,20 +191,28 @@ class _VolumeWriter:
         if self.pool is None:
             store()
             progress.step("slabs")
+            self.finished.add(start, start + count)
             return
+        self._land()
+        progress.check_canceled()
+        self.pending = (self.pool.submit(store), start, start + count)
+
+    def _land(self) -> None:
+        """Wait for the pending write, and record its slab."""
         if self.pending is not None:
-            self.pending.result()
+            write, first, stop = self.pending
             self.pending = None
+            write.result()
             progress.step("slabs")
-            progress.check_canceled()
-        self.pending = self.pool.submit(store)
+            self.finished.add(first, stop)
 
     def __exit__(self, *args: object) -> None:
         try:
             if self.pending is not None:
-                self.pending.result()
-                if not args[0]:
-                    progress.step("slabs")
+                if args[0]:
+                    self.pending[0].result()
+                else:
+                    self._land()
         finally:
             if self.pool is not None:
                 self.pool.shutdown(wait=True, cancel_futures=True)
@@ -312,11 +325,13 @@ def fbp_host(
         and slab_bytes <= _output_memory(projections, poses) // 4
     )
     progress.remaining("slabs", -(-grid.nz // depth))
-    with _VolumeWriter(enabled=enabled) as write:
+    with checkpoint.slabs(output) as finished, _VolumeWriter(finished, enabled=enabled) as write:
         for start, v_start, phase in axial_row_starts(
             grid.nz, depth, detector.nv, rows, first, step, integer=integer
         ):
             progress.check_canceled()
+            if finished.finished(start, min(start + depth, grid.nz)):
+                continue
             # Local grid/detector metadata stay identical for every slab. Only the
             # fractional row phase changes, passed as a dynamic pose translation.
             local_poses = host_poses.copy()
@@ -342,7 +357,7 @@ def fbp_host(
             count = min(depth, grid.nz - start)
             # Only one previous slab can remain pending while this slab computes.
             target = output[start : start + count]
-            write(volume, target, count)
+            write(volume, target, start, count)
             del volume
     return output
 
@@ -373,49 +388,53 @@ def _general_slabs(
         slices = max(1, (free // 2 - workspace) // (4 * grid.nx * grid.ny))
     depth = min(slices, grid.nz)
     ox, oy, oz = grid_volume_origin(grid)
-    start = 0
-    while start < grid.nz:
-        progress.check_canceled()
-        count = min(depth, grid.nz - start)
-        # Keep the slab shape fixed at this depth, including the padded tail.
-        slab = replace(grid, nz=depth, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None)
-        volume = None
-        try:
-            volume = _fbp_from_host(
-                host_poses,
-                projections,
-                np.asarray(view_scale, np.float32),
-                np.asarray(params, np.float32),
-                spectrum,
-                float(arc_length),
-                grid=slab,
-                detector=detector_f,
-                backend=backend,
-                batch_size=batch,
-                separable=separable,
-                check_finite=True,
+    with checkpoint.slabs(output) as finished:
+        start = finished.prefix
+        while start < grid.nz:
+            progress.check_canceled()
+            count = min(depth, grid.nz - start)
+            # Keep the slab shape fixed at this depth, including the padded tail.
+            slab = replace(
+                grid, nz=depth, vol_origin=(ox, oy, oz + start * grid.vz), vol_center=None
             )
-            target = output[start : start + count]
-            copy_to_host(volume[:count], target)
-        except Exception as error:
-            if not is_oom_error(error):
-                raise
             volume = None
-            if depth > 1:
-                progress.retried("slab depth")
-                depth = max(1, depth // 2)
-            elif batch > 1:
-                progress.retried("view batch")
-                batch = max(1, batch // 2)
-            else:
-                raise
-            # Leave the exception scope before retrying: its traceback can own
-            # device buffers. Completed slabs stay on the host and are not redone.
-            continue
-        # Do not keep the preceding device slab alive while constructing the next.
-        del volume
-        start += count
-        progress.step("slabs", remaining=-(-(grid.nz - start) // depth))
+            try:
+                volume = _fbp_from_host(
+                    host_poses,
+                    projections,
+                    np.asarray(view_scale, np.float32),
+                    np.asarray(params, np.float32),
+                    spectrum,
+                    float(arc_length),
+                    grid=slab,
+                    detector=detector_f,
+                    backend=backend,
+                    batch_size=batch,
+                    separable=separable,
+                    check_finite=True,
+                )
+                target = output[start : start + count]
+                copy_to_host(volume[:count], target)
+            except Exception as error:
+                if not is_oom_error(error):
+                    raise
+                volume = None
+                if depth > 1:
+                    progress.retried("slab depth")
+                    depth = max(1, depth // 2)
+                elif batch > 1:
+                    progress.retried("view batch")
+                    batch = max(1, batch // 2)
+                else:
+                    raise
+                # Leave the exception scope before retrying: its traceback can own
+                # device buffers. Completed slabs stay on the host and are not redone.
+                continue
+            # Do not keep the preceding device slab alive while constructing the next.
+            del volume
+            finished.add(start, start + count)
+            start += count
+            progress.step("slabs", remaining=-(-(grid.nz - start) // depth))
     return output
 
 
@@ -484,22 +503,24 @@ def fbp_slabs[T](
             depth = min(depth, 4)
         host_poses = np.asarray(poses, np.float32)
         scale = np.asarray(_view_weights(poses, config.scale)[0], np.float32)
-        start = 0
-        while start < grid.nz:
-            try:
-                with closing(
-                    _run_slabs(
-                        grid, detector, host_poses, scale, read, config, backend, depth, start
-                    )
-                ) as completed:
-                    for slab in completed:
-                        start = slab.stop
-                        yield slab
-            except Exception as error:
-                if depth == 1 or not is_oom_error(error):
-                    raise
-                progress.retried("slab depth")
-                depth = max(1, depth // 2)
+        with checkpoint.slabs() as finished:
+            start = finished.prefix
+            while start < grid.nz:
+                try:
+                    with closing(
+                        _run_slabs(
+                            grid, detector, host_poses, scale, read, config, backend, depth, start
+                        )
+                    ) as completed:
+                        for slab in completed:
+                            start = slab.stop
+                            yield slab
+                            finished.add(slab.start, slab.stop)
+                except Exception as error:
+                    if depth == 1 or not is_oom_error(error):
+                        raise
+                    progress.retried("slab depth")
+                    depth = max(1, depth // 2)
 
 
 def _finish[T](item: tuple[ReconstructionSlab[T], jax.Array, jax.Array]) -> ReconstructionSlab[T]:

@@ -11,6 +11,7 @@ import numpy as np
 
 from tomojax import _parameters, progress
 from tomojax.backends.api import is_oom_error
+from tomojax.core import checkpoint
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
@@ -27,7 +28,7 @@ from ._fourier_rows import ProjectionRows, prepare_projection_rows
 from ._host_arrays import validate_host_arrays
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
     from concurrent.futures import Future
 
     import jax
@@ -198,47 +199,56 @@ def fourier(
             projections, slice(start, start + depth), slice(None), depth, backend
         )
 
-    def write(start: int, volume: np.ndarray) -> None:
-        output[start : min(start + depth, grid.nz)] = volume
+    with checkpoint.slabs(output) as finished:
 
-    while True:
-        progress.check_canceled()
-        progress.remaining("slabs", (grid.nz + depth - 1) // depth)
-        try:
-            overlap = (
-                backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
-            )
-            plan = FourierPlan(
-                grid,
-                sampling.detector,
-                nviews,
-                sampling.flipped,
-                sampling.angles,
-                depth,
-                backend,
-                async_transfers=overlap,
-                shifts=sampling.shifts,
-                filter=cfg.filter,
-            )
-            if overlap:
-                _run_host_pipeline(plan, grid.nz, depth, prepare, write)
-            else:
-                for start in range(0, grid.nz, depth):
-                    progress.check_canceled()
-                    count = min(depth, grid.nz - start)
-                    with progress.preparing("dispatch fourier transform", start):
-                        write(start, plan.reconstruct(prepare(start), count=count))
-                    progress.step("slabs")
-            return output
-        except Exception as error:
-            if backend != "cupy" or depth == 1 or not is_oom_error(error):
-                raise
-            # The pipeline has drained its transfer events. Drop this attempt's
-            # buffers and the exception traceback before allocating a smaller
-            # slab; rewriting from slice zero also replaces any completed output.
-            plan = None
-        progress.retried("slab depth")
-        depth = max(1, depth // 2)
+        def write(start: int, volume: np.ndarray) -> None:
+            stop = min(start + depth, grid.nz)
+            output[start:stop] = volume
+            finished.add(start, stop)
+
+        while True:
+            progress.check_canceled()
+            starts = [
+                start
+                for start in range(0, grid.nz, depth)
+                if not finished.finished(start, min(start + depth, grid.nz))
+            ]
+            progress.remaining("slabs", len(starts))
+            try:
+                overlap = (
+                    backend == "cupy" and grid.nz > depth and host_bytes >= _HOST_PIPELINE_MIN_BYTES
+                )
+                plan = FourierPlan(
+                    grid,
+                    sampling.detector,
+                    nviews,
+                    sampling.flipped,
+                    sampling.angles,
+                    depth,
+                    backend,
+                    async_transfers=overlap,
+                    shifts=sampling.shifts,
+                    filter=cfg.filter,
+                )
+                if overlap:
+                    _run_host_pipeline(plan, grid.nz, depth, starts, prepare, write)
+                else:
+                    for start in starts:
+                        progress.check_canceled()
+                        count = min(depth, grid.nz - start)
+                        with progress.preparing("dispatch fourier transform", start):
+                            write(start, plan.reconstruct(prepare(start), count=count))
+                        progress.step("slabs")
+                return output
+            except Exception as error:
+                if backend != "cupy" or depth == 1 or not is_oom_error(error):
+                    raise
+                # The pipeline has drained its transfer events. Drop this attempt's
+                # buffers and the exception traceback before allocating a smaller
+                # slab, rewriting every slab not yet finished.
+                plan = None
+            progress.retried("slab depth")
+            depth = max(1, depth // 2)
 
 
 @dataclass(frozen=True)
@@ -379,10 +389,11 @@ def _run_host_pipeline(
     plan: FourierPlan,
     nz: int,
     depth: int,
+    starts: Sequence[int],
     prepare: Callable[[int], np.ndarray | ProjectionRows],
     write: Callable[[int, np.ndarray], None],
 ) -> None:
-    """Overlap bounded staging and transfers; CUDA stays on the calling thread."""
+    """Overlap staging and transfers of the slabs at ``starts``; CUDA stays on this thread."""
     pending: list[tuple[int, PendingSlab]] = []
     with (
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-fourier-read") as reader,
@@ -399,9 +410,9 @@ def _run_host_pipeline(
                 progress.check_canceled()
             written = writer.submit(write, start, volume)
 
-        prepared = reader.submit(prepare, 0)
+        prepared = reader.submit(prepare, starts[0]) if starts else None
         try:
-            for start in range(0, nz, depth):
+            for index, start in enumerate(starts):
                 progress.check_canceled()
                 try:
                     assert prepared is not None
@@ -414,8 +425,8 @@ def _run_host_pipeline(
                     pending.clear()
                     raise
                 stop = min(start + depth, nz)
-                if stop < nz:
-                    prepared = reader.submit(prepare, stop)
+                if index + 1 < len(starts):
+                    prepared = reader.submit(prepare, starts[index + 1])
                 with progress.preparing("dispatch fourier transform", start):
                     pending.append((start, plan.enqueue(data, count=stop - start)))
                 del data

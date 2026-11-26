@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 import math
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 from tomojax.core.host_volume import close_work_file, host_volume, scratch_directory
 from tomojax.core.operator_norm import bounds_settled
 from tomojax.errors import InvalidParameter
 from tomojax.wire.metrics import Metric
 
+from ._chunks import restored
 from ._cuda_tv import proximal_host
 from ._noise_probe import gaussian_probe
 from ._tv_metric import voxel_noise_weight
@@ -28,6 +30,16 @@ if TYPE_CHECKING:
     from ._cone_slabs import Batch, ConeProblem, HostVolume
     from ._tv_metric import TVMetric
     from .fista_tv import FISTAConfig, FistaRuntime
+
+
+class _Scalars(NamedTuple):
+    """What a checkpoint keeps of the loop besides its volumes."""
+
+    limit: float
+    at_zero: float
+    losses: list[float]
+    t: float
+    streak: int
 
 
 class HostFista:
@@ -179,15 +191,20 @@ class HostFista:
         )
         return math.sqrt(energy / math.prod(self.shape))
 
+    def calibrate(self, noise: float | jax.Array | None = None) -> float | jax.Array | None:
+        """Set an automatic TV weight from the noise level, measured unless given; return it."""
+        if self.noise_scale is None:
+            return None
+        if self.metric is None:
+            raise ValueError("automatic host FISTA TV requires a resolved TV metric")
+        if noise is None:
+            noise = self.noise_scale * self.noise_gradient_rms()
+        self.metric = voxel_noise_weight(self.metric, noise, self.shape)
+        return noise
+
     def initialize(self) -> tuple[float, float]:
         """The unchanged backprojected-data power start, then the feasible initial iterate."""
         xp = self.xp
-        if self.noise_scale is not None:
-            if self.metric is None:
-                raise ValueError("automatic host FISTA TV requires a resolved TV metric")
-            self.metric = voxel_noise_weight(
-                self.metric, self.noise_scale * self.noise_gradient_rms(), self.shape
-            )
         value = self.apply(None, self.G, residual=True)
         limit = self.cfg.lipschitz
         if limit is None:
@@ -288,46 +305,65 @@ class HostFista:
 
     def run(self) -> tuple[np.ndarray, dict[str, object]]:
         """Run exactly the same stopping rule and retain the padded objective history."""
-        cfg = self.cfg
-        limit, at_zero = self.initialize()
-        losses, t, streak, done = [], np.float32(1), 0, False
-        zero = self.initial is None and self.lower <= 0 <= self.upper
-        for step in range(cfg.iterations):
-            progress.check_canceled()
-            loss = 0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
-            gradient = step == 0 and zero
-            loss += (
-                at_zero if gradient else self.apply(self.Z, self.G, residual=True, step=1 / limit)
-            )
-            tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
-            done = self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
-            if cfg.tolerance and cfg.patience:
-                small = (
-                    bool(losses)
-                    and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.tolerance
+        with checkpoint.loop() as saves:
+            cfg = self.cfg
+            if saves.saved is None:
+                noise = self.calibrate()
+                scalars = _Scalars(*self.initialize(), [], 1.0, 0)
+            else:
+                volumes, levels = saves.saved.arrays[:2], saves.saved.arrays[2:]
+                for volume, values in zip((self.X, self.Z), volumes, strict=True):
+                    volume.restore(values)
+                noise = None if self.noise_scale is None else restored(self.noise_scale, levels)
+                _ = self.calibrate(noise)
+                scalars = saves.saved.scalars(_Scalars)
+            limit, at_zero, losses, t, streak = scalars
+            t, done = np.float32(t), False
+            zero = self.initial is None and self.lower <= 0 <= self.upper
+            for step in range(len(losses), cfg.iterations):
+                progress.check_canceled()
+                loss = (
+                    0.0 if self.metric is None else float(self.metric.weight) * self.regularizer()
                 )
-                streak = streak + 1 if small else 0
-                done = streak >= cfg.patience
-            losses.append(loss)
-            if (task := progress.for_unit("iterations")) is not None:
-                self.problem.completed(task.advance, len(losses), {Metric.loss.name: loss})
-            t = tn
-            progress.preview(
-                lambda: self.X.preview(self.plan.grid), final=done or step + 1 == cfg.iterations
-            )
-            if done:
-                break
-        count = len(losses)
-        losses.extend([losses[-1]] * (cfg.iterations - count) if losses else [])
-        return self.X.array, {
-            "loss": losses,
-            "lipschitz": limit,
-            "effective_iterations": count,
-            "early_stop": done,
-            "regularizer": cfg.regularizer,
-            "huber_delta": cfg.huber_delta,
-            "host_slabs": True,
-        }
+                gradient = step == 0 and zero
+                loss += (
+                    at_zero
+                    if gradient
+                    else self.apply(self.Z, self.G, residual=True, step=1 / limit)
+                )
+                tn = np.float32((1 + np.sqrt(1 + 4 * t * t)) / 2)
+                done = self.update(limit, np.float32((t - 1) / tn), gradient=gradient)
+                if cfg.tolerance and cfg.patience:
+                    small = (
+                        bool(losses)
+                        and abs(loss - losses[-1]) / max(abs(losses[-1]), 1e-6) <= cfg.tolerance
+                    )
+                    streak = streak + 1 if small else 0
+                    done = streak >= cfg.patience
+                losses.append(loss)
+                if (task := progress.for_unit("iterations")) is not None:
+                    self.problem.completed(task.advance, len(losses), {Metric.loss.name: loss})
+                t = tn
+                progress.preview(
+                    lambda: self.X.preview(self.plan.grid), final=done or step + 1 == cfg.iterations
+                )
+                if done:
+                    break
+                if saves.due():
+                    scalars = _Scalars(limit, at_zero, losses, float(t), streak)
+                    arrays = (self.X.contents(), self.Z.contents())
+                    saves.save(arrays if noise is None else (*arrays, noise), scalars)
+            count = len(losses)
+            losses.extend([losses[-1]] * (cfg.iterations - count) if losses else [])
+            return self.X.array, {
+                "loss": losses,
+                "lipschitz": limit,
+                "effective_iterations": count,
+                "early_stop": done,
+                "regularizer": cfg.regularizer,
+                "huber_delta": cfg.huber_delta,
+                "host_slabs": True,
+            }
 
 
 def needs_host_state(

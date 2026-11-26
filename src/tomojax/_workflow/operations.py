@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, closing, contextmanager
 from dataclasses import is_dataclass, replace
+import inspect
 import json
 import logging
 import os
@@ -483,6 +484,7 @@ def reconstruct(
     warm_start: bool | None = None,
     seed: int | None = None,
     devices: Device | Sequence[Device] | None = None,
+    checkpoint: str | PathLike[str] | None = None,
 ) -> Reconstruction:
     """Reconstruct ``scan`` with ``method``.
 
@@ -557,6 +559,16 @@ def reconstruct(
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
 
+    ``checkpoint`` names a directory where the run keeps its state, so a run
+    that is killed (by a scheduler's time limit, preemption or a failed node)
+    resumes when it is run again with the same directory, scan and settings,
+    and returns the volume it would have returned uninterrupted. Iterative
+    methods save their solver state, and slab reconstructions their finished
+    slabs, at most every 10 minutes and at most 5% of the run's time apart;
+    on SIGTERM the run saves at the end of the current iteration or slab and
+    raises :class:`tomojax.errors.Canceled`. The directory is deleted when the
+    call returns. A directory holding another run's checkpoint is refused.
+
     Parameters
     ----------
     scan : Scan
@@ -594,6 +606,8 @@ def reconstruct(
         Random seed for stochastic view ordering where supported.
     devices : jax.Device or sequence of jax.Device or None, optional
         Devices sharing views for supported methods; None uses the default device.
+    checkpoint : str or path-like or None, optional
+        Directory of the run's saved state, created if absent; None saves nothing.
 
     Returns
     -------
@@ -629,20 +643,33 @@ def reconstruct(
         seed=seed,
         devices=devices,
     )
-    return reconstruct_resolved(plan, out=out)
+    return reconstruct_resolved(plan, out=out, checkpoint=checkpoint)
 
 
 def reconstruct_resolved(
-    plan: ResolvedReconstruction, *, out: np.ndarray | None = None
+    plan: ResolvedReconstruction,
+    *,
+    out: np.ndarray | None = None,
+    checkpoint: str | PathLike[str] | None = None,
 ) -> Reconstruction:
     """Execute the resolved method on its original selected support and grid."""
+    from tomojax.core.checkpoint import checkpointing
     from tomojax.recon.api import reconstruct_arrays
 
     scan, method = plan.scan, plan.method
     if method not in {"fbp", "fourier"}:
         _suggest_binning(scan, "iterative reconstruction")
     radius = None if plan.cylinder is None else plan.cylinder.radius
-    with registration(scan, cylinder_radius=radius), progress.runtime() as actual:
+    with (
+        checkpointing(
+            checkpoint,
+            operation="reconstruct",
+            settings=(plan.config, plan.warm_start, plan.cylinder, scan.geometry),
+            input=scan.projections,
+        ),
+        registration(scan, cylinder_radius=radius),
+        progress.runtime() as actual,
+    ):
         volume, info = reconstruct_arrays(
             method,
             scan.geometry,
@@ -682,6 +709,7 @@ def reconstruct_slabs(
     | None = None,
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
+    checkpoint: str | PathLike[str] | None = None,
 ) -> AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]:
     """Correct raw frames and reconstruct bounded z slabs.
 
@@ -714,6 +742,17 @@ def reconstruct_slabs(
     neighbors. The oblique FBP filter and iterative projector couple the rows;
     these methods read the complete detector and return the coupled volume in one slab.
 
+    ``checkpoint`` names a directory recording which slabs are finished, so a run
+    that is killed resumes when it is run again with the same directory, frames
+    and settings. A slab is finished once the body of the loop that received it
+    returns; a resumed run yields the slabs after the last finished one, so
+    write each slab where it survives the kill (for example a memmap opened
+    with ``mode="r+"`` when it exists). SIRT and MLEM also save the state of the
+    slab in progress, at most every 10 minutes and at most 5% of the run's time
+    apart. On SIGTERM the loop stops after the slab its body is writing,
+    raising :class:`tomojax.errors.Canceled`. The directory is deleted when the
+    last slab is finished; a directory holding another run's checkpoint is refused.
+
     Parameters
     ----------
     frames : Frames
@@ -730,6 +769,8 @@ def reconstruct_slabs(
         Start SIRT/OSEM from FBP; None uses the method's default.
     epsilon : float, optional
         Positive finite lower bound for flat field and transmission.
+    checkpoint : str or path-like or None, optional
+        Directory recording the finished slabs, created if absent; None records nothing.
 
     Returns
     -------
@@ -757,6 +798,7 @@ def reconstruct_slabs(
         config=config,
         warm_start=warm_start,
         epsilon=epsilon,
+        checkpoint=checkpoint,
     )
 
 
@@ -803,7 +845,9 @@ def _reconstruct_slabs_context(
     config: MethodConfig | None,
     warm_start: bool | None,
     epsilon: float,
+    checkpoint: str | PathLike[str] | None,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
+    from tomojax.core.checkpoint import checkpointing, keep_checkpoint
     from tomojax.corrections.api import corrected_row_source
     from tomojax.geometry.api import is_cone_beam
     from tomojax.recon.api import reconstruct_slabs as array_slabs, solver_name
@@ -819,21 +863,31 @@ def _reconstruct_slabs_context(
             corrections=corrections,
             epsilon=epsilon,
         )
-        with corrected_row_source(
-            frames.counts,
-            flats=frames.flats,
-            flat_positions=frames.flat_positions,
-            darks=frames.darks,
-            white_level=frames.white_level,
-            steps=bound,
-            epsilon=epsilon,
-            view_positions=frames.view_positions,
-            exposure_times=frames.exposure_times,
-            flat_exposure_times=frames.flat_exposure_times,
-            host=cone or bool(getattr(frames.geometry, "detector_roll", 0)),
-            dark_source=frames.dark_source,
-            linear_limit=frames.linear_limit,
-        ) as source:
+        raw = (frames.flats, frames.darks, frames.flat_positions, frames.white_level)
+        timing = (frames.view_positions, frames.exposure_times, frames.flat_exposure_times)
+        with (
+            checkpointing(
+                checkpoint,
+                operation="reconstruct_slabs",
+                settings=(cfg, target, bound, epsilon, warm_start, frames.geometry),
+                input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
+            ),
+            corrected_row_source(
+                frames.counts,
+                flats=frames.flats,
+                flat_positions=frames.flat_positions,
+                darks=frames.darks,
+                white_level=frames.white_level,
+                steps=bound,
+                epsilon=epsilon,
+                view_positions=frames.view_positions,
+                exposure_times=frames.exposure_times,
+                flat_exposure_times=frames.flat_exposure_times,
+                host=cone or bool(getattr(frames.geometry, "detector_roll", 0)),
+                dark_source=frames.dark_source,
+                linear_limit=frames.linear_limit,
+            ) as source,
+        ):
 
             def read(
                 first: int, stop: int
@@ -854,6 +908,8 @@ def _reconstruct_slabs_context(
                 closing(_slab_results(completed, frames, target, method, cfg)) as output,
             ):
                 yield output
+                if inspect.getgeneratorstate(output) != inspect.GEN_CLOSED:
+                    keep_checkpoint()  # the caller stopped early: later slabs remain
 
 
 def _slab_results(

@@ -18,11 +18,12 @@ no projection-sized vector is retained. Absolute mode needs no additional sweep.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import fill, host_volume, scratch_directory
 from tomojax.wire.metrics import Metric
@@ -131,6 +132,19 @@ def solve(
         info = solver.run()
     volume = problem.result(solver.x)
     return volume, {**info, "projector_backend": backend}
+
+
+class _Scalars(NamedTuple):
+    """What a checkpoint keeps of the loop besides its volumes."""
+
+    gamma: float
+    first: float
+    beta: float | None
+    count: int
+    recomputations: int
+    failed: bool
+    roundoff: bool
+    verified: bool
 
 
 class _HostCGLS:
@@ -394,56 +408,72 @@ class _HostCGLS:
 
     def run(self) -> dict[str, object]:
         """Iterate as the resident streamed solver does; return its record."""
-        cfg = self.cfg
-        gamma, _ = self.gradient()
-        first, initial_norm = gamma, float(np.sqrt(gamma))
-        threshold = cfg.absolute_tolerance + cfg.tolerance * initial_norm
-        state = {"failed": not np.isfinite(gamma), "roundoff": False, "verified": True}
-        count, recomputations, beta = 0, 0, None
-        while (
-            count < cfg.iterations
-            and gamma > threshold**2
-            and not (state["failed"] or state["roundoff"])
-        ):
-            progress.check_canceled()
-            energy, direction_norm2 = self.normal(beta)
-            denominator = (
-                energy
-                + float(self.damp2) * direction_norm2
-                + float(self.smooth2) * self.edge_energy
+        with checkpoint.loop() as saves:
+            cfg = self.cfg
+            if saves.saved is None:
+                gamma, _ = self.gradient()
+                scalars = _Scalars(gamma, gamma, None, 0, 0, not np.isfinite(gamma), False, True)
+            else:
+                for volume, values in zip(
+                    (self.X, self.G, self.D), saves.saved.arrays, strict=True
+                ):
+                    volume.restore(values)
+                self.zero = False
+                scalars = saves.saved.scalars(_Scalars)
+            gamma, first, beta, count, recomputations, *flags = scalars
+            state: dict[str, bool] = dict(
+                zip(("failed", "roundoff", "verified"), flags, strict=True)
             )
-            if not np.isfinite(denominator) or denominator <= 0:
-                state["failed"] = True
-                break
-            alpha = np.float32(gamma / denominator)
-            gamma_new, state["roundoff"], size = self.update(alpha)
-            verify = (
-                state["roundoff"]
-                or float(alpha) ** 2 * direction_norm2 <= _EPS**2 * size
-                or gamma_new <= threshold**2
-                or (((count + 1) % 16 == 0 or state["verified"]) and gamma_new <= _EPS * first)
-            )
-            restart = False
-            if verify:
-                restart, gamma_new = self.verify(gamma, gamma_new, threshold, state)
-                recomputations += 1
-            count += 1
-            if (task := progress.for_unit("iterations")) is not None:
-                residual = gamma_new if np.isfinite(gamma_new) else gamma
-                self.problem.completed(
-                    task.advance,
-                    count,
-                    {Metric.normal_residual_norm.name: float(np.sqrt(residual))},
+            initial_norm = float(np.sqrt(first))
+            threshold = cfg.absolute_tolerance + cfg.tolerance * initial_norm
+            while (
+                count < cfg.iterations
+                and gamma > threshold**2
+                and not (state["failed"] or state["roundoff"])
+            ):
+                progress.check_canceled()
+                energy, direction_norm2 = self.normal(beta)
+                denominator = (
+                    energy
+                    + float(self.damp2) * direction_norm2
+                    + float(self.smooth2) * self.edge_energy
                 )
-            progress.preview(lambda: self.X.preview(self.plan.grid))
-            if not np.isfinite(gamma_new):
-                state["failed"] = True
-                break
-            beta = None if restart else gamma_new / gamma
-            gamma, state["verified"] = gamma_new, verify
-        if count:
-            progress.preview(lambda: self.X.preview(self.plan.grid), final=True)
-        return self.record(gamma, threshold, initial_norm, count, recomputations, state)
+                if not np.isfinite(denominator) or denominator <= 0:
+                    state["failed"] = True
+                    break
+                alpha = np.float32(gamma / denominator)
+                gamma_new, state["roundoff"], size = self.update(alpha)
+                verify = (
+                    state["roundoff"]
+                    or float(alpha) ** 2 * direction_norm2 <= _EPS**2 * size
+                    or gamma_new <= threshold**2
+                    or (((count + 1) % 16 == 0 or state["verified"]) and gamma_new <= _EPS * first)
+                )
+                restart = False
+                if verify:
+                    restart, gamma_new = self.verify(gamma, gamma_new, threshold, state)
+                    recomputations += 1
+                count += 1
+                if (task := progress.for_unit("iterations")) is not None:
+                    residual = gamma_new if np.isfinite(gamma_new) else gamma
+                    self.problem.completed(
+                        task.advance,
+                        count,
+                        {Metric.normal_residual_norm.name: float(np.sqrt(residual))},
+                    )
+                progress.preview(lambda: self.X.preview(self.plan.grid))
+                if not np.isfinite(gamma_new):
+                    state["failed"] = True
+                    break
+                beta = None if restart else gamma_new / gamma
+                gamma, state["verified"] = gamma_new, verify
+                if saves.due():
+                    flags = (bool(state[name]) for name in ("failed", "roundoff", "verified"))
+                    scalars = _Scalars(gamma, first, beta, count, recomputations, *flags)
+                    saves.save((self.X.contents(), self.G.contents(), self.D.contents()), scalars)
+            if count:
+                progress.preview(lambda: self.X.preview(self.plan.grid), final=True)
+            return self.record(gamma, threshold, initial_norm, count, recomputations, state)
 
     def verify(
         self, gamma: float, gamma_new: float, threshold: float, state: dict[str, bool]

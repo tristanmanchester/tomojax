@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
+from tomojax.core.checkpoint import Completed, Loop, Saved
 from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import algebraic_sweep, cone_problem, host_projections
@@ -70,18 +72,10 @@ def solve(
             fill(x, 1.0)
     xp = np if isinstance(x, np.ndarray) else problem.engine.xp
     _constrain(x, support, problem.plan.depth, nonnegative=warm_start, xp=xp)
-    em = _HostEM(problem, x, updating=iterations > 0)
-    with problem.using(out, em.volume):
-        for step in range(1, max(1, iterations) + 1):
-            progress.check_canceled()
-            for group in range(subsets):
-                problem.sweep.run(
-                    order[group::subsets], source=em.source, finish=em.finish, sink=em.sink,
-                    transposed=int(em.updating), ones=True, keep=problem.keep,
-                    prefetch=lambda k: em.volume.prefetch(*problem.plan.planes(k)),
-                )  # fmt: skip
-            if iterations and (task := progress.for_unit("iterations")) is not None:
-                problem.completed(task.advance, step, {})
+    with checkpoint.loop() as saves:
+        em = _HostEM(problem, x, updating=iterations > 0, saved=saves.saved)
+        with problem.using(out, em.volume):
+            em.run(order, subsets, iterations, saves)
     for z0 in range(0, grid.nz, problem.plan.depth):
         z1 = min(grid.nz, z0 + problem.plan.depth)
         x[z0:z1, :, :] *= xp.asarray(np.unpackbits(em.seen[z0:z1, :, :], axis=2, count=grid.nx))
@@ -107,11 +101,34 @@ def _constrain(x: Any, support: Any, depth: int, *, nonnegative: bool, xp: Any) 
 class _HostEM:
     """One host EM volume's subset sweeps, recording which voxels any subset sees."""
 
-    def __init__(self, problem: ConeProblem, x: np.ndarray, *, updating: bool) -> None:
+    def __init__(
+        self, problem: ConeProblem, x: np.ndarray, *, updating: bool, saved: Saved | None
+    ) -> None:
         self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
         self.volume, self.updating = problem.volume(x), updating
         grid = self.plan.grid
         self.seen = np.zeros((grid.nz, grid.ny, (grid.nx + 7) // 8), np.uint8, order="C")
+        self.steps = 0
+        if saved is not None:  # a checkpoint's iterate, seen voxels and steps
+            self.volume.restore(saved.arrays[0])
+            np.copyto(self.seen, saved.arrays[1])
+            self.steps = saved.scalars(Completed).steps
+
+    def run(self, order: np.ndarray, subsets: int, iterations: int, saves: Loop) -> None:
+        """Every subset's update in each iteration after the completed ones; at least one sweep."""
+        problem = self.problem
+        for step in range(self.steps + 1, max(1, iterations) + 1):
+            progress.check_canceled()
+            for group in range(subsets):
+                problem.sweep.run(
+                    order[group::subsets], source=self.source, finish=self.finish, sink=self.sink,
+                    transposed=int(self.updating), ones=True, keep=problem.keep,
+                    prefetch=lambda k: self.volume.prefetch(*problem.plan.planes(k)),
+                )  # fmt: skip
+            if iterations and (task := progress.for_unit("iterations")) is not None:
+                problem.completed(task.advance, step, {})
+            if saves.due():
+                saves.save((self.volume.contents(), self.seen), Completed(step))
 
     def source(self, k: int) -> tuple[Any, ...]:
         retain = not self.problem.keep

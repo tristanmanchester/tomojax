@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import jax.numpy as jnp
 
+from tomojax.core import checkpoint
 from tomojax.core.validation import validate_projection_stack
 
 from ._fbp_storage import fbp_volume
@@ -34,13 +35,15 @@ def fbp_start(
 
     Volumes given host storage ``out``, or too large for the device, are made
     in host slabs as public FBP makes them, into ``out`` or a new host array.
+    A checkpoint keeps none of its slabs: the solver's saved state replaces it.
     """
     _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="warm_start projections"
     )
     # Thin host slabs: XLA keeps the device memory FDK used, and host solvers
     # allocate their own through CuPy next.
-    volume, _ = fbp_volume(
-        geometry, grid, detector, projections, config, det_grid, out, slab_planes=_SLAB_PLANES
-    )
+    with checkpoint.suspended():
+        volume, _ = fbp_volume(
+            geometry, grid, detector, projections, config, det_grid, out, slab_planes=_SLAB_PLANES
+        )
     return volume

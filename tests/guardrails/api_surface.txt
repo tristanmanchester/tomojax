@@ -254,6 +254,7 @@ def tomojax.reconstruct(
         warm_start: 'bool | None' = None,
         seed: 'int | None' = None,
         devices: 'Device | Sequence[Device] | None' = None,
+        checkpoint: 'str | PathLike[str] | None' = None,
     ) -> 'Reconstruction'
 def tomojax.reconstruct_slabs(
         frames: 'Frames',
@@ -264,6 +265,7 @@ def tomojax.reconstruct_slabs(
         config: 'recon.FBPConfig | recon.FourierConfig | recon.SIRTConfig | recon.MLEMConfig | None' = None,
         warm_start: 'bool | None' = None,
         epsilon: 'float' = 1e-06,
+        checkpoint: 'str | PathLike[str] | None' = None,
     ) -> 'AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]'
 def tomojax.save(
         path: 'str | PathLike[str]',

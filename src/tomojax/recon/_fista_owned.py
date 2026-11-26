@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 from tomojax.core.operator_norm import bounds_settled, collatz_ratio, unit
 from tomojax.recon._volume_storage import preview_planes
 from tomojax.wire.metrics import Metric
@@ -42,6 +43,15 @@ class FistaResult(NamedTuple):
     loss: jax.Array
     iters_done: jax.Array
     done: jax.Array
+
+
+class _Scalars(NamedTuple):
+    """What a checkpoint keeps of the loop besides its iterates."""
+
+    losses: list[float]
+    streak: int
+    previous: float | None
+    limit: float
 
 
 class FistaScanState(NamedTuple):
@@ -213,6 +223,7 @@ def _refine(
     x: jax.Array,
     limit: float | jax.Array,
     first_value: jax.Array | None = None,
+    saves: checkpoint.Loop = checkpoint.IDLE,
 ) -> tuple[FistaResult, jax.Array]:
     cfg = runtime.config
     z = jnp.array(x, copy=True)
@@ -222,11 +233,15 @@ def _refine(
     early = tolerance > 0 and cfg.patience > 0
     streak, done = 0, False
     previous = float(first_value) if early and first_value is not None else None
-    value = jnp.float32(0) if first_value is None else first_value
     task = progress.for_unit("iterations")
-    if task is not None and first_value is not None:
+    if saves.saved is not None:
+        x, z, t = (jax.device_put(np.asarray(a), x.sharding) for a in saves.saved.arrays)
+        saved, streak, previous, _ = saves.saved.scalars(_Scalars)
+        losses = [jnp.float32(value) for value in saved]
+    elif task is not None and first_value is not None:
         task.advance(1, {Metric.loss.name: float(first_value)})
         progress.preview(lambda x=x: preview_planes(x, runtime.projector[0], grid))
+    value = losses[-1] if losses else jnp.float32(0)
     for _step in range(len(losses), cfg.iterations):
         progress.check_canceled()
         with progress.preparing("first fista update", _step - (first_value is not None)):
@@ -253,6 +268,9 @@ def _refine(
             done = streak >= cfg.patience
             if done:
                 break
+        if saves.due():
+            scalars = _Scalars([float(v) for v in losses], streak, previous, float(limit))
+            saves.save((x, z, t), scalars)
     jax.block_until_ready((x, z, t))
     count = len(losses)
     if count:
@@ -267,7 +285,12 @@ def run_owned_fista(
 ) -> tuple[FistaResult, jax.Array, TVMetric | None]:
     """Run nonnegative least squares with owned, reusable volume buffers."""
     data = jnp.asarray(projections)
-    with progress.preparing("initialize fista"):
-        x, first_value, limit = _zero_start(grid, detector, data, runtime)
-    state, limit = _refine(grid, detector, data, runtime, x, limit, first_value)
+    with checkpoint.loop() as saves:
+        if saves.saved is None:
+            with progress.preparing("initialize fista"):
+                x, first_value, limit = _zero_start(grid, detector, data, runtime)
+        else:  # the saved iterates replace these
+            x, first_value = jnp.zeros((), jnp.float32), None
+            limit = jnp.float32(saves.saved.scalars(_Scalars).limit)
+        state, limit = _refine(grid, detector, data, runtime, x, limit, first_value, saves)
     return state, limit, runtime.metric

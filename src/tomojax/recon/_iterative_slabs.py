@@ -11,6 +11,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.backends.api import device_free_memory_bytes, is_oom_error
+from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from .api import reconstruct_arrays
@@ -50,43 +51,46 @@ def iterative_slabs[T](
     fitting = max(1, int(budget / per_row))
     # Bound CPU output too: the full requested volume may exceed host RAM.
     depth = min(8, 2 ** (fitting.bit_length() - 1))
-    start = 0
-    while start < grid.nz:
-        stop = min(start + depth, grid.nz)
-        count = stop - start
-        data = context = volume = result = None
-        try:
-            data, context = read(start, stop)
-            # Translate both together, reusing one compiled geometry per depth.
-            local_grid = replace(
-                grid,
-                nz=count,
-                vol_center=None,
-                vol_origin=(*origin[:2], -(count - 1) * grid.vz / 2),
-            )
-            local_detector = replace(detector, nv=count, center=(detector.center[0], 0.0))
-            local_geometry = ParallelGeometry(local_grid, local_detector, geometry.angles)
-            support = config.support
-            if support is not None and np.ndim(support) == 3 and np.shape(support)[0] != 1:
-                support = support[start:stop]
-            result, info = reconstruct_arrays(
-                config.method,
-                local_geometry,
-                local_grid,
-                local_detector,
-                data,
-                config=replace(config, support=support),
-                warm_start=warm_start,
-            )
-            volume = np.asarray(result)
-            del result
-        except Exception as error:
+    with checkpoint.slabs() as finished:
+        start = finished.prefix
+        while start < grid.nz:
+            stop = min(start + depth, grid.nz)
+            count = stop - start
             data = context = volume = result = None
-            if depth == 1 or not is_oom_error(error):
-                raise
-            progress.retried("slab depth")
-            depth = max(1, depth // 2)
-            continue
-        yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
-        data = context = volume = result = None
-        start = stop
+            try:
+                data, context = read(start, stop)
+                # Translate both together, reusing one compiled geometry per depth.
+                local_grid = replace(
+                    grid,
+                    nz=count,
+                    vol_center=None,
+                    vol_origin=(*origin[:2], -(count - 1) * grid.vz / 2),
+                )
+                local_detector = replace(detector, nv=count, center=(detector.center[0], 0.0))
+                local_geometry = ParallelGeometry(local_grid, local_detector, geometry.angles)
+                support = config.support
+                if support is not None and np.ndim(support) == 3 and np.shape(support)[0] != 1:
+                    support = support[start:stop]
+                with checkpoint.scope(f"z{start}"):
+                    result, info = reconstruct_arrays(
+                        config.method,
+                        local_geometry,
+                        local_grid,
+                        local_detector,
+                        data,
+                        config=replace(config, support=support),
+                        warm_start=warm_start,
+                    )
+                volume = np.asarray(result)
+                del result
+            except Exception as error:
+                data = context = volume = result = None
+                if depth == 1 or not is_oom_error(error):
+                    raise
+                progress.retried("slab depth")
+                depth = max(1, depth // 2)
+                continue
+            yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
+            data = context = volume = result = None
+            finished.add(start, stop)
+            start = stop

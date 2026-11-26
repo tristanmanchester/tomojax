@@ -11,6 +11,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.backends.api import is_oom_error
+from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
 from ._fourier_backend import (
@@ -102,36 +103,38 @@ def fourier_slabs[T](
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
         detector.nv - 1
     ) / 2
-    start = 0
-    while start < grid.nz:
-        plan = None
-        try:
-            plan = FourierPlan(
-                grid,
-                detector,
-                len(order),
-                flipped,
-                angles,
-                depth,
-                backend,
-                filter=config.filter,
-                async_transfers=backend == "cupy",
-            )
-            with closing(
-                _run_plan(plan, read, order, positions, start, geometry.detector_roll)
-            ) as completed:
-                for slab in completed:
-                    start = slab.stop
-                    yield slab
-        except Exception as error:
-            if backend != "cupy" or depth == 1 or not is_oom_error(error):
-                raise
-            progress.retried("slab depth")
-            depth = max(1, depth // 2)
-        finally:
-            if plan is not None:
-                plan.synchronize()
+    with checkpoint.slabs() as finished:
+        start = finished.prefix
+        while start < grid.nz:
             plan = None
+            try:
+                plan = FourierPlan(
+                    grid,
+                    detector,
+                    len(order),
+                    flipped,
+                    angles,
+                    depth,
+                    backend,
+                    filter=config.filter,
+                    async_transfers=backend == "cupy",
+                )
+                with closing(
+                    _run_plan(plan, read, order, positions, start, geometry.detector_roll)
+                ) as completed:
+                    for slab in completed:
+                        start = slab.stop
+                        yield slab
+                        finished.add(slab.start, slab.stop)
+            except Exception as error:
+                if backend != "cupy" or depth == 1 or not is_oom_error(error):
+                    raise
+                progress.retried("slab depth")
+                depth = max(1, depth // 2)
+            finally:
+                if plan is not None:
+                    plan.synchronize()
+                plan = None
 
 
 def _run_plan[T](

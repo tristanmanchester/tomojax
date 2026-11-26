@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 from tomojax.core.registration import planes
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
@@ -101,30 +102,35 @@ def axial_slabs(
     info = {}
     from ._chunks import partial_sweep
 
-    for start in range(0, grid.nz, depth):
-        progress.check_canceled()
-        stop = min(start + depth, grid.nz)
-        nz = stop - start
-        # Translate detector and volume together: every equal-sized slab has
-        # the same compiled geometry, not one executable per z offset.
-        local_grid = replace(grid, nz=nz, vol_origin=(*origin[:2], -(nz - 1) * grid.vz / 2))
-        local_detector = replace(detector, nv=nz, center=(detector.center[0], 0.0))
-        local_geometry = ParallelGeometry(
-            local_grid, local_detector, cast("ParallelGeometry", geometry).angles
-        )
-        partition = partial_sweep.set(partial_sweep.get() or stop < grid.nz)
-        try:
-            volume, info = solve(
-                local_geometry,
-                data[:, start:stop, :],
-                None if initial is None else initial[start:stop, :, :],
-                None if support is None else support[start:stop, :, :],
+    with checkpoint.slabs(output) as finished:
+        for start in range(0, grid.nz, depth):
+            progress.check_canceled()
+            stop = min(start + depth, grid.nz)
+            if finished.finished(start, stop):
+                continue
+            nz = stop - start
+            # Translate detector and volume together: every equal-sized slab has
+            # the same compiled geometry, not one executable per z offset.
+            local_grid = replace(grid, nz=nz, vol_origin=(*origin[:2], -(nz - 1) * grid.vz / 2))
+            local_detector = replace(detector, nv=nz, center=(detector.center[0], 0.0))
+            local_geometry = ParallelGeometry(
+                local_grid, local_detector, cast("ParallelGeometry", geometry).angles
             )
-        finally:
-            partial_sweep.reset(partition)
-        output[start:stop, :, :] = np.asarray(volume)
-        # Do not retain the previous device slab while allocating the next.
-        del volume
+            partition = partial_sweep.set(partial_sweep.get() or stop < grid.nz)
+            try:
+                with checkpoint.scope(f"z{start}"):
+                    volume, info = solve(
+                        local_geometry,
+                        data[:, start:stop, :],
+                        None if initial is None else initial[start:stop, :, :],
+                        None if support is None else support[start:stop, :, :],
+                    )
+            finally:
+                partial_sweep.reset(partition)
+            output[start:stop, :, :] = np.asarray(volume)
+            # Do not retain the previous device slab while allocating the next.
+            del volume
+            finished.add(start, stop)
     if info.get("effective_iterations") and partial_sweep.get() is None:
         progress.preview(lambda: planes(output, grid), final=True)
     return output, {**info, "host_slabs": True, "slices_per_batch": depth}

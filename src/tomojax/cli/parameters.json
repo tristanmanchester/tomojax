@@ -2767,7 +2767,11 @@
           "nonnegative": "nonnegative",
           "warm_start": "warm_start",
           "seed": "seed",
-          "devices": "devices"
+          "devices": "devices",
+          "checkpoint": {
+            "owner": "python",
+            "description": "Directory of the run's saved state, created if absent; None saves nothing."
+          }
         }
       }
     },
@@ -2939,7 +2943,11 @@
           "corrections": "corrections",
           "config": "config",
           "warm_start": "warm_start",
-          "epsilon": "epsilon"
+          "epsilon": "epsilon",
+          "checkpoint": {
+            "owner": "python",
+            "description": "Directory recording the finished slabs, created if absent; None records nothing."
+          }
         }
       }
     },

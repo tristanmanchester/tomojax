@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import ExitStack
 from contextvars import ContextVar
 from functools import partial
@@ -10,8 +10,10 @@ from time import monotonic
 from typing import TYPE_CHECKING, Protocol
 
 import jax
+import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
 
 type Metrics = Mapping[str, float | int | str | None]
 
@@ -38,6 +40,25 @@ type Drive[S] = Callable[
 partial_sweep = ContextVar[bool | None]("tomojax_partial_sweep", default=None)
 
 
+def restored[S](state: S, arrays: Sequence[np.ndarray]) -> S:
+    """``state`` with the saved values of its leaves, on the same devices and of the same types."""
+    leaves, tree = jax.tree.flatten(state)
+    if len(leaves) != len(arrays):
+        raise ValueError("the checkpoint's solver state does not match this solve")
+    values = []
+    for leaf, value in zip(leaves, arrays, strict=True):
+        dtype = leaf.dtype if hasattr(leaf, "dtype") else np.result_type(leaf)
+        if np.shape(leaf) != value.shape or dtype != value.dtype:
+            raise ValueError("the checkpoint's solver state does not match this solve")
+        if isinstance(leaf, jax.Array):
+            values.append(jax.device_put(np.asarray(value), leaf.sharding))
+        elif isinstance(leaf, np.ndarray):
+            values.append(np.array(value))
+        else:
+            values.append(type(leaf)(value.item()))
+    return jax.tree.unflatten(tree, values)
+
+
 def run_chunks[S](
     state: S,
     end: int,
@@ -46,12 +67,21 @@ def run_chunks[S](
     sample: Callable[[S], dict[str, progress.Sample]],
     *,
     task: IterationProgress | None,
+    saves: checkpoint.Loop | None = None,
 ) -> S:
-    if task is None:
+    """Advance ``state`` to ``end`` in chunks reported to ``task`` and saved by ``saves``.
+
+    Without either, the whole loop is one call of ``advance``. A chunk lasts
+    about a quarter of a second once compiled; its boundaries are where the
+    state is reported and saved.
+    """
+    if task is None and saves is None:
         return advance(state, end)
+    if saves is not None and saves.saved is not None:
+        state = restored(state, saves.saved.arrays)
     _ = jax.block_until_ready(state)
     done, stopped, metrics = completed(state)
-    if done:
+    if done and task is not None:
         task.advance(done, metrics)
         if partial_sweep.get() is None:
             progress.preview(lambda state=state: sample(state), final=stopped or done == end)
@@ -66,10 +96,12 @@ def run_chunks[S](
         elapsed = monotonic() - start
         previous = done
         done, stopped, metrics = completed(state)
-        if not partial_sweep.get():
+        if task is not None and not partial_sweep.get():
             task.advance(done, metrics)
             if partial_sweep.get() is None:
                 progress.preview(lambda state=state: sample(state), final=stopped or done == end)
+        if saves is not None and saves.due():
+            saves.save(jax.tree.leaves(state))
         if compiled:
             length = max(1, round(0.25 * (done - previous) / max(elapsed, 1e-9)))
         compiled = True
@@ -77,7 +109,7 @@ def run_chunks[S](
 
 
 class Chunked[R]:
-    """Fuse all phases when unwatched. Only watched solves materialize chunk state."""
+    """Fuse all phases when unwatched. Watched or checkpointed solves materialize chunk state."""
 
     def __init__(self, program: Callable[..., R], *, static_argnames: tuple[str, ...]) -> None:
         self.program = program
@@ -87,10 +119,10 @@ class Chunked[R]:
 
     def __call__(self, *args: object, **kwargs: object) -> R:
         task = progress.for_unit("iterations")
-        if task is None:
+        if task is None and not checkpoint.active():
             return self.unwatched(*args, **kwargs)
         progress.check_canceled()
-        with ExitStack() as setup:
+        with ExitStack() as setup, checkpoint.loop() as saves:
             _ = setup.enter_context(progress.preparing("initialize solver"))
 
             def drive[S](
@@ -101,7 +133,7 @@ class Chunked[R]:
                 sample: Callable[[S], dict[str, progress.Sample]],
             ) -> S:
                 setup.close()
-                return run_chunks(state, end, advance, completed, sample, task=task)
+                return run_chunks(state, end, advance, completed, sample, task=task, saves=saves)
 
             return self.program(*args, **kwargs, drive=drive)
 

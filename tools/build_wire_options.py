@@ -157,6 +157,9 @@ def description() -> dict[str, Any]:
                 if name == "out" and operation is op.Reconstruct:
                     by_name[name] = {"owner": "worker", **info}
                     continue
+                if name == "checkpoint":  # resuming is for Python and command-line runs
+                    by_name[name] = {"owner": "python", **info}
+                    continue
                 if name not in props:
                     wire_name = {
                         "steps": "corrections",

@@ -6,12 +6,12 @@ import functools
 import importlib.util
 import os
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
 from tomojax import progress
-from tomojax.core import backend_policy
+from tomojax.core import backend_policy, checkpoint
 from tomojax.core.geometry.lamino import LaminographyGeometry
 from tomojax.core.geometry.parallel import ParallelGeometry
 from tomojax.core.geometry.views import host_view_poses
@@ -138,7 +138,8 @@ def solve(
             if initial is None
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
-        result, info = _iterate(cp, ops, data, x, grid, cfg, zero_start=initial is None)
+        with checkpoint.loop() as saves:
+            result, info = _iterate(cp, ops, data, x, grid, cfg, saves, zero_start=initial is None)
         volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
         del ops, data, x, result
     # The solve returns host arrays, so none of its device memory outlives it:
@@ -190,6 +191,35 @@ def _all(cp: CuPyValue, kernel: CuPyValue, *args: object) -> CuPyValue:
     return cp.equal(flag[0], np.int32(1))
 
 
+def _initial(
+    cp: CuPyValue,
+    ops: JosephCUDA,
+    data: CuPyValue,
+    x: CuPyValue,
+    cfg: CGLSConfig,
+    *,
+    zero_start: bool,
+) -> tuple[CuPyValue, CuPyValue, CuPyValue]:
+    """The residual, normal gradient and its squared norm at the starting volume ``x``."""
+    with progress.preparing("initialize cgls"):
+        residual = data.copy() if zero_start else data - ops.forward(x)
+        residual = project_residual(residual, cfg.data_term, xp=cp)
+        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
+        _kernels(cp)["negaxpy"](np.float32(cfg.damping) ** 2, x, gradient)
+        return residual, gradient, _dot(cp, gradient, gradient)
+
+
+class _Scalars(NamedTuple):
+    """What a checkpoint keeps of the loop besides its arrays."""
+
+    initial_norm: float
+    count: int
+    recomputations: int
+    roundoff: bool
+    verified: bool
+    restart: bool
+
+
 def _iterate(
     cp: CuPyValue,
     ops: JosephCUDA,
@@ -197,26 +227,23 @@ def _iterate(
     x: CuPyValue,
     grid: Grid,
     cfg: CGLSConfig,
+    saves: checkpoint.Loop,
     *,
     zero_start: bool,
 ) -> tuple[CuPyValue, dict[str, object]]:
-    with progress.preparing("initialize cgls"):
-        k = _kernels(cp)
-        residual = data.copy() if zero_start else data - ops.forward(x)
-        residual = project_residual(residual, cfg.data_term, xp=cp)
-        damp2 = np.float32(cfg.damping) ** 2
-        gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
-        k["negaxpy"](damp2, x, gradient)
-        gamma = _dot(cp, gradient, gradient)
-        initial_norm = float(cp.sqrt(gamma))
+    k, damp2 = _kernels(cp), np.float32(cfg.damping) ** 2
+    if saves.saved is None:
+        residual, gradient, gamma = _initial(cp, ops, data, x, cfg, zero_start=zero_start)
+        direction, previous_gamma = cp.empty_like(gradient), gamma
+        scalars = _Scalars(float(cp.sqrt(gamma)), 0, 0, False, True, True)
+    else:
+        arrays, scalars = saves.saved.arrays, saves.saved.scalars(_Scalars)
+        cp.copyto(x, cp.asarray(arrays[0]))
+        direction, gradient, residual, gamma, previous_gamma = map(cp.asarray, arrays[1:])
+    initial_norm, count, recomputations, roundoff, verified, restart = scalars
     tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
-    count, recomputations = 0, 0
     failed = not np.isfinite(initial_norm)
-    roundoff, verified = False, True
-    norm2 = float(gamma)
-    eps = np.finfo(np.float32).eps
-    direction = cp.empty_like(gradient)
-    restart, previous_gamma = True, gamma
+    norm2, eps = float(gamma), np.finfo(np.float32).eps
     while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
         progress.check_canceled()
         if restart:
@@ -264,6 +291,10 @@ def _iterate(
             # The stopping statistics above already wait for the updated iterate.
             task.advance(count, {Metric.normal_residual_norm.name: float(np.sqrt(norm2))})
             progress.preview(lambda: planes(x, grid, reversed_axes=True))
+        if not failed and saves.due():
+            flags = bool(roundoff), bool(verified), bool(restart)
+            state = _Scalars(initial_norm, count, recomputations, *flags)
+            saves.save((x, direction, gradient, residual, gamma, previous_gamma), state)
     converged = bool(not failed and norm2 <= tolerance**2)
     info = {
         "effective_iterations": count,

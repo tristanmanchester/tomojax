@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from tomojax import progress
+from tomojax.core import checkpoint
+from tomojax.core.checkpoint import Completed
 from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import Batch, ConeProblem, algebraic_sweep, cone_problem, host_projections
@@ -48,14 +50,22 @@ def solve(
         **algebraic_sweep(cfg, data.shape[0], host_output=out is not None),
     )  # fmt: skip
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
-    with problem.using(out, solver.volume, solver.point):
-        for step, momentum in enumerate(_momenta(cfg), 1):
+    volumes = (solver.volume, solver.point) if cfg.acceleration else (solver.volume,)
+    with problem.using(out, solver.volume, solver.point), checkpoint.loop() as saves:
+        first = 0
+        if saves.saved is not None:
+            for volume, values in zip(volumes, saves.saved.arrays, strict=True):
+                volume.restore(values)
+            solver.zero, (first,) = False, saves.saved.scalars(Completed)
+        for step, momentum in enumerate(_momenta(cfg)[first:], first + 1):
             progress.check_canceled()
             solver.momentum = momentum
             for subset in range(cfg.subsets):
                 solver.update(np.arange(subset, data.shape[0], cfg.subsets))
             if (task := progress.for_unit("iterations")) is not None:
                 problem.completed(task.advance, step, {})
+            if saves.due():
+                saves.save([volume.contents() for volume in volumes], Completed(step))
     return problem.result(solver.x), {
         "effective_iterations": cfg.iterations,
         "subset_updates": cfg.iterations * cfg.subsets,

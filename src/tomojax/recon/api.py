@@ -472,15 +472,22 @@ def _coupled_detector_volume[T](
     """An oblique ramp uses the 2D spectrum; Joseph updates couple neighboring voxel planes."""
     import numpy as np
 
+    from tomojax.core import checkpoint
+
     from .types import ReconstructionSlab
 
-    data, context = read(0, detector.nv)
-    volume, info = reconstruct_arrays(
-        config.method, geometry, grid, detector, data, config=config, warm_start=warm_start
-    )
-    yield ReconstructionSlab(
-        0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
-    )
+    with checkpoint.slabs() as finished:
+        if finished.prefix == grid.nz:
+            return
+        data, context = read(0, detector.nv)
+        with checkpoint.scope("z0"):
+            volume, info = reconstruct_arrays(
+                config.method, geometry, grid, detector, data, config=config, warm_start=warm_start
+            )
+        yield ReconstructionSlab(
+            0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
+        )
+        finished.add(0, grid.nz)
 
 
 def reconstruct_arrays(

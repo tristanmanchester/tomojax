@@ -308,6 +308,22 @@ class HostVolume:
             write.result()
         return planes(self.array, grid)
 
+    def contents(self) -> object:
+        """The whole volume once every queued write has landed."""
+        for write in self._writes:
+            write.result()
+        return self.array
+
+    def restore(self, values: np.ndarray) -> None:
+        """Replace the whole volume with host ``values``, before any slab is read."""
+        for z0 in range(0, self.array.shape[0], self.depth):
+            z1 = min(z0 + self.depth, self.array.shape[0])
+            if isinstance(self.array, np.ndarray):
+                self.array[z0:z1, :, :] = values[z0:z1]
+                release_planes(self.array, z0, z1)
+            else:
+                self.array[z0:z1, :, :] = self.engine.upload(np.ascontiguousarray(values[z0:z1]))
+
     def close(self) -> None:
         """Wait for every write behind and stop the worker; a failed write raises here."""
         try:
