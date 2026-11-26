@@ -22,6 +22,16 @@
   On an 8,000-view 2160 × 2560 Diamond K11 scan (93 GB uncompressed, one V100S on GPFS),
   file-to-volume Fourier reconstruction runs in 83.3 s cold (39.5 s warm, 26 GiB peak host
   RAM) and `Frames.corrected()` in 141.3 s (down from 434 s).
+- Axial CUDA FBP packs four contiguous aligned detector rows per vectorized load, with
+  bit-identical outputs. On Diamond K11-52544 (8,000 views of 2560 columns), warm one-GPU
+  `fbp_host` on 64 rows runs 1.47× faster on a V100S and 1.56× faster on a Blackwell GPU,
+  and raw-frame `tj.reconstruct_slabs` on 32 rows runs 1.82× and 3.45× faster.
+- Single-GPU native CUDA CGLS and host-slab CUDA CGLS and FISTA use the separable axial
+  Joseph projector pair on axial parallel scans (keeping the matched 3-D pair for tilted
+  or nonseparable geometries), with byte-identical results. On Diamond K11-52567 on one
+  V100S, warm per-iteration time drops from 2.66 s to 0.58 s on 16 rows × 1,000 views
+  (4.6×) and from 20.03 s to 4.90 s on 64 rows × 2,000 views (4.1×); host-slab CGLS and
+  FISTA run about 2× faster per iteration.
 - `tj.load_frames` reads NeXus scan files by their structure: the frames of the default
   plot, the `image_key` of the detector holding them, and the rotation as the plotted
   coordinate with angular units, its own or those recorded for its positioner. Diamond

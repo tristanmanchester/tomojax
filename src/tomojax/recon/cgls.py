@@ -187,8 +187,11 @@ def cgls(
     Inputs and the solve use FP32. Host arrays on CUDA can use the native
     linear Joseph kernels and return a NumPy volume, avoiding JAX startup and
     tracing; device arrays, streaming, and other models use the compiled JAX
-    solver. Both paths use the same stationarity and roundoff checks. This
-    public solver returns host diagnostics and is not differentiable.
+    solver. On axial parallel scans, single-GPU native CUDA solves and host-slab
+    solves use the separable axial CUDA Joseph projector pair; tilted and
+    nonseparable geometries use the matched 3-D pair. Both paths use the same
+    stationarity and roundoff checks. This public solver returns host diagnostics
+    and is not differentiable.
 
     Cone-beam volumes, and CUDA linear Joseph parallel/laminography volumes,
     whose working set exceeds the device (or given ``out``) use host z slabs.

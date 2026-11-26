@@ -650,6 +650,9 @@ def fista(
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
+    Host-slab CUDA Joseph solves use the separable axial projector pair on axial
+    parallel scans and the matched 3-D pair on tilted or nonseparable geometries.
+
     Parameters
     ----------
     geometry : Geometry

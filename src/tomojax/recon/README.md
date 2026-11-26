@@ -83,7 +83,9 @@ small stacks stay in one batch. This estimate is not a hard process-memory cap:
 input projections, output/accumulator volumes, compiler workspaces and runtime
 caches remain additional costs. The final partial batch counts each view once.
 Given a NumPy array or memmap, `fbp` streams view batches from host memory, so
-only the volume and one batch occupy the device.
+only the volume and one batch occupy the device. On axial parallel scans with
+aligned rows, the CUDA FBP gather packs four contiguous detector rows per
+vectorized load with identical output.
 
 `tj.reconstruct` switches `fbp` to `fbp_host`, and FDK to `fdk_host`, when the
 volume would take more than 40% of the free device memory on the first device;
@@ -319,10 +321,15 @@ starts from FBP/FDK clipped to nonnegative values, retaining its zero set.
 
 ### Parallel and laminographic CGLS beyond device memory
 
+Native single-GPU CUDA CGLS and host-slab CUDA linear Joseph solves (CGLS and
+FISTA) use the separable axial CUDA Joseph projector pair on axial parallel
+scans (with four-row aligned forward loads when voxel planes align with detector
+rows), and the matched 3-D pair on tilted or nonseparable geometries.
+
 CUDA linear Joseph CGLS streams z slabs automatically when its working volumes
 do not fit on the GPU. Slab forward projections are summed before the residual,
 and each slab uses the matched transpose; tilted scans are not reconstructed
-as independent slices. Small resident solves keep their existing execution path.
+as independent slices.
 
 If the four host volumes exceed half of available host memory, the result and
 work volumes use automatically removed temporary files. Set the standard

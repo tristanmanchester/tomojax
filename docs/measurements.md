@@ -385,6 +385,44 @@ Measured 2026-10-08 (`a3a925b`) on four H100 80 GB GPUs on Modal: 20 nonnegative
 
 Volume-sized solver updates stay constant per GPU and a 0.5 GB volume reduction crosses NVLink once per iteration.
 
+## Large axial synchrotron scans (V100S and Blackwell)
+
+Measured 2026-11-26 on Diamond K11 parallel-beam scans (2160 × 2560 `uint16` detector, 8,000 views over 180°, 93 GB uncompressed one-frame HDF5 chunks on GPFS) on Tesla V100S 32 GB and RTX PRO 6000 Blackwell 96 GB GPUs.
+
+### Raw HDF5 loading and full-volume slab reconstruction
+
+Measured on commit `1db61b18` on K11-52544 (reconstructing a 2160 × 2560 × 2560, 56.6 GB `float32` volume into host memory on one V100S with 40 CPUs):
+
+| Workflow | Time | Peak host RAM | Verification |
+| --- | --- | ---: | --- |
+| `tj.reconstruct_slabs(frames, "fourier")` (cold process and file) | 83.3 s | 26 GiB | Middle slice identical to reference |
+| `tj.reconstruct_slabs(frames, "fourier")` (second run, cached file) | 39.5 s | 26 GiB | Middle slice identical to reference |
+| `tj.reconstruct_slabs(frames, "fourier")` (cold file, warm process) | 60.5 s | 26 GiB | Middle slice identical to reference |
+| `tj.reconstruct_slabs(frames, "fbp")` (file to volume) | 356.7 s | 26 GiB | Identical to reference |
+| `Frames.corrected()` (8,000 views to host stack) | 141.3 s | — | Bit-identical to reference |
+
+### Packed-row axial CUDA FBP
+
+Measured on commit `bc0d2127` on K11-52544 (8,000 views of 2560 columns, warm one-GPU wall time):
+
+| Case | V100S | Blackwell | Equivalence |
+| --- | --- | --- | --- |
+| 64 corrected rows, `fbp_host` | 8.07 s | 2.02 s | Bit-identical to scalar gather |
+| 32 raw rows in RAM, `tj.reconstruct_slabs` (includes correction, 2 repeats) | 5.02–5.21 s | 0.82–0.84 s | Bit-identical to scalar gather |
+
+In `tools/check_numerical_equivalence.py` on Shepp–Logan FBP (5 repeats), packed-row gathers agree at 0/0 median/max ULP (truth NRMSE 0.1105, relative residual 0.01089).
+
+### Single-GPU, host-slab, and multi-GPU axial CGLS and FISTA-TV
+
+Measured on commit `1db61b18` on central rows of K11-52567 (2560 columns, warm runs on Tesla V100S with 10 CPUs per GPU):
+
+| Case | 1 GPU | 2 GPUs | 4 GPUs | Equivalence |
+| --- | ---: | ---: | ---: | --- |
+| 64 rows × 2,000 views, CGLS, 50 warm iterations | 254 s | 141 s (1.8×) | 90 s (2.8×) | Byte-identical per device count |
+| 64 rows × 2,000 views, nonnegative FISTA-TV, 50 warm iterations | 284 s | 171 s (1.7×) | 115 s (2.5×) | Byte-identical per device count |
+
+Warm time per additional iteration on one V100S with the separable axial CUDA Joseph pair: 0.58 s for 16 rows × 1,000 views resident CGLS (0.35 s forward, 0.22 s transpose), 4.90 s for 64 rows × 2,000 views resident CGLS, and on explicit host slabs (`out=`) for 16 rows × 1,000 views, 2.11 s for CGLS and 1.80 s for FISTA. In `tools/check_numerical_equivalence.py` (5 repeats), both parallel Shepp–Logan (NRMSE 0.03761, residual 0.0005108) and laminography (NRMSE 0.3328, residual 0.003923) pass at 0/0 median/max ULP.
+
 ## Calibrated detector count noise
 
 `tomojax.datasets.DetectorModel` fits photon gain and read noise from repeated flats and darks (`b608d187`, `0199b919`). Calibrating on the first half of flats and evaluating adjacent-frame log differences on the second half (16 rows, 100 exposures):
