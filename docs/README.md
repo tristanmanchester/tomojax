@@ -56,6 +56,7 @@ Import through public package roots or their `.api` facades; modules starting wi
 - [Corrections](../src/tomojax/corrections/README.md): flat/dark, phase retrieval, ring/stripe removal, and beam hardening.
 - [IO](../src/tomojax/io/README.md): dataset formats, metadata readers, and TIFF angle files.
 - [Alignment](../src/tomojax/alignment/README.md): joint alignment solver and convergence criteria.
+- [Architecture map](architecture-map.md): subsystem ownership, shared vocabulary, and sources of truth.
 - [Benchmarks](../bench/README.md): rerunning comparisons with ASTRA and TIGRE.
 - [Contributing](../CONTRIBUTING.md): development setup, checks, and release process.
 - [Changelog](../CHANGELOG.md): behavioral changes and migration notes.
