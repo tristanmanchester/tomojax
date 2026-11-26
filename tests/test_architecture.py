@@ -1,8 +1,8 @@
 """Hold the code to its recorded shape: public API, CLI vocabulary and debt ratchets.
 
-When a test here fails after an intended change, run
-``python tools/guardrails.py --write`` and commit the updated records with the
-change, so the review shows what moved.
+Package line counts appear in the guardrails report. After an intended API
+change or debt reduction, run ``python tools/guardrails.py --write`` and commit
+the updated records with the change.
 """
 
 from __future__ import annotations
@@ -86,6 +86,30 @@ def test_code_health_ratchets_only_tighten() -> None:
     problems: list[str] = []
     _compare("ratchets", recorded, guardrails.ratchets(), problems)
     assert not problems, "\n".join(problems)
+
+
+def test_package_line_growth_passes_but_new_debt_fails(tmp_path, monkeypatch):
+    guardrails = _guardrails()
+    src = tmp_path / "src" / "tomojax"
+    src.mkdir(parents=True)
+    monkeypatch.setattr(guardrails, "ROOT", tmp_path)
+    monkeypatch.setattr(guardrails, "SRC", src)
+    monkeypatch.setattr(guardrails, "STUDIO_SRC", tmp_path / "studio" / "src")
+    monkeypatch.setattr(guardrails, "_pyright_warnings", dict)
+    module = src / "example.py"
+    module.write_text("pi = 3.14\n", encoding="utf-8")
+    recorded = guardrails.ratchets()
+    assert guardrails._code_lines() == {"(modules)": 1}
+
+    module.write_text("pi = 3.14\ntau = 2 * pi\n", encoding="utf-8")
+    assert guardrails._code_lines() == {"(modules)": 2}
+    problems = []
+    _compare("ratchets", recorded, guardrails.ratchets(), problems)
+    assert problems == []
+
+    module.write_text("from typing import Any\n\npi: Any = 3.14\n", encoding="utf-8")
+    _compare("ratchets", recorded, guardrails.ratchets(), problems)
+    assert problems == ["ratchets.explicit_any rose from 0 to 1: bring it back down"]
 
 
 def test_no_subpackage_shares_a_root_name() -> None:
@@ -305,3 +329,98 @@ def a():
 """
     debt = _guardrails()._helper_debt([source])
     assert debt == {"tiny": 3, "forwarders": 2, "chained": 1}
+
+
+def test_python_debt_counts_ast_references_and_handlers():
+    source = """
+from typing import Any, cast
+from typing import Any as Opaque, cast as unchecked
+import typing as t
+import typing
+
+# Any, cast(float, value), except Exception:
+prose = "typing.Any, cast(float, value), except Exception:"
+def f(value: Any, other: list[typing.Any], quoted: "Any") -> t.Any:
+    try:
+        return cast(float, value), typing.cast(str, other), unchecked(Opaque, other)
+    except ValueError:
+        return utils.cast(value)
+    except (KeyError, Exception):
+        raise
+
+try:
+    f(None, [], None)
+except Exception as error:
+    raise
+except:
+    raise
+"""
+    debt = _guardrails()._python_debt([source, "from typing import Any, cast\n"])
+    assert debt == {"explicit_any": 4, "type_casts": 3, "broad_except": 3}
+
+
+def test_studio_debt_ignores_prose_and_excludes_test_items(tmp_path, monkeypatch):
+    guardrails = _guardrails()
+    studio = tmp_path / "studio" / "src"
+    studio.mkdir(parents=True)
+    monkeypatch.setattr(guardrails, "ROOT", tmp_path)
+    monkeypatch.setattr(guardrails, "STUDIO_SRC", studio)
+    source = r"""
+#![allow(dead_code)]
+// .unwrap() .expect("no") #[allow(dead_code)] #[cfg(test)]
+fn production() {
+    let _ = "escaped \" // .unwrap() #[allow(dead_code)]";
+    let _ = br##" .expect("} #") #[allow(dead_code)] "##;
+    /* .unwrap() /* nested */ .expect("no") */
+    Some(1).unwrap /* comment */ ();
+    Some(2)
+        .expect("must exist");
+    #[cfg(test)]
+    let _ = { Some(3).unwrap() };
+}
+#[cfg(test)]
+mod tests;
+#[allow(dead_code)]
+#[cfg (
+    test
+)]
+mod inline {
+    fn long_test() {
+        Some(4).unwrap();
+"""
+    body = '        Some(0).expect("test");\n' * 801
+    (studio / "main.rs").write_text(source + body + "    }\n}\n", encoding="utf-8")
+    for name in ("tests.rs", "jobs_tests.rs"):
+        (studio / name).write_text(
+            "#[allow(dead_code)]\nfn long_test() {\n" + body + "}\n", encoding="utf-8"
+        )
+    assert guardrails._studio_debt() == {
+        "studio_unwraps": 2,
+        "studio_allows": 4,
+        "studio_long_files": {},
+        "studio_long_functions": {},
+    }
+
+
+def test_studio_long_functions_track_braces_and_thresholds(tmp_path, monkeypatch):
+    guardrails = _guardrails()
+    monkeypatch.setattr(guardrails, "ROOT", tmp_path)
+    monkeypatch.setattr(guardrails, "STUDIO_SRC", tmp_path)
+    head = r"""fn render<'a>(text: &'a str) -> Fixed<{ 1 }> {
+    let _ = r##" } "#
+        fn fake() { .unwrap() }
+    "##;
+    let _ = '}';
+    /* } /* { */ } */
+    // }
+    if true { nested(); }
+"""
+    boundary = "fn short() {\n" + "    nested();\n" * 98 + "}\n"
+    test_item = "    #[cfg(test)]\n    { nested(); }\n"
+    source = head + test_item + "    nested();\n" * 92 + "}\n" + boundary
+    source += "// filler\n" * 600
+    (tmp_path / "large.rs").write_text(source, encoding="utf-8")
+    (tmp_path / "boundary.rs").write_text("// filler\n" * 800, encoding="utf-8")
+    debt = guardrails._studio_debt()
+    assert debt["studio_long_files"] == {"large.rs": 801}
+    assert debt["studio_long_functions"] == {"large.rs::render": 101}
