@@ -395,11 +395,11 @@ Measured on commit `1db61b18` on K11-52544 (reconstructing a 2160 × 2560 × 256
 
 | Workflow | Time | Peak host RAM | Verification |
 | --- | --- | ---: | --- |
-| `tj.reconstruct_slabs(frames, "fourier")` (cold process and file) | 83.3 s | 26 GiB | Middle slice identical to reference |
-| `tj.reconstruct_slabs(frames, "fourier")` (second run, cached file) | 39.5 s | 26 GiB | Middle slice identical to reference |
-| `tj.reconstruct_slabs(frames, "fourier")` (cold file, warm process) | 60.5 s | 26 GiB | Middle slice identical to reference |
-| `tj.reconstruct_slabs(frames, "fbp")` (file to volume) | 356.7 s | 26 GiB | Identical to reference |
-| `Frames.corrected()` (8,000 views to host stack) | 141.3 s | — | Bit-identical to reference |
+| `tj.reconstruct_slabs(frames, "fourier")` (cold process and file) | 83.3 s | 18 GiB | Middle slice identical to reference |
+| `tj.reconstruct_slabs(frames, "fourier")` (second run, cached file) | 39.5 s | 24 GiB | Middle slice identical to reference |
+| `tj.reconstruct_slabs(frames, "fourier")` (a second scan of the same size, warm process) | 60.5 s | 24 GiB | — |
+| `tj.reconstruct_slabs(frames, "fbp")` (file to volume) | 356.7 s | 26 GiB | — |
+| `Frames.corrected()` (8,000 views to host stack) | 141.3 s | 168 GiB | — |
 
 ### Packed-row axial CUDA FBP
 
@@ -414,12 +414,12 @@ In `tools/check_numerical_equivalence.py` on Shepp–Logan FBP (5 repeats), pack
 
 ### Single-GPU, host-slab, and multi-GPU axial CGLS and FISTA-TV
 
-Measured on commit `1db61b18` on central rows of K11-52567 (2560 columns, warm runs on Tesla V100S with 10 CPUs per GPU):
+Measured on commit `1db61b18` on central rows of K11-52567 (2560 columns, warm runs on one node with four Tesla V100S and 40 CPUs):
 
 | Case | 1 GPU | 2 GPUs | 4 GPUs | Equivalence |
 | --- | ---: | ---: | ---: | --- |
-| 64 rows × 2,000 views, CGLS, 50 warm iterations | 254 s | 141 s (1.8×) | 90 s (2.8×) | Byte-identical per device count |
-| 64 rows × 2,000 views, nonnegative FISTA-TV, 50 warm iterations | 284 s | 171 s (1.7×) | 115 s (2.5×) | Byte-identical per device count |
+| 64 rows × 2,000 views, CGLS, 50 warm iterations | 254 s | 141 s (1.8×) | 90 s (2.8×) | Five-iteration volumes byte-identical to the previous kernels at each device count |
+| 64 rows × 2,000 views, nonnegative FISTA-TV, 50 warm iterations | 284 s | 171 s (1.7×) | 115 s (2.5×) | — |
 
 Warm time per additional iteration on one V100S with the separable axial CUDA Joseph pair: 0.58 s for 16 rows × 1,000 views resident CGLS (0.35 s forward, 0.22 s transpose), 4.90 s for 64 rows × 2,000 views resident CGLS, and on explicit host slabs (`out=`) for 16 rows × 1,000 views, 2.11 s for CGLS and 1.80 s for FISTA. In `tools/check_numerical_equivalence.py` (5 repeats), both parallel Shepp–Logan (NRMSE 0.03761, residual 0.0005108) and laminography (NRMSE 0.3328, residual 0.003923) pass at 0/0 median/max ULP.
 

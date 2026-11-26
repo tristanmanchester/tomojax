@@ -24,7 +24,7 @@ uv pip install --python .venv/bin/python "tomojax[cuda12]"
 JAX_PLATFORMS=cuda .venv/bin/python -c "import jax; print(jax.devices()); assert jax.default_backend() == 'gpu'"
 ```
 
-Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialize. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver. TomoJAX's CUDA kernels (including cone beam and alignment) compile and run on Volta and newer NVIDIA GPUs (compute capability 7.0 and later, such as V100, T4, and RTX 20xx through Blackwell) with the stock `cuda12` wheels. Alignment does not require cuDNN convolutions.
+Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initialize. The `cuda12` extra installs JAX's CUDA runtime, CuPy, and NVIDIA's runtime and NVRTC wheels for compiling TomoJAX's CUDA C kernels on first use (compiled kernels are cached on disk). These wheels do not replace the system NVIDIA driver. TomoJAX's CUDA kernels, cone beam and alignment included, run on Volta and newer NVIDIA GPUs (compute capability 7.0 and later) with the stock `cuda12` wheels.
 
 ## Optional extras and Studio
 

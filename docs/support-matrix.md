@@ -67,6 +67,6 @@ Tested against real acquisitions from ESRF NXtomo (`nxtomomill`), APS TomoBank (
 | Iterative solvers (`cgls`, `cgls_multires`, `fista`, `spdhg`, `sirt`, `mlem`) | Exact matched JAX/CUDA projectors; automatic projection streaming and host-slab volume fallback (except SPDHG, which needs 5 volumes in VRAM); TV/Huber-TV, box bounds, support masks, `data_term="per_view_contrast"`, ordered subsets |
 | Joint alignment (`tj.align`) | Single Gauss-Newton/Schur solver for `center`, `translations`, `tilt`, `roll`, `rotations` across all geometries; `method="opposite-views"` projection-only center estimate for axial parallel scans |
 | PyTorch bridge (`tomojax.torch.Projector`) | Zero-copy DLPack wrapper around CUDA forward and exact-transpose projectors with autograd |
-| Hardware tested | Linux x86_64 CPU; CUDA 12 on Tesla V100S (Volta, 32 GB), RTX 4070 Laptop GPU (Ada, 8 GB), 4× H100 (80 GB), and RTX PRO 6000 Blackwell (96 GB); CUDA kernels target Volta (compute capability 7.0) and newer GPUs |
+| Hardware tested | Linux x86_64 CPU; CUDA 12 on Tesla V100S (Volta, 32 GB), RTX 4070 Laptop GPU (Ada, 8 GB) and 4× H100 (80 GB); CUDA kernels target Volta (compute capability 7.0) and newer GPUs |
 
 Volumes use `(z, y, x)` and projections use `(view, v, u)`, with voxel and detector spacings sharing one physical length unit. Forward projection integrates over physical ray length. FBP returns attenuation in inverse length units (normalized differently from the Euclidean transpose used by iterative solvers).
