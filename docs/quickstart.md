@@ -164,7 +164,7 @@ recon = tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv",
 Direct keywords (such as `iterations=100`) override fields of the same name in `config`.
 
 - **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
-- **FISTA TV weight:** `tv_weight=None` estimates detector noise and interpolation uncertainty, backprojects their scale, and accounts for the TV cost of an isolated voxel. Pass a positive number to fix it, or `0` to disable TV.
+- **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, and `early_stop` (`False` means the solver reached the iteration cap). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
 
 ### Export slices
 

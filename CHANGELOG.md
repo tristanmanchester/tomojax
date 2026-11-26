@@ -8,9 +8,14 @@
   detector-interpolation response and radial replicas inside the Cartesian
   frequency grid, giving resolution and noise close to FBP at Fourier's speed;
   omitting `filter` keeps the sharper, noisier native response.
-- FISTA calibrates automatic TV from detector noise and subpixel curvature and
-  stops at the estimated noise level of the proximal gradient mapping. The
-  default iteration cap is 200.
+- FISTA calibrates automatic TV (`tv_weight=None`) from Haar-MAD detector noise
+  and the RMS linear interpolation error implied by detector curvature (both cell
+  mean and within-cell variation), propagated through the matched backprojector,
+  and stops when the largest proximal gradient component falls below the estimated
+  noise-score SD (`noise_score_rms`). The default iteration cap is 200 (was 50).
+  `info` reports `resolved_tv_weight`, `effective_tv_weight`, `noise_score_rms`,
+  `effective_iterations`, and `early_stop`. Explicit `tv_weight` values keep
+  their physical-TV normalization and run to the iteration cap.
 - Cone-beam CUDA kernels reduce tile maxima with warp shuffles instead of
   `__reduce_max_sync`, so they compile and run on Volta and Turing GPUs (V100, T4,
   RTX 20xx) as well as Ampere and newer cards.

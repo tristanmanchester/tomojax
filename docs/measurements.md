@@ -115,11 +115,20 @@ Measured 2026-11-15 (`03a44438`) on two simulated laminography scans with indepe
 | Method | Rock (measured / missing cone) | Watch (measured / missing cone) |
 | --- | ---: | ---: |
 | FBP (default) | 0.165 / 0.316 | 0.163 / 0.396 |
-| `fista`, 50 iterations (default) | 0.0835 / 0.212 | 0.0918 / 0.215 |
-| `fista`, 100 iterations | 0.0788 / 0.185 | 0.0790 / 0.208 |
-| `fista`, 1000 iterations | 0.0792 / 0.186 | 0.0788 / 0.208 |
+| `fista`, 50 iterations (`tv_weight=5e-5`, `03a44438`) | 0.0835 / 0.212 | 0.0918 / 0.215 |
+| `fista`, 100 iterations (`tv_weight=5e-5`, `03a44438`) | 0.0788 / 0.185 | 0.0790 / 0.208 |
+| `fista`, 1000 iterations (`tv_weight=5e-5`, `03a44438`) | 0.0792 / 0.186 | 0.0788 / 0.208 |
+| `fista`, automatic (`04e69508`, 2026-11-26) | 0.0741 / 0.182 | 0.0969 / 0.215 |
 
-Nonnegative FISTA-TV with its automatic TV weight halves measured-band error and fills part of the missing cone; 50 iterations stops 5–16% short of convergence on these scans, while 100 iterations reaches the converged floor. On real Diamond K11 scan 54013 (1441 views, 704 × 704 × 234 grid), FBP takes 5.5 s and 50-iteration FISTA-TV takes 233 s ([iterative solvers on real scans](#iterative-solvers-on-real-scans)).
+Nonnegative FISTA-TV cuts measured-band error roughly in half and fills part of the missing cone. With automatic calibration (`04e69508`), rock selected `resolved_tv_weight=3.75e-5` and stopped at 198 updates (full NRMSE 0.1966), while watch selected `1.2e-5` and reached the 200-update cap (NRMSE 0.2357). On real Diamond K11 scan 54013 (1441 views, 704 × 704 × 234 grid), FBP takes 5.5 s and 50-iteration FISTA-TV takes 233 s ([iterative solvers on real scans](#iterative-solvers-on-real-scans)).
+
+### Automatic FISTA-TV calibration
+
+Measured 2026-11-26 on commit `04e69508` with default `tv_weight=None` and `tolerance=None` (200-update cap):
+
+- **Independent four-disk sinograms** (4 disks of radii 8, 3.5, 1.5, and 1.5 voxels; 32-subpixel analytic chords vs 32 × 32 voxel reference, 3 slices): across 24 and 96 views and measurement SDs of 0, 0.015, and 0.08, automatic FISTA stopped in 29–78 updates with NRMSE 0.0349 / 0.0436 / 0.1132 (24 views) and 0.0345 / 0.0290 / 0.0663 (96 views). Forcing all 200 updates changed NRMSE by at most 0.0022.
+- **2DeteCT slice 00001** (low-dose mode 1 vs published high-dose mode 2 reference downsampled to 128 × 128, nonnegative FISTA, no intensity rescaling): at 180 views, NRMSE was 0.1493 and relative gradient error 0.524 (`resolved_tv_weight=0.00221`, stopped at 92 updates); at 360 views, NRMSE was 0.1318 and gradient error 0.464 (`0.00160`, stopped at 105 updates), with grain-interior high-pass contrast transfer of 0.90 and 0.94 (slight smoothing of small pores).
+- **Diamond K11-52567 cathode** (16-row band at 0.54 µm pitch, 500 and 2,000 views): with `Rings()`, automatic FISTA selected `6.08e-6` (500 views) and `3.06e-6` (2,000 views), reaching the 200-update cap in both cases. Without `Rings()`, narrow radial RMS near the axis reached 16.8 (500 views) and 37.1 × 10⁻⁶ µm⁻¹ (2,000 views); `Rings()` cut radial RMS at 2,000 views by 78% (to 8.0 × 10⁻⁶ µm⁻¹) while changing the selected weight by less than 1%.
 
 ## TV-regularized reconstruction against TIGRE
 
@@ -352,7 +361,7 @@ Keeping SPDHG-TV's five state volumes in place in z-contiguous layout (`19431f9`
 
 ### Iterative solvers on real scans
 
-Default `tj.reconstruct(scan, method)` (50 iterations, fresh process per call, `92bd2e8`, 2026-11-21) on the 8 GB RTX 4070 Laptop GPU:
+`tj.reconstruct(scan, method)` at 50 iterations (fresh process per call, `92bd2e8`, 2026-11-21) on the 8 GB RTX 4070 Laptop GPU:
 
 | Scan | CGLS (time / peak VRAM) | SIRT (time / peak VRAM) | MLEM (time / peak VRAM) | FISTA-TV (time / peak VRAM) |
 | --- | ---: | ---: | ---: | ---: |

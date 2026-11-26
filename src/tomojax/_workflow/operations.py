@@ -513,9 +513,14 @@ def reconstruct(
         Least squares by conjugate gradients, ``iterations`` (default 50).
     ``fista``
         Least squares with physical total variation, ``iterations`` (default
-        200), optionally ``nonnegative``. Default ``tv_weight=None`` calibrates TV
-        and stopping from detector noise and interpolation uncertainty. An
-        explicit positive weight bypasses estimation; zero disables TV.
+        200), optionally ``nonnegative``. Default ``tv_weight=None`` calibrates
+        TV from detector noise and linear interpolation error propagated through
+        the backprojector, and stops when the proximal gradient mapping falls
+        below the estimated noise level or reaches ``iterations``. ``info``
+        reports ``resolved_tv_weight``, ``effective_tv_weight``,
+        ``noise_score_rms``, ``effective_iterations``, and ``early_stop``. An
+        explicit positive ``tv_weight`` bypasses calibration and runs to
+        ``iterations``; zero disables TV.
     ``sirt``
         SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.
     ``spdhg``
@@ -578,7 +583,8 @@ def reconstruct(
     iterations : int or None, optional
         Iteration count; None uses the method default or configuration.
     tv_weight : float or None, optional
-        Total-variation weight for fista/spdhg; None uses the configuration.
+        Dimensionless total-variation weight for fista or spdhg. None uses the
+        configuration (automatic calibration by default); zero disables TV.
     nonnegative : bool or None, optional
         Nonnegative constraint where supported; None uses the configuration.
     warm_start : bool or None, optional

@@ -1608,7 +1608,7 @@
             }
           ],
           "default": null,
-          "description": "Dimensionless physical-TV weight. Zero disables TV. The default estimates detector noise from Haar differences and subpixel interpolation uncertainty from second differences. A centered Gaussian backprojection estimates their RMS contribution to the data gradient. The TV cost of an isolated voxel on a flat interior balances an upper bound on the expected largest absolute noise score. This calibration assumes approximately uniform coverage and independent errors. Rings and other coherent errors can survive. Huber-TV uses the same strength on its linear branch. Passing a number fixes the weight."
+          "description": "Dimensionless physical-TV weight. None (default) estimates detector noise from Haar differences and RMS linear interpolation error from detector second differences (including both the cell mean and within-cell variation). A centered Gaussian backprojection propagates that scale into the data gradient, and the TV cost of an isolated voxel on a flat interior balances the upper bound on the expected largest absolute noise score. This calibration assumes approximately uniform coverage and independent errors; rings and other coherent errors can survive. Huber-TV uses the same strength on its linear branch. Pass a positive number to fix the weight, or 0 to disable TV."
         },
         "regularizer": {
           "enum": [
@@ -1666,7 +1666,7 @@
             }
           ],
           "default": null,
-          "description": "With automatic weight, None stops when the largest proximal gradient mapping component falls below one estimated noise-score SD. With an explicit weight, None runs to the iteration cap. A positive tolerance and patience select relative objective-change stopping. Zero runs to the cap."
+          "description": "With automatic weight (tv_weight=None), None (default) stops when the largest absolute component of the proximal gradient mapping falls below one estimated noise-score SD (noise_score_rms), up to iterations updates. With an explicit weight, None runs to iterations. A positive tolerance with positive patience selects relative objective-change stopping. Zero runs to iterations."
         },
         "patience": {
           "type": "integer",
@@ -2725,7 +2725,7 @@
             }
           ],
           "default": null,
-          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+          "description": "Dimensionless total-variation weight for fista or spdhg. None uses the configuration (automatic calibration by default); zero disables TV."
         },
         "nonnegative": {
           "anyOf": [
@@ -4742,7 +4742,7 @@
             }
           ],
           "default": null,
-          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+          "description": "Dimensionless total-variation weight for fista or spdhg. None uses the configuration (automatic calibration by default); zero disables TV."
         },
         "nonnegative": {
           "anyOf": [
@@ -4995,7 +4995,7 @@
             }
           ],
           "default": null,
-          "description": "Total-variation weight for fista/spdhg; None uses the configuration."
+          "description": "Dimensionless total-variation weight for fista or spdhg. None uses the configuration (automatic calibration by default); zero disables TV."
         },
         "nonnegative": {
           "anyOf": [

@@ -41,20 +41,28 @@ step, controlled by `tv_prox_iterations`; the outer step uses only the data
 operator's Lipschitz scale. Huber smoothing does not add a large global curvature
 penalty to that outer step.
 
-FISTA estimates a detector error scale from Haar-MAD measurement noise and the
-RMS linear interpolation error implied by detector curvature. This includes both
-the mean error in a detector cell and the variation within the cell. A centered
-Gaussian backprojection propagates that scale into the data gradient. The automatic weight compares the
-estimated largest voxel score with the TV cost of a unit impulse in the flat
-interior. Coverage variation, detector correlations, and model bias limit this
-approximation. SPDHG retains its Haar-MAD calibration and empirical minimum of
-`5e-5`. Both solvers accept a dimensionless explicit weight, including zero.
+With `tv_weight=None` (the default), FISTA estimates a detector error scale from
+Haar-MAD measurement noise and the RMS linear interpolation error implied by
+detector curvature, including both the mean error in a detector cell and the
+variation within the cell. A centered Gaussian backprojection propagates that
+scale into the data gradient to estimate the voxel noise-score SD
+(`noise_score_rms`). Comparing the expected largest absolute noise score over
+supported voxels with the TV cost of a unit impulse in the flat interior sets
+the weight. Coverage variation, detector correlations, and model bias limit this
+approximation, and coherent artifacts such as rings should be removed beforehand.
+SPDHG uses Haar-MAD calibration with an empirical minimum of `5e-5`. Both
+solvers accept an explicit dimensionless weight, including `0` to disable TV.
 
-Automatic FISTA stops when the largest component of the proximal gradient
-mapping falls below one estimated score SD, or after 200 updates. The mapping
-uses the configured finite proximal solve. Inspect `early_stop` to distinguish
-statistical stopping from exhausting the budget. To replay an automatic run,
-pass `resolved_tv_weight` and `effective_iterations` from its `info` record.
+With `tv_weight=None` and `tolerance=None`, FISTA stops when the largest
+absolute component of the proximal gradient mapping falls below one estimated
+noise-score SD, or after `iterations` updates (default `200`). The mapping uses
+the configured finite proximal solve. With an explicit `tv_weight`, or with
+`tolerance=0`, FISTA runs to the `iterations` cap; positive `tolerance` with
+positive `patience` selects relative objective-change stopping. `info` reports
+`resolved_tv_weight`, `effective_tv_weight`, `noise_score_rms`,
+`effective_iterations`, and `early_stop` (`True` for early stopping, `False`
+when the budget was exhausted). To replay an automatic run, pass
+`resolved_tv_weight` and `effective_iterations` from `info`.
 
 SIRT uses the exact matched projector pair with row/column normalization:
 `SIRTConfig(iterations=50, subsets=1, lower_bound=0, upper_bound=None, support=None)`.
@@ -247,8 +255,8 @@ level raises `FloatingPointError`.
 CUDA Joseph `fista` uses host slabs automatically when resident state
 would exceed device memory; its `out=` argument explicitly selects host output.
 The host route supports ordinary TV and box constraints without a support mask.
-It uses the same global power estimate,
-clipped momentum, objective stopping and finite-step TV proximal, not independent
+It uses the same global power estimate, automatic noise-score calibration,
+clipped momentum, stopping rule and finite-step TV proximal, not independent
 slice solves. Three host volumes move to unlinked temporary files in `TMPDIR`
 when their aggregate exceeds half of available host RAM. The output owns its
 file until released. Projections and a haloed TV tile still need device space;

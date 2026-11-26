@@ -23,7 +23,7 @@ tomojax reconstruct tilted.nxs -o tilted-recon.nxs \
 tomojax inspect tilted-recon.nxs --preview-dir tilted-previews
 ```
 
-`--tilt` is the angle of the rotation axis away from the perpendicular tomography axis. Because laminography leaves a cone of frequencies around the rotation axis unmeasured, features blur along that axis.
+`--tilt` is the angle of the rotation axis away from the perpendicular tomography axis. Because laminography leaves a cone of frequencies around the rotation axis unmeasured, features blur along that axis. Omitting `--iterations` and `--tv-weight` lets FISTA calibrate the TV weight from the projections and stop at the estimated noise level (up to 200 updates).
 
 ![Two rows, parallel beam and 30° laminography: the phantom's central slice, its first projection, the sinogram of the central detector row, and the reconstruction across and along the rotation axis. The laminography reconstruction is blurred along the axis.](images/synthetic-scans.png)
 

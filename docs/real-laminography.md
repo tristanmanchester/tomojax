@@ -79,12 +79,12 @@ Laminography leaves a cone of frequencies around the rotation axis unmeasured. F
 
 ```bash
 tomojax reconstruct corrected-lamino.nxs -o recon.nxs \
-  --method fista --iterations 100 --nonnegative \
+  --method fista --nonnegative \
   --manifest recon-manifest.json
 tomojax inspect recon.nxs --preview-dir previews
 ```
 
-On simulated laminography benchmarks, FISTA-TV with its automatic TV weight halves FBP's error on measured frequencies (0.079 vs 0.165 and 0.163) and suppresses missing-cone fog. The historical 50-iteration budget under-converged on laminography. Automatic FISTA now stops at its estimated noise-score tolerance or the 200-iteration cap (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.
+With default settings, FISTA-TV calibrates its TV weight from detector noise and interpolation error and stops when the proximal gradient reaches the estimated noise level or at 200 iterations (override with `--iterations` or `--tv-weight`, and inspect `resolved_tv_weight`, `effective_iterations`, and `early_stop` in the manifest or `recon.info`). On simulated laminography benchmarks, automatic nonnegative FISTA-TV cuts FBP's measured-band error roughly in half and suppresses missing-cone fog (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.
 
 ![Diamond K11 scan 54286 reconstructed by FBP and by FISTA-TV: in-plane slices through a layer of glass spheres, enlarged regions and vertical sections. The FISTA-TV slice has sharper sphere edges and a clean background, and its vertical section is dark around the layer where FBP's is gray.](images/k11-fbp-fista.png)
 

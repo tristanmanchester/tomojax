@@ -169,8 +169,11 @@ class FISTAConfig:
     line integrals by a constant. It weights an integral, not a mean over the ROI;
     padding the volume does not dilute an explicit weight. Automatic noise
     scaling uses RMS over the support and can change with volume padding.
-    Effective dimensional and selected dimensionless weights are returned in
-    ``info`` as ``effective_tv_weight`` and ``resolved_tv_weight``.
+    ``info`` reports ``resolved_tv_weight`` (dimensionless),
+    ``effective_tv_weight`` (dimensional), ``noise_score_rms`` (estimated voxel
+    noise-score SD in data-gradient units, or ``None`` for an explicit weight),
+    ``effective_iterations``, and ``early_stop``. Pass ``resolved_tv_weight``
+    and ``effective_iterations`` to replay an automatic run.
 
     Against synthetic truth FISTA-TV is more accurate than FBP. On phase-contrast
     data it renders propagation fringes as smooth bands where FBP keeps them.
@@ -194,14 +197,16 @@ class FISTAConfig:
         per view, so absolute background density is not recoverable. This costs
         accuracy on contained objects; do not select it for contained scans.
     tv_weight : float | None, optional
-        Dimensionless physical-TV weight. Zero disables TV. The default estimates
-        detector noise from Haar differences and subpixel interpolation uncertainty
-        from second differences. A centered Gaussian backprojection estimates
-        their RMS contribution to the data gradient. The TV cost of an isolated
-        voxel on a flat interior balances an upper bound on the expected largest
-        absolute noise score. This calibration assumes approximately uniform
-        coverage and independent errors. Rings and other coherent errors can survive.
-        Huber-TV uses the same strength on its linear branch. Passing a number fixes the weight.
+        Dimensionless physical-TV weight. None (default) estimates detector
+        noise from Haar differences and RMS linear interpolation error from
+        detector second differences (including both the cell mean and
+        within-cell variation). A centered Gaussian backprojection propagates
+        that scale into the data gradient, and the TV cost of an isolated
+        voxel on a flat interior balances the upper bound on the expected
+        largest absolute noise score. This calibration assumes approximately
+        uniform coverage and independent errors; rings and other coherent
+        errors can survive. Huber-TV uses the same strength on its linear
+        branch. Pass a positive number to fix the weight, or 0 to disable TV.
     regularizer : Regularizer, optional
         Regularization model: "tv" or "huber_tv". Both use a constrained proximal
         solve after each data-gradient step. Default is 'tv'.
@@ -216,11 +221,12 @@ class FISTAConfig:
     tv_prox_iterations : int, optional
         Iterations of the TV or Huber-TV proximal solve per FISTA update. Default is 10.
     tolerance : float | None, optional
-        With automatic weight, None stops when the largest proximal gradient
-        mapping component falls below one estimated noise-score SD. With an
-        explicit weight, None runs to the iteration cap. A positive tolerance
-        and patience select relative objective-change stopping. Zero runs to
-        the cap.
+        With automatic weight (``tv_weight=None``), None (default) stops when
+        the largest absolute component of the proximal gradient mapping falls
+        below one estimated noise-score SD (``noise_score_rms``), up to
+        ``iterations`` updates. With an explicit weight, None runs to
+        ``iterations``. A positive tolerance with positive ``patience`` selects
+        relative objective-change stopping. Zero runs to ``iterations``.
     patience : int, optional
         Number of successive small objective changes required with positive tolerance.
         Default is 0.
@@ -690,8 +696,10 @@ def fista(
     volume : jax.Array or numpy.ndarray
         Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
-        Solver diagnostics and effective work; a small residual or iteration
-        count does not establish reconstruction accuracy.
+        Solver diagnostics and effective work, including ``resolved_tv_weight``,
+        ``effective_tv_weight``, ``noise_score_rms``, ``effective_iterations``,
+        and ``early_stop``. Reaching the iteration cap or a small residual does
+        not establish reconstruction accuracy.
 
     Raises
     ------
