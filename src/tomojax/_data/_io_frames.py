@@ -466,8 +466,9 @@ def _records(
         )
 
     def cut(values: np.ndarray | None) -> np.ndarray | None:
-        fits = values is not None and values.ndim == 1 and len(values) >= read
-        return values[:read] if fits and values is not None else values
+        if values is None or values.ndim != 1 or len(values) < read:
+            return values  # left for the shape check to reject
+        return values[:read]
 
     return cut(raw["image_key"]), cut(raw["angles"]), counts
 
