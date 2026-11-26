@@ -55,7 +55,9 @@ def turn_response(
     adjacent = jnp.roll(opposed, 1, axis=0)
     common, difference = (opposed + adjacent) / 2, (opposed - adjacent) / 2
     u = np.arange(columns)
-    length = np.minimum(u + radius + 1, columns) - np.maximum(u - radius, 0)
+    lo = np.maximum(u - radius, 0)
+    hi = np.minimum(u + radius + 1, columns)
+    length = hi - lo
 
     def power(values: jax.Array) -> jax.Array:
         return window_sum((values**2).mean(0), 2 * radius + 1, "SAME") / length
@@ -66,13 +68,22 @@ def turn_response(
     remaining = variation - slope * centered
     level_noise = power(remaining) / count
     slope_noise = power(remaining * centered / jnp.sqrt(predictor_variance)) / count
-    level += jnp.minimum(available / (power(broad[None]) + level_noise + 1e-15), 1) * broad
+    # Overlapping reflected neighborhoods sample the same detector columns.
+    # Their odd power misses a broad even offset. Weight its mean by the
+    # uncertainty across arcs in the shared part of the two neighborhoods.
+    mirror = 2 * axis - u
+    overlap = np.maximum(np.minimum(hi, mirror + radius + 1) - np.maximum(lo, mirror - radius), 0)
+    shared = overlap / length
+    measured_gain = jnp.minimum(available / (power(broad[None]) + level_noise + 1e-15), 1)
+    mean_gain = available / (available + level_noise + 1e-15)
+    level += ((1 - shared) * measured_gain + shared * mean_gain) * broad
     slope *= jnp.minimum(dynamic / (power(slope * centered) + slope_noise + 1e-15), 1)
 
     # The median spatial estimate can be much more precise on smooth rays.
     # Compare angular scatter at its resolution with the arc fit's error.
     spatial = q - ref
-    scatter = jnp.median(jnp.abs(spatial - jnp.median(spatial, axis=0)))
+    scatter = jnp.median(jnp.abs(spatial - jnp.median(spatial, axis=0)), axis=0)
+    scatter = jnp.sqrt(power(scatter[None]))
     contrast = remaining - correlate(remaining, quadratic_taps(6, 0))
     uncertainty = (contrast**2).mean(0) / count
     weight = scatter**2 / (scatter**2 + uncertainty + 1e-18)

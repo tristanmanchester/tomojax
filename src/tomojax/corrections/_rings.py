@@ -340,8 +340,10 @@ def _row_response(
             alpha = level - beta * xm
         else:
             grid_axis = round(2 * axis) / 2
-            offset = offset_prior(q, groups)
-            level = _response_posterior(level, il, ml, taps, groups, offset)
+            # The rank fit supplies the initial broad field. On the second
+            # pass the local regression measures the remaining level directly.
+            if k == 0:
+                level = offset_prior(q, groups)
             transmission = -jnp.expm1(-ref)
             mean_transmission = transmission.mean(0)
             level = regularize(level + beta * (mean_transmission - xm), grid_axis)
@@ -586,8 +588,9 @@ class Rings(Step):
     short angular arcs measure each column's mean response and its change
     with transmission. A cubic interpolation compares opposing arcs at the
     reflected detector coordinates. Repeatable differences between the arcs
-    estimate the detector power in a neighborhood around each column. This
-    determines how much the arc fit can revise the local spatial estimate.
+    estimate the detector power in a neighborhood around each column. The
+    offset fit weights the arc mean by its uncertainty where reflected
+    neighborhoods overlap and share the same detector columns.
 
     A weighted median over views provides a more precise intercept on locally
     quadratic rays. The angular scatter of the local spatial contrast and
