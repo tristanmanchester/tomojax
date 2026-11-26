@@ -98,6 +98,15 @@ extern "C" __global__ void backproject(
 
 _AXIAL_SOURCE = r"""
 // Threads span contiguous x; each shares one u interpolation across a z run.
+// Pack aligned detector rows at each u so one load serves four z planes.
+struct alignas(4 * LANES) RowGroup { float value[LANES]; };
+
+__device__ __forceinline__ RowGroup read_rows(const float* image, int u, int v) {
+    if ((unsigned)u >= nu || (unsigned)v >= nv) return {};
+    long index = LANES == 4 ? (long)u * nv + v : (long)v * nu + u;
+    return *reinterpret_cast<const RowGroup*>(image + index);
+}
+
 extern "C" __global__ void backproject_axial(
     const float* __restrict__ poses, const float* __restrict__ images,
     const float* initial, float* out, int nviews)
@@ -121,14 +130,12 @@ extern "C" __global__ void backproject_axial(
             int iu = (int)lower + (nu - 1) / 2;
             const float* image = images + (long)(start + view) * nu * nv;
             #pragma unroll
-            for (int j = 0; j < RUN; ++j) {
+            for (int j = 0; j < RUN; j += LANES) {
                 int v = FIRST_ROW + z + j;
-                float a = 0.f, b = 0.f;
-                if ((unsigned)v < nv) {
-                    if ((unsigned)iu < nu) a = image[(long)v * nu + iu];
-                    if ((unsigned)(iu + 1) < nu) b = image[(long)v * nu + iu + 1];
-                }
-                total[j] += a * (1.f - wu) + b * wu;
+                RowGroup a = read_rows(image, iu, v), b = read_rows(image, iu + 1, v);
+                #pragma unroll
+                for (int k = 0; k < LANES; ++k)
+                    total[j + k] += a.value[k] * (1.f - wu) + b.value[k] * wu;
             }
         }
     }
@@ -145,7 +152,14 @@ extern "C" __global__ void backproject_axial(
 
 @cache
 def _source(
-    grid: Grid, detector: Detector, mode: int, run: int, *, accumulate: bool, axial: bool
+    grid: Grid,
+    detector: Detector,
+    mode: int,
+    run: int,
+    *,
+    accumulate: bool,
+    axial: bool,
+    lanes: int,
 ) -> str:
     integers = {"nx": grid.nx, "ny": grid.ny, "nz": grid.nz, "nu": detector.nu, "nv": detector.nv}
     ox, oy, oz = grid_volume_origin(grid)
@@ -169,7 +183,7 @@ def _source(
     return (
         constants
         + f"#define MODE {mode}\n#define RUN {run}\n#define ACCUMULATE {int(accumulate)}\n"
-        + f"#define FIRST_ROW {first_row}\n"
+        + f"#define FIRST_ROW {first_row}\n#define LANES {lanes}\n"
         + (_AXIAL_SOURCE if axial else _SOURCE)
     )
 
@@ -185,10 +199,11 @@ def _launch(
     mode: int,
     run: int,
     axial: bool,
+    lanes: int,
 ) -> None:
     count = grid.nx * grid.ny * grid.nz
     launch_kernel(
-        _source(grid, detector, mode, run, accumulate=bool(initial), axial=axial),
+        _source(grid, detector, mode, run, accumulate=bool(initial), axial=axial, lanes=lanes),
         "backproject_axial" if axial else "backproject",
         options=("--fmad=false",),
         stream=context.stream,
@@ -217,9 +232,22 @@ def backproject_filtered_cuda(
     axial = mode == 0 and grid.vz == detector.dv and abs(first - round(first)) <= 1e-5
     if run is None:
         run = 16 if mode == 0 and grid.nx * grid.ny * grid.nz >= 16 * 1024**2 else 4
+        if axial:
+            run = min(run, grid.nz)
+    packed = axial and run % 4 == 0 and detector.nv % 4 == 0 and round(first) % 4 == 0
+    if packed:
+        filtered = filtered.swapaxes(1, 2)
     shape = (grid.nz, grid.ny, grid.nx)
     call = buffer_callback(
-        partial(_launch, grid=grid, detector=detector, mode=mode, run=run, axial=axial),
+        partial(
+            _launch,
+            grid=grid,
+            detector=detector,
+            mode=mode,
+            run=run,
+            axial=axial,
+            lanes=4 if packed else 1,
+        ),
         jax.ShapeDtypeStruct(shape, jnp.float32),
         input_output_aliases={2: 0} if accumulate is not None else {},
         vmap_method="sequential",
