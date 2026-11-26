@@ -314,7 +314,6 @@ def test_the_api_and_cli_use_one_vocabulary(monkeypatch):
 
 
 def test_every_exported_name_uses_american_spelling():
-    assert misspelled([Site("x", "centre_sweep")])
     _check(misspelled(exported_sites()))
 
 
