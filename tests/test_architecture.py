@@ -115,9 +115,13 @@ def test_package_line_growth_passes_but_new_debt_fails(tmp_path, monkeypatch):
 def test_no_subpackage_shares_a_root_name() -> None:
     # A subpackage named like a root function replaces it once imported.
     package = ROOT / "src" / "tomojax"
+    directories = {entry.name for entry in package.iterdir() if entry.is_dir()}
+    modules = {
+        entry.stem for entry in package.iterdir() if entry.suffix == ".py" and entry.is_file()
+    }
     for name in tomojax.__all__:
-        assert not (package / name).is_dir(), f"tomojax.{name} is also a subpackage"
-        assert not (package / f"{name}.py").is_file(), f"tomojax.{name} is also a module"
+        assert name not in directories, f"tomojax.{name} is also a subpackage"
+        assert name not in modules, f"tomojax.{name} is also a module"
 
 
 _STANDARD_OPTIONS = {"-h", "--help", "-o", "--output", "--force", "--config", "--config-keys"}

@@ -187,7 +187,8 @@ def host_volume(
 ) -> np.ndarray:
     """A zeroed C-ordered array (FP32 by default): in memory, or a temporary file in ``directory``.
 
-    The temporary file has no name and is removed when the array is released.
+    The temporary file is unlinked immediately. An open descriptor keeps it
+    available for slab I/O until the array is released.
     A file is made only when ``directory`` has room for all of it: a mapped page
     written past a full disk would end the process with a bus error.
 
@@ -206,7 +207,6 @@ def host_volume(
     with tempfile.NamedTemporaryFile(dir=directory) as handle:
         array = np.memmap(handle.name, dtype, "w+", shape=shape, order="C")
         descriptor = os.open(handle.name, os.O_RDWR)
-    # The descriptor keeps the unlinked file open for slab reads and writes.
     _DESCRIPTORS[id(array)] = descriptor
     weakref.finalize(array, _close_descriptor, id(array))
     return array
@@ -292,7 +292,7 @@ def slab_file(array: np.ndarray) -> tuple[int, int] | None:
 def read_at(descriptor: int, out: np.ndarray, position: int, *, drop: bool = False) -> None:
     """Fill the contiguous ``out`` from the file at byte ``position``.
 
-    With ``drop`` the bytes read leave the page cache.
+    With ``drop``, advise the OS to discard cached pages where supported.
     """
     view, done = memoryview(out).cast("B"), 0
     while done < len(view):
@@ -300,21 +300,22 @@ def read_at(descriptor: int, out: np.ndarray, position: int, *, drop: bool = Fal
         if count == 0:
             raise EOFError(f"volume file ends before byte {position + len(view)}")
         done += count
-    if drop:
+    if drop and hasattr(os, "posix_fadvise"):
         os.posix_fadvise(descriptor, position, len(view), os.POSIX_FADV_DONTNEED)
 
 
 def write_at(descriptor: int, block: np.ndarray, position: int, *, drop: bool = False) -> None:
     """Write the contiguous ``block`` to the file at byte ``position``.
 
-    With ``drop`` the bytes reach the disk and leave the page cache before
-    this returns, so writes to a slow disk cannot fill memory.
+    With ``drop``, sync the writes before returning and advise the OS to discard
+    cached pages where supported.
     """
     view, done = memoryview(block).cast("B"), 0
     while done < len(view):
         done += os.pwrite(descriptor, view[done:], position + done)
     if drop:
-        os.fdatasync(descriptor)
+        (os.fdatasync if hasattr(os, "fdatasync") else os.fsync)(descriptor)
+    if drop and hasattr(os, "posix_fadvise"):
         os.posix_fadvise(descriptor, position, len(view), os.POSIX_FADV_DONTNEED)
 
 

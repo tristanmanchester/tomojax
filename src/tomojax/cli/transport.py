@@ -128,6 +128,7 @@ def _transport(
     stdin: int,
     stdout: int,
 ) -> int:
+    """Poll the pipes. Darwin requires POLLHUP to be requested for idle stdout."""
     poll = select.poll()
     poll.register(stdin, select.POLLIN)
     poll.register(wake, select.POLLIN)
@@ -139,7 +140,7 @@ def _transport(
         while not session.closing and not box.lost:
             if not pending:
                 pending = box.take()
-            poll.register(stdout, select.POLLOUT if pending else 0)
+            poll.register(stdout, select.POLLHUP | (select.POLLOUT if pending else 0))
             for fd, mask in poll.poll():
                 if fd == stdout:
                     if mask & (select.POLLHUP | select.POLLERR | select.POLLNVAL):

@@ -204,6 +204,7 @@ def test_stop_wakes_paused(client, finish):
     assert c.proc.wait(8) == 0
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="sets the pipe capacity with F_SETPIPE_SZ")
 @pytest.mark.parametrize("drain", [True, False])
 def test_full_pipe_supersedes_paused_worker_before_client_reads(client, drain):
     c = client
@@ -271,7 +272,14 @@ def test_durable_group_at_commit(client, tmp_path, outcome):
         ("invalid", "invalid_parameter"),
         ("jax-oom", "out_of_memory"),
         ("jax-unknown", "internal"),
-        ("alloc", "out_of_memory"),
+        pytest.param(
+            "alloc",
+            "out_of_memory",
+            marks=pytest.mark.skipif(
+                sys.platform != "linux",
+                reason="forces a real allocation failure with Linux RLIMIT_AS and /proc",
+            ),
+        ),
     ],
 )
 def test_executor_failure_is_a_typed_terminal(client, case, kind):
@@ -382,6 +390,7 @@ def test_replays_fixed_session_transcript(client):
     assert c.proc.wait(8) == 0
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="sets the pipe capacity with F_SETPIPE_SZ")
 def test_only_adjacent_advances_coalesce_behind_blocked_writer(client):
     c = client
     fd = c.proc.stdout.fileno()

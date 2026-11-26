@@ -99,5 +99,6 @@ def test_unknown_accelerator_memory_does_not_use_host(monkeypatch, platform) -> 
 @pytest.mark.parametrize(("info", "expected"), [("MemAvailable: 512 kB", 524288), ("", 4096)])
 def test_host_capacity_includes_reclaimable_page_cache(monkeypatch, info, expected):
     monkeypatch.setattr(host_volume.Path, "read_text", lambda _: info)
+    monkeypatch.setattr(host_volume.os, "sysconf_names", {"SC_AVPHYS_PAGES": 0, "SC_PAGE_SIZE": 1})
     monkeypatch.setattr(host_volume.os, "sysconf", lambda _: 64)
     assert host_volume.host_available_memory_bytes() == expected

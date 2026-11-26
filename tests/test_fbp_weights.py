@@ -299,4 +299,5 @@ def test_filter_workspace_tiles_keep_odd_tail_views_and_scales(monkeypatch):
     reference = module._filter_rows_bounded(rows, scales, spectrum)
     monkeypatch.setattr(module, "_FILTER_WORKSPACE_BYTES", 16 * 3 * 64 * 4)
     tiled = module._filter_rows_bounded(rows, scales, spectrum)
-    np.testing.assert_array_equal(tiled, reference)
+    # The tiled and untiled FFT batches can round differently.
+    np.testing.assert_allclose(tiled, reference, rtol=1e-6, atol=2e-7)
