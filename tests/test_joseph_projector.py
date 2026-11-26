@@ -681,7 +681,7 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(
     d = Detector(9, nz + 2 if fractional else nz, 0.7, 1.2 if fractional else 1.3, (0.17, v_center))
     # Cross the native forward's view-batch boundary, including its final tail,
     # and split the transpose into chunks of five views.
-    monkeypatch.setattr("tomojax.core._cuda_axial._SCRATCH", 5 * 9 * nz)
+    monkeypatch.setattr("tomojax.core._axial_kernels._SCRATCH", 5 * 9 * nz)
     angles = np.r_[0, 1e-7, 43, 90, 179, np.linspace(2, 178, 12)]
     poses = np.broadcast_to(np.eye(4, dtype=np.float32), (len(angles), 4, 4)).copy()
     poses[:, :3, :3] = Rotation.from_euler("z", angles[:, None], degrees=True).as_matrix()
@@ -722,6 +722,36 @@ def test_axial_cuda_pair_matches_physical_matrix_near_axis(
     np.testing.assert_allclose(
         jnp.vdot(fp(volume), data), jnp.vdot(volume, bp(data)), atol=1e-5, rtol=1e-5
     )
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize(("nz", "offset"), [(16, 0), (17, -0.23)])
+@pytest.mark.parametrize("z_fast", [False, True])
+def test_native_axial_pair_on_a_volume_taller_than_the_detector(nz, offset, z_fast):
+    import cupy as cp
+
+    from tomojax.core.joseph_cuda import JosephCUDA
+
+    grid = Grid(7, 5, nz, 0.8, 1.1, 1)
+    detector = Detector(9, 8, 0.7, 1, (0.3, offset))
+    geometry = ParallelGeometry(grid, detector, [0, 27, 90, 141])
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(4)], dtype=np.float32)
+    reference = matrix(poses, grid, detector)
+    plan = JosephCUDA(poses, grid, detector, views_per_batch=3, z_fast=z_fast)
+    rng = np.random.default_rng(321)
+    x = rng.normal(size=grid.shape).astype(np.float32)
+    y = rng.normal(size=(4, 8, 9)).astype(np.float32)
+    projected = plan.forward(cp.asarray(x.T if z_fast else x)).get()
+    backprojected = plan.adjoint(cp.asarray(y)).get()
+    gradient = backprojected.T if z_fast else backprojected
+    for actual, expected in (
+        (projected.ravel(), reference @ x.ravel()),
+        (gradient.ravel(), reference.T @ y.ravel()),
+    ):
+        # The independent matrix constructs physical coordinates in FP64.
+        assert np.linalg.norm(actual - expected) <= 2e-6 * np.linalg.norm(expected)
+    lhs, rhs = np.vdot(projected.astype(float), y), np.vdot(x.astype(float), gradient)
+    assert abs(lhs - rhs) <= 1e-6 * np.linalg.norm(projected) * np.linalg.norm(y)
 
 
 @pytest.mark.gpu

@@ -1,8 +1,10 @@
 """JAX-independent CUDA kernels for the exact linear Joseph projector pair."""
 
+from collections.abc import Callable
 from functools import cache
 from pathlib import Path
-from typing import Any
+
+from .cuda_types import CuPyValue
 
 RUN = 4
 _VIEWS_PER_STAGE = 32
@@ -131,6 +133,7 @@ extern "C" __global__ void joseph_gather(
 """
 
 
+@cache
 def storage_source(*, z_fast: bool) -> str:
     """Kernel source defining the volume storage macros the projector kernels share."""
     header = Path(__file__).with_name("joseph_sampling.cuh").read_text()
@@ -144,12 +147,21 @@ def gather_source(*, z_fast: bool) -> str:
     return storage_source(z_fast=z_fast) + source
 
 
+type Kernel = Callable[[tuple[int, ...], tuple[int, ...], CuPyValue], None]
+
+
 @cache
-def gather_kernel(*, z_fast: bool = False) -> Any:
-    """``joseph_gather``; pass (runs, count, 1) after the output, or (any, any, 0)."""
+def raw_kernel(text: str, name: str, options: tuple[str, ...] = ()) -> Kernel:
+    """Compile on first use on each CuPy device."""
     import cupy as cp
 
-    return cp.RawModule(code=gather_source(z_fast=z_fast)).get_function("joseph_gather")
+    return cp.RawKernel(text, name, options=options)
+
+
+@cache
+def gather_kernel(*, z_fast: bool = False) -> Kernel:
+    """``joseph_gather``; pass (runs, count, 1) after the output, or (any, any, 0)."""
+    return raw_kernel(gather_source(z_fast=z_fast), "joseph_gather")
 
 
 @cache
@@ -169,9 +181,7 @@ def source(name: str, **constants: int | str) -> str:
 @cache
 def forward_kernel(
     *, narrow: bool, uniform: bool = False, z_fast: bool = False, slab: bool = False
-) -> Any:
-    import cupy as cp
-
+) -> Kernel:
     text = source(
         "forward",
         INDEX_TYPE="int" if narrow else "long",
@@ -183,4 +193,4 @@ def forward_kernel(
         UNIFORM=int(uniform),
         SLAB=int(slab),
     )
-    return cp.RawModule(code=text, options=("--fmad=false",)).get_function("forward")
+    return raw_kernel(text, "forward", ("--fmad=false",))

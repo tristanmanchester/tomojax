@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from tomojax.core.joseph_cuda import coefficients, slab_adjoint_into, slab_forward
+from tomojax.core.joseph_cuda import (
+    Sampling,
+    coefficients,
+    sampling,
+    slab_adjoint_into,
+    slab_forward,
+)
 from tomojax.core.validation import validate_physical_poses
 
 from ._cone_slabs import ConeProblem, SlabPlan, Sweep, slab_depth
@@ -32,14 +38,22 @@ class SlabCoefficients:
         return SlabCoefficients(self.values[index], self.z0)
 
 
+@dataclass(kw_only=True)
 class ParallelEngine(CudaEngine):
     """The matched Joseph pair on slabs, retaining resident coordinate arithmetic."""
+
+    sampling: Sampling
 
     def project(self, volume: Any, coeff: Any, rows: int, *, out: Any, row_start: int) -> None:
         """Add a global-coordinate slab into its full-detector projection window."""
         del row_start, rows
         out += slab_forward(
-            volume, coeff.values, grid=self.grid, detector=self.detector, z0=coeff.z0
+            volume,
+            coeff.values,
+            grid=self.grid,
+            detector=self.detector,
+            z0=coeff.z0,
+            mode=self.sampling,
         )
 
     def transpose(
@@ -48,7 +62,13 @@ class ParallelEngine(CudaEngine):
         """Accumulate each RHS using the resident gather's global z coordinate."""
         for image, target in zip(images, accumulate, strict=True):
             slab_adjoint_into(
-                image, coeff.values, out=target, grid=self.grid, detector=self.detector, z0=coeff.z0
+                image,
+                coeff.values,
+                out=target,
+                grid=self.grid,
+                detector=self.detector,
+                z0=coeff.z0,
+                axial=self.sampling != "generic",
             )
         return accumulate
 
@@ -73,7 +93,8 @@ def parallel_problem(
     """Plan a CUDA Joseph sweep without rounding a new origin for each slab."""
     del geometry
     validate_physical_poses(poses, "cgls", rigid=True)
-    engine = ParallelEngine(grid, detector)
+    coeff = coefficients(np.asarray(poses), grid, detector, xp=np)
+    engine = ParallelEngine(grid, detector, sampling=sampling(coeff))
     count, batch = len(poses), min(batch, len(poses))
 
     def plans(depth: int) -> SlabPlan:
@@ -89,6 +110,5 @@ def parallel_problem(
         )
 
     depth = slab_depth(plans, count, channels, batch, engine)
-    coeff = coefficients(np.asarray(poses), grid, detector, xp=np)
     sweep = ParallelSweep(plans(depth), engine, coeff, batch)
     return ConeProblem(sweep, data, keep=False, retain=False)
