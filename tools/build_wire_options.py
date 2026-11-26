@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import MISSING, fields
 import inspect
 import json
 from pathlib import Path
 import re
-from types import NoneType, UnionType
+import sys
+from types import ModuleType, NoneType, UnionType
 from typing import (
     TYPE_CHECKING,
     Annotated,
@@ -25,7 +27,6 @@ from numpydoc.docscrape import NumpyDocString
 import tomojax as tj
 from tomojax import corrections
 from tomojax._parameters import Filter, GeometryName, TiltAbout
-from tomojax.cli import operations as op
 from tomojax.cli._parameter_types import option_types
 
 if TYPE_CHECKING:
@@ -113,6 +114,8 @@ def choices(annotation: Any) -> list[Any]:
 
 def description() -> dict[str, Any]:
     """Enrich the operation schema with public parameter help, units and domain choices."""
+    from tomojax.cli import operations as op
+
     schema = msgspec.json.schema(op.ExecutionInput)
     definitions = schema["$defs"]
     describe_models(definitions)
@@ -247,8 +250,37 @@ def parameters(owner: Callable[..., Any]) -> dict[str, dict[str, Any]]:
     return result
 
 
+def main() -> int:
+    """Write generated files or verify the checked-in copies."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    _ = parser.add_argument("--check", action="store_true", help="Check for drift without writing.")
+    check = parser.parse_args().check is True
+
+    options = render()
+    drifted: list[Path] = []
+    if not check:
+        _ = TARGET.write_text(options, encoding="utf-8")
+    elif not TARGET.is_file() or TARGET.read_bytes() != options.encode("utf-8"):
+        drifted.append(TARGET)
+        # The parameter description uses these types through cli.operations. Load
+        # the fresh definitions so stale or missing source cannot skew that check.
+        module = ModuleType("tomojax.cli.wire_options")
+        sys.modules[module.__name__] = module
+        exec(compile(options, str(TARGET), "exec"), vars(module))
+
+    parameters_json = json.dumps(description(), indent=2, ensure_ascii=False) + "\n"
+    if not check:
+        _ = DESCRIPTION.write_text(parameters_json, encoding="utf-8")
+    elif not DESCRIPTION.is_file() or DESCRIPTION.read_bytes() != parameters_json.encode("utf-8"):
+        drifted.append(DESCRIPTION)
+
+    if drifted:
+        paths = ", ".join(p.relative_to(ROOT).as_posix() for p in drifted)
+        print(f"Generated files are out of date: {paths}", file=sys.stderr)
+        print("Regenerate with: uv run python tools/build_wire_options.py", file=sys.stderr)
+        return 1
+    return 0
+
+
 if __name__ == "__main__":
-    _ = TARGET.write_text(render(), encoding="utf-8")
-    _ = DESCRIPTION.write_text(
-        json.dumps(description(), indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
+    raise SystemExit(main())

@@ -10,7 +10,6 @@ from tomojax._parameters import GeometryName, Phantom
 from tomojax.cli._options import add_config, add_output, check_paths, hide_expert
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
 from tomojax.cli.config import parse_args_with_config
-from tomojax.datasets import SimConfig, SimulationArtefacts
 
 from ._runtime import transfer_guard_context
 
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
     import argparse
     from collections.abc import Sequence
 
+    from tomojax.datasets import SimulationArtefacts
     from tomojax.wire.progress import Result
 
 TransferGuardName = Literal["off", "log", "disallow"]
@@ -169,23 +169,26 @@ _PHANTOM_SETTINGS = (
     "max_rotation",
     "lamino_thickness_ratio",
 )
-_ARTEFACT_SETTINGS = tuple(f.name for f in fields(SimulationArtefacts) if f.name != "poisson_scale")
 
 
 def _settings() -> dict[str, object]:
     """A config file's expert settings: phantom details and detector artefacts."""
+    from tomojax.datasets import SimConfig, SimulationArtefacts
+
     phantom = SimConfig(nx=1, ny=1, nz=1, nu=1, nv=1, n_views=1)
     artefacts = SimulationArtefacts()
     return {name: getattr(phantom, name) for name in _PHANTOM_SETTINGS} | {
-        name: getattr(artefacts, name) for name in _ARTEFACT_SETTINGS
+        f.name: getattr(artefacts, f.name) for f in fields(artefacts) if f.name != "poisson_scale"
     }
 
 
 def _validate_args(
     parser: ProgressParser,
     args: argparse.Namespace,
-    settings: dict[str, object],
-) -> None:
+    artefact_settings: dict[str, object],
+) -> SimulationArtefacts | None:
+    from tomojax.datasets import SimulationArtefacts
+
     if cast("int", args.size) < 1:
         parser.error("--size must be a positive integer")
     n_views = cast("int | None", args.n_views)
@@ -207,33 +210,30 @@ def _validate_args(
     if geometry == "parallel" and args.tilt is not None:
         parser.error("--tilt applies to --geometry lamino or cone, not parallel")
     try:
-        _ = replace(
-            SimulationArtefacts(),
-            **{name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings},
-        )
+        return replace(SimulationArtefacts(), **artefact_settings) if artefact_settings else None
     except (TypeError, ValueError) as exc:
         parser.error(str(exc))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run ``tomojax simulate``: :func:`tomojax.simulate`, saved with its scan."""
-    import tomojax as tj
-    from tomojax._simulate import build_sim_config, simulate_config
-
     parser = _build_parser()
     args, metadata = parse_args_with_config(parser, argv)
+
+    import tomojax as tj
+    from tomojax._simulate import build_sim_config, simulate_config
 
     def run() -> Result | None:
         settings = cast("dict[str, object]", metadata["settings"])
         out = cast("str", args.out)
         check_paths(parser, outputs=[out], force=cast("bool", args.force))
-        _validate_args(parser, args, settings)
+        artefacts = _validate_args(
+            parser, args, {k: v for k, v in settings.items() if k not in _PHANTOM_SETTINGS}
+        )
         shape = cast("list[int] | None", args.grid)
         pixels = cast("list[int] | None", args.detector)
         grid = None if shape is None else tj.Grid(shape[0], shape[1], shape[2], 1, 1, 1)
         detector = None if pixels is None else tj.Detector(pixels[0], pixels[1], 1, 1)
-        artefact_keys = {name: settings[name] for name in _ARTEFACT_SETTINGS if name in settings}
-        artefacts = replace(SimulationArtefacts(), **artefact_keys) if artefact_keys else None
         phantom_keys = {name: settings[name] for name in _PHANTOM_SETTINGS if name in settings}
         with transfer_guard_context(cast("TransferGuardName", args.transfer_guard)):
             resolved_grid, resolved_detector, cfg = build_sim_config(

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
+import sys
 from typing import Any, get_args
 
 import msgspec
@@ -14,7 +16,8 @@ from tomojax.cli.products import Output
 from tomojax.wire.arrays import Array, PoseColumn
 from tomojax.wire.progress import ProgressRecord
 
-DIRECTORY = Path(__file__).resolve().parents[1] / "docs" / "protocol"
+ROOT = Path(__file__).resolve().parents[1]
+DIRECTORY = ROOT / "docs" / "protocol"
 BASE = "https://tomojax.dev/protocol/"
 
 
@@ -74,6 +77,37 @@ def documents() -> dict[str, dict[str, Any]]:
     return documents
 
 
+def main() -> int:
+    """Write generated schemas or verify the checked-in copies."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    _ = parser.add_argument("--check", action="store_true", help="Check for drift without writing.")
+    check = parser.parse_args().check is True
+
+    drifted: list[str] = []
+    schemas = documents()
+    for filename, schema in schemas.items():
+        path = DIRECTORY / filename
+        content = json.dumps(schema, indent=2) + "\n"
+        if not check:
+            _ = path.write_text(content, encoding="utf-8")
+        elif not path.is_file() or path.read_bytes() != content.encode("utf-8"):
+            drifted.append(path.relative_to(ROOT).as_posix())
+
+    if check:
+        obsolete = sorted(
+            path.relative_to(ROOT).as_posix()
+            for path in DIRECTORY.glob("*.schema.json")
+            if path.name not in schemas
+        )
+        if obsolete:
+            print(f"Remove obsolete schemas: {', '.join(obsolete)}", file=sys.stderr)
+        if drifted:
+            print(f"Generated files are out of date: {', '.join(drifted)}", file=sys.stderr)
+        if obsolete or drifted:
+            print("Regenerate with: uv run python tools/build_wire_schemas.py", file=sys.stderr)
+            return 1
+    return 0
+
+
 if __name__ == "__main__":
-    for filename, schema in documents().items():
-        _ = (DIRECTORY / filename).write_text(json.dumps(schema, indent=2) + "\n", encoding="utf-8")
+    raise SystemExit(main())
