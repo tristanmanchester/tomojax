@@ -7,8 +7,8 @@ import jax.numpy as jnp
 def mask_weights(mask: jax.Array | None, predicted: jax.Array) -> jax.Array:
     """Broadcast detector weights over views while preserving explicit stack weights."""
     if mask is None:
-        return jnp.ones_like(predicted, dtype=jnp.float32)
-    weights = jnp.asarray(mask, dtype=jnp.float32)
+        return jnp.ones_like(predicted, dtype="float32")
+    weights = jnp.asarray(mask, dtype="float32")
     if weights.shape == predicted.shape:
         return weights
     if weights.ndim == predicted.ndim - 1:

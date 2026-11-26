@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, SupportsFloat, SupportsIndex
 
 if TYPE_CHECKING:
     import jax.numpy as jnp
@@ -41,13 +41,13 @@ def transform_detector_grid(
     import jax.numpy as jnp
 
     Xr, Zr = base_grid
-    roll_rad = jnp.deg2rad(jnp.asarray(detector_roll, dtype=jnp.float32))
+    roll_rad = jnp.deg2rad(jnp.asarray(detector_roll, dtype="float32"))
     cos_r = jnp.cos(roll_rad)
     sin_r = jnp.sin(roll_rad)
     Xrot = cos_r * Xr - sin_r * Zr
     Zrot = sin_r * Xr + cos_r * Zr
-    u_offset = jnp.asarray(det_u_px, dtype=jnp.float32) * jnp.float32(native_du)
-    v_offset = jnp.asarray(det_v_px, dtype=jnp.float32) * jnp.float32(native_dv)
+    u_offset = jnp.asarray(det_u_px, dtype="float32") * jnp.float32(native_du)
+    v_offset = jnp.asarray(det_v_px, dtype="float32") * jnp.float32(native_dv)
     return Xrot + u_offset, Zrot + v_offset
 
 
@@ -123,11 +123,15 @@ def detector_grid_from_geometry_inputs(
     tuple of jax.Array or None
         Rolled detector grids, or None when roll is absent or zero.
     """
-    roll = None
+    roll: object
     if isinstance(geometry_inputs, dict):
         roll = geometry_inputs.get("detector_roll")
     else:
         roll = getattr(geometry_inputs, "detector_roll", None)
-    if roll is None or float(cast("float", roll)) == 0.0:
+    if roll is None:
+        return None
+    if not isinstance(roll, str | bytes | bytearray | SupportsFloat | SupportsIndex):
+        raise TypeError("detector_roll must be numeric")
+    if float(roll) == 0.0:
         return None
     return detector_grid_from_detector_roll(detector, detector_roll=roll)

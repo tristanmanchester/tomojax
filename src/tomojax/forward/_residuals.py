@@ -155,13 +155,12 @@ def robust_residual_scale(residual: jax.Array, *, mask: jax.Array | None = None)
     """
     values = jnp.asarray(residual, dtype=jnp.float32)
     valid = jnp.asarray(True)
-    if mask is not None:
-        mask_arr = jnp.asarray(mask, dtype=bool)
-        if mask_arr.shape != values.shape:
-            raise ValueError("mask must match residual shape")
+    mask_arr = None if mask is None else jnp.asarray(mask, dtype=bool)
+    if mask_arr is not None and mask_arr.shape != values.shape:
+        raise ValueError("mask must match residual shape")
     if values.size == 0:
         return jnp.asarray(1.0, dtype=jnp.float32)
-    if mask is None:
+    if mask_arr is None:
         median = jnp.median(values)
         mad = jnp.median(jnp.abs(values - median))
     else:

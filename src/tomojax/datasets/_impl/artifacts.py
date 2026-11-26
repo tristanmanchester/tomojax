@@ -112,24 +112,24 @@ class SimulationArtifacts:
         return {key: _json_scalar(value) for key, value in asdict(self).items()}
 
     def __post_init__(self) -> None:
-        for name in (
-            "dead_pixel_fraction",
-            "hot_pixel_fraction",
-            "zinger_fraction",
-            "stripe_fraction",
-            "dropped_view_fraction",
+        for name, field_value in (
+            ("dead_pixel_fraction", self.dead_pixel_fraction),
+            ("hot_pixel_fraction", self.hot_pixel_fraction),
+            ("zinger_fraction", self.zinger_fraction),
+            ("stripe_fraction", self.stripe_fraction),
+            ("dropped_view_fraction", self.dropped_view_fraction),
         ):
-            value = float(getattr(self, name))
+            value = float(field_value)
             if not 0.0 <= value <= 1.0:
                 raise InvalidParameter(name, f"{name} must be in [0, 1], got {value}")
 
-        for name in (
-            "poisson_scale",
-            "gaussian_sigma",
-            "stripe_gain_sigma",
-            "detector_blur_sigma",
+        for name, field_value in (
+            ("poisson_scale", self.poisson_scale),
+            ("gaussian_sigma", self.gaussian_sigma),
+            ("stripe_gain_sigma", self.stripe_gain_sigma),
+            ("detector_blur_sigma", self.detector_blur_sigma),
         ):
-            value = float(getattr(self, name))
+            value = float(field_value)
             if value < 0.0:
                 raise InvalidParameter(name, f"{name} must be non-negative, got {value}")
 

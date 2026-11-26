@@ -956,9 +956,8 @@ def solve(
     data and a record of the steps, the stacks' placement and the level's time.
     """
     start = time.perf_counter()
-    width = prior.size
     c = (
-        jnp.zeros(width, jnp.float64)
+        jnp.zeros(prior.size, jnp.float64)
         if p0 is None
         else prior.project_gauge(jnp.asarray(p0, jnp.float64).reshape(-1))
     )
@@ -999,10 +998,9 @@ def _descend(
     x = level.start(c, x0, budget.initial_image_iterations)
     history: list[dict[str, _StepMetric]]
     history, lm, stable, status = [], budget.lm_initial, 0, "step_budget_reached"
-    f = 0.0
-    previous_weight: PoseWeight | None = None
+    initial_objective = f = 0.0
+    pose_stats: tuple[PoseWeight, float | None, float] | None = None
     level_task = progress.for_unit("steps")
-    # A zero-step level still measures its initial objective and motion prior.
     for it in range(max(1, budget.iterations)):
         with (
             progress.task("step", f"Gauss-Newton step {it + 1}", None, "")
@@ -1011,7 +1009,8 @@ def _descend(
         ):
             gx0, dd, sw, j, gr, gram, data, obstats, residual, common = level.linearize(c, x)
             linear = (gx0, dd, sw, j, gr, gram, residual, common)
-            pose_weight, noise, fisher = _pose_weight(level, linear, pose_sigma)
+            previous_weight = None if pose_stats is None else pose_stats[0]
+            pose_weight, _, _ = pose_stats = _pose_weight(level, linear, pose_sigma)
             if previous_weight is not None:
                 f += float(prior.value(c, pose_weight)) - float(prior.value(c, previous_weight))
             else:
@@ -1019,7 +1018,6 @@ def _descend(
                 initial_objective = f
                 if not budget.iterations:
                     break
-            previous_weight = pose_weight
             result = level.step(x, c, linear, lm, pose_weight, f)
             if result is None:
                 status = "line_search_stalled"
@@ -1064,6 +1062,8 @@ def _descend(
             break
     if history:
         progress.preview(lambda: level.ops.preview(x, c), final=True)
+    assert pose_stats is not None  # Even a zero-step budget measures the prior.
+    pose_weight, noise, fisher = pose_stats
     final_prior = float(prior.value(c, pose_weight))
     final_image_prior = level.image_penalty(x)
     record: _DescentRecord = {
