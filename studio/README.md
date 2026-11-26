@@ -165,7 +165,7 @@ cargo test --release --locked --manifest-path studio/Cargo.toml
 TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml -- --ignored
 ```
 
-The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves) and checks GPU rendering pixels and opacity against analytic expectations.
+The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.
 
 Studio also supports headless offscreen rendering through the same scientific compositor:
 

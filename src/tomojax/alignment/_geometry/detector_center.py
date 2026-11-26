@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import find_peaks
 from scipy.stats import chi2
 
-from tomojax import progress
+from tomojax import errors, progress
 from tomojax.core.validation import validate_projection_stack, view_indices
 from tomojax.geometry import ParallelGeometry
 
@@ -425,8 +425,8 @@ def opposite_samples(
 ) -> CenterSelection:
     """Original view indices and interpolation weights for the estimator's work."""
     if type(geometry) is not ParallelGeometry:
-        raise ValueError('method="opposite-views" needs an unposed axial ParallelGeometry')
-    geometry = cast("ParallelGeometry", geometry)
+        message = 'method="opposite-views" needs an unposed axial ParallelGeometry'
+        raise errors.InvalidParameter("method", message)
     detector = geometry.detector
     angles = np.asarray(geometry.angles, np.float64)
     eligible = np.arange(len(angles)) if views is None else view_indices(views, len(angles))

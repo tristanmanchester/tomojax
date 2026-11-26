@@ -165,6 +165,7 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         ParallelGeometry,
         RotationAxisGeometry,
     )
+    from tomojax.recon.fdk import check_angular_coverage
 
     base: Any = scan.geometry
     while hasattr(base, "base"):
@@ -180,7 +181,7 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "reconstruction requires declared acquisition geometry: this file records no "
             "rotation axis; pass geometry=... to tomojax.load"
         )
-    reason = "Filtered backprojection supports the declared acquisition geometry."
+    method, reason = "fbp", "Filtered backprojection supports the declared acquisition geometry."
     if isinstance(base, ConeSegments):
         # Segments with detector offsets can still belong to one circular orbit.
         beams = [getattr(segment, "beam", None) for segment in base.segments]
@@ -204,7 +205,11 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "directions spread over the half turn."
         )
         return "fbp", reason, recommendation
-    return "fbp", reason, None
+    try:  # One orbit: FDK weights a full turn or 180 degrees plus the fan angle; CGLS any arc.
+        check_angular_coverage(scan.geometry, scan.detector, len(scan.angles))
+    except ValueError as err:
+        method, reason = "cgls", f"CGLS, because {err}."
+    return method, reason, None
 
 
 def _coverage_advice(scan: Scan) -> str | None:

@@ -92,7 +92,7 @@ For a single cone-beam arrangement, `--method auto` selects FDK (`--method fbp` 
 tomojax reconstruct calibrated.nxs -o fdk.nxs
 ```
 
-FDK handles full turns, offset-detector (half-fan) full turns, and Parker-weighted short scans (≥ 180° + fan angle). Like any circular-orbit FDK, it is exact in the orbit plane and develops cone artifacts away from it.
+FDK handles full turns, offset-detector (half-fan) full turns, and Parker-weighted short scans (≥ 180° + fan angle); for a shorter arc, `--method auto` selects matched CGLS instead. Like any circular-orbit FDK, it is exact in the orbit plane and develops cone artifacts away from it.
 
 ![FDK central slices of three lab scans, each above an enlarged region: a copper oxide specimen from a Zeiss Xradia at 1.13 µm, a box of seeds from a Nikon X-Tek at 94 µm and grains in a SkyScan 1172 at 14.1 µm.](images/lab-cone-slices.png)
 
