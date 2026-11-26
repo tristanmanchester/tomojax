@@ -72,7 +72,8 @@ def test_the_printed_command_applies_the_chosen_center_in_length_units(tmp_path,
     chosen = report["sweep"][1]
     u = chosen["center_length"]
     assert u == pytest.approx(2 * 0.25) and apply["v"] == 0.75
-    command = apply["command"].replace("U", repr(u)).split()
+    command = apply["command"].split()
+    command[command.index("U")] = repr(u)
     out = tmp_path / "centered.nxs"
     assert command[:2] == ["tomojax", "correct"]
     assert main([*command[1:3], "-o", str(out), *command[5:], "--progress", "none"]) == 0
