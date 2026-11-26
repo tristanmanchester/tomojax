@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="12 8 112 112" role="img" aria-labelledby="tomojax-icon-title tomojax-icon-desc">
+  <title id="tomojax-icon-title">TomoJAX icon</title>
+  <desc id="tomojax-icon-desc">Two-tone sliced-volume mark. The middle slice is displaced by 22.2 percent of the circle radius. Transparent background.</desc>
+  <g transform="rotate(-32 64 64)">
+    <path fill="#6C8A77" d="M 22.979 45.500 A 45 45 0 0 1 105.021 45.500 Z"/>
+    <path fill="#265B49" d="M 30.494 52.500 A 45 45 0 0 0 30.494 75.500 H 117.506 A 45 45 0 0 0 117.506 52.500 Z"/>
+    <path fill="#6C8A77" d="M 22.979 82.500 H 105.021 A 45 45 0 0 1 22.979 82.500 Z"/>
+  </g>
+</svg>

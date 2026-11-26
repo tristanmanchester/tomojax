@@ -183,6 +183,45 @@ pub fn icon(kind: Icon, size: f32, color: Color) -> El {
     canvas(shape).size(size, size).inert()
 }
 
+/// Two-tone sliced-volume TomoJAX mark matching `assets/brand/tomojax-icon.svg`.
+pub fn brand_mark(size: f32) -> El {
+    let angle = -32.0_f32.to_radians();
+    let (sin_a, cos_a) = angle.sin_cos();
+    let rot = |x: f32, y: f32| -> [f32; 2] {
+        let (dx, dy) = (x - 64., y - 64.);
+        [
+            64. + dx * cos_a - dy * sin_a - 12.,
+            64. + dx * sin_a + dy * cos_a - 8.,
+        ]
+    };
+    let arc = |cx: f32, cy: f32, start: f32, end: f32, steps: usize| -> Vec<[f32; 2]> {
+        (0..=steps)
+            .map(|i| {
+                let a = start + (end - start) * (i as f32 / steps as f32);
+                rot(cx + 45. * a.cos(), cy + 45. * a.sin())
+            })
+            .collect()
+    };
+
+    let cap_a = (18.5_f32 / 45.).asin();
+    let mid_a = (11.5_f32 / 45.).asin();
+    let pi = std::f32::consts::PI;
+
+    let top_cap = arc(64., 64., -pi + cap_a, -cap_a, 24);
+    let bottom_cap = arc(64., 64., cap_a, pi - cap_a, 24);
+    let mut middle_slice = arc(74., 64., pi - mid_a, pi + mid_a, 10);
+    middle_slice.extend(arc(74., 64., -mid_a, mid_a, 10));
+
+    let outer = color([0x6C, 0x8A, 0x77]);
+    let center = color([0x26, 0x5B, 0x49]);
+    let shape = Shape::new()
+        .view_box(112., 112.)
+        .fill(top_cap, outer)
+        .fill(middle_slice, center)
+        .fill(bottom_cap, outer);
+    canvas(shape).size(size, size).inert()
+}
+
 pub fn separator() -> El {
     el().w_full().h(1.).fill(line())
 }

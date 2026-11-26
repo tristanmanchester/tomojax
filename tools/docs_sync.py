@@ -263,13 +263,20 @@ def convert(
     """Return one Markdown file as an MDX page with front matter."""
     lines = (ROOT / source).read_text(encoding="utf-8").splitlines()
     body: list[str] = []
-    in_fence, heading = False, None
+    in_fence, in_picture, heading = False, False, None
     for line in lines:
+        stripped = line.strip()
         if line.lstrip().startswith(("```", "~~~")):
             in_fence = not in_fence
             body.append(line)
         elif in_fence:
             body.append(line)
+        elif in_picture:
+            if stripped == "</picture>":
+                in_picture = False
+        elif stripped == "<picture>":
+            # Theme-switched GitHub logo banners are replaced by the site navbar lockup.
+            in_picture = True
         elif heading is None and line.startswith("# "):
             heading = line[2:].strip()
         else:
@@ -281,6 +288,26 @@ def convert(
     }
     header = "\n".join(f"{key}: {json.dumps(value)}" for key, value in front.items())
     return f"---\n{header}\n---\n\n" + "\n".join(body).strip() + "\n"
+
+
+def _sync_brand_assets() -> int:
+    """Copy canonical brand SVGs and favicons from ``assets/brand`` into ``site/public``."""
+    brand_src = ROOT / "assets" / "brand"
+    brand_dst = SITE / "public" / "brand"
+    shutil.rmtree(brand_dst, ignore_errors=True)
+    brand_dst.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for svg in sorted(brand_src.glob("*.svg")):
+        _ = shutil.copy2(svg, brand_dst / svg.name)
+        copied += 1
+    for src_name, dst_name in (
+        ("tomojax-favicon.svg", "favicon.svg"),
+        ("tomojax-favicon.ico", "favicon.ico"),
+        ("tomojax-avatar.png", "apple-touch-icon.png"),
+    ):
+        _ = shutil.copy2(brand_src / src_name, SITE / "public" / dst_name)
+        copied += 1
+    return copied
 
 
 def main() -> None:
@@ -304,7 +331,10 @@ def main() -> None:
 
     for image in sorted(images):
         _ = shutil.copy2(ROOT / image, public_images / Path(image).name)
-    print(f"Wrote {len(routes)} guides and {len(images)} images to {SITE}")
+    brand_count = _sync_brand_assets()
+    print(
+        f"Wrote {len(routes)} guides, {len(images)} images and {brand_count} brand assets to {SITE}"
+    )
 
 
 if __name__ == "__main__":

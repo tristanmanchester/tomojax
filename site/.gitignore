@@ -24,9 +24,13 @@ yarn-error.log*
 .env*.local
 .vercel
 next-env.d.ts
-# generated from the repository by `just docs` (tools/docs_sync.py, tools/docs_api.py)
+# generated from the repository by `just site` (tools/docs_sync.py, tools/docs_api.py)
 /content/docs/
 /public/images/
+/public/brand/
+/public/favicon.svg
+/public/favicon.ico
+/public/apple-touch-icon.png
 
 # the repository ignores Python lib/ folders; this one is the site's source
 !/lib/

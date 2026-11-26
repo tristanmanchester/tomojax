@@ -14,6 +14,13 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: { template: `%s | ${appName}`, default: appName },
   description: tagline,
+  icons: {
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/favicon.ico", sizes: "any" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export default function Layout({ children }: LayoutProps<"/">) {
