@@ -696,36 +696,40 @@ impl Project {
         let mut changed = false;
         while let Ok(ack) = self.completed.try_recv() {
             changed = true;
-            if ack.error.is_none() {
-                self.saved_generation = self.saved_generation.max(ack.generation);
-            }
-            // An older valid write must not erase a newer serialization/size
-            // error whose snapshot was deliberately withheld from the writer.
-            if ack.generation == self.generation {
-                self.save_error = ack.error;
-            }
+            self.apply(ack);
         }
         changed
+    }
+    /// Only the latest generation's acknowledgment decides the save error. An
+    /// older valid write must not erase a newer serialization/size error whose
+    /// snapshot was withheld, and an older failure must not fail a newer
+    /// snapshot that the writer still holds or has already saved.
+    fn apply(&mut self, ack: SaveAck) {
+        if ack.error.is_none() {
+            self.saved_generation = self.saved_generation.max(ack.generation);
+        }
+        if ack.generation == self.generation {
+            self.save_error = ack.error;
+        }
     }
     pub fn dirty(&self) -> bool {
         self.generation > self.saved_generation
     }
+    /// Wait until the latest generation is on disk or has failed. Without a
+    /// save error, `changed` handed that generation to the writer, so its
+    /// acknowledgment is still to come.
     pub fn flush(&mut self) -> Result<(), String> {
-        if let Some(error) = &self.save_error {
-            return Err(error.clone());
-        }
-        while self.dirty() {
+        while self.save_error.is_none() && self.dirty() {
             let ack = self
                 .completed
                 .recv()
                 .map_err(|_| "Project writer stopped before saving".to_string())?;
-            if let Some(error) = ack.error {
-                self.save_error = Some(error.clone());
-                return Err(error);
-            }
-            self.saved_generation = self.saved_generation.max(ack.generation);
+            self.apply(ack);
         }
-        Ok(())
+        match &self.save_error {
+            Some(error) => Err(error.clone()),
+            None => Ok(()),
+        }
     }
 }
 
@@ -881,6 +885,59 @@ mod tests {
         assert!(project.changed().is_err());
         assert!(project.save_error.is_some());
         assert!(project.flush().is_err());
+    }
+
+    /// The writer's acknowledgments, as `tests/protocol_model.rs` found them:
+    /// generation 1's write failed after generation 2 was queued.
+    fn after_acknowledgments(directory: &Path, acks: [SaveAck; 2]) -> Project {
+        let (signal, _work) = mpsc::channel();
+        let (send, completed) = mpsc::channel();
+        for ack in acks {
+            send.send(ack).unwrap();
+        }
+        Project {
+            root: directory.into(),
+            document: Document::new(directory),
+            generation: 2,
+            saved_generation: 0,
+            save_error: None,
+            pending: Arc::default(),
+            signal,
+            completed,
+            writer: None,
+        }
+    }
+
+    #[test]
+    fn an_older_failed_write_does_not_decide_a_newer_generation() {
+        let directory = tempfile::tempdir().unwrap();
+        let failed = |generation, error: &str| SaveAck {
+            generation,
+            error: Some(error.into()),
+        };
+        let saved = SaveAck {
+            generation: 2,
+            error: None,
+        };
+        let mut project = after_acknowledgments(directory.path(), [failed(1, "disk full"), saved]);
+        assert_eq!(project.flush(), Ok(()));
+        assert!(!project.dirty());
+
+        let saved = SaveAck {
+            generation: 2,
+            error: None,
+        };
+        let mut project = after_acknowledgments(directory.path(), [failed(1, "disk full"), saved]);
+        project.poll();
+        assert_eq!(project.save_error, None);
+        assert!(!project.dirty());
+
+        let mut project = after_acknowledgments(
+            directory.path(),
+            [failed(1, "disk full"), failed(2, "read-only")],
+        );
+        assert_eq!(project.flush(), Err("read-only".into()));
+        assert!(project.dirty());
     }
 
     #[test]
