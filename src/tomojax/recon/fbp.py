@@ -277,8 +277,11 @@ def _run_fbp_streamed(
         from ._fbp_cuda import backproject_filtered_cuda
 
         filtered = _filter_axial_stack(projections, view_scale, filter, detector, b)
+        # A thread can consume every packed row of a shallow aligned slab at
+        # the same detector coordinate before moving to the next view.
+        run = min(16, nv) if nv == grid.nz and nv % 4 == 0 else None
         return backproject_filtered_cuda(
-            poses, filtered, grid=grid, detector=detector, z_mode=z_mode
+            poses, filtered, grid=grid, detector=detector, z_mode=z_mode, run=run
         )
 
     def step(chunk: jnp.ndarray, accum: jnp.ndarray) -> jnp.ndarray:
