@@ -44,6 +44,8 @@ from tomojax import progress
 from ._batches import correction_group, view_batches
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from ._fields import CalibrationFrames, Fields
     from ._records import Json
     from ._steps import Step
@@ -113,7 +115,7 @@ class FlatWeights:
         return np.ascontiguousarray(found[0] if len(found) == 1 else found)
 
 
-def _along_columns(cells: np.ndarray, cols: int) -> np.ndarray:
+def _along_columns[T: np.generic](cells: NDArray[T], cols: int) -> NDArray[T]:
     """Values on cells along the last axis, at every detector column of each cell."""
     return np.repeat(cells, _CELL, axis=-1)[..., :cols]
 
@@ -245,9 +247,9 @@ def _sampled_sums(
             sums.append(np.asarray(done))
             progress.step("view batches")
     # The ratio's mean over each cell's rows, at every column.
-    padded = np.pad(np.asarray(ratio, np.float64), ((0, -rows % _CELL), (0, 0)))
-    measured = np.pad(fields.usable, ((0, -rows % _CELL), (0, 0))).reshape(-1, _CELL, cols).sum(1)
-    total = padded.reshape(-1, _CELL, cols).sum(1)
+    starts = np.arange(0, rows, _CELL, dtype=np.intp)
+    measured = np.add.reduceat(fields.usable, starts, axis=0, dtype=np.int32)
+    total = np.add.reduceat(np.asarray(ratio), starts, axis=0, dtype=np.float64)
     return np.concatenate(sums, axis=1), np.where(measured, total / np.maximum(measured, 1), np.nan)
 
 
@@ -437,8 +439,11 @@ def _solve(
 
 
 def _levels(
-    ends: np.ndarray, broad: np.ndarray, share: np.ndarray, ratio: np.ndarray
-) -> np.ndarray:
+    ends: NDArray[np.float64],
+    broad: NDArray[np.float64],
+    share: NDArray[np.float64],
+    ratio: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+) -> NDArray[np.float32]:
     """The log factor on the blended flat that sets its level.
 
     The weights ``ends`` describe the sets' fine structure and are noisy from cell
@@ -465,24 +470,26 @@ def _levels(
     # reference sets its reliability when the entire row has changing texture.
     quiet = _along_columns(1 - share, cols) * np.isfinite(ratio)
     ratio = np.nan_to_num(ratio)
-    order = np.argsort(ratio, axis=1)
-    mass = np.take_along_axis(quiet, order, axis=1).cumsum(axis=1)
-    middle = (mass < 0.5 * mass[:, -1:]).sum(axis=1, keepdims=True)
-    drift = np.take_along_axis(ratio, np.take_along_axis(order, middle, axis=1), axis=1)
-    drift *= quiet.max(axis=1, keepdims=True)
+    reliability = np.amax(quiet, axis=1, keepdims=True)
+    reference = np.quantile(
+        ratio,
+        0.5,
+        axis=1,
+        keepdims=True,
+        method="inverted_cdf",
+        weights=np.where(reliability > 0, quiet, 1.0),
+    )
+    drift = np.multiply(reliability, reference)
     change = np.expm1(ratio - drift)[None]
-    weights = _along_columns(ends.astype(np.float64), cols)
-    step = np.log1p(weights[..., 1:] * change[..., 1:]) - np.log1p(
-        weights[..., :-1] * change[..., 1:]
-    )
-    target = np.log1p(_along_columns(broad.astype(np.float64), cols) * change) - np.log1p(
-        weights * change
-    )
+    weights = _along_columns(ends, cols)
+    blended = np.log1p(weights * change)
+    step = blended[..., 1:] - np.log1p(weights[..., :-1] * change[..., 1:])
+    target = np.log1p(_along_columns(broad, cols) * change) - blended
     # Convert the blend of gain-normalized sets back to a factor on the raw
     # count-space blend. At either position endpoint its own set is unchanged.
-    gain = _LINEAR * drift + np.log1p(weights * change) - np.log1p(weights * np.expm1(ratio))
+    gain = _LINEAR * drift + blended - np.log1p(weights * np.expm1(ratio))
     if cols < 2 or not (step.any() or target.any()):
-        return gain.astype(np.float32)
+        return np.asarray(gain, dtype=np.float32)
     # Tridiagonal normal equations, -1 off the diagonal, solved along each row at once.
     diagonal = np.broadcast_to(2.0 + hold, target.shape).copy()
     diagonal[..., [0, -1]] -= 1.0
@@ -498,4 +505,4 @@ def _levels(
         right[..., u] = (right[..., u] + right[..., u - 1]) / pivot
     for u in range(cols - 2, -1, -1):
         right[..., u] -= over[..., u] * right[..., u + 1]
-    return (right + gain).astype(np.float32)
+    return np.asarray(right + gain, dtype=np.float32)
