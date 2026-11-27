@@ -13,7 +13,7 @@ block with missing input pixels is the mean of its finite ones, weighted by thei
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
 right at Nyquist. Faint rays and row contrasts calibrate the fixed detector offsets and
-excess column variance. The default image prior weights differences across the detector edges.
+excess column variance. The optional coverage prior weights differences across the detector edges.
 """
 
 from __future__ import annotations
@@ -278,7 +278,7 @@ def _level(
         d,
         y,
         weights=precision,
-        tv_weight=1.0 if config.image_tv_weight is None else config.image_tv_weight,
+        tv_weight=1.0 if config.image_tv_weight == "coverage" else config.image_tv_weight,
         huber_delta=config.image_tv_huber,
     )
     contrast = _capped_contrast(y, float(metric.contrast_scale), precision)
@@ -303,7 +303,7 @@ def _level(
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
     weight = float(metric.weight_over_contrast) * contrast
-    if config.image_tv_weight is None:
+    if config.image_tv_weight == "coverage":
         rms = column_noise.faint_sd * float(scale) * h**2 * math.sqrt(len(y) / (d.du * d.dv))
         weight = float(voxel_noise_weight(metric, rms, g.shape).weight)
     calibration: _LevelCalibration = {
@@ -528,7 +528,13 @@ def fit_poses(
         prior = None
         levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(y0[:, : detector.nv - drop_v, : detector.nu - drop_u], bins)
-        column_noise = calibrate_columns(binned, bins, noise)
+        column_noise = calibrate_columns(
+            binned,
+            bins,
+            noise,
+            model=config.detector_columns,
+            coverage=config.image_tv_weight == "coverage",
+        )
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
             with (
@@ -582,7 +588,7 @@ def fit_poses(
                     p0=p,
                     pose_sigma=cal["sigma"],
                     delta=cal["delta"],
-                    visibility=config.image_tv_weight is None,
+                    visibility=config.image_tv_weight == "coverage",
                     scales=cal["scales"],
                     placement=placement,
                 )

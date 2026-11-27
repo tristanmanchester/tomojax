@@ -14,6 +14,8 @@ from tomojax.core.robust import MAD_TO_SD
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from tomojax.alignment._config import DetectorColumns
+
 
 type Float32Array = np.ndarray[tuple[int, ...], np.dtype[np.float32]]
 type Float64Array = np.ndarray[tuple[int, ...], np.dtype[np.float64]]
@@ -251,7 +253,12 @@ def _blocked(
 
 
 def calibrate_columns(
-    levels: Sequence[tuple[Float32Array, Float32Array | None]], bins: Sequence[int], noise: float
+    levels: Sequence[tuple[Float32Array, Float32Array | None]],
+    bins: Sequence[int],
+    noise: float,
+    *,
+    model: DetectorColumns,
+    coverage: bool,
 ) -> dict[int, ColumnNoise]:
     """Remove recurrent gain errors and estimate each level's column-contrast attenuation."""
     fine = min(bins)
@@ -260,37 +267,50 @@ def calibrate_columns(
     attenuation = {b: ColumnNoise(0.0, noise / b) for b in bins}
     if min(n, v, u) < 2:
         return attenuation
+    if model == "none":
+        sd = _air_noise(y, w, noise / fine) if coverage else noise / fine
+        return {b: ColumnNoise(0.0, sd * fine / b) for b in bins}
     dynamic, observed, floor, sd = _transient(y, w, noise / fine)
-    field = _fixed(y, w, *_offset_variance(floor - dynamic, observed))
-    # A random detector gain is common even to distant rows. Independent
-    # estimates in the two outer quartiles distinguish it from variance
-    # confined to the intervening specimen. Their cross-product is unbiased
-    # for the common variance under independent errors in the two estimates.
-    band = max(1, v // 4)
-    ends: list[tuple[Float64Array, BoolArray]] = []
-    for rows in (slice(0, band), slice(-band, None)):
-        edge, seen, _, _ = _transient(y[:, rows], None if w is None else w[:, rows], noise / fine)
-        ends.append((edge, seen))
-    paired_native = ends[0][1] & ends[1][1]
-    covariance_native = np.sum(ends[0][0] * ends[1][0], where=paired_native, dtype=np.float64)
-    power = np.sum(dynamic**2, where=paired_native, dtype=np.float64)
-    gain = (
-        np.asanyarray(np.clip(covariance_native / power, 0, 1), dtype=np.float64).item()
-        if power > 0
+    fixed = (
+        _fixed(y, w, *_offset_variance(floor - dynamic, observed))
+        if model in ("both", "fixed")
         else 0.0
     )
-    corrected_field = field + gain * dynamic
+    ends: list[tuple[Float64Array, BoolArray]] = []
+    gain = 0.0
+    if model in ("both", "transient"):
+        # A random detector gain is common even to distant rows. Independent
+        # estimates in the two outer quartiles distinguish it from variance
+        # confined to the intervening specimen. Their cross-product is unbiased
+        # for the common variance under independent errors in the two estimates.
+        band = max(1, v // 4)
+        for rows in (slice(0, band), slice(-band, None)):
+            edge, seen, _, _ = _transient(
+                y[:, rows], None if w is None else w[:, rows], noise / fine
+            )
+            ends.append((edge, seen))
+        paired_native = ends[0][1] & ends[1][1]
+        covariance_native = np.sum(ends[0][0] * ends[1][0], where=paired_native, dtype=np.float64)
+        power = np.sum(dynamic**2, where=paired_native, dtype=np.float64)
+        gain = (
+            np.asanyarray(np.clip(covariance_native / power, 0, 1), dtype=np.float64).item()
+            if power > 0
+            else 0.0
+        )
+    corrected_field = fixed + gain * dynamic
     for (data, _), b in zip(levels, bins, strict=True):
         ratio = b // fine
-        left, left_seen = _blocked(*ends[0], ratio)
-        right, right_seen = _blocked(*ends[1], ratio)
-        paired = left_seen & right_seen
-        covariance = np.sum(left * right, where=paired, dtype=np.float64) / max(
-            1, np.count_nonzero(paired)
-        )
-        # Conditioning on the full-height estimate gives posterior variance
-        # tau² (1 - gain), as well as the shrunk correction gain * dynamic.
-        variance = (1 - gain) * max(0.0, np.asanyarray(covariance, dtype=np.float64).item())
+        variance = 0.0
+        if ends:
+            left, left_seen = _blocked(*ends[0], ratio)
+            right, right_seen = _blocked(*ends[1], ratio)
+            paired = left_seen & right_seen
+            covariance = np.sum(left * right, where=paired, dtype=np.float64) / max(
+                1, np.count_nonzero(paired)
+            )
+            # Conditioning on the full-height estimate gives posterior variance
+            # tau² (1 - gain), as well as the shrunk correction gain * dynamic.
+            variance = (1 - gain) * max(0.0, np.asanyarray(covariance, dtype=np.float64).item())
         columns = corrected_field.reshape(n, data.shape[2], ratio)
         independent = (noise / b) ** 2
         total = independent + data.shape[1] * variance

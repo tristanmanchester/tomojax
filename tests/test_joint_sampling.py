@@ -123,7 +123,7 @@ def test_column_calibration_respects_missing_rays_at_both_resolutions():
     data[:, 8:, 3::5] = np.nan
     data[:, :, -1] = np.nan
     levels, _, noise = _fit._read(data, [2, 1])
-    _fit.calibrate_columns(levels, [2, 1], noise)
+    _fit.calibrate_columns(levels, [2, 1], noise, model="both", coverage=True)
     coarse, fine = levels
     weighted = (fine[0] * fine[1]).reshape(64, 8, 2, 16, 2).mean(axis=(2, 4))
     np.testing.assert_allclose(coarse[0] * coarse[1], weighted, rtol=1e-6, atol=2e-7)
@@ -185,7 +185,7 @@ def test_column_calibration_requires_evidence_in_distant_rows():
     residual = []
     for original in (localized, common):
         levels, _, noise = _fit._read(original, [1])
-        _fit.calibrate_columns(levels, [1], noise)
+        _fit.calibrate_columns(levels, [1], noise, model="both", coverage=True)
         result = levels[0][0]
         # Score the imposed field at its peak, relative to exposures far from it.
         difference = (result[24] - result[60:80].mean(axis=0))[v // 4 : 3 * v // 4].mean(axis=0)

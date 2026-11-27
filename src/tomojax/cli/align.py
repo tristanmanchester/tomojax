@@ -199,6 +199,9 @@ def _build_align_config(
                 raise ValueError("levels must be a list of positive integers ending at 1")
             coerced[key] = tuple(int(item) for item in value)
             continue
+        if key == "image_tv_weight" and value == "coverage":
+            coerced[key] = value
+            continue
         expected = defaults.get(key)
         if isinstance(expected, bool):
             if not isinstance(value, bool):

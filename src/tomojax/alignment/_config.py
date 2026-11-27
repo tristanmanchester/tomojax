@@ -10,6 +10,7 @@ from typing import Literal
 from tomojax.errors import InvalidParameter
 
 type Interpolation = Literal["linear", "cubic"]
+type DetectorColumns = Literal["none", "fixed", "transient", "both"]
 type Motion = Literal["independent", "smooth"]
 
 
@@ -80,10 +81,14 @@ class AlignConfig:
         deviations. Default is 2.5.
     loss_contrast_floor : float, optional
         The least loss width, as a fraction of the data's contrast. Default is 0.5.
-    image_tv_weight : float, optional
+    detector_columns : {"none", "fixed", "transient", "both"}, optional
+        Column errors to model in the joint fit. "fixed" estimates offsets shared
+        by all views. "transient" estimates row-common disturbances per view and
+        weights their residual variance. "both" fits both terms. Default is "none".
+    image_tv_weight : float or {"coverage"}, optional
         Total-variation weight on the fit's image, as a fraction of its contrast;
-        0 leaves the image unregularized. The default scales the penalty by measured noise
-        and by changes in detector coverage between neighboring voxels.
+        0 (default) leaves the image unregularized. "coverage" scales the penalty by
+        measured noise and changes in detector coverage between neighboring voxels.
     image_tv_huber : float, optional
         The total variation's Huber width, as a fraction of the contrast.
         Default is 1.0.
@@ -115,7 +120,8 @@ class AlignConfig:
     rotation_sigma: float = field(default=0.5, metadata={"unit": "degree"})
     loss_width: float = field(default=2.5, metadata={"unit": "noise_sigma"})
     loss_contrast_floor: float = field(default=0.5, metadata={"unit": "1"})
-    image_tv_weight: float | None = field(default=None, metadata={"unit": "1"})
+    detector_columns: DetectorColumns = "none"
+    image_tv_weight: float | Literal["coverage"] = field(default=0.0, metadata={"unit": "1"})
     image_tv_huber: float = field(default=1.0, metadata={"unit": "1"})
     margin: float = field(default=1 / 16, metadata={"unit": "1"})
     refine_smoothing: float = field(default=8.0, metadata={"unit": "native_pixel"})
@@ -144,12 +150,17 @@ class AlignConfig:
             ("margin", self.margin),
             ("image_tolerance", self.image_tolerance),
             ("tolerance", self.tolerance),
-            ("image_tv_weight", self.image_tv_weight if self.image_tv_weight is not None else 0.0),
+            (
+                "image_tv_weight",
+                self.image_tv_weight if self.image_tv_weight != "coverage" else 0.0,
+            ),
             ("loss_contrast_floor", self.loss_contrast_floor),
             ("refine_smoothing", self.refine_smoothing),
         ):
             if not math.isfinite(value) or value < 0:
                 raise InvalidParameter(name, f"{name} must be finite and nonnegative")
+        if self.detector_columns not in ("none", "fixed", "transient", "both"):
+            raise InvalidParameter("detector_columns", "choose none, fixed, transient or both")
         if self.motion not in ("independent", "smooth"):
             raise InvalidParameter(
                 "motion", f'motion is "independent" or "smooth", not {self.motion!r}'
