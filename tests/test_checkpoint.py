@@ -64,6 +64,8 @@ def _scan(geometry: str = "parallel", views: int = 24) -> tj.Scan:
 
 SOLVES = [
     pytest.param("cgls", {"iterations": 64}, id="cgls"),
+    pytest.param("cgls", {"iterations": 64, "devices": 2}, id="shared-cgls"),
+    pytest.param("fista", {"iterations": 12, "devices": 2, "tv_weight": 1e-3}, id="shared-fista"),
     pytest.param("fista", {"iterations": 12, "tv_weight": 1e-3}, id="fista"),
     pytest.param("sirt", {"iterations": 12}, id="sirt"),
     pytest.param(
@@ -106,6 +108,13 @@ def test_a_cancel_saves_the_state_and_names_the_checkpoint(tmp_path: Path) -> No
 def test_a_stopped_solve_resumes_to_the_uninterrupted_volume(
     tmp_path: Path, method: str, options: dict[str, Any]
 ) -> None:
+    if "devices" in options:
+        import jax
+
+        count = options["devices"]
+        if len(jax.devices()) < count:
+            pytest.skip(f"needs {count} devices")
+        options = {**options, "devices": jax.devices()[:count]}
     scan = _scan()
     path = tmp_path / "run"
     plain = np.asarray(tj.reconstruct(scan, method, **options).volume)

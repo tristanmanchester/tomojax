@@ -92,8 +92,7 @@ class ViewBatches:
         return jax.lax.dynamic_slice(self.counts, (start,), (self.size,))
 
     def images(self, stack: jax.Array, start: jax.Array) -> jax.Array:
-        shape = (self.size, self.detector.nv, self.detector.nu)
-        return jax.lax.dynamic_slice(stack, (start, 0, 0), shape)
+        return jax.lax.dynamic_slice_in_dim(stack, start, self.size)
 
     def _coefficients(self, start: jax.Array, size: int | None = None) -> jax.Array:
         assert self.coefficients is not None

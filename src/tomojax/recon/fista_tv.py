@@ -29,13 +29,13 @@ from ._chunks import Chunked
 from ._fista_initialization import first_gradient as estimate_first_gradient
 from ._fista_owned import FistaResult, FistaScanState, run_owned_fista, store_residuals
 from ._noise import detector_error_scale
-from ._noise_probe import probe_gradient_rms
+from ._noise_probe import gaussian_probe
 from ._projection import (
     ConeModel,
     least_squares_operators,
+    projection_operators,
     resolve_geometry_projector,
 )
-from ._projection_batches import ViewBatches
 from ._solver_validation import validate_fista_config
 from ._tv_metric import TVMetric, resolve_tv_metric, voxel_noise_weight
 from ._tv_ops import (
@@ -104,27 +104,17 @@ class FistaRuntime:
         if detector.nv * detector.nu == 1:
             return voxel_noise_weight(self.metric, 0, grid.shape)
         model, backend, batch = self.projector
-        ops = ViewBatches(
-            self.poses,
-            grid,
-            detector,
-            self.detector_grid,
-            backend,
-            batch,
-            model,
-            "linear",
-            absolute_weights=False,
+        _, adjoint = projection_operators(
+            self.poses, grid, detector, self.detector_grid, backend, batch, model, split=self.split
         )
-        backproject = ops.backproject
-        rms = probe_gradient_rms(
-            self.poses,
-            grid,
-            detector,
-            backproject,
-            batch_size=batch,
-            shape=volume_shape(model, grid),
-            support=self.volume_mask,
+        # Generate each noise view on its owner, with the same global seed in every layout.
+        gradient = adjoint(
+            jax.lax.iota(np.int32, self.poses.shape[0]),
+            functools.partial(gaussian_probe, detector_shape=(detector.nv, detector.nu)),
         )
+        if self.volume_mask is not None:
+            gradient = gradient * self.volume_mask
+        rms = jnp.sqrt(jnp.mean(gradient * gradient))
         return voxel_noise_weight(
             self.metric, self.noise_scale * rms, volume_shape(model, grid), self.volume_mask
         )
