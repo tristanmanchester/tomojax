@@ -363,6 +363,20 @@ def test_cancellation_estimate_does_not_stop_decreasing_normal_residual():
         assert info["normal_residual_norm"] >= previous["normal_residual_norm"]
 
 
+@pytest.mark.parametrize("stream", [False, True])
+def test_healthy_small_normal_residual_does_not_trigger_per_iteration_replacement(stream):
+    import tomojax as tj
+
+    scan = tj.simulate("shepp", size=16, n_views=17).scan
+    clean = np.asarray(scan.projections)
+    noise = np.random.default_rng(12).standard_normal(clean.shape, dtype=np.float32)
+    data = clean + 0.01 * clean.std() * noise
+    config = CGLSConfig(iterations=128, tolerance=0, stream=stream)
+    _, info = cgls(scan.geometry, scan.grid, scan.detector, data, config=config)
+    assert info["effective_iterations"] == 128
+    assert 0 < info["residual_recomputations"] < 128 // 4
+
+
 @pytest.mark.parametrize("damping", [0.0, 0.3])
 def test_streamed_cgls_solves_the_same_least_squares_problem(tmp_path, damping):
     grid, detector = Grid(12, 11, 8, 0.8, 1.1, 1.3), Detector(14, 10, 0.9, 1.2, (0.1, -0.2))

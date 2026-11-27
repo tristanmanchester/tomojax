@@ -447,7 +447,7 @@ class _HostCGLS:
                     state["roundoff"]
                     or float(alpha) ** 2 * direction_norm2 <= _EPS**2 * size
                     or gamma_new <= threshold**2
-                    or (((count + 1) % 16 == 0 or state["verified"]) and gamma_new <= _EPS * first)
+                    or (((count + 1) % 16 == 0 or beta is None) and gamma_new <= _EPS * first)
                 )
                 restart = False
                 if verify:

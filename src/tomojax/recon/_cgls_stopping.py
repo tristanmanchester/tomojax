@@ -39,7 +39,7 @@ def precision_stalled(
     compare two recomputed residuals: a recurrence estimate can drift below the
     measured norm, falsely suggesting that progress has stopped.
 
-    After a near-precision check continues, the solver checks the next small
+    After a near-precision check restarts the direction, check the next small
     residual too. Waiting another period lets an unverified recurrence leave
     the cancellation floor before two measured gradients can be compared.
     """

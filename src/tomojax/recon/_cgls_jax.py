@@ -56,6 +56,7 @@ class _State(NamedTuple):
     failed: jax.Array
     roundoff: jax.Array
     residual_verified: jax.Array
+    restarted: jax.Array
     residual_recomputations: jax.Array
 
 
@@ -137,6 +138,7 @@ def _solve_initial(
         gamma,
         ~(inputs_finite & jnp.isfinite(gamma)),
         jnp.bool_(False),
+        jnp.bool_(True),
         jnp.bool_(True),
         jnp.int32(0),
     )
@@ -246,7 +248,7 @@ def _solve(
         # true residual periodically once its norm is small, before that noise
         # gets amplified.
         near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        check_due = ((state.iteration + 1) % 16 == 0) | state.residual_verified
+        check_due = ((state.iteration + 1) % 16 == 0) | state.restarted
         verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
         def recompute(
@@ -299,6 +301,7 @@ def _solve(
             ~valid,
             jnp.where(valid, roundoff, state.roundoff),
             jnp.where(valid, verify, state.residual_verified),
+            restart,
             state.residual_recomputations + verify.astype(jnp.int32),
         )
 
@@ -370,6 +373,7 @@ def _solve_streamed_initial(
         gamma,
         ~(finite & jnp.isfinite(gamma)),
         jnp.bool_(False),
+        jnp.bool_(True),
         jnp.bool_(True),
         jnp.int32(0),
     )
@@ -447,7 +451,7 @@ def _solve_streamed(
         )
         convergence_candidate = gamma_new <= threshold * threshold
         near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        check_due = ((state.iteration + 1) % 16 == 0) | state.residual_verified
+        check_due = ((state.iteration + 1) % 16 == 0) | state.restarted
         verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
         def recompute(recurrence: jax.Array) -> tuple[jax.Array, ...]:
@@ -486,6 +490,7 @@ def _solve_streamed(
             ~valid,
             jnp.where(valid, roundoff, state.roundoff),
             jnp.where(valid, verify, state.residual_verified),
+            restart,
             state.residual_recomputations + verify.astype(jnp.int32),
         )
 

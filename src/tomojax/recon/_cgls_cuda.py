@@ -264,8 +264,8 @@ def _iterate(
         norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
         candidate = bool(norm2 <= tolerance**2)
-        # Keep verifying after a near-precision check, not sixteen steps later.
-        periodic = (count % 16 == 0 or previous[1]) and norm2 <= eps * initial_norm**2
+        # Confirm a restart promptly; an accurate recurrence waits for the next period.
+        periodic = (count % 16 == 0 or restart) and norm2 <= eps * initial_norm**2
         verified = roundoff or small_update or candidate or periodic
         restart = False
         if verified and not failed:

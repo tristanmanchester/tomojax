@@ -63,7 +63,7 @@ def _scan(geometry: str = "parallel", views: int = 24) -> tj.Scan:
 
 
 SOLVES = [
-    pytest.param("cgls", {"iterations": 12}, id="cgls"),
+    pytest.param("cgls", {"iterations": 64}, id="cgls"),
     pytest.param("fista", {"iterations": 12, "tv_weight": 1e-3}, id="fista"),
     pytest.param("sirt", {"iterations": 12}, id="sirt"),
     pytest.param(
@@ -82,7 +82,7 @@ def test_a_stopped_solve_resumes_to_the_uninterrupted_volume(
     scan = _scan()
     path = tmp_path / "run"
     plain = np.asarray(tj.reconstruct(scan, method, **options).volume)
-    whole = np.asarray(tj.reconstruct(scan, method, checkpoint=path, **options).volume)
+    whole = tj.reconstruct(scan, method, checkpoint=path, **options)
     assert not path.exists()  # removed once the run returns
 
     with pytest.raises(Canceled, match="SIGTERM"), progress.watch(_terminated_after(3)):
@@ -91,8 +91,10 @@ def test_a_stopped_solve_resumes_to_the_uninterrupted_volume(
     recon, first = _first_report(lambda: tj.reconstruct(scan, method, checkpoint=path, **options))
 
     assert first is not None and first >= 3  # it continued; a fresh start reports 1 first
-    np.testing.assert_array_equal(whole, plain)
-    np.testing.assert_array_equal(np.asarray(recon.volume), whole)
+    np.testing.assert_array_equal(whole.volume, plain)
+    np.testing.assert_array_equal(np.asarray(recon.volume), whole.volume)
+    for key in ("termination", "effective_iterations", "residual_recomputations"):
+        assert recon.info.get(key) == whole.info.get(key)
     assert not path.exists()
 
 

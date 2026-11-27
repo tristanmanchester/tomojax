@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- CGLS continues its conjugate recurrence after a periodic FP32 check finds it
+  accurate. Long solves still verify convergence and check a restarted direction.
+
 - Long runs resume after a kill: `checkpoint=` on `tj.reconstruct`, `tj.reconstruct_slabs`,
   and `tj.align` (`--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`) saves
   solver state, finished slabs, and finished alignment levels in a directory. Periodic saves
