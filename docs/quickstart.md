@@ -203,7 +203,7 @@ Iterative solvers use one coarse fit to those completed rows to estimate how muc
 
 To assume zero beyond the detector, set `exterior="zero"` in the method configuration:
 
-- **Python:** pass the configuration for the chosen method, such as `config=CGLSConfig(exterior="zero")` or `config=FBPConfig(exterior="zero")` to `tj.reconstruct` or `tj.reconstruct_slabs` (`FBPConfig` applies to cone-beam FDK as well; direct `tomojax.recon.fdk` calls take `FDKConfig(exterior="zero")`).
+- In Python, pass the method configuration to `tj.reconstruct`, for example `config=CGLSConfig(exterior="zero")`. For iterative reconstruction with `tj.reconstruct_slabs`, use `SIRTConfig` or `MLEMConfig` on axial parallel scans. Cone-beam FDK through the workflow takes `FBPConfig`. Direct `tomojax.recon.fdk` calls take `FDKConfig`.
 - **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit method, such as `--method cgls`.
 - **Worker and MCP:** pass the chosen method’s config, such as `{"type": "CGLSConfig", "exterior": "zero"}`, in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP.
 
@@ -213,7 +213,7 @@ Every reconstruction carries `recon.info["truncation"]`, computed from the proje
 
 | Key | Meaning |
 | --- | --- |
-| `edge_ratio` | Mean line integral at the detector edges divided by the mean across the rows (zero for a contained object) |
+| `edge_ratio` | Mean line integral at the detector edges divided by the mean across the rows (zero when the sampled edges are air) |
 | `outside_fraction` | Share of the continued scan's attenuation that lies beyond the detector |
 | `interior_shift` | Estimated change on the rotation axis from using the cylinder exterior, in the volume's units |
 | `radius` | Median radius of the rows' fitted cylinders, in the scan's length unit |
