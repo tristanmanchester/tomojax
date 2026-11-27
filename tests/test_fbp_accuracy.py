@@ -75,7 +75,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     if backend != "jax" and jax.default_backend() != "gpu":
         pytest.skip("requires a CUDA GPU")
     module = importlib.import_module("tomojax.recon.fbp")
-    monkeypatch.setattr(module, "_parallel_filter_batch_size", lambda *_: batch)
+    monkeypatch.setattr(module, "parallel_filter_batch_size", lambda *_: batch)
     grid = Grid(9, 7, 1, 0.8, 1.2, 1.0, vol_center=(1.7, -2.3, 0.0))
     detector = Detector(nu, 1, 0.7, 1.0, (0.27, 0.0))
     angles = np.array([0.0, 31.0, 117.0], dtype=np.float32)

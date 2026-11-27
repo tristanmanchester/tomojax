@@ -29,7 +29,7 @@ def test_nondivisible_view_batches(method, host, devices, cancel, monkeypatch):
     # The native FBP batch size normally varies with scan size and workspace.
     if method == "fbp":
         monkeypatch.setattr(
-            import_module("tomojax.recon.fbp"), "_parallel_filter_batch_size", lambda *_: 3
+            import_module("tomojax.recon.fbp"), "parallel_filter_batch_size", lambda *_: 3
         )
         geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 19, endpoint=False))
         solve, config = fbp, FBPConfig(devices=placement, backend="jax")
