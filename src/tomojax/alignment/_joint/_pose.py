@@ -166,17 +166,7 @@ class _Woodbury(NamedTuple):
         )
 
 
-class _BlockDiagonal(NamedTuple):
-    inverse: jax.Array
-
-    def solve(self, rhs: jax.Array) -> jax.Array:
-        n, k, _ = self.inverse.shape
-        return (self.inverse @ rhs.reshape(n, k, -1)).reshape(rhs.shape)
-
-
-type _LocalFactor = tuple[
-    _BlockDiagonal | _Woodbury | _spline_solve.Factor, jax.Array, jax.Array | None, jax.Array
-]
+type _LocalFactor = tuple[_Woodbury | _spline_solve.Factor, jax.Array, jax.Array | None, jax.Array]
 type PoseFactor = tuple[_LocalFactor | None, jax.Array, jax.Array, jax.Array | None]
 # eval_shape preserves the factor's tuple tree and replaces its leaves with shapes.
 type FactorShape = tuple[jax.ShapeDtypeStruct | FactorShape | None, ...]
@@ -563,10 +553,6 @@ class MotionPrior:
             u = m.U[:, :0] if innovation else m.U
             tri = _Tridiagonal.build(blocks, w)
             base = _Woodbury.build(tri, u, self._laplacian(u, w))
-        elif self.independent and not innovation:
-            # The joint step can move every view freely before imposing the gauge.
-            # Only the innovation step needs the tree to hold the spline drift fixed.
-            base = _BlockDiagonal(_inverse(blocks))
         else:
             base = _spline_solve.factor(m.chain, blocks, w, innovation)
         g = m.C if innovation else m.G
