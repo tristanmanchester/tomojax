@@ -65,18 +65,21 @@ def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
     return "numpy"
 
 
+def _free_device_memory() -> int:
+    import cupy
+
+    return int(cupy.cuda.runtime.memGetInfo()[0])
+
+
 def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, backend: str) -> int:
     """Bound automatic CUDA FFT planes before allocation; explicit budgets stay fixed."""
     if requested is not None:
         depth = operator.index(requested)
     elif backend == "cupy":
-        import cupy
-
         shape, _ = transform_grid(grid, detector)
         # Several transform buffers, workspaces and pending transfers coexist.
         # Bounding one padded FP32 plane stack avoids expensive retry cascades.
-        free, _ = cupy.cuda.runtime.memGetInfo()
-        budget = min(512 * 1024**2, free // 32)
+        budget = min(512 * 1024**2, _free_device_memory() // 32)
         planes = max(1, budget // (4 * shape[0] * shape[1]))
         depth = min(16, 1 << (planes.bit_length() - 1))
     else:
@@ -688,7 +691,6 @@ class FourierPlan:
                     source = xp.from_dlpack(data)
                 else:
                     source = xp.asarray(np.asarray(data))
-                source = xp.ascontiguousarray(xp.take(source.transpose(1, 0, 2), order, axis=1))
                 positions = np.clip(positions, -1, data.shape[1])
                 indices = np.floor(positions).astype(np.int64)
                 fraction = (positions - indices).astype(np.float32)
@@ -699,9 +701,10 @@ class FourierPlan:
                     -1,
                 )
                 rows = ProjectionRows(source, lower, upper, fraction)
-                raw, metadata = interpolate_projection_rows(rows, source, self.depth, xp)
-                # The ordered rows were allocated and last used on this compute stream.
-                del rows, source
+                raw, metadata = interpolate_projection_rows(
+                    rows, source, self.depth, xp, order=order
+                )
+                del rows
                 volume: CuPyValue = self._compute_volume(raw, len(positions))
                 finite = all_finite_kernel()(volume)
                 computed = xp.cuda.Event()
@@ -716,7 +719,7 @@ class FourierPlan:
                 downloaded = xp.cuda.Event()
                 downloaded.record()
             return PendingSlab(
-                host, flag, downloaded, (data, raw, volume, finite, computed, *metadata)
+                host, flag, downloaded, (data, source, raw, volume, finite, computed, *metadata)
             )
         except BaseException:
             self.synchronize()

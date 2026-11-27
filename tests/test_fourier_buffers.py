@@ -100,7 +100,7 @@ def test_fourier_output_mapping_follows_escaped_buffer_views():
 
 
 @pytest.mark.gpu
-def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch):
+def test_raw_fourier_samples_rows_without_a_reordered_copy(monkeypatch):
     import cupy as cp
 
     import tomojax as tj
@@ -110,28 +110,17 @@ def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch
     detector = tj.Detector(11, 6, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, [60, 0, 120])
     frames = tj.Frames(np.full((3, 6, 11), 400, np.float32), geometry, white_level=1000)
-    contiguous, rfft = cp.ascontiguousarray, cp.fft.rfft
-    ordered = []
-    checks = []
+    contiguous = cp.ascontiguousarray
 
-    def remember(array, *args, **kwargs):
-        result = contiguous(array, *args, **kwargs)
-        if result.shape == (2, 3, 11):
-            ordered.append(weakref.ref(result))
-        return result
+    def no_reordered_copy(array, *args, **kwargs):
+        assert array.shape != (2, 3, 11)
+        return contiguous(array, *args, **kwargs)
 
-    def transform(array, *args, **kwargs):
-        assert ordered and all(ref() is None for ref in ordered)
-        checks.append(array.shape)
-        return rfft(array, *args, **kwargs)
-
-    monkeypatch.setattr(cp, "ascontiguousarray", remember)
-    monkeypatch.setattr(cp.fft, "rfft", transform)
+    monkeypatch.setattr(cp, "ascontiguousarray", no_reordered_copy)
     with tj.reconstruct_slabs(
         frames, "fourier", config=FourierConfig(backend="cupy", slices_per_batch=2)
     ) as slabs:
         assert [section.stop for section, _ in slabs] == [2, 4, 6]
-    assert checks.count((2, 3, 11)) == 3  # one measured transform per slab
 
 
 @pytest.mark.parametrize(

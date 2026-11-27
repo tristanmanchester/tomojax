@@ -60,13 +60,14 @@ def prepare_projection_rows(
     return ProjectionRows(samples, lower, upper, fraction)
 
 
-@lru_cache(maxsize=2)
-def _row_kernel(*, per_view: bool = False) -> CuPyValue:
+@lru_cache(maxsize=4)
+def _row_kernel(*, per_view: bool = False, reorder: bool = False) -> CuPyValue:
     import cupy
 
     return cupy.ElementwiseKernel(
         "raw float32 source, raw int64 lower, raw int64 upper, "
-        "raw float32 fraction, int64 nviews, int64 nu, int64 count",
+        "raw float32 fraction, int64 nviews, int64 nu, int64 count"
+        + (", raw int64 order, int64 nv" if reorder else ""),
         "float32 output",
         r"""
         long long u = i % nu;
@@ -79,24 +80,43 @@ def _row_kernel(*, per_view: bool = False) -> CuPyValue:
         // Match host multiply/add rounding, zero-weight masking and signed zeros.
         if (lo >= 0)
             value = __fadd_rn(value, __fmul_rn(
-                source[(lo * nviews + view) * nu + u], __fsub_rn(1.0f, f)));
+                source[LOW], __fsub_rn(1.0f, f)));
         if (hi >= 0)
-            value = __fadd_rn(value, __fmul_rn(source[(hi * nviews + view) * nu + u], f));
+            value = __fadd_rn(value, __fmul_rn(source[HIGH], f));
         output = value;
-        """.replace("PER_VIEW", "1" if per_view else "0"),
-        "tomojax_fourier_detector_rows" + ("_per_view" if per_view else ""),
+        """.replace("PER_VIEW", "1" if per_view else "0")
+        .replace(
+            "LOW",
+            "(order[view] * nv + lo) * nu + u" if reorder else "(lo * nviews + view) * nu + u",
+        )
+        .replace(
+            "HIGH",
+            "(order[view] * nv + hi) * nu + u" if reorder else "(hi * nviews + view) * nu + u",
+        ),
+        "tomojax_fourier_detector_rows"
+        + ("_per_view" if per_view else "")
+        + ("_ordered" if reorder else ""),
     )
 
 
 def interpolate_projection_rows(
-    rows: ProjectionRows, source: CuPyValue, depth: int, xp: CuPyValue
-) -> tuple[CuPyValue, tuple[CuPyValue, CuPyValue, CuPyValue]]:
+    rows: ProjectionRows,
+    source: CuPyValue,
+    depth: int,
+    xp: CuPyValue,
+    *,
+    order: CuPyValue | None = None,
+) -> tuple[CuPyValue, tuple[CuPyValue, ...]]:
     """An owned CUDA FFT slab, and the metadata arrays it needs until the kernel runs."""
-    nviews, nu = rows.samples.shape[1:]
+    nviews = source.shape[1] if order is None else source.shape[0]
+    nu = source.shape[-1]
     output = xp.empty((depth, nviews, nu), dtype=xp.float32)
     lower, upper, fraction = (xp.asarray(a) for a in (rows.lower, rows.upper, rows.fraction))
     count = np.int64(len(rows.fraction))
-    _row_kernel(per_view=rows.fraction.ndim == 2)(
-        source, lower, upper, fraction, np.int64(nviews), np.int64(nu), count, output
+    ordering = (
+        () if order is None else (xp.asarray(order, dtype=xp.int64), np.int64(source.shape[1]))
     )
-    return output, (lower, upper, fraction)
+    _row_kernel(per_view=rows.fraction.ndim == 2, reorder=order is not None)(
+        source, lower, upper, fraction, np.int64(nviews), np.int64(nu), count, *ordering, output
+    )
+    return output, (lower, upper, fraction, *ordering[:1])

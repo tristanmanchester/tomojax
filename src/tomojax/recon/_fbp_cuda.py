@@ -111,20 +111,23 @@ extern "C" __global__ void backproject_axial(
     const float* __restrict__ poses, const float* __restrict__ images,
     const float* initial, float* out, int nviews)
 {
-    __shared__ float cf[32 * 16];
+    __shared__ float3 cf[128];
     long xy = (long)blockIdx.x * blockDim.x + threadIdx.x;
     long plane = (long)nx * ny;
     int ix = xy % nx, iy = xy / nx, z = blockIdx.y * RUN;
     float x = (float)ix * vx + ox, y = (float)iy * vy + oy;
     float total[RUN] = {};
-    for (int start = 0; start < nviews; start += 32) {
+    for (int start = 0; start < nviews; start += blockDim.x) {
         __syncthreads();
-        for (int i = threadIdx.x; i < 32 * 16; i += blockDim.x)
-            cf[i] = start * 16 + i < nviews * 16 ? poses[start * 16 + i] : 0.f;
+        int v = start + threadIdx.x;
+        if (v < nviews) {
+            const float* p = poses + v * 16;
+            cf[threadIdx.x] = make_float3(p[0], p[1], p[3]);
+        }
         __syncthreads();
-        for (int view = 0; view < min(32, nviews - start); ++view) {
-            const float* p = cf + view * 16;
-            float wx = (p[0] * x + p[1] * y) + p[3];
+        for (int view = 0; view < min((int)blockDim.x, nviews - start); ++view) {
+            float3 p = cf[view];
+            float wx = (p.x * x + p.y * y) + p.z;
             float u = (wx - cu) * (1.f / du) + (float)((nu - 1) % 2) * .5f;
             float lower = floorf(u), wu = u - lower;
             int iu = (int)lower + (nu - 1) / 2;

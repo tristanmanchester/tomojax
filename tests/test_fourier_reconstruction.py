@@ -877,7 +877,13 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
 
 
-def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(monkeypatch):
+@pytest.mark.parametrize("free_gib, expected_depths", [(8, (16, 8, 2)), (32, (16, 16, 4))])
+def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(
+    monkeypatch, free_gib, expected_depths
+):
+    monkeypatch.setattr(
+        "tomojax.recon._fourier_backend._free_device_memory", lambda: free_gib * 1024**3
+    )
     monkeypatch.setattr("tomojax.recon._fourier_backend._cupy_device", lambda: 0)
     implementation = importlib.import_module("tomojax.recon.fourier")
 
@@ -891,7 +897,7 @@ def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overr
     detector = Detector(64, 31, 1, 1)
     angles = np.linspace(0, 180, 32, endpoint=False)
     data = np.zeros((32, 31, 64), np.float32)
-    for pitch, expected in ((1, 16), (1 / 16, 8), (1 / 36, 2)):
+    for pitch, expected in zip((1, 1 / 16, 1 / 36), expected_depths, strict=True):
         grid = Grid(4, 4, 31, pitch, pitch, 1)
         geometry = ParallelGeometry(grid, detector, angles)
         for requested, selected in ((None, expected), (5, 5)):

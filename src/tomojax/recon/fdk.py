@@ -45,7 +45,9 @@ from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._fdk_filter import (
+    batch_cosines,
     continued_rows,
+    cosines,
     filter_operator,
     grid_columns,
     measured_and_exterior,
@@ -251,45 +253,6 @@ def _distinct_view_weights(
     return weight * measure[selected, None]
 
 
-def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
-    """``(nv, nu)`` cosine of each pixel's ray to the detector normal."""
-    center, u_dir, v_dir = beam.detector_frame(detector)
-    normal = np.cross(u_dir, v_dir)
-    normal /= np.linalg.norm(normal)
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
-    v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
-    ray = center - beam.source()
-    z = abs(ray @ normal)
-    return z / np.sqrt((ray @ u_dir + u[None, :]) ** 2 + (ray @ v_dir + v[:, None]) ** 2 + z**2)
-
-
-def _cosines(parts: tuple[tuple[int | None, ConeBeam, Detector], ...], n_views: int) -> np.ndarray:
-    """Shared cosine image, or compact per-view ray coordinates in detector axes."""
-    if len(parts) == 1:
-        return np.asarray(_cosine_weights(parts[0][1], parts[0][2]), np.float32)
-    values = []
-    for count, beam, detector in parts:
-        center, u, v = beam.detector_frame(detector)
-        ray = center - beam.source()
-        coordinates = np.array([ray @ u, ray @ v, abs(ray @ np.cross(u, v))], np.float32)
-        values.append(np.broadcast_to(coordinates, (n_views if count is None else count, 3)))
-    return np.concatenate(values)[..., None]
-
-
-def _batch_cosines(
-    cosine: jax.Array, start: jax.Array | int, count: int, detector: Detector
-) -> jax.Array:
-    if cosine.ndim == 2:
-        return cosine
-    parameters = jax.lax.dynamic_slice_in_dim(cosine, start, count)[..., 0]
-    u = (jnp.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
-    v = (jnp.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
-    x = parameters[:, 0, None, None] + u[None, None, :]
-    y = parameters[:, 1, None, None] + v[None, :, None]
-    z = parameters[:, 2, None, None]
-    return z / jnp.sqrt(x * x + y * y + z * z)
-
-
 def _backproject_jax(
     filtered: jax.Array,
     coeff: jax.Array,
@@ -356,7 +319,7 @@ def _fdk_batch(
     weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
     nu = views.shape[-1]
     wide = replace(detector, nu=len(distance) or nu)
-    cosine = _batch_cosines(cosine, start, views.shape[0], wide)
+    cosine = batch_cosines(cosine, start, views.shape[0], wide)
     if profiles is not None and radius2 is not None:
         rows, correction = measured_and_exterior(
             views, weights, cosine, radius2, distance, profiles
@@ -501,7 +464,7 @@ def _prepare(
         detector=detector,
         # device_put, unlike jnp.asarray, compiles nothing for a new shape.
         weights=jax.device_put(np.asarray(weights, np.float32)),
-        cosine=jax.device_put(_cosines(continued, n_views)),
+        cosine=jax.device_put(cosines(continued, n_views)),
         kernel=jax.device_put(kernel),
         operator=operator,
         scale=1.0 / magnification,
