@@ -17,9 +17,9 @@ from tomojax._typed_arrays import (
     max_float,
     numpy_float32_array,
     numpy_float64_array,
-    sum_float64,
 )
 from tomojax.core import checkpoint
+from tomojax.core.cuda_types import CuPyValue
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.host_volume import host_array
@@ -39,32 +39,41 @@ if TYPE_CHECKING:
     from .spdhg_tv import SPDHGConfig
 
 
-def _bin(values: Float32Array, count: int, axis: int) -> Float32Array:
+def _bin(values: Float32Array | CuPyValue, count: int, axis: int) -> Float32Array | CuPyValue:
     """Equal-area averages over a detector axis, including fractional end cells."""
-    length = int(np.size(values, axis))
+    length = int(values.shape[axis])
     if length == count:
         return values
     source = values.swapaxes(axis, -1)
     if length % count == 0:
         shape = (*map(int, source.shape[:-1]), count, length // count)
-        means = numpy_float32_array(np.mean(source.reshape(shape), axis=-1, dtype=np.float32))
+        means = source.reshape(shape).mean(axis=-1, dtype=np.float32)
     else:
         edges = np.linspace(0, length, count + 1, dtype=np.float64)
         cell = edges.astype(np.intp)
-        sums = np.pad(
-            np.cumsum(source, axis=-1, dtype=np.float64), [(0, 0)] * (source.ndim - 1) + [(1, 0)]
-        )
-        integrals = numpy_float64_array(sums[..., cell]) + (edges - cell) * np.take(
-            source, np.minimum(cell, length - 1), axis=-1
-        )
-        means = (np.diff(integrals) * (count / length)).astype(np.float32)
+        # The partial cells transfer mass only between adjacent bins. Reduce
+        # directly to the coarse lattice, without a fine-grid prefix-sum copy.
+        if isinstance(source, np.ndarray):
+            xp = np
+        else:
+            from ._cgls_cuda import array_module
+
+            xp = array_module()
+        indices = xp.asarray(cell)
+        totals = xp.add.reduceat(source, indices[:-1], axis=-1, dtype=np.float64)
+        partial = xp.asarray(edges[1:-1] - cell[1:-1]) * source[..., indices[1:-1]]
+        totals[..., :-1] += partial
+        totals[..., 1:] -= partial
+        means = (totals * (count / length)).astype(np.float32)
     return means.swapaxes(axis, -1)
 
 
 def _poses(geometry: Geometry, views: int) -> Float32Array:
     poses = host_view_poses(geometry, views)
     if poses is None:
-        poses = np.asarray([geometry.pose_matrix(i) for i in range(views)], np.float32)
+        from tomojax.core.geometry.views import stack_view_poses
+
+        poses = np.asarray(stack_view_poses(geometry, views))
     return numpy_float32_array(poses)
 
 
@@ -158,13 +167,32 @@ class _Sampling:
             sample = cls.for_scan(grid, detector, reach, binning)
             d, wide = sample.detector, sample.grid
             fitted = len(range(0, views, _stride(geometry, wide)))
-            if room is None or resident_bytes(wide, (fitted, d.nv, 3 * d.nu)) <= room:
+            if (
+                room is None
+                or resident_bytes(wide, (fitted, d.nv, 3 * d.nu)) <= room
+                or (d.nu, d.nv, wide.nz) == (1, 1, 1)
+            ):
                 return sample
-            if (d.nu, d.nv, wide.nz) == (1, 1, 1):
-                raise MemoryError(
-                    "continued projections for one auxiliary voxel do not fit on the device"
-                )
             binning *= 2
+
+    def planes(self, rows: int, pitch: float) -> _Sampling:
+        """Use this in-plane lattice independently on each physical detector row."""
+        return replace(
+            self,
+            grid=replace(self.grid, nz=rows, vz=pitch, vol_center=(0.0, 0.0, 0.0)),
+            detector=replace(
+                self.detector, nv=rows, dv=pitch, center=(self.detector.center[0], 0.0)
+            ),
+        )
+
+    def depth(self, geometry: Geometry, views: int, rows: int, room: int | None) -> int:
+        shape = (len(range(0, views, _stride(geometry, self.grid))), 1, 3 * self.detector.nu)
+        # Batch right-hand sides within 128 MiB of completed host rows and the
+        # available resident device budget. A full scan reuses the same workspace.
+        fitting = min(rows, max(1, (128 << 20) // (4 * views * 3 * self.detector.nu)))
+        if room is not None:
+            fitting = min(fitting, max(1, room // resident_bytes(self.grid, shape)))
+        return 2 ** (fitting.bit_length() - 1)
 
     def completed(self, geometry: Geometry, data: np.ndarray | jax.Array) -> Float32Array:
         d = self.detector
@@ -174,8 +202,11 @@ class _Sampling:
         batch = max(1, (16 << 20) // (4 * nv * nu))
         for i in range(0, views, batch):
             progress.check_canceled()
-            block = np.asarray(data[i : i + batch], np.float32)
-            middle[i : i + batch] = _bin(_bin(block, d.nu, -1), d.nv, -2)
+            block = data[i : i + batch]
+            if not isinstance(block, np.ndarray) and hasattr(block, "devices"):
+                block = np.asarray(block, np.float32)
+            binned = _bin(_bin(block.astype(np.float32, copy=False), d.nu, -1), d.nv, -2)
+            middle[i : i + batch] = binned if isinstance(binned, np.ndarray) else binned.get()
         fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu)
         radius = fit.stack_radius(middle)[None]
         batch = max(1, (16 << 20) // (8 * d.nv * d.nu))
@@ -214,28 +245,26 @@ def storage(
     from ._axial_slabs import independent_planes
 
     full_data = 4 * views * detector.nv * detector.nu
-    if independent_planes(geometry, grid, detector) and grid.nz > 1:
+    independent = independent_planes(geometry, grid, detector)
+    rows = detector.nv
+    if independent:
         grid = replace(grid, nz=1)
         detector = replace(detector, nv=1)
     sample = _Sampling.fitting(geometry, grid, detector, views, room)
+    if independent:
+        depth = sample.depth(geometry, views, rows, room) if room is not None else 1
+        sample = sample.planes(depth, detector.dv)
+        detector = replace(detector, nv=depth)
     d, wide = sample.detector, sample.grid
     shape = (views, d.nv, 3 * d.nu)
-    measured = 4 * views * detector.nv * detector.nu
     completed = 4 * math.prod(shape)
     volume = 4 * math.prod(wide.shape)
     # Completed rows and their measured-column residual survive through reprojection.
     # A streamed host result and the extended exterior lattice can coexist.
-    block = min(views, max(1, min(64, (16 << 20) // (4 * detector.nv * detector.nu))))
+    block = min(views, max(1, (16 << 20) // (4 * detector.nv * detector.nu)))
     images = 4 * block * detector.nv * detector.nu
     project = 4 * (wide.nz + 2) * wide.ny * wide.nx + images
-    host = (
-        full_data
-        + (measured if measured < full_data else 0)
-        + completed
-        + completed // 3
-        + 3 * volume
-        + 4 * images
-    )
+    host = full_data + completed + completed // 3 + 3 * volume + 4 * images
     fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
     return host, max(resident_bytes(wide, fitted_shape), project)
 
@@ -254,28 +283,50 @@ class _Runtime(NamedTuple):
 
 
 def _fit(
-    geometry: Geometry, wide: Grid, detector: Detector, full: np.ndarray, config: CGLSConfig
+    geometry: Geometry,
+    wide: Grid,
+    detector: Detector,
+    full: np.ndarray,
+    config: CGLSConfig,
+    *,
+    native: bool,
+    axial: bool,
 ) -> tuple[Float32Array, bool]:
     """Resume the coarse fit independently and retain its finished coefficients for the fine fit."""
     from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
 
     with checkpoint.scope("continued-exterior"), checkpoint.loop("volume") as fitted:
         if fitted.saved is not None:
-            return fitted.saved.arrays[0], fitted.saved.scalars(_Runtime).native
+            return fitted.saved.arrays[0], native and fitted.saved.scalars(_Runtime).native
         stride = _stride(geometry, wide)
         if isinstance(geometry, ParallelGeometry) and stride > 1:
             geometry = replace(geometry, angles=np.asarray(geometry.angles)[::stride])
             full = np.ascontiguousarray(full[::stride])
-        reconstruction, info = cgls(
-            geometry,
-            wide,
-            detector,
-            full,
-            config=config,
-            det_grid=detector_grid_from_geometry_inputs(detector, geometry),
-        )
-        native = info.get("execution_backend") == "cupy"
-        volume = numpy_float32_array(reconstruction)
+        result = None
+        if axial:
+            from ._exterior_cuda import axial_fit
+
+            result = axial_fit(_poses(geometry, len(full)), wide, detector, full, config)
+        elif native and cone_parts(geometry, detector) is not None:
+            from tomojax.core.cone import use_cuda_cone
+
+            if use_cuda_cone():
+                from ._exterior_cuda import cone_fit
+
+                result = cone_fit(geometry, wide, detector, full, config)
+        if result is None:
+            reconstruction, info = cgls(
+                geometry,
+                wide,
+                detector,
+                full,
+                config=config,
+                det_grid=detector_grid_from_geometry_inputs(detector, geometry),
+            )
+            volume = numpy_float32_array(reconstruction)
+            native = info.get("execution_backend") == "cupy"
+        else:
+            volume, native = result, True
         fitted.save((volume,), _Runtime(native))
         return volume, native
 
@@ -289,9 +340,9 @@ def _project(
     config: CGLSConfig,
     *,
     native: bool,
-) -> Iterator[tuple[slice[int, int, None], Float32Array]]:
+) -> Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]]:
     """Use the solver's physical forward projector with a bounded block of output rays."""
-    batch = max(1, min(64, (16 << 20) // (4 * detector.nu * detector.nv)))
+    batch = max(1, (16 << 20) // (4 * detector.nu * detector.nv))
     if native:
         from tomojax.core.joseph_cuda import JosephCUDA
 
@@ -299,12 +350,26 @@ def _project(
 
         cp = array_module()
         with native_device(cp):
-            device_volume = cp.asarray(volume)
+            device_volume = cp.asarray(volume, order="C")
+            if cone_parts(geometry, detector) is not None:
+                from ._exterior_cuda import ConeOperator
+
+                cone = ConeOperator(geometry, grid, detector, poses, batch=batch, z_fast=False)
+                for first in range(0, len(poses), batch):
+                    part = slice(first, first + batch)
+                    yield part, cone.project(device_volume, part)
+                return
+            z_fast = grid.nz > 1
+            if z_fast:
+                device_volume = cp.ascontiguousarray(device_volume.transpose(2, 1, 0))
             for first in range(0, len(poses), batch):
                 part = slice(first, first + batch)
-                operator = JosephCUDA(poses[part], grid, detector, views_per_batch=batch)
-                yield part, numpy_float32_array(operator.forward(device_volume).get())
+                operator = JosephCUDA(
+                    poses[part], grid, detector, views_per_batch=batch, z_fast=z_fast
+                )
+                yield part, operator.forward(device_volume)
         return
+    batch = min(64, batch)
     from tomojax.core.cone import ConeModel, cone_project
     from tomojax.core.joseph import forward_project_planes, plane_coefficients
     from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
@@ -369,7 +434,7 @@ def outside_data(
     detector: Detector,
     data: np.ndarray | jax.Array,
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
-) -> tuple[np.ndarray | None, float]:
+) -> tuple[np.ndarray | jax.Array | None, float]:
     """Estimate an additive ray background and its share of measured attenuation."""
     from ._fbp_storage import first_device
 
@@ -385,50 +450,99 @@ def _background(
     detector: Detector,
     data: np.ndarray | jax.Array,
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
-) -> tuple[np.ndarray | None, float]:
+) -> tuple[np.ndarray | jax.Array | None, float]:
     from ._axial_slabs import independent_planes
 
-    if (
-        isinstance(geometry, ParallelGeometry)
-        and independent_planes(geometry, grid, detector)
-        and grid.nz > 1
-    ):
-        # Each axial detector row is a separate inverse problem. It has the same
-        # auxiliary fit whether the caller reads one row, a slab, or the whole scan.
+    independent = independent_planes(geometry, grid, detector)
+    rows = detector.nv
+    room, native = _resources()
+    if independent:
+        assert isinstance(geometry, ParallelGeometry)
         origin = grid_volume_origin(grid)
-        plane = replace(grid, nz=1, vol_center=None, vol_origin=(*origin[:2], 0.0))
-        line = replace(detector, nv=1, center=(detector.center[0], 0.0))
-        rotation = replace(geometry, grid=plane, detector=line)
-        source = None
-        removed = 0.0
-        for z in range(grid.nz):
-            with checkpoint.scope(f"exterior-row{z}"):
-                row, total = _model(rotation, plane, line, data[:, z : z + 1], config)
-            if row is not None:
-                if source is None:
-                    source = host_array(data.shape, copies=2)
-                source[:, z : z + 1] = row
-                removed += total
-        if source is None:
-            return None, 0.0
-    else:
-        source, removed = _model(geometry, grid, detector, data, config)
-        if source is None:
-            return None, 0.0
-    # Keep a device input and a file-backed scan in place when totaling the rays.
-    batch = max(1, (16 << 20) // (4 * detector.nv * detector.nu))
-    measured = sum(sum_float64(data[i : i + batch]) for i in range(0, len(data), batch))
+        grid = replace(grid, nz=1, vol_center=None, vol_origin=(*origin[:2], 0.0))
+        detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
+        geometry = replace(geometry, grid=grid, detector=detector)
+
+    views = data.shape[0]
+    with checkpoint.loop("exterior-sampling") as sampling:
+        if sampling.saved is None:
+            sample = _Sampling.fitting(geometry, grid, detector, views, room)
+            sampling.save((), _Binning(sample.binning))
+        else:
+            reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
+            sample = _Sampling.for_scan(
+                grid, detector, reach, sampling.saved.scalars(_Binning).factor
+            )
+    depth = rows
+    if independent:
+        depth = sample.depth(geometry, views, rows, room) if native else 1
+    resident = None
+    samples = data
+    if not isinstance(data, np.ndarray) and native and len(data.devices()) == 1:
+        from ._exterior_cuda import DeviceRows
+
+        resident = DeviceRows.on_selected_device(data)
+        if resident is not None:
+            samples = resident.input
+    source = None
+    removed = 0.0
+    for z in range(0, rows, depth):
+        section = slice(z, min(z + depth, rows))
+        count = section.stop - z
+        local = sample.planes(count, detector.dv) if independent else sample
+        measured_detector = replace(detector, nv=count) if independent else detector
+        target = (
+            replace(
+                grid,
+                nz=count,
+                vol_center=None,
+                vol_origin=(*grid_volume_origin(grid)[:2], -(count - 1) * grid.vz / 2),
+            )
+            if independent
+            else grid
+        )
+        with checkpoint.scope(f"exterior-rows{z}-{section.stop}") if independent else nullcontext():
+            for part, block in _model(
+                geometry,
+                target,
+                measured_detector,
+                samples[:, section],
+                config,
+                local,
+                native=native,
+                axial=independent and native,
+            ):
+                if resident is not None:
+                    resident.write(part, section, block)
+                else:
+                    if source is None:
+                        source = host_array(data.shape, copies=2)
+                    host = (
+                        block if isinstance(block, np.ndarray) else numpy_float32_array(block.get())
+                    )
+                    removed += float(host.sum(dtype=np.float64))
+                    source[part, section] = host
+    if resident is not None:
+        return resident.result()
+    if source is None:
+        return None, 0.0
+    # A float64 accumulator needs no second stack of double-precision measurements.
+    batch = max(1, (16 << 20) // (4 * data.shape[1] * data.shape[2]))
+    measured = sum(
+        float(np.asarray(data[i : i + batch]).sum(dtype=np.float64))
+        for i in range(0, len(data), batch)
+    )
     return source, removed / measured if measured else 0.0
 
 
 @dataclass(frozen=True)
-class _LinearAxis:
+class LinearAxis:
     lower: NDArray[np.intp]
     upper: NDArray[np.intp]
     fraction: Float32Array
 
     @classmethod
-    def cells(cls, source: int, target: int) -> _LinearAxis:
+    def cells(cls, source: int, target: int) -> LinearAxis:
         coordinate = np.clip((np.arange(target) + 0.5) * source / target - 0.5, 0, source - 1)
         lower = coordinate.astype(np.intp)
         return cls(
@@ -442,23 +556,22 @@ class _LinearAxis:
         return numpy_float32_array(left + (right - left) * self.fraction)
 
 
-def _room(geometry: Geometry, data: np.ndarray | jax.Array, coarse: CGLSConfig) -> int | None:
-    """Room for the auxiliary solve on the selected accelerator."""
+def _resources() -> tuple[int | None, bool]:
+    """Room for the coarse fit and availability of native kernels on its device."""
     from tomojax.core import backend_policy
 
-    from ._cgls_cuda import array_module, available, native_device
+    from ._cgls_cuda import array_module, native_device, native_platform
 
-    # The native path can query its own allocator without initializing JAX.
-    if available(geometry, data, coarse, host_initial=True, canonical=True):
+    if native_platform():
         cp = array_module()
         if cp.cuda.is_available():
             with native_device(cp):
-                return backend_policy.cupy_available_bytes()
-    elif backend_policy.cuda_backend():
+                return backend_policy.cupy_available_bytes(), True
+    if backend_policy.cuda_backend():
         from tomojax.backends import device_free_memory_bytes
 
-        return max(backend_policy.cupy_available_bytes(), device_free_memory_bytes() or 0)
-    return None
+        return device_free_memory_bytes(), False
+    return None, False
 
 
 def _model(
@@ -467,22 +580,19 @@ def _model(
     detector: Detector,
     data: np.ndarray | jax.Array,
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
-) -> tuple[np.ndarray | None, float]:
+    sample: _Sampling,
+    *,
+    native: bool,
+    axial: bool,
+) -> Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]]:
     views, nv, nu = data.shape
     coarse = CGLSConfig(iterations=50)
-    with checkpoint.loop("exterior-sampling") as sampling:
-        if sampling.saved is None:
-            sample = _Sampling.fitting(
-                geometry, grid, detector, views, _room(geometry, data, coarse)
-            )
-            sampling.save((), _Binning(sample.binning))
-        else:
-            reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
-            sample = _Sampling.for_scan(
-                grid, detector, reach, sampling.saved.scalars(_Binning).factor
-            )
-
     d, wide = sample.detector, sample.grid
+    # If both fitted edge windows contain only air on every view, every
+    # virtual ray is identically zero. No interior samples enter that result.
+    window = math.ceil(min(d.nu, max(2, d.nu // 16)) * nu / d.nu)
+    if not data[..., :window].any() and not data[..., -window:].any():
+        return
     complete = replace(d, nu=3 * d.nu)
     poses = _poses(geometry, views)
     # With a single ray family, virtual and measured rays never intersect
@@ -491,11 +601,11 @@ def _model(
         np.array_equal(poses, np.broadcast_to(poses[:1], poses.shape))
         and cone_parts(geometry, detector) is None
     ):
-        return None, 0.0
+        return
     mask = _unseen(geometry, complete, grid, poses)
     mask[:, d.nu : 2 * d.nu] = False
     if not mask.any():
-        return None, 0.0
+        return
     full = sample.completed(geometry, data)
     observed = np.sum(full, axis=-1, where=mask[:, None, :], dtype=np.float64)
     # Positive exterior attenuation, fitted to the integral of the virtual rays
@@ -511,18 +621,21 @@ def _model(
         0.0,
     )
     if not mass.any():
-        return None, 0.0
+        return
     # The completed stack includes correlated, synthetic rays. Its residual
     # does not have the measured scan's noise law.
-    volume, native = _fit(geometry, wide, complete, full, coarse)
+    volume, native = _fit(geometry, wide, complete, full, coarse, native=native, axial=axial)
     predicted: Float64Array = np.zeros(d.nv)
     residual: Float32Array = host_array((views, d.nv, d.nu))
-    for part, block in _project(geometry, complete, wide, poses, volume, coarse, native=native):
+    for part, projected in _project(geometry, complete, wide, poses, volume, coarse, native=native):
+        block = (
+            projected if isinstance(projected, np.ndarray) else numpy_float32_array(projected.get())
+        )
         predicted += np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
-        residual[part] = (full[part] - block)[..., d.nu : 2 * d.nu]
+        residual[part] = full[part, :, d.nu : 2 * d.nu] - block[..., d.nu : 2 * d.nu]
     scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
     if not scale.any():
-        return None, 0.0
+        return
     outside = sample.exterior(volume, grid)
     # A coarsened z lattice interpolates the edge row through a half-cell
     # beyond its end centres. At native z sampling the known grid extent
@@ -532,31 +645,39 @@ def _model(
         wide = replace(wide, nz=wide.nz + 2)
     row = (np.arange(nv) + 0.5) * d.nv / nv - 0.5
     amplitude = np.interp(row, np.arange(d.nv), scale).astype(np.float32)[:, None]
-    vertical, horizontal = _LinearAxis.cells(d.nv, nv), _LinearAxis.cells(d.nu, nu)
-    source: Float32Array = host_array(data.shape, copies=2)
-    removed = 0.0
-    for part, block in _project(geometry, detector, wide, poses, outside, coarse, native=native):
+    vertical, horizontal = LinearAxis.cells(d.nv, nv), LinearAxis.cells(d.nu, nu)
+    projected = _project(geometry, detector, wide, poses, outside, coarse, native=native)
+    if native:
+        from ._exterior_cuda import interpolate
+
+        yield from interpolate(
+            projected, residual, amplitude, horizontal, vertical, positive=config.method == "mlem"
+        )
+        return
+    for part, block in projected:
         progress.check_canceled()
-        across = horizontal.interpolate(residual[part])
-        mismatch = vertical.interpolate(across.swapaxes(1, 2)).swapaxes(1, 2)
-        source[part] = (block + mismatch) * amplitude
+        mismatch = residual[part]
+        if d.nu != nu:
+            mismatch = horizontal.interpolate(mismatch)
+        if d.nv != nv:
+            mismatch = vertical.interpolate(mismatch.swapaxes(1, 2)).swapaxes(1, 2)
+        corrected = (block + mismatch) * amplitude
         if config.method == "mlem":
-            _ = np.clip(source[part], 0, None, out=source[part])
-        removed += sum_float64(source[part])
-    return source, removed
+            np.maximum(corrected, 0, out=corrected)
+        yield part, corrected
 
 
 def subtract_background(
-    data: np.ndarray | jax.Array, background: np.ndarray
+    data: np.ndarray | jax.Array, background: np.ndarray | jax.Array
 ) -> np.ndarray | jax.Array:
     """Replace private host scratch with corrected measurements, retaining device placement."""
-    batch = max(1, (16 << 20) // (4 * data.shape[1] * data.shape[2]))
-    for first in range(0, len(data), batch):
-        part = slice(first, first + batch)
-        _ = np.subtract(np.asarray(data[part]), background[part], out=background[part])
-    if isinstance(data, np.ndarray):
+    if isinstance(data, np.ndarray) and isinstance(background, np.ndarray):
+        np.subtract(data, background, out=background)
         return background
     import jax
+    import jax.numpy as jnp
 
-    corrected: jax.Array = jax.device_put(background, data.sharding)
-    return corrected
+    assert isinstance(data, jax.Array)
+    private = jax.device_put(background, data.sharding)
+    # The fitted background is private and can become the corrected stack.
+    return jax.jit(jnp.subtract, donate_argnums=(1,))(data, private)

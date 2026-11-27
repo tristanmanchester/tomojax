@@ -46,7 +46,7 @@ def solve(
     cfg: MLEMConfig,
     initial: jax.Array | np.ndarray | None,
     warm_start: bool = False,
-    background: np.ndarray | None = None,
+    background: np.ndarray | jax.Array | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[Any, dict[str, object]]:
     """Run validated EM settings; return the volume (``out`` if given) and its storage record.
@@ -123,7 +123,7 @@ class _HostEM:
         problem: ConeProblem,
         x: np.ndarray,
         *,
-        background: np.ndarray | None,
+        background: np.ndarray | jax.Array | None,
         updating: bool,
         saved: Saved | None,
     ) -> None:
@@ -167,7 +167,9 @@ class _HostEM:
             xp, predicted = self.xp, rows[0]
             measured = self.problem.measured(batch, first, stop)
             if self.background is not None:
-                additive = self.problem.engine.upload(self.background[batch.views, first:stop])
+                additive = self.problem.engine.upload(
+                    np.asarray(self.background[batch.views, first:stop])
+                )
                 expected = predicted + additive
                 rows[1][...] = predicted / xp.where(expected > 0, expected, 1)
                 predicted[...] = expected

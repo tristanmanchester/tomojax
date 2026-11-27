@@ -113,11 +113,13 @@ def inversion_storage(
     if not isinstance(cfg, FBPConfig) and cfg.exterior == "cylinder":
         from ._exterior import storage
 
-        auxiliary_host, auxiliary_device = storage(geometry, grid, detector, views)
+        auxiliary_host, auxiliary_device = storage(
+            geometry, grid, detector, views, pool if gpu else None
+        )
         # The auxiliary solve ends before the fine solve. Device inputs are still
         # owned by the caller while the corrected copy is fitted.
         retained = projections if not isinstance(data, np.ndarray) else 0
-        working = max(working + retained, auxiliary_device + retained)
+        working = max(working + retained, auxiliary_device + 2 * retained)
         hosts += max(auxiliary_host, projections + (volume if slabbed else 0))
     elif slabbed:
         hosts += volume

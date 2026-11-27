@@ -104,7 +104,8 @@ def iterative_slabs[T](
             if (diagnostics is not None or checkpoint.active()) and config.exterior == "cylinder":
                 record = info["truncation"]
                 assert isinstance(record, dict)
-                mass = float(np.asarray(data).sum(dtype=np.float64))
+                with jax.enable_x64(True):
+                    mass = float(data.sum(dtype=np.float64))
                 totals = {
                     "measured_sum": mass,
                     "exterior_sum": mass * record["outside_grid"],
@@ -120,7 +121,8 @@ def iterative_slabs[T](
             measured, removed, applied = 0.0, 0.0, False
             for report in finished.reports.values():
                 mass, outside = report.pop("measured_sum", 0.0), report.pop("exterior_sum", 0.0)
-                assert isinstance(mass, float) and isinstance(outside, float)
+                assert isinstance(mass, float)
+                assert isinstance(outside, float)
                 measured += mass
                 removed += outside
                 applied |= bool(report.pop("exterior_applied", False))

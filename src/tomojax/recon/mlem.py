@@ -333,7 +333,7 @@ def _run_device(
     projections: jax.Array | np.ndarray,
     *,
     config: MLEMConfig,
-    background: np.ndarray | None = None,
+    background: np.ndarray | jax.Array | None = None,
     model: Model,
     backend: str,
     initial: jax.Array | np.ndarray | None,
@@ -365,7 +365,7 @@ def _run_device(
     background_context = (
         nullcontext(None)
         if background is None
-        else host_source(background)
+        else host_source(np.asarray(background))
         if stream
         else nullcontext(_device(background))
     )
@@ -502,7 +502,7 @@ def run_mlem(
     config: MLEMConfig,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
     warm_start: bool = False,
-    background: np.ndarray | None = None,
+    background: np.ndarray | jax.Array | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Own workflow initialization inside the solver, never copying a private host start."""

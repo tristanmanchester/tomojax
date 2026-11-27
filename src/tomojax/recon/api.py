@@ -724,7 +724,7 @@ def _iterative_result(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
-    background: np.ndarray | None = None,
+    background: np.ndarray | jnp.ndarray | None = None,
     warm_data: np.ndarray | jnp.ndarray | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
@@ -804,7 +804,7 @@ def _iterative_incore(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
-    background: np.ndarray | None = None,
+    background: np.ndarray | jnp.ndarray | None = None,
     warm_data: np.ndarray | jnp.ndarray | None = None,
     solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
     out: np.ndarray | None = None,

@@ -6,7 +6,7 @@ import functools
 import importlib.util
 import os
 import sys
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
 import numpy as np
 
@@ -43,6 +43,15 @@ if TYPE_CHECKING:
     from .types import DataTerm
 
 
+class DeviceOperator(Protocol):
+    """Matched native projector and transpose in the solver's private volume order."""
+
+    batch: int
+
+    def forward(self, volume: CuPyValue) -> CuPyValue: ...
+    def adjoint(self, images: CuPyValue) -> CuPyValue: ...
+
+
 def available(
     geometry: Geometry,
     projections: jax.Array | np.ndarray,
@@ -62,8 +71,14 @@ def available(
         or cfg.stream
         or not canonical
         or type(geometry) not in {ParallelGeometry, LaminographyGeometry}
-        or os.environ.get("TOMOJAX_CUDA_KERNELS") == "0"
     ):
+        return False
+    return native_platform()
+
+
+def native_platform() -> bool:
+    """Whether native kernels may run on the selected device without starting JAX."""
+    if os.environ.get("TOMOJAX_CUDA_KERNELS") == "0":
         return False
     if "jax" not in sys.modules and os.environ.get("JAX_DEFAULT_DEVICE"):
         return False
@@ -150,7 +165,7 @@ def solve(
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         with checkpoint.loop() as saves:
-            result, info = _iterate(
+            result, info = iterate(
                 cp, ops, data, x, grid, cfg, saves, zero_start=initial is None, target=target
             )
         volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
@@ -163,7 +178,7 @@ def solve(
 
 
 @functools.cache
-def _kernels(cp: CuPyValue) -> dict[str, CuPyValue]:
+def update_kernels(cp: CuPyValue) -> dict[str, CuPyValue]:
     """Fused updates and tests: no volume-sized temporaries beside the iterate.
 
     The solve's device memory is then the iterate, the direction and two
@@ -206,7 +221,7 @@ def _all(cp: CuPyValue, kernel: CuPyValue, *args: object) -> CuPyValue:
 
 def _initial(
     cp: CuPyValue,
-    ops: JosephCUDA,
+    ops: DeviceOperator,
     data: CuPyValue,
     x: CuPyValue,
     cfg: CGLSConfig,
@@ -218,7 +233,7 @@ def _initial(
         residual = data.copy() if zero_start else data - ops.forward(x)
         residual = project_residual(residual, cfg.data_term, xp=cp)
         gradient = ops.adjoint(project_residual(residual, cfg.data_term, xp=cp))
-        _kernels(cp)["negaxpy"](np.float32(cfg.damping) ** 2, x, gradient)
+        update_kernels(cp)["negaxpy"](np.float32(cfg.damping) ** 2, x, gradient)
         return residual, gradient, _dot(cp, gradient, gradient)
 
 
@@ -258,9 +273,9 @@ class _Scalars(NamedTuple):
         )
 
 
-def _iterate(
+def iterate(
     cp: CuPyValue,
-    ops: JosephCUDA,
+    ops: DeviceOperator,
     data: CuPyValue,
     x: CuPyValue,
     grid: Grid,
@@ -270,7 +285,7 @@ def _iterate(
     zero_start: bool,
     target: float | None,
 ) -> tuple[CuPyValue, dict[str, object]]:
-    k, damp2 = _kernels(cp), np.float32(cfg.damping) ** 2
+    k, damp2 = update_kernels(cp), np.float32(cfg.damping) ** 2
     if saves.saved is None:
         residual, gradient, gamma = _initial(cp, ops, data, x, cfg, zero_start=zero_start)
         direction, previous_gamma = cp.empty_like(gradient), gamma
@@ -355,7 +370,7 @@ def _iterate(
 
 def _step(
     cp: CuPyValue,
-    ops: JosephCUDA,
+    ops: DeviceOperator,
     x: CuPyValue,
     direction: CuPyValue,
     residual: CuPyValue,
@@ -369,7 +384,7 @@ def _step(
     Returns the device gradient and its squared norm, the host norm and roundoff
     tests, and the optional discrepancy margin. None signals a step breakdown.
     """
-    k = _kernels(cp)
+    k = update_kernels(cp)
     eps, tiny = np.finfo(np.float32).eps, np.finfo(np.float32).tiny
     projected = project_residual(ops.forward(direction), data_term, xp=cp)
     direction_norm2 = _dot(cp, direction, direction)
@@ -396,7 +411,7 @@ def _step(
 
 def _verify(
     cp: CuPyValue,
-    ops: JosephCUDA,
+    ops: DeviceOperator,
     data: CuPyValue,
     x: CuPyValue,
     gradient: CuPyValue,
@@ -410,7 +425,7 @@ def _verify(
     target: float | None,
 ) -> tuple[CuPyValue, CuPyValue, CuPyValue, float, bool, bool | np.bool_, float | None]:
     """Replace the recurrence with the measured residual before accepting a stop."""
-    k = _kernels(cp)
+    k = update_kernels(cp)
     prediction = ops.forward(x)
     cancellation = ops.adjoint(cancellation_magnitude(data, prediction, data_term))
     k["absaxpy"](damp2, x, cancellation)
