@@ -22,7 +22,7 @@ type Region = tuple[slice, ...]
 
 
 @dataclass(frozen=True)
-class Source:
+class ExportSource:
     """A registered array with a window reader pinned to its generation.
 
     Parameters
@@ -79,13 +79,15 @@ def interval(part: Interval, size: int) -> tuple[int, int]:
 
 @dataclass(frozen=True)
 class Selection:
-    source: Source
+    source: ExportSource
     bounds: tuple[tuple[int, int], ...]
     factors: tuple[int, ...]
     order: tuple[int, ...]
 
     @classmethod
-    def select(cls, source: Source, crop: Crop | None, binning: int, axis: str | None) -> Selection:
+    def select(
+        cls, source: ExportSource, crop: Crop | None, binning: int, axis: str | None
+    ) -> Selection:
         if crop is not None and len(crop) != 3:
             raise InvalidParameter("crop", "supply one interval per stored axis")
         if isinstance(binning, bool) or not isinstance(binning, int) or binning < 1:

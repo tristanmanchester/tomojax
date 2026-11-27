@@ -24,7 +24,7 @@ from tomojax.io._datasets import (
     validate_nxtomo,
 )
 from tomojax.io._export import ExportPlan, inspect_export, install_export, plan_export, publishing
-from tomojax.io._export_data import Crop as ExportCrop, ExportDtype, Source as ExportSource
+from tomojax.io._export_data import Crop as ExportCrop, ExportDtype, ExportSource
 from tomojax.io._export_formats import format_descriptions
 from tomojax.io._hdf5_array import read_hdf5_array
 from tomojax.io._inspection import inspect_dataset, projection_stats

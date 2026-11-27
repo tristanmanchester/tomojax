@@ -18,7 +18,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.errors import InvalidParameter
-from tomojax.io._export_data import Blocks, Crop, Selection, Source, Values
+from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
 from tomojax.io._export_formats import FORMATS, Document, Format, format_for, slice_path
 
 
@@ -256,7 +256,7 @@ class ExportPlan:
 
 def plan_export(
     path: Path,
-    source: Source,
+    source: ExportSource,
     *,
     dtype: str | None = None,
     value_range: Sequence[float] | None = None,
@@ -271,7 +271,7 @@ def plan_export(
     ----------
     path : Path
         Primary destination.
-    source : Source
+    source : ExportSource
         Three-dimensional pixels, registration and record.
     dtype : str, optional
         Stored scalar type.
