@@ -92,13 +92,16 @@ def truncation_record(
     radius2: Host = np.asarray(fits.radius(np.asarray, low, high), np.float64)
     amplitudes = fits.amplitudes(np.asarray, low, high, radius2)
     edges: Host = np.concatenate(amplitudes)
-    tails: Host = np.concatenate(fits.tails(np.asarray, *amplitudes, radius2), axis=-1)
+    # All views share each row's profile. Its integral depends only on the
+    # mean edge amplitudes, so form one pair of tails per row.
+    average = tuple(a.mean(axis=1, keepdims=True) for a in amplitudes)
+    tails: Host = np.concatenate(fits.tails(np.asarray, average[0], average[1], radius2), axis=-1)
     # Each ray's share of the row, and of the level on the axis: FBP weighs a ray at
     # distance s from the axis by -1 / (2 pi**2 s**2) there, over a half turn.
     width: Host = abs(np.gradient(distance))
     outside = np.concatenate([np.arange(pad), np.arange(pad + nu, nu + 2 * pad)])
     measured = float(np.sum(sample * width[pad : pad + nu]))
-    continued = float(np.sum(tails * width[outside]))
+    continued = float(np.sum(tails * width[outside])) * view.size
     on_axis: Host = np.sum(tails * (width[outside] / distance[outside] ** 2), axis=-1)
     total = measured + continued
     mean = float(np.mean(sample))

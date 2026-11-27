@@ -251,9 +251,9 @@ class Continuation:
         if isinstance(projections, np.ndarray) or not hasattr(projections, "devices"):
             low, high = np.zeros((nv, window)), np.zeros((nv, window))
             for view in map(int, views):
-                frame: Host = np.asarray(projections[view : view + 1], np.float64)
-                low += frame[0, :, :window] ** 2 / len(views)
-                high += frame[0, :, nu - window :] ** 2 / len(views)
+                frame = projections[view : view + 1]
+                low += np.square(frame[0, :, :window], dtype=np.float64) / len(views)
+                high += np.square(frame[0, :, nu - window :], dtype=np.float64) / len(views)
         else:  # a JAX array: one gather of the fitted values
             pick = (views[:, None, None], np.arange(nv)[None, :, None])
             first: Host = np.asarray(
