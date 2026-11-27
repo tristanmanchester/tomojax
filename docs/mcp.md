@@ -89,7 +89,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots, with marks and feature outlines |
 | `feature` | Make a named mask from a box, sphere, cylinder or prism, a region grown from seed points, or a band around another feature |
 | `evaluate` | Score candidate settings on held-out views |
-| `save`, `export` | Write a dataset or feature mask with its manifest, or TIFF slices and raw volumes |
+| `save`, `export` | Write a dataset or feature mask with its manifest, or [export a registered volume](export.md). Use `dry_run` to inspect its files, axes, value mapping and space requirements |
 | `control` | Cancel, pause or resume a job; close a handle; reload tool definitions or restart the worker |
 | `python` | Run Python in the worker, with the live handles and `tj` in scope |
 

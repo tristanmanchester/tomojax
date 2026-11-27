@@ -190,12 +190,16 @@ def tomojax.backproject(
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.export(
         path: 'str | PathLike[str]',
-        reconstruction: 'Reconstruction | Alignment | Simulation',
+        item: 'Reconstruction | Alignment | Simulation',
         *,
-        dtype: "Literal['float32', 'uint16']" = 'float32',
+        dtype: 'ExportDtype | None' = None,
         range: 'tuple[float, float] | None' = None,
-        prefix: 'str' = 'slice',
-    ) -> 'None'
+        crop: 'ExportCrop | None' = None,
+        binning: 'int' = 1,
+        axis: 'str | None' = None,
+        compress: 'bool | None' = None,
+        dry_run: 'bool' = False,
+    ) -> 'dict[str, object]'
 def tomojax.inspect(path: 'str | PathLike[str]') -> 'Inspection'
 def tomojax.load(
         path: 'str | PathLike[str]',

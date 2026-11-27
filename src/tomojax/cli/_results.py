@@ -13,7 +13,7 @@ import h5py
 import numpy as np
 
 from tomojax.cli.products import VOLUME_DATASET
-from tomojax.core.registration import pose_columns, recorded_length_unit
+from tomojax.core.registration import pose_columns, recorded_length_unit, scan_axes
 from tomojax.wire.arrays import (
     Array,
     Axis,
@@ -132,15 +132,6 @@ def disk_volume(
         disk_axes = tuple(volume.axes["zyx".index(a)] for a in axes)
         unit = volume.unit
     return Array(storage, shape, dtype, disk_axes, unit, "attenuation")
-
-
-def scan_axes(det: tj.Detector, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
-    """Pixel centers in the detector's local frame, in stored (view, v, u) order."""
-    return (
-        view,
-        Axis("v", "detector", unit, Uniform(det.center[1] - (det.nv - 1) * det.dv / 2, det.dv)),
-        Axis("u", "detector", unit, Uniform(det.center[0] - (det.nu - 1) * det.du / 2, det.du)),
-    )
 
 
 def saved_result(

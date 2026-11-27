@@ -177,3 +177,7 @@ site:
     python3 tools/docs_sync.py
     uv run --no-project --with "griffe>=1.14" python tools/docs_api.py
     cd site && pnpm install --frozen-lockfile && pnpm build
+
+# Independent readers for freshly exported volumes; Java artifacts are cached locally.
+interop *args:
+    JAX_PLATFORMS=cpu uv run --locked --group interop python tools/check_export_readers.py {{args}}

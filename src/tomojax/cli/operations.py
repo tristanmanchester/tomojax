@@ -16,7 +16,7 @@ from tomojax._parameters import (
     RegionName,
 )
 from tomojax.cli import wire_options as w
-from tomojax.wire.arrays import Count, Id, Member, Npy, Record, Storage
+from tomojax.wire.arrays import Count, Id, Member, Npy, Positive, Record, Storage
 
 type Step = w.BeamHardening | w.Paganin | w.RadialDistortion | w.RejectViews | w.Rings | w.Zingers
 type Config = (
@@ -221,14 +221,17 @@ class Save(Record, tag="save"):
 
 
 class Export(Record, tag="export"):
-    """Stage the complete raw or TIFF export with its sidecars."""
+    """Export one registered member in the format selected by its destination."""
 
     source: Member
     path: Id
     force: bool = False
-    dtype: Literal["float32", "uint16"] = "float32"
+    dtype: Literal["float32", "uint16", "uint8"] | None = None
     range: tuple[float, float] | None = None
-    prefix: str = "slice"
+    crop: tuple[tuple[int | None, int | None] | None, ...] | None = None
+    binning: Positive = 1
+    axis: str | None = None
+    compress: bool | None = None
 
 
 class Select(Record, tag="select"):

@@ -169,7 +169,11 @@ class Session:
                 metadata = None
                 if isinstance(ref, Member):
                     handle = self.handles[ref.handle]
-                    leases[ref] = ex.Lease(handle.bound.members[ref.member], handle.manifest)
+                    leases[ref] = ex.Lease(
+                        handle.bound.members[ref.member],
+                        handle.manifest,
+                        owner=handle.bound.members.get("self"),
+                    )
                     member = leases[ref].value
                     if isinstance(member, ex.RegisteredArray):
                         metadata = member.metadata

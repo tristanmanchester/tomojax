@@ -18,7 +18,7 @@ DRY_HELP = {
     "Align": "Resolve the fit method, working grids, budgets and placement.",
     "Reconstruct": "Resolve the reconstruction method, grid, iterations and placement.",
     "Save": "Report dataset and manifest paths and whether the destination exists.",
-    "Export": "Report destination existence, paths, slice count, and first and last filenames.",
+    "Export": "Report the format, files, axes, value mapping and resource estimates.",
 }
 
 
@@ -34,7 +34,7 @@ def schema(cls: type[Record], definitions: Object) -> Object:
                 {
                     k: v
                     for k, v in properties.get(key, {}).items()
-                    if k in {"description", "x-unit", "x-choices"}
+                    if k in {"description", "x-unit", "x-choices", "x-formats"}
                 }
             )
     for field, help_text in {

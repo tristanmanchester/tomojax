@@ -11,6 +11,7 @@ import tempfile
 from uuid import uuid4
 
 from tomojax.cli.execution import ArrayStage
+from tomojax.io.api import ExportPlan, install_export, publishing
 from tomojax.wire.arrays import Npy
 
 
@@ -48,21 +49,6 @@ class Destination:
         if self.force and os.path.lexists(self.path):
             if not self.path.is_symlink() and self.path.is_dir() != self.stage.is_dir():
                 raise ValueError(f"incompatible destination type: {self.path}")
-            if self.stage.is_dir() and self.path.is_dir() and not self.path.is_symlink():
-                from tomojax._loading.stack_files import tiff_stack_entry
-
-                originals = self.work / "original"
-                originals.mkdir()
-                for entry in self.path.iterdir():
-                    if tiff_stack_entry(entry, self.stage):
-                        backup = originals / entry.name
-                        entry.replace(backup)
-                        undo.callback(self.restore, backup, entry)
-                for staged in self.stage.iterdir():
-                    destination = self.path / staged.name
-                    staged.replace(destination)
-                    undo.callback(destination.replace, staged)
-                return
             backup = self.work / "original"
             self.path.replace(backup)
             undo.callback(self.restore, backup, self.path)
@@ -90,6 +76,7 @@ class Stages:
         self.arrays: dict[str, ArrayStage] = {}
         self.outputs: dict[Path, Destination] = {}
         self.temporary = ExitStack()
+        self.export_group: tuple[ExportPlan, dict[Path, Path], bool] | None = None
 
     def array(self) -> ArrayStage:
         token = uuid4().hex
@@ -116,6 +103,17 @@ class Stages:
         self.outputs[dest] = reservation
         return reservation.stage
 
+    def export(self, plan: ExportPlan, *, force: bool) -> dict[str, object]:
+        paths = plan.format.paths(plan.path)
+        staged = {p: self.output(p, force=force) for p in paths}
+        primary = staged[plan.path]
+        receipt = plan.write(primary)
+        for final, generated in zip(paths, plan.format.paths(primary), strict=True):
+            if generated != staged[final]:
+                generated.replace(staged[final])
+        self.export_group = plan, staged, force
+        return receipt
+
     def publish_array(self, token: str) -> Path:
         stage = self.arrays[token]
         public = Path(stage.reference.path)
@@ -125,7 +123,17 @@ class Stages:
 
     def commit(self) -> None:
         """Install a complete group, undoing replacements in reverse on failure."""
-        with ExitStack() as undo:
-            for destination in self.outputs.values():
-                destination.install(undo)
+        for path in self.outputs:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        with publishing(list(self.outputs)), ExitStack() as cleanup, ExitStack() as undo:
+            grouped = set()
+            if self.export_group:
+                plan, staged, force = self.export_group
+                grouped = {p.parent.resolve() / p.name for p in staged}
+                install_export(
+                    staged, plan.format, plan.path, force=force, undo=undo, cleanup=cleanup
+                )
+            for path, destination in self.outputs.items():
+                if path not in grouped:
+                    destination.install(undo)
             undo.pop_all()

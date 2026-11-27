@@ -680,10 +680,10 @@ def test_raw_export_refuses_to_replace_an_existing_sidecar(tmp_path: Path):
         grid=Grid(6, 5, 4, 0.5, 0.5, 0.25),
     )
     save_dataset(tmp_path / "recon.nxs", dataset)
-    (tmp_path / "volume.json").write_text("keep")
+    (tmp_path / "volume.raw.json").write_text("keep")
     with pytest.raises(SystemExit) as exit_info:
         main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "volume.raw")])
-    assert exit_info.value.code == 2 and (tmp_path / "volume.json").read_text() == "keep"
+    assert exit_info.value.code == 2 and (tmp_path / "volume.raw.json").read_text() == "keep"
 
 
 def test_correct_cli_supports_config_slices_and_open_crop(tmp_path: Path, capsys) -> None:
@@ -998,17 +998,17 @@ def test_export_cli_validates_flags_cleans_stale_tiffs_and_fails_without_volume(
         assert exc.value.code == 2
 
     tiffs = tmp_path / "slices"
-    tiffs.mkdir()
+    assert main(["export", str(recon), "-o", str(tiffs)]) == 0
     (tiffs / "slice_00099.tif").write_bytes(b"stale")
     assert main(["export", str(recon), "-o", str(tiffs), "--force"]) == 0
     assert not (tiffs / "slice_00099.tif").exists()
     assert sorted(p.name for p in tiffs.iterdir()) == [
-        "slice.json",
-        "slice_00000.tif",
-        "slice_00001.tif",
+        "slices.json",
+        "slices_00000.tif",
+        "slices_00001.tif",
     ]
-    sidecar = json.loads((tiffs / "slice.json").read_text(encoding="utf-8"))
-    assert "vol_origin_xyz" in sidecar and "grid" in sidecar
+    sidecar = json.loads((tiffs / "slices.json").read_text(encoding="utf-8"))
+    assert sidecar["geometry"]["grid"] == dataset.grid.to_dict()
 
 
 def test_inspect_json_prints_even_if_preview_fails(tmp_path: Path, capsys) -> None:

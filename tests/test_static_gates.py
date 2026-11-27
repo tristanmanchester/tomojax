@@ -85,6 +85,10 @@ def test_wire_check_reports_stale_files_without_writing(
     script = tmp_path / "tools" / generator
     script.parent.mkdir()
     shutil.copyfile(ROOT / "tools" / generator, script)
+    if generator == "build_wire_options.py":
+        guide = tmp_path / "docs/export.md"
+        guide.parent.mkdir()
+        guide.write_text("<!-- formats -->\nstale table\n<!-- /formats -->\n")
     if generator == "build_wire_schemas.py":
         schema_dir = tmp_path / "docs/protocol"
         schema_dir.mkdir(parents=True)
@@ -99,6 +103,9 @@ def test_wire_check_reports_stale_files_without_writing(
 
     assert result.returncode == 1
     assert f"uv run python tools/{generator}" in result.stderr
+    if generator == "build_wire_options.py":
+        assert "docs/export.md" in result.stderr
+        assert "stale table" in guide.read_text()
     for name in files:
         assert name in result.stderr
         assert (tmp_path / name).read_bytes() == b"stale\n"

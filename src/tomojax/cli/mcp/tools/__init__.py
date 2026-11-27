@@ -225,7 +225,13 @@ class Tools:
     async def inspect(self, args: Inspect) -> CallToolResult:
         """Inspect through the worker with directory discovery and unrecognized-HDF5 fallback."""
         path = (self.supervisor.base / Path(args.path).expanduser()).resolve()
-        if path.is_dir() and not (path / "checkpoint.json").is_file():
+        from tomojax.io.api import inspect_export
+
+        if (
+            path.is_dir()
+            and not (path / "checkpoint.json").is_file()
+            and not await asyncio.to_thread(inspect_export, path)
+        ):
             return result(await asyncio.to_thread(inspect_directory, path))
         g = await self.supervisor.worker()
 
@@ -237,6 +243,8 @@ class Tools:
             return {
                 k: full[k]
                 for k in (
+                    "record",
+                    "contents",
                     "input_path",
                     "checkpoint",
                     "valid",

@@ -125,8 +125,8 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--dry-run` prints the plan: sampled views and pairs for
   direct axial center measurement, angular pairs for `opposite-views`, or each level's grid and
   budget for a joint fit, along with estimated memory.
-- `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
-  OUTPUT ends in `.raw`.
+- `export`: `tj.export`, writing one registered member in the format selected by OUTPUT.
+  Use `--dry-run` to inspect its dimensions and value mapping. See [export](../../../docs/export.md).
 - `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.
   Use `--translation-sigma DIST` to simulate independent object shifts with standard
   deviation `DIST` voxel pitches along each detector axis.

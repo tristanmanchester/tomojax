@@ -43,9 +43,10 @@ from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import ancestor_paths, check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
-from tomojax.cli._results import scan_axes, unit_of
+from tomojax.cli._results import unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_ops import check_binning
+from tomojax.core.registration import scan_axes
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
@@ -652,89 +653,99 @@ class Admission:
         return partial(item.corrected, *steps, **settings)
 
     @prepare.register
-    def durable(self, operation: op.Save | op.Export) -> Work:
-        from tomojax._loading.files import validate_export_options
-
-        kinds = (tj.Reconstruction, tj.Alignment, tj.Simulation)
+    def save(self, operation: op.Save) -> Work:
         held = self.context.leases[operation.source].value
-        feature = held if isinstance(held, ex.Feature) else None
-        value = feature or source(
-            operation.source,
-            self.context,
-            kinds=(*kinds, tj.Scan) if isinstance(operation, op.Save) else kinds,
-        )
         path = Path(operation.path)
-        if not path.name or path.name == "..":
-            raise InvalidParameter("path", "expected an output file or directory name")
-        sidecar = path.with_name(path.name + ".manifest.json")
-        paths = [path, sidecar]
-        raw = path.suffix.lower() == ".raw"
-        if isinstance(operation, op.Save) and feature is not None:
-            from tomojax.cli._features import SAVED_SUFFIXES
+        if isinstance(held, ex.Feature):
+            from tomojax.cli._features import SAVED_SUFFIXES, save_feature
 
             if path.suffix.lower() not in SAVED_SUFFIXES:
                 raise InvalidParameter("path", f"save a feature as {', '.join(SAVED_SUFFIXES)}")
-        elif isinstance(operation, op.Save):
-            assert not isinstance(value, ex.Feature)
-            validate_save(path, value, include_scan=operation.include_scan)
+            feature = held
         else:
-            validate_export_options(path, operation.dtype, operation.range, operation.prefix)
-            if isinstance(value, tj.Alignment) and value.image is None:
-                raise InvalidParameter("source", "alignment holds no working image to export")
-            if raw:
-                paths.append(path.with_suffix(".json"))
-        self.details.update(
-            paths=[str(p) for p in paths], destination_exists=path.exists() or path.is_symlink()
-        )
-        if isinstance(operation, op.Export):
-            count = value.shape[0] if isinstance(value, ex.Feature) else None
-            self.details.update(
-                export_summary(operation, value, path, self.details["paths"], count)
+            value = source(
+                operation.source,
+                self.context,
+                kinds=(tj.Scan, tj.Reconstruction, tj.Alignment, tj.Simulation),
             )
-        check_destinations(set(ancestor_paths((self.manifest,))), paths, force=operation.force)
+            validate_save(path, value, include_scan=operation.include_scan)
+            feature = None
+        paths = self.durable_paths(path, [path], force=operation.force)
 
         def write() -> p.Files:
-            staged = {p: self.context.staging.output(p, force=operation.force) for p in paths}
-            producer = self.context.leases[operation.source].provenance
-            origin = (
-                producer.parameters["path"]
-                if producer.operation == "open"
-                else {
-                    "member": msgspec.to_builtins(operation.source),
-                    "manifest": sidecar.name if raw else "../" + sidecar.name,
-                }
-            )
-            if isinstance(value, ex.Feature):
-                from tomojax.cli._features import export_feature, save_feature
-
-                if isinstance(operation, op.Save):
-                    save_feature(staged[path], value)
-                else:
-                    export_feature(
-                        staged[path],
-                        value,
-                        dtype=operation.dtype,
-                        value_range=operation.range,
-                        prefix=operation.prefix,
-                        source=origin if isinstance(origin, dict) else {"path": origin},
-                    )
-            elif isinstance(operation, op.Save):
-                tj.save(staged[path], value, include_scan=operation.include_scan)
+            stage = self.context.staging.output(path, force=operation.force)
+            if feature is not None:
+                save_feature(stage, feature)
             else:
-                from tomojax._loading.files import export_volume
+                tj.save(stage, value, include_scan=operation.include_scan)
+            return self.write_manifest(paths, force=operation.force)
 
-                export_volume(
-                    staged[path],
-                    value,
-                    dtype=operation.dtype,
-                    value_range=operation.range,
-                    prefix=operation.prefix,
-                    source=origin,
-                )
-            if raw:
-                staged[path].with_suffix(".json").replace(staged[path.with_suffix(".json")])
-            staged[sidecar].write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-            return p.Files(tuple(self.details["paths"]))
+        return write
+
+    def durable_paths(self, path: Path, outputs: list[Path], *, force: bool) -> list[Path]:
+        if not path.name or path.name == "..":
+            raise InvalidParameter("path", "expected an output file or directory name")
+        paths = [*outputs, path.with_name(path.name + ".manifest.json")]
+        self.details.update(
+            paths=[str(p) for p in paths], destination_exists=any(p.exists() for p in paths)
+        )
+        check_destinations(
+            set(ancestor_paths((self.manifest,))), paths, force=force or self.validating
+        )
+        return paths
+
+    def write_manifest(self, paths: list[Path], *, force: bool) -> p.Files:
+        stage = self.context.staging.output(paths[-1], force=force)
+        stage.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
+        return p.Files(tuple(str(p) for p in paths))
+
+    @prepare.register
+    def export(self, operation: op.Export) -> Work:
+        from tomojax._loading.files import volume_source
+        from tomojax.io.api import ExportSource, plan_export
+
+        lease = self.context.leases[operation.source]
+        held = lease.value
+        if isinstance(held, ex.RegisteredArray):
+            if operation.source.member not in ("volume", "image", "phantom", "mask"):
+                raise InvalidParameter("source", "choose a three-dimensional volume or mask")
+            held = lease.owner
+        if isinstance(held, ex.Feature):
+            member = ExportSource(
+                held.name,
+                held.shape,
+                held.dtype,
+                held.registration.axes,
+                "1",
+                "mask",
+                held.__getitem__,
+                {"recipe": held.recipe},
+            )
+        elif isinstance(held, tj.Reconstruction | tj.Simulation | tj.Alignment):
+            member = volume_source(held)
+        else:
+            raise InvalidParameter("source", "choose a volume or mask to export")
+        member.record["provenance"] = {
+            **object_mapping(member.record.get("provenance")),
+            "lineage": msgspec.to_builtins(self.manifest),
+        }
+        path = Path(operation.path)
+        plan = plan_export(
+            path,
+            member,
+            dtype=operation.dtype,
+            value_range=operation.range,
+            crop=operation.crop,
+            binning=operation.binning,
+            axis=operation.axis,
+            compress=operation.compress,
+        )
+        paths = self.durable_paths(path, list(plan.format.paths(path)), force=operation.force)
+        self.details.update(plan.details)
+
+        def write() -> p.Files:
+            self.details.update(self.context.staging.export(plan, force=operation.force))
+            return self.write_manifest(paths, force=operation.force)
 
         return write
 
@@ -779,29 +790,6 @@ def write_slabs(
         kept.unlink()
         with suppress(OSError):
             checkpoint.rmdir()
-
-
-def export_summary(
-    operation: op.Export,
-    value: tj.Reconstruction | tj.Alignment | tj.Simulation | ex.Feature,
-    path: Path,
-    paths: list[str],
-    count: int | None = None,
-) -> dict[str, Any]:
-    """Name the slice files an export writes; ``count`` overrides the grid's plane count."""
-    from tomojax._loading.stack_files import slice_name
-
-    if count is None:
-        assert not isinstance(value, ex.Feature)
-        grid = value.scan.grid if isinstance(value, tj.Simulation) else value.grid
-        assert grid is not None
-        count = grid.nz
-    first = last = path
-    if path.suffix.lower() != ".raw":
-        first = path / slice_name(operation.prefix, 0)
-        last = path / slice_name(operation.prefix, count - 1)
-        paths.append(str(path / f"{operation.prefix}.json"))
-    return {"slice_count": count, "first_file": str(first), "last_file": str(last)}
 
 
 def provenance(

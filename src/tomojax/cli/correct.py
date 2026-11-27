@@ -261,20 +261,26 @@ def view_ranges(text: str, views: int) -> np.ndarray:
 
 def detector_block(text: str) -> tuple[slice, slice]:
     """The rows and columns of ``[Y0]:[Y1],[X0]:[X1]``."""
+    rows, columns = crop_intervals(text, "Y0:Y1,X0:X1")
+    return rows, columns
+
+
+def crop_intervals(text: str, pattern: str) -> tuple[slice, ...]:
+    """Parse one half-open interval per storage axis."""
     parts = text.split(",")
-    if len(parts) != 2:
-        raise ValueError(f"--crop {text!r}: expected Y0:Y1,X0:X1")
+    if len(parts) != len(pattern.split(",")):
+        raise ValueError(f"--crop {text!r}: expected {pattern}")
     slices: list[slice] = []
     for piece in parts:
         bounds = piece.split(":")
         if len(bounds) != 2:
-            raise ValueError(f"--crop {text!r}: expected Y0:Y1,X0:X1")
+            raise ValueError(f"--crop {text!r}: expected {pattern}")
         start = _parse_bound(bounds[0], "--crop")
         stop = _parse_bound(bounds[1], "--crop")
         if start is not None and stop is not None and stop <= start:
             raise ValueError(f"--crop {text!r}: stop must exceed start")
         slices.append(slice(start, stop))
-    return slices[0], slices[1]
+    return tuple(slices)
 
 
 def _resolve_paganin(

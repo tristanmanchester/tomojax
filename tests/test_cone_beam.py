@@ -505,14 +505,16 @@ def test_export_writes_volume_slices_and_raw_files(tmp_path: Path):
     )
     save_dataset(tmp_path / "recon.nxs", dataset)
     assert main(["export", str(tmp_path / "recon.nxs"), "-o", str(tmp_path / "tif")]) == 0
-    np.testing.assert_array_equal(iio.imread(tmp_path / "tif" / "slice_00002.tif"), volume[2])
+    np.testing.assert_array_equal(iio.imread(tmp_path / "tif" / "tif_00002.tif"), volume[2])
     raw = tmp_path / "recon.raw"
     args = ["export", str(tmp_path / "recon.nxs"), "-o", str(raw)]
     assert main([*args, "--dtype", "uint16", "--range", "0", "1"]) == 0
     stored = np.fromfile(raw, "<u2").reshape(4, 5, 6)
-    np.testing.assert_array_equal(stored, np.round(volume * 65535))
-    info = json.loads(raw.with_suffix(".json").read_text())
-    assert info["shape_zyx"] == [4, 5, 6] and info["voxel_size_xyz"] == [0.5, 0.5, 0.25]
+    np.testing.assert_array_equal(stored, np.round(volume.astype(np.float64) * 65535))
+    info = json.loads(raw.with_suffix(".raw.json").read_text())
+    array = info["arrays"]["volume"]
+    assert array["shape"] == [4, 5, 6]
+    assert [a["coordinates"]["spacing"] for a in array["axes"]] == [0.25, 0.5, 0.5]
 
 
 @pytest.mark.parametrize("shape", [(3, 4, 5), (3, 4, 3)])

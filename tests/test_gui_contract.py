@@ -399,7 +399,7 @@ def test_cli_streams_one_terminal_per_command(tmp_path):
     result = invoke("align", source, "--method", "opposite-views", "--fit", "center", "-o", aligned)
     assert result.method == "opposite-views" and result.arrays["poses"].shape == (24, 6)
     result = invoke("export", output, "-o", raw)
-    assert result.outputs == (str(raw), str(raw.with_suffix(".json")))
+    assert result.outputs == (str(raw), str(raw.with_suffix(".raw.json")))
     with h5py.File(output) as f:
         np.testing.assert_array_equal(
             np.fromfile(raw, "<f4").reshape(12, 12, 12),

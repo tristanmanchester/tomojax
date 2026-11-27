@@ -50,7 +50,7 @@ containers = tomojax._loading
 layers =
     files
     loader : frame_sources
-    geometry | stack_files
+    geometry
 
 [importlinter:contract:scan-layers]
 name = The scan model builds only on ASTRA conversion

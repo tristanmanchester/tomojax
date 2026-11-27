@@ -378,3 +378,77 @@ def test_every_surface_agrees(scenario, inputs, worker, agent, tmp_path, capsys)
     for surface, outcome in outcomes.items():
         assert not isinstance(outcome, Refused), f"{surface} refused {scenario.name}: {outcome}"
         assert_same(outcome, expected, surface)
+
+
+@pytest.mark.parametrize("random", [False, True], ids=["uniform", "noise"])
+def test_export_plan_and_receipt_across_surfaces(tmp_path, worker, agent, capsys, random):
+    import tifffile
+
+    grid = tj.Grid(32, 18, 7, 0.03, 0.04, 0.05)
+    geom = tj.ParallelGeometry(grid, tj.Detector(8, 4, 1, 1), np.arange(4.0))
+    volume = np.random.default_rng(19).random(grid.shape, dtype=np.float32)
+    if not random:
+        volume.fill(0.25)
+    source = tj.Reconstruction(volume, geom, "fbp", {}, length_unit="mm")
+    native, target = tmp_path / "input.nxs", tmp_path / "out.tif"
+    tj.save(native, source)
+    options = dict(dtype="uint8", range=[0.0, 1.0], axis="y", crop=[[1, 5], None, None], binning=2)
+    plan = tj.export(target, source, **options, compress=True, dry_run=True)
+    cli_args = [
+        "export",
+        str(native),
+        "-o",
+        str(target),
+        "--dtype",
+        "uint8",
+        "--range",
+        "0",
+        "1",
+        "--axis",
+        "y",
+        "--crop",
+        "1:5,:,:",
+        "--binning",
+        "2",
+    ]
+    opened = worker.request(dict(type="open", path=str(native), kind="reconstruction"))
+    assert opened["type"] == "result", opened
+    member = dict(type="member", handle=opened["result"]["value"]["handle"], member="volume")
+    op = dict(type="export", source=member, path=str(target), compress=True, **options)
+    handle = agent.call("open", path=str(native), kind="reconstruction")["structuredContent"][
+        "handle"
+    ]
+
+    def mcp_export(**extra):
+        reply = agent.call(
+            "export", source=handle, path=str(target), compress=True, **options, **extra
+        )
+        assert not reply["isError"], reply["content"]
+        return reply["structuredContent"]
+
+    assert cli([*cli_args, "--compress", "--dry-run"]) == 0
+    plans = [
+        json.loads(capsys.readouterr().out),
+        worker.request(dict(type="validate", operation=op))["result"]["value"]["details"],
+        mcp_export(dry_run=True),
+    ]
+    for other in plans:
+        for k in plan.keys() - {"free_bytes"}:
+            assert other[k] == plan[k], k
+    assert not target.exists()
+    for flag, codec in [("--no-compress", "NONE"), ("--compress", "LZW")]:
+        assert cli([*cli_args, flag, "--force"]) == 0
+        cli_receipt = json.loads(capsys.readouterr().out)
+        assert cli_receipt["bytes_written"] == target.stat().st_size
+        with tifffile.TiffFile(target) as f:
+            assert f.pages[0].compression.name == codec
+    raw = worker.request(dict(type="run", operation={**op, "force": True}))
+    assert raw["type"] == "result", raw
+    worker_receipt = raw["result"]["info"]["summary"]
+    assert worker_receipt["bytes_written"] == target.stat().st_size
+    mcp_receipt = mcp_export(force=True)
+    assert mcp_receipt["bytes_written"] == target.stat().st_size
+    for receipt in (worker_receipt, mcp_receipt, cli_receipt):
+        for k in plan.keys() - {"paths", "free_bytes", "destination_exists"}:
+            assert receipt[k] == plan[k], k
+        assert receipt["clipped"] == {"below": 0, "above": 0}

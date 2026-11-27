@@ -65,6 +65,14 @@ Changelog = "https://github.com/tristanmanchester/tomojax/blob/main/CHANGELOG.md
 Issues = "https://github.com/tristanmanchester/tomojax/issues"
 
 [dependency-groups]
+interop = [
+    "SimpleITK==2.5.8",
+    "vtk==9.7.2",
+    "silx==3.1.3",
+    "nxtomo==3.1.1",
+    "ome-zarr==0.21.0",
+    "JPype1==1.7.1",
+]
 examples = [
     "matplotlib>=3.10,<4",
 ]

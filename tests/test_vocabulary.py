@@ -65,7 +65,7 @@ MIRRORS = {
     "align": ("align", {"scan", "config"}),
     "reconstruct": ("reconstruct", {"scan", "out", "config", "devices"}),
     "correct": ("load", {"path", "detector", "grid", "exposure_times", "flat_exposure_times"}),
-    "export": ("export", {"path", "reconstruction"}),
+    "export": ("export", {"path", "item"}),
     "inspect": ("inspect", {"path"}),
     "simulate": ("simulate", {"artifacts"}),
 }

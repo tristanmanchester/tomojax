@@ -3293,7 +3293,7 @@
     },
     "Export": {
       "title": "Export",
-      "description": "Stage the complete raw or TIFF export with its sidecars.",
+      "description": "Export one registered member in the format selected by its destination.",
       "type": "object",
       "properties": {
         "type": {
@@ -3306,18 +3306,126 @@
         },
         "path": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-formats": [
+            {
+              "name": "ImageJ TIFF",
+              "suffixes": [
+                ".tif",
+                ".tiff"
+              ],
+              "layout": "file",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "ImageJ reads voxel size, origin and value calibration in classic TIFF. Bio-Formats reads voxel size in classic and BigTIFF.",
+              "spatial_only": false
+            },
+            {
+              "name": "OME-TIFF",
+              "suffixes": [
+                ".ome.tif",
+                ".ome.tiff"
+              ],
+              "layout": "file",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "Bio-Formats reads voxel sizes. Classic ImageJ and ITK read the in-plane sizes.",
+              "spatial_only": false
+            },
+            {
+              "name": "TIFF slices",
+              "suffixes": [],
+              "layout": "directory",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "ImageJ, Bio-Formats and ITK read the in-plane pixel size.",
+              "spatial_only": false
+            },
+            {
+              "name": "Raw",
+              "suffixes": [
+                ".raw"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis"
+              ],
+              "carries": "The adjacent JSON record gives axes, units and value scaling.",
+              "spatial_only": false
+            },
+            {
+              "name": "MetaImage",
+              "suffixes": [
+                ".mhd"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis"
+              ],
+              "carries": "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
+              "spatial_only": false
+            },
+            {
+              "name": "AmiraMesh",
+              "suffixes": [
+                ".am"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning"
+              ],
+              "carries": "Bio-Formats reads voxel size and assumes micrometres when the unit is unknown. The bounding box records placement.",
+              "spatial_only": true
+            }
+          ]
         },
         "force": {
           "type": "boolean",
           "default": false
         },
         "dtype": {
-          "enum": [
-            "float32",
-            "uint16"
+          "anyOf": [
+            {
+              "enum": [
+                "float32",
+                "uint16",
+                "uint8"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ],
-          "default": "float32"
+          "default": null
         },
         "range": {
           "anyOf": [
@@ -3341,9 +3449,78 @@
           ],
           "default": null
         },
-        "prefix": {
-          "type": "string",
-          "default": "slice"
+        "crop": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "prefixItems": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    ],
+                    "items": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "binning": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 1
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "compress": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [

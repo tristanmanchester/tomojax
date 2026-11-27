@@ -555,12 +555,12 @@ def test_the_commands_api_counterparts_simulate_inspect_and_export(tmp_path: Pat
     assert report["valid"] and report["issues"] == [] and report["angles"]["count"] == 6
     assert report["volume"]["found"]
     tj.export(tmp_path / "slices", sim)
-    assert len(list((tmp_path / "slices").glob("slice_*.tif"))) == 8
+    assert len(list((tmp_path / "slices").glob("slices_*.tif"))) == 8
     tj.export(tmp_path / "truth.raw", sim, dtype="uint16", range=(0.0, 1.0))
     assert (tmp_path / "truth.raw").stat().st_size == 8 * 8 * 8 * 2
     assert not list(tmp_path.glob(".*partial*"))  # each file moved on whole
-    sidecar = json.loads((tmp_path / "truth.json").read_text())
-    assert "vol_origin_xyz" in sidecar and sidecar["grid"] == sim.scan.grid.to_dict()
+    sidecar = json.loads((tmp_path / "truth.raw.json").read_text())
+    assert sidecar["geometry"]["grid"] == sim.scan.grid.to_dict()
 
 
 def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
@@ -591,26 +591,26 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
 
     slices_dir = tmp_path / "slices"
     assert cli_main(["export", str(aligned_path), "-o", str(slices_dir)]) == 0
-    sidecar = json.loads((slices_dir / "slice.json").read_text())
-    assert sidecar["voxel_size_xyz"] == [1.0, 0.8, 1.2]
-    assert sidecar["grid"] == work_grid.to_dict()
+    sidecar = json.loads((slices_dir / "slices.json").read_text())
+    axes = sidecar["arrays"]["image"]["axes"]
+    assert [a["coordinates"]["spacing"] for a in axes] == [1.2, 0.8, 1.0]
+    assert (
+        tj.Grid.from_dict(sidecar["geometry"]["meta"]["alignment_info"]["working_grid"])
+        == work_grid
+    )
 
-    # A second prefix coexists with all slices of the original export.
+    # Replacing an owned stack installs the complete shorter export.
     smaller = tj.Reconstruction(
         np.zeros((2, 4, 4), np.float32),
         tj.ParallelGeometry(tj.Grid(4, 4, 2, 1.0, 1.0, 1.0), detector, geometry.angles),
         "fbp",
         {},
     )
-    tj.export(slices_dir, smaller, prefix="small")
+    tj.export(slices_dir, smaller)
     assert sorted(p.name for p in slices_dir.iterdir()) == [
-        "slice.json",
-        "slice_00000.tif",
-        "slice_00001.tif",
-        "slice_00002.tif",
-        "small.json",
-        "small_00000.tif",
-        "small_00001.tif",
+        "slices.json",
+        "slices_00000.tif",
+        "slices_00001.tif",
     ]
 
     # Image-free alignment (e.g. opposite-views) round-trips via load_alignment.
@@ -622,7 +622,7 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
     assert reloaded_center.scan.grid == scan_grid
     assert reloaded_center.info["method"] == "opposite-views"
     tj.export(tmp_path / "align-slices", aligned)
-    assert len(list((tmp_path / "align-slices").glob("slice_*.tif"))) == 3
+    assert len(list((tmp_path / "align-slices").glob("align-slices_*.tif"))) == 3
     with pytest.raises(ValueError, match="working image"):
         tj.export(tmp_path / "no-img", center_only)
 

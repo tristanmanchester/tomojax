@@ -15,7 +15,7 @@ from tomojax.wire.arrays import Axis, Column, Fixed, PoseColumn, Uniform
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
-    from tomojax.core.geometry.base import Grid
+    from tomojax.core.geometry.base import Detector, Grid
 
 
 length_unit = ContextVar("tomojax_preview_length", default="scan_length")
@@ -71,6 +71,15 @@ def volume_axes(grid: Grid, unit: str) -> tuple[Axis, ...]:
         for name, start, pitch in zip(
             "zyx", reversed(grid_volume_origin(grid)), (grid.vz, grid.vy, grid.vx), strict=True
         )
+    )
+
+
+def scan_axes(det: Detector, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
+    """Pixel centers in the detector's local frame, in stored (view, v, u) order."""
+    return (
+        view,
+        Axis("v", "detector", unit, Uniform(det.center[1] - (det.nv - 1) * det.dv / 2, det.dv)),
+        Axis("u", "detector", unit, Uniform(det.center[0] - (det.nu - 1) * det.du / 2, det.du)),
     )
 
 

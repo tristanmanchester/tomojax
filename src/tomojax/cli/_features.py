@@ -20,7 +20,7 @@ from scipy import ndimage
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._handles import stage_array
 from tomojax.errors import InvalidParameter
-from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member, Npy, Uniform
+from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member, Npy
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -393,34 +393,3 @@ def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
         recipe = msgspec.json.decode(str(group.attrs["recipe"]))
         feature = ex.Feature(str(group.attrs["name"]), inside, box, grid, recipe)
     return feature_handle(feature, None)
-
-
-def export_feature(
-    path: Path,
-    feature: ex.Feature,
-    *,
-    dtype: str,
-    value_range: tuple[float, float] | None,
-    prefix: str,
-    source: dict[str, object],
-) -> None:
-    """Write the mask as 0/1 planes along its first axis, as TIFFs or one raw file."""
-    from tomojax._loading.files import write_volume
-
-    if feature.ndim != 3:
-        raise InvalidParameter("source", "export needs a three-dimensional feature")
-    spacing = [
-        abs(a.coordinates.spacing) if isinstance(a.coordinates, Uniform) else 1.0
-        for a in feature.registration.axes
-    ]
-    shape = cast("tuple[int, int, int]", feature.shape)
-    write_volume(
-        path,
-        lambda z: feature[z].astype(np.float32),
-        shape,
-        (spacing[2], spacing[1], spacing[0]),
-        dtype=dtype,
-        value_range=value_range,
-        prefix=prefix,
-        source=source,
-    )

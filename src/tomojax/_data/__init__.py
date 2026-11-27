@@ -19,8 +19,10 @@ from tomojax._data._io_nxtomo import (
     saved_without_frames,
     slab_volume,
     validate_nxtomo,
+    volume_entry,
 )
 from tomojax._data._io_types import LoadedNXTomo, NXTomoMetadata
+from tomojax._data._record import metadata_record
 from tomojax._data.geometry_meta import LoadedGeometryMeta, build_geometry_from_meta, views_of
 
 __all__ = [
@@ -38,6 +40,7 @@ __all__ = [
     "load_npz",
     "load_nxtomo",
     "locate_frames",
+    "metadata_record",
     "npz_layout",
     "read_nxtomo",
     "save_npz",
@@ -47,4 +50,5 @@ __all__ = [
     "slab_volume",
     "validate_nxtomo",
     "views_of",
+    "volume_entry",
 ]

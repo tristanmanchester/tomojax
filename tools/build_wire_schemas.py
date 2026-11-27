@@ -61,6 +61,10 @@ def documents() -> dict[str, dict[str, Any]]:
                     },
                 },
             }
+        if name == "operations":
+            from tomojax.io.api import format_descriptions
+
+            defs["Export"]["properties"]["path"]["x-formats"] = format_descriptions()
         own = {key: value for key, value in defs.items() if key not in owners}
         document = {
             "$schema": "https://json-schema.org/draft/2020-12/schema",

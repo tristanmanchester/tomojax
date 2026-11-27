@@ -463,11 +463,14 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
                 assert back["shape"] == [size] * 3
                 data("control", action="close", target=array["handle"])
             plan = data("export", source=volume["handle"], path="stack", dry_run=True)
-            assert plan["slice_count"] == size and plan["destination_exists"] is False
+            assert plan["shape"][0] == size and plan["destination_exists"] is False
             written = data("export", source=volume["handle"], path="stack")
-            assert Path(written["first_file"]).is_file() and Path(written["last_file"]).is_file()
-            sidecar = json.loads((tmp_path / "stack/slice.json").read_text())
-            assert (tmp_path / "stack" / sidecar["source"]["manifest"]).is_file()
+            assert (
+                Path(written["files"]["first"]).is_file()
+                and Path(written["files"]["last"]).is_file()
+            )
+            sidecar = json.loads((tmp_path / "stack/stack.json").read_text())
+            assert sidecar["provenance"]["lineage"]["operation"] == "export"
             assert data("export", source=volume["handle"], path="export.raw")["paths"]
             assert (
                 data("open", path="result.nxs", kind="reconstruction", dry_run=True)["type"]

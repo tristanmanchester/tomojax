@@ -35,6 +35,8 @@ PUBLIC_MODULES = (
 # Immutable values and typing aliases cannot own docstrings. Their reference
 # entries live here so every export is covered by either numpydoc or this prose.
 PUBLIC_DATA = {
+    "tomojax.io.api.ExportCrop": "One half-open interval per stored array axis.",
+    "tomojax.io.api.ExportDtype": "Supported interchange sample types.",
     "tomojax.progress.Event": "A task transition, completed work or watch message.",
     "tomojax.forward.api.ResidualFilterKind": "Residual filter: raw, lowpass_gaussian or "
     "bandpass_difference_of_gaussians.",

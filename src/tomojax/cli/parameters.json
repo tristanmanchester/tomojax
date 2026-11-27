@@ -3914,7 +3914,7 @@
     },
     "Export": {
       "title": "Export",
-      "description": "Stage the complete raw or TIFF export with its sidecars.",
+      "description": "Export one registered member in the format selected by its destination.",
       "type": "object",
       "properties": {
         "type": {
@@ -3924,27 +3924,136 @@
         },
         "source": {
           "$ref": "#/$defs/Member",
-          "description": "The volume (reconstruction, alignment working image, or simulation phantom) and its grid."
+          "description": "Reconstruction volume, alignment working image or simulation phantom. An integer or boolean volume supplies mask labels."
         },
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Directory for TIFF slices, or a .raw file."
+          "description": "Destination. The longest matching suffix selects the format. A directory with no recognized suffix holds numbered TIFF slices.",
+          "x-formats": [
+            {
+              "name": "ImageJ TIFF",
+              "suffixes": [
+                ".tif",
+                ".tiff"
+              ],
+              "layout": "file",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "ImageJ reads voxel size, origin and value calibration in classic TIFF. Bio-Formats reads voxel size in classic and BigTIFF.",
+              "spatial_only": false
+            },
+            {
+              "name": "OME-TIFF",
+              "suffixes": [
+                ".ome.tif",
+                ".ome.tiff"
+              ],
+              "layout": "file",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "Bio-Formats reads voxel sizes. Classic ImageJ and ITK read the in-plane sizes.",
+              "spatial_only": false
+            },
+            {
+              "name": "TIFF slices",
+              "suffixes": [],
+              "layout": "directory",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "ImageJ, Bio-Formats and ITK read the in-plane pixel size.",
+              "spatial_only": false
+            },
+            {
+              "name": "Raw",
+              "suffixes": [
+                ".raw"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis"
+              ],
+              "carries": "The adjacent JSON record gives axes, units and value scaling.",
+              "spatial_only": false
+            },
+            {
+              "name": "MetaImage",
+              "suffixes": [
+                ".mhd"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis"
+              ],
+              "carries": "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
+              "spatial_only": false
+            },
+            {
+              "name": "AmiraMesh",
+              "suffixes": [
+                ".am"
+              ],
+              "layout": "group",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning"
+              ],
+              "carries": "Bio-Formats reads voxel size and assumes micrometres when the unit is unknown. The bounding box records placement.",
+              "spatial_only": true
+            }
+          ]
         },
         "force": {
           "type": "boolean",
           "default": false
         },
         "dtype": {
-          "enum": [
-            "float32",
-            "uint16"
+          "anyOf": [
+            {
+              "enum": [
+                "float32",
+                "uint16",
+                "uint8"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ],
-          "default": "float32",
-          "description": "Sample type; uint16 maps range to 0..65535. Default is float32.",
+          "default": null,
+          "description": "Output type. Defaults to float32, or uint8 for a mask.",
           "x-choices": [
             "float32",
-            "uint16"
+            "uint16",
+            "uint8"
           ]
         },
         "range": {
@@ -3968,12 +4077,84 @@
             }
           ],
           "default": null,
-          "description": "The values uint16 maps to 0 and 65535 (finite, low < high); None takes the 0.1 and 99.9 percentiles of up to 16 slices. Only valid with dtype=\"uint16\"."
+          "description": "Physical values mapped to zero and the integer maximum. The default uses finite 0.1 and 99.9 percentiles of up to 16 evenly spaced planes."
         },
-        "prefix": {
-          "type": "string",
-          "default": "slice",
-          "description": "TIFF file name prefix. Default is \"slice\"."
+        "crop": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "array",
+                    "minItems": 2,
+                    "maxItems": 2,
+                    "prefixItems": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    ],
+                    "items": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Half-open (start, stop) pairs, slices, or None in stored (z, y, x) order."
+        },
+        "binning": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "default": 1,
+          "description": "Mean over complete spatial bins after cropping. Default is one."
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stack planes along this axis. The default preserves stored order."
+        },
+        "compress": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Use the format's lossless codec. TIFF uses LZW and defaults to compressed for masks."
         }
       },
       "required": [
@@ -3985,10 +4166,17 @@
       "x-python": {
         "export": {
           "path": "path",
-          "reconstruction": "source",
+          "item": "source",
           "dtype": "dtype",
           "range": "range",
-          "prefix": "prefix"
+          "crop": "crop",
+          "binning": "binning",
+          "axis": "axis",
+          "compress": "compress",
+          "dry_run": {
+            "owner": "python",
+            "description": "Return the resolved plan before writing any files."
+          }
         }
       }
     },

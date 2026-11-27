@@ -205,6 +205,10 @@ class Inspection(InspectionReport):
 
     Attributes
     ----------
+    record : dict or None
+        Embedded metadata for a saved object or interchange export.
+    contents : dict
+        Registered members keyed by name, with their sample shape, type and axes.
     loading : dict or None
         What loading the file as a scan reads (:class:`LoadingReport`); None when
         the file holds no projections.
@@ -221,6 +225,8 @@ class Inspection(InspectionReport):
         What the check found: missing calibration, angles or frames.
     """
 
+    record: dict[str, object] | None
+    contents: dict[str, dict[str, object]]
     loading: LoadingReport | None
     checkpoint: dict[str, object] | None
     valid: bool

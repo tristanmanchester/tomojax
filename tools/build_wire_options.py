@@ -154,6 +154,9 @@ def description() -> dict[str, Any]:
             by_name = {}
             for name, info in parameters(owner).items():
                 wire_name = name
+                if operation is op.Export and name == "dry_run":
+                    by_name[name] = {"owner": "python", **info}
+                    continue
                 if (operation, name) in {(op.Reconstruct, "out"), (op.ReconstructSlabs, "info")}:
                     by_name[name] = {"owner": "worker", **info}
                     continue
@@ -178,6 +181,9 @@ def description() -> dict[str, Any]:
     definitions["Save"]["properties"]["path"]["description"] = (
         "Output dataset path. Set force to replace existing files."
     )
+    from tomojax.io.api import format_descriptions
+
+    definitions["Export"]["properties"]["path"]["x-formats"] = format_descriptions()
     inherit_align_config(definitions)
     for target, source in (
         (op.Slice, op.Reconstruct),
@@ -254,6 +260,17 @@ class _Options(argparse.Namespace):
     check: bool = False
 
 
+def format_table() -> str:
+    """The consumer and registration information shown in the export guide."""
+    from tomojax.io.api import format_descriptions
+
+    rows = ["| Destination | Format | What the reader receives |", "| --- | --- | --- |"]
+    for fmt in format_descriptions():
+        suffixes = ", ".join(f"`{ext}`" for ext in fmt["suffixes"]) or "Slice directory"
+        rows.append(f"| {suffixes} | {fmt['name']} | {fmt['carries']} |")
+    return "\n".join(rows)
+
+
 def main() -> int:
     """Write generated files or verify the checked-in copies."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -277,6 +294,16 @@ def main() -> int:
         _ = DESCRIPTION.write_text(parameters_json, encoding="utf-8")
     elif not DESCRIPTION.is_file() or DESCRIPTION.read_bytes() != parameters_json.encode("utf-8"):
         drifted.append(DESCRIPTION)
+
+    guide = ROOT / "docs/export.md"
+    text = guide.read_text(encoding="utf-8")
+    before, table = text.split("<!-- formats -->", 1)
+    _, after = table.split("<!-- /formats -->", 1)
+    updated = before + "<!-- formats -->\n" + format_table() + "\n<!-- /formats -->" + after
+    if check and text != updated:
+        drifted.append(guide)
+    elif not check:
+        guide.write_text(updated, encoding="utf-8")
 
     if drifted:
         paths = ", ".join(p.relative_to(ROOT).as_posix() for p in drifted)

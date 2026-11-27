@@ -488,13 +488,7 @@ def read_nxtomo(
                 key = np.zeros(len(stack), np.int32)
             out["image_key"] = key
             out["angles"] = None if located.angles is None else located.angles.astype(np.float32)
-        load_geometry_metadata(out, entry, path=path)
-        load_grid_metadata(out, entry, path=path)
-        load_detector_metadata(out, entry, path=path)
-        load_source_metadata(out, entry)
-        volume, volume_axes_attr = load_processing_metadata(out, entry, path=path)
-        load_sample_metadata(out, entry)
-
+        volume, volume_axes_attr = entry_metadata(out, entry, path=path)
         if volume is not None:
             volume_np, disk_order = _volume_in_internal_axes(
                 volume, volume_axes_attr, path=path, layout_only=layout_only
@@ -508,6 +502,50 @@ def read_nxtomo(
         payload.metadata.geometry_meta = meta
     payload.metadata.volume = volume_np
     return payload
+
+
+def entry_metadata(
+    out: LoadedDataset, entry: h5py.Group, *, path: str
+) -> tuple[h5py.Dataset | None, str | None]:
+    """Read the saved record and locate the volume without transferring its pixels."""
+    load_geometry_metadata(out, entry, path=path)
+    load_grid_metadata(out, entry, path=path)
+    load_detector_metadata(out, entry, path=path)
+    load_source_metadata(out, entry)
+    volume, volume_axes_attr = load_processing_metadata(out, entry, path=path)
+    load_sample_metadata(out, entry)
+
+    return volume, volume_axes_attr
+
+
+def volume_entry(file: h5py.File) -> tuple[NXTomoMetadata, h5py.Dataset, str]:
+    """Locate a saved volume and read its registration from the open file.
+
+    Parameters
+    ----------
+    file : h5py.File
+        Open TomoJAX HDF5 container.
+
+    Returns
+    -------
+    tuple
+        Metadata, live HDF5 dataset and stored axis order.
+    """
+    out: LoadedDataset = {}
+    entry = child_group(file, "/entry")
+    if entry is None:
+        raise ValueError(f"{file.filename} holds no reconstructed volume")
+    volume, axes = entry_metadata(out, entry, path=file.filename)
+    if volume is None or volume.ndim != 3:
+        raise ValueError(f"{file.filename} holds no reconstructed volume")
+    for name, paths in (
+        ("angles", ROTATION_ANGLE_PATHS),
+        ("image_key", ("/entry/instrument/detector/image_key",)),
+    ):
+        dataset = next((file[p] for p in paths if p in file), None)
+        if dataset is not None:
+            out[name] = np.asarray(dataset)
+    return NXTomoMetadata.from_dataset(out), volume, saved_volume_axes(axes, file.filename)
 
 
 def _volume_in_internal_axes(

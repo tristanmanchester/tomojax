@@ -19,7 +19,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Zeiss `.txrm` projection acquisitions | `tj.load("scan.txrm")` or `tj.load_frames("scan.txrm", flats="reference_Front.xrm").corrected(...)` ([CPU preview](lab-ct.md#zeiss-xradia-preview)) |
 | Multi-orbit cone-beam scans (`ConeSegments`) | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then iterative `tj.reconstruct` and `tj.align` |
 | Alignment (direct parallel center fit; joint fit for center, translations, tilt, roll, per-view rotations) | `tomojax align corrected.nxs -o aligned.nxs --fit ...` or `tj.align(scan, fit=..., grid=...)` |
-| Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
+| [Export a registered volume](export.md) as TIFF, raw binary, MetaImage or AmiraMesh | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap, `tj.reconstruct_slabs`, and worker/MCP `reconstruct_slabs` ([large scans](large-scans.md)) |
 | Checkpoint and resume long runs (Python, CLI, worker, and MCP) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`; `checkpoint` on worker and MCP `reconstruct`, `reconstruct_slabs`, and `align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |

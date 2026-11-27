@@ -46,6 +46,11 @@ def format_inspection_report(report: Inspection) -> str:
         keys = ("path", "run", "request", "created", "saved", "entries", "bytes", "in_use")
         rows = [f"  {key + ':':<9} {json.dumps(saved.get(key))}" for key in keys]
         return "\n".join(["Checkpoint", *rows, f"  {saved['resume']}"])
+    if (record := report.get("record")) and record.get("kind") == "export":
+        lines = [f"Export {report['input_path']}"]
+        for name, array in report["contents"].items():
+            lines.append(f"  {name}  {array['shape']}  {array['dtype']}  {array['unit']}")
+        return "\n".join(lines)
     corrections = report["corrections"]
     geometry = report["geometry"]
     sections = [

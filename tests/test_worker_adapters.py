@@ -154,7 +154,7 @@ def test_save_reopen_plan_edit_and_export(worker, simulation, tmp_path):
     ]
     assert set(map(Path, exported["paths"])) == {
         raw,
-        raw.with_suffix(".json"),
+        raw.with_suffix(".raw.json"),
         raw.with_name("result.raw.manifest.json"),
     }
     assert raw.stat().st_size == np.prod(recon["value"]["volume"]["shape"]) * 4
@@ -558,51 +558,17 @@ def test_region_overlays_can_drive_another_reconstruction_and_close(worker, tmp_
     assert all(not Path(a["storage"]["path"]).exists() for a in value["arrays"].values())
 
 
-@pytest.mark.parametrize("rollback", [False, True])
-def test_forced_stack_export_preserves_unrelated_directory_entries(
-    worker, simulation, tmp_path, rollback
-):
+def test_forced_stack_export_refuses_an_unowned_directory(worker, simulation, tmp_path):
     stack = tmp_path / "stack"
     stack.mkdir()
     sentinel = stack / "acquisition.txt"
     sentinel.write_text("original")
-    nested = stack / "calibration" / "reference.tif"
-    nested.parent.mkdir()
-    nested.write_bytes(b"flat")
-    prefix = "sample.[a]"
-    retained = [
-        "acquisition.json",
-        "flat.tiff",
-        "other_00001.tif",
-        f"{prefix}_notes.tif",
-        f"{prefix}_7.tif",
-    ]
-    for name in retained:
-        (stack / name).write_text(name)
-    previous = stack / f"{prefix}.json"
-    previous.write_bytes(b"old metadata")
-    stale = stack / f"{prefix}_00123.tif"
-    stale.write_bytes(b"previous stack")
-    if rollback:
-        # Walk a real failure after installing the TIFFs, at the manifest destination.
-        stack.with_suffix(".manifest.json").mkdir()
     root = dict(type="member", handle=simulation["value"]["handle"], member="self")
-    reply = worker(
-        "run",
-        operation=dict(type="export", source=root, path=str(stack), prefix=prefix, force=True),
-    )
-    assert reply["type"] == ("error" if rollback else "result")
-    for name in retained:
-        assert (stack / name).read_text() == name
+    reply = worker("run", operation=dict(type="export", source=root, path=str(stack), force=True))
+    assert reply["type"] == "error"
+    assert "export record" in reply["error"]["message"]
+    assert list(stack.iterdir()) == [sentinel]
     assert sentinel.read_text() == "original"
-    assert nested.read_bytes() == b"flat"
-    if rollback:
-        assert previous.read_bytes() == b"old metadata"
-        assert stale.read_bytes() == b"previous stack"
-        assert not (stack / f"{prefix}_00000.tif").exists()
-    else:
-        assert not stale.exists()
-        assert (stack / f"{prefix}_00000.tif").is_file()
 
 
 def test_cone_cgls_interpolation_preflight(worker, simulation):

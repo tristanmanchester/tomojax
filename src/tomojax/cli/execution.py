@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     from numpy.typing import ArrayLike
 
     from tomojax._typed_arrays import Device
+    from tomojax.io.api import ExportPlan
 
 
 class Control(Protocol):
@@ -140,6 +141,7 @@ class Lease:
     value: HandleValue | Npy
     provenance: Provenance
     metadata: Array | None = None
+    owner: HandleValue | None = None
 
 
 @dataclass(frozen=True)
@@ -155,6 +157,10 @@ class Staging(Protocol):
 
     def array(self) -> ArrayStage:
         """Reserve a private npy and its eventual public reference."""
+        ...
+
+    def export(self, plan: ExportPlan, *, force: bool) -> dict[str, object]:
+        """Stage a complete interchange export for commit."""
         ...
 
     def output(self, destination: Path, *, force: bool) -> Path:

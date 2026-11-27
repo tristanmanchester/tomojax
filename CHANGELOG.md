@@ -16,6 +16,11 @@
   penalty uses the same noise calibration as FISTA, and its stochastic step
   sizes scale with the probability of selecting a block. An explicit iteration
   count still fixes the work budget.
+- Export a registered volume as ImageJ TIFF, OME-TIFF, TIFF slices, raw binary,
+  MetaImage or AmiraMesh. Python, CLI, worker and MCP accept crop, binning,
+  stack axis, integer scaling and format-specific compression. Dry runs report
+  the files and registration, and `tj.inspect` reads them back. The directory
+  names its slices and owns its contents. The `prefix` option is removed.
 
 - Flat sets taken before and after a scan are weighted by what the scan's views show of
   each, instead of by each view's position between them. A set taken with something in

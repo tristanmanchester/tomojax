@@ -10,8 +10,8 @@ import numpy as np
 
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
-from tomojax.cli._results import scan_axes, unit_of
-from tomojax.core.registration import pose_columns
+from tomojax.cli._results import unit_of
+from tomojax.core.registration import pose_columns, scan_axes
 from tomojax.recon.api import solver_name
 from tomojax.wire.arrays import (
     Array,

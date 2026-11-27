@@ -273,27 +273,14 @@ The discrepancy test measures RMS over detector samples. Different spatial frequ
 
 On real scans, motion, scatter, calibration bias, and correlated detector errors often keep the projection residual above the local noise-and-sampling estimate past 50 updates, so `termination="iteration_limit"` is common. That result means the cap ended the solve without detecting the scan's noise floor. Inspect the slices, pass an explicit `iterations=` if structure is still under-resolved, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run identically, pass `iterations=recon.info["effective_iterations"]` for CGLS, and pass both `iterations` and `acceleration` from `recon.info` for SIRT.
 
-### Export slices
+### Export
 
 ```bash
-tomojax export recon.nxs -o slices/                 # 32-bit TIFF z-slices + JSON sidecar
-tomojax export recon.nxs -o recon.raw --dtype uint16
+tomojax export recon.nxs -o recon.tif
+tomojax export recon.nxs -o detail.mhd --crop 100:300,:,: --binning 2
 ```
 
-Each z-slice has y rows and x columns from low to high physical z. `tomojax export` streams one slice at a time without loading the full volume. In Python:
-
-```python
-from pathlib import Path
-import numpy as np
-import tifffile
-import tomojax as tj
-
-recon = tj.load_reconstruction("recon.nxs")
-slices = Path("slices")
-slices.mkdir()
-for z in range(recon.grid.nz):
-    tifffile.imwrite(slices / f"slice_{z:04d}.tif", np.asarray(recon.volume[z], dtype=np.float32))
-```
+In Python, `tj.export("recon.tif", recon)` writes the same volume. Pass `dry_run=True` to inspect the output shape and scaling before writing. See [export a reconstruction](export.md) for reader-specific calibration and file formats.
 
 ### Checking trial rotation centers by eye
 

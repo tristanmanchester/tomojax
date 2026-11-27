@@ -1,5 +1,4 @@
-"""``tomojax export``: write a reconstruction as TIFF slices or a raw file, slice by slice."""
-# pyright: reportUnknownMemberType=false
+"""Export a registered member of a saved file."""
 
 from __future__ import annotations
 
@@ -9,13 +8,10 @@ from pathlib import Path
 import sys
 from typing import TYPE_CHECKING
 
-import h5py
-import numpy as np
-
 from tomojax.cli._options import add_output, check_paths
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
-from tomojax.cli._results import stored_grid
-from tomojax.cli.products import VOLUME_DATASET
+from tomojax.errors import InvalidParameter
+from tomojax.io.api import format_descriptions, plan_export
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -23,133 +19,76 @@ if TYPE_CHECKING:
     from tomojax.wire.progress import Result
 
 
-class _Args(argparse.Namespace):
-    data: str
-    out: str
-    dtype: str
-    range: list[float] | None
-    prefix: str | None
-    force: bool
-    progress: str
-
-
 def _build_parser() -> ProgressParser:
+    formats = format_descriptions()
+    suffixes = ", ".join((f["suffixes"] or ["slice directory"])[0] for f in formats)
     parser = ProgressParser(
-        prog="tomojax export",
-        description=(
-            "Export a reconstruction or alignment image for other software: a directory of "
-            "z-slice TIFFs (y rows, x columns), or one little-endian z-major file when OUTPUT "
-            "ends in .raw. A JSON sidecar gives the shape, voxel size, grid placement and value "
-            "scaling."
-        ),
-        epilog=(
-            "Exit status: 0 success, 1 failure, 2 usage error.\n\nExamples:\n"
-            "  tomojax export recon.nxs -o slices/\n"
-            "  tomojax export recon.nxs -o recon.raw --dtype uint16"
-        ),
-        formatter_class=argparse.RawDescriptionHelpFormatter,
+        prog="tomojax export", description=f"Export a registered volume. Destinations: {suffixes}."
     )
-    _ = parser.add_argument("data", metavar="INPUT", help="Reconstruction (.nxs, .h5)")
+    _ = parser.add_argument("data", metavar="INPUT", help="Saved TomoJAX file")
     add_progress(parser)
-    add_output(parser, "Directory for TIFF slices, or a .raw file")
-    _ = parser.add_argument(
-        "--dtype",
-        choices=["float32", "uint16"],
-        default="float32",
-        help="uint16 maps --range (default: the 0.1 and 99.9 percentiles) to 0..65535",
-    )
-    _ = parser.add_argument(
-        "--range",
-        type=float,
-        nargs=2,
-        metavar=("LOW", "HIGH"),
-        default=None,
-        help="Values mapped to 0 and 65535 for --dtype uint16 (finite, LOW < HIGH)",
-    )
-    _ = parser.add_argument("--prefix", default=None, help="TIFF file name prefix (default slice)")
+    add_output(parser, "File or slice directory")
+    _ = parser.add_argument("--member", help="Array in the file (listed by inspect)")
+    _ = parser.add_argument("--dry-run", action="store_true", help="Print the plan without writing")
+    enabled = {name for f in formats for name in f["options"]}
+    fields = {
+        "dtype": {"choices": ["float32", "uint16", "uint8"], "help": "Stored sample type"},
+        "range": {
+            "type": float,
+            "nargs": 2,
+            "metavar": ("LOW", "HIGH"),
+            "help": "Physical bounds for integer conversion",
+        },
+        "axis": {"help": "Axis to stack first (default: stored order)"},
+        "binning": {"type": int, "default": 1, "help": "Mean-bin spatial axes by this factor"},
+        "compress": {"action": argparse.BooleanOptionalAction, "help": "Use lossless compression"},
+        "crop": {"metavar": "LO:HI,LO:HI,LO:HI", "help": "Half-open bounds in storage order"},
+    }
+    for name, options in fields.items():
+        if name in enabled:
+            parser.add_argument("--" + name, **options)
     return parser
 
 
-def _z_slice(dataset: h5py.Dataset, axes: str, z: int) -> np.ndarray:
-    """The ``(ny, nx)`` slice at height ``z`` of a volume stored with ``axes``."""
-    selection: list[int | slice] = [slice(None)] * 3
-    selection[axes.index("z")] = z
-    plane = np.asarray(dataset[tuple(selection)], np.float32)
-    rest = [axis for axis in axes if axis != "z"]
-    return plane if rest == ["y", "x"] else plane.T
-
-
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the export command: :func:`tomojax.export`, reading the volume a slice at a time."""
-    from tomojax._loading.files import validate_export_range, write_volume
+    """Run the volume export command."""
+    from tomojax._loading.files import saved_export_source
+    from tomojax.cli._results import report_result
+    from tomojax.cli.correct import crop_intervals
 
     parser = _build_parser()
     parser.set_invocation(list(sys.argv[1:] if argv is None else argv))
-    args = parser.parse_args(argv, namespace=_Args())
+    args = parser.parse_args(argv)
 
     def run() -> Result | None:
         data, out = Path(args.data), Path(args.out)
-        raw = out.suffix.lower() == ".raw"
-        dtype = args.dtype
-        value_range = args.range
-        explicit_prefix = args.prefix
-        if raw and explicit_prefix is not None:
-            parser.error("--prefix applies only to TIFF directory exports, not .raw files")
-        try:
-            _ = validate_export_range(dtype, value_range)
-        except ValueError as exc:
-            parser.error(str(exc))
-        prefix = "slice" if explicit_prefix is None else explicit_prefix
-        # A raw volume writes a JSON sidecar beside it; refuse to replace either.
-        outputs = [out, out.with_suffix(".json")] if raw else [out]
-        check_paths(parser, inputs=[data], outputs=outputs, force=args.force)
-        registered = {}
-        with h5py.File(data, "r") as handle:
-            dataset = handle.get(VOLUME_DATASET)
-            if not isinstance(dataset, h5py.Dataset) or dataset.ndim != 3:
-                raise ValueError(
-                    f"{data} holds no reconstructed volume; "
-                    "reconstruct it with tomojax reconstruct",
+        check_paths(parser, inputs=[data])
+        with saved_export_source(data, args.member) as (source, disk):
+            try:
+                crop = None if args.crop is None else crop_intervals(args.crop, "Z0:Z1,Y0:Y1,X0:X1")
+                plan = plan_export(
+                    out,
+                    source,
+                    dtype=args.dtype,
+                    value_range=args.range,
+                    crop=crop,
+                    binning=args.binning,
+                    axis=args.axis,
+                    compress=args.compress,
                 )
-            grid, grid_meta, geom_meta, axes = stored_grid(handle, data)
-            shape = {axis: int(n) for axis, n in zip(axes, dataset.shape, strict=True)}
-            voxel = (
-                (grid.vx, grid.vy, grid.vz)
-                if grid is not None
-                else (
-                    float(grid_meta.get("vx", 1.0)),
-                    float(grid_meta.get("vy", 1.0)),
-                    float(grid_meta.get("vz", 1.0)),
-                )
-            )
-            if args.progress == "json":
-                from tomojax.cli._results import disk_volume
-
-                registered["source_volume"] = disk_volume(
-                    data, grid, axes, tuple(dataset.shape), dataset.dtype.str, geom_meta
-                )
-            sidecar = write_volume(
-                out,
-                lambda z: _z_slice(dataset, axes, z),
-                (shape["z"], shape["y"], shape["x"]),
-                voxel,
-                dtype=dtype,
-                value_range=value_range,
-                prefix=prefix,
-                source=str(data),
-                grid=grid,
-            )
+            except InvalidParameter as exc:
+                parser.error(str(exc))
+            paths = plan.format.paths(out)
+            check_paths(parser, inputs=[data], outputs=paths, force=args.force or args.dry_run)
+            report = plan.details if args.dry_run else plan.publish(force=args.force)
         if args.progress == "json":
-            from tomojax.cli._results import report_result
-
-            written = [out] if raw else [out / f"{prefix}_{z:05d}.tif" for z in range(shape["z"])]
             return report_result(
                 out,
-                tuple(str(p) for p in [*written, sidecar]),
-                json.loads(sidecar.read_text()),
-                arrays=registered,
+                () if args.dry_run else tuple(map(str, paths)),
+                report,
+                arrays={"source_volume": disk},
             )
-        print(f"exported {shape['z']} z-slices of {shape['y']}x{shape['x']} to {out}")
+        print(json.dumps(report, indent=2))
         return None
 
     return run_command("export", args.progress, run)

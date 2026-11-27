@@ -111,3 +111,22 @@ The README watch figures come from [examples/reconstruct_watch.py](examples/reco
 | `.artifacts/` | Ignored local runs, logs, and build outputs |
 
 Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) records each published result with the commit and date needed to contextualize it (with full runner commands in [bench/README.md](bench/README.md)). When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.
+
+## Add an export format
+
+1. Write a block writer and add one `Format` entry to `FORMATS` in
+   `src/tomojax/io/_export_formats.py`. Specify the suffixes, file layout,
+   supported options and what independent readers recover. A file with an
+   embedded record also supplies its record reader. The planner validates those
+   options for Python, the CLI, the worker and MCP.
+2. Extend the independent readback in `tests/test_export.py` for the format.
+   The parameterized test exercises every table entry, each stack axis and
+   widths 1, 8 and 11. Add the consumer to `tools/check_export_readers.py` to
+   check which calibration and sample values survive import.
+3. Run `uv run python tools/build_wire_options.py`, then
+   `uv run python tools/build_wire_schemas.py`. Their `--check` modes fail on
+   stale client metadata, schemas or the format table in `docs/export.md`.
+4. Run `uv run pytest tests/test_export.py`, `just interop` and
+   `just fast-check`. The temporary-format test exercises dispatch, inspection,
+   CLI and generated wire and MCP field descriptions with a format defined only
+   inside the test.

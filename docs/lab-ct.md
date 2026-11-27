@@ -123,7 +123,7 @@ tomojax export fdk.nxs -o fdk_slices/               # 32-bit float TIFF z-slices
 tomojax export fdk.nxs -o fdk.raw --dtype uint16    # little-endian z-major raw file
 ```
 
-Outputs ending in `.raw` write a single binary file; any other path writes a directory of z-slices (y rows × x columns, bottom to top). A JSON sidecar (`fdk.json` or `slice.json`) records shape, voxel pitch, and any `uint16` scaling range (`--range`, defaulting to the 0.1 and 99.9 percentiles). Export streams one slice at a time.
+A raw export stores little-endian samples in `fdk.raw` and the registered axes and value mapping in `fdk.raw.json`. See [export a reconstruction](export.md) for calibrated TIFF and MetaImage.
 
 ## Correct per-view motion
 
