@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 import gc
-import math
 from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
@@ -18,8 +17,8 @@ from tomojax._scan.model import bind_step_geometry, frame_output_grid, selected_
 from tomojax._workflow.operations import reconstruct_resolved
 from tomojax._workflow.planning import resolve_reconstruction
 from tomojax._workflow.smooth_alignment import transfer_alignment
-from tomojax.core.geometry.cone import segments_of
-from tomojax.core.host_volume import host_array, release_planes, resident_limit
+from tomojax.alignment._integration import acquisition_segments
+from tomojax.core.host_volume import release_planes, resident_limit, selected_stack
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
 from tomojax.recon import api
@@ -65,11 +64,7 @@ def native_split(
 ) -> tuple[Split, np.ndarray]:
     n, rows, cols = (data.counts if isinstance(data, tj.Frames) else data.projections).shape
     shape = (n, rows, cols)
-    positions = np.arange(n) if data.view_positions is None else np.asarray(data.view_positions)
-    starts = np.r_[True, np.diff(positions) <= 0]
-    if parts := segments_of(data.geometry):
-        starts[np.cumsum(parts.trajectory_lengths)[:-1]] = True
-    segments = np.cumsum(starts)
+    segments = acquisition_segments(data.geometry, data.view_positions)
     interleaved_guard = None
     if settings["type"] == "angular":
         split = Split.angular(
@@ -125,19 +120,7 @@ def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> t
     source = data.counts if isinstance(data, tj.Frames) else data.projections
     if raw and hasattr(source, "frames_at"):
         return data.selected(ids)
-    target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
-    batch = max(1, _PARTITION_BYTES // (math.prod(source.shape[1:]) * source.dtype.itemsize))
-    for first in range(0, len(ids), batch):
-        progress.check_canceled()
-        group = ids[first : first + batch]
-        if hasattr(source, "frames_at"):
-            target[first : first + len(group)] = source[group]
-        else:
-            for row, view in enumerate(group, first):
-                target[row] = source[int(view)]
-        if isinstance(source, np.ndarray):
-            release_planes(source, int(group[0]), int(group[-1]) + 1)
-        release_planes(target, first, first + len(group))
+    target = selected_stack(source, ids)
     if isinstance(data, tj.Scan):
         return selected_scan(data, ids, target)
     fields = selected_frames(data, ids, target)

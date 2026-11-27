@@ -344,6 +344,7 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         "detector_binning": 1,
         "levels": [{"status": "step_budget_reached", "stacks": {"placement": {}}}],
         "refinement": {"status": "pose_steps_below_tolerance"},
+        "disturbance_score": [0.0] * len(angles),
         "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
     }
 

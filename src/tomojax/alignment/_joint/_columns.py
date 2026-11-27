@@ -230,7 +230,7 @@ def _fixed(
     )
 
 
-def _transient(
+def transient_profile(
     y: Float32Array, w: Float32Array | None, sigma: float
 ) -> tuple[Float64Array, BoolArray, Float64Array, float]:
     """Conditional faint-ray innovations, retaining the measured mean of each exposure."""
@@ -270,7 +270,7 @@ def calibrate_columns(
     if model == "none":
         sd = _air_noise(y, w, noise / fine) if coverage else noise / fine
         return {b: ColumnNoise(0.0, sd * fine / b) for b in bins}
-    dynamic, observed, floor, sd = _transient(y, w, noise / fine)
+    dynamic, observed, floor, sd = transient_profile(y, w, noise / fine)
     fixed = (
         _fixed(y, w, *_offset_variance(floor - dynamic, observed))
         if model in ("both", "fixed")
@@ -285,7 +285,7 @@ def calibrate_columns(
         # for the common variance under independent errors in the two estimates.
         band = max(1, v // 4)
         for rows in (slice(0, band), slice(-band, None)):
-            edge, seen, _, _ = _transient(
+            edge, seen, _, _ = transient_profile(
                 y[:, rows], None if w is None else w[:, rows], noise / fine
             )
             ends.append((edge, seen))

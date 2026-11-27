@@ -180,6 +180,8 @@ def summary_text(data: Object) -> str:
             for column, value in zip(poses["columns"], poses["rms"], strict=True)
         )
         summary.append(f"pose RMS {rms}")
+    if disturbed := data.get("disturbed_views"):
+        summary.append(disturbed["message"])
     summary.extend(data.get("paths", []))
     summary.extend(data.get("devices", []))
     summary.append(f"{data['wall_seconds']:g} s")
@@ -441,6 +443,7 @@ class Tools:
             "method",
             "calibration",
             "diagnostics",
+            "disturbed_views",
             "geometry",
             "automatic",
             "truncation",

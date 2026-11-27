@@ -9,15 +9,26 @@ import numpy as np
 from tomojax.alignment._geometry.center_focus import angular_focus
 from tomojax.alignment._geometry.center_registration import paired_center
 from tomojax.alignment._geometry.detector_center import CenterSelection, opposite_samples
+from tomojax.alignment._joint._disturbance import disturbed_report
 from tomojax.alignment._joint._fit import FitSchedule, fit_poses, fit_schedule
 from tomojax.alignment._joint._parameters import parse_fit
-from tomojax.core.geometry.cone import cone_parts
+from tomojax.core.geometry.cone import cone_parts, segments_of
 from tomojax.geometry import ParallelGeometry
 
 if TYPE_CHECKING:
     import jax
 
     from tomojax.geometry import ScanGeometry
+
+
+def acquisition_segments(geometry: ScanGeometry, positions: np.ndarray | None) -> np.ndarray:
+    """Label uninterrupted acquisition trajectories, including explicit cone orbit breaks."""
+    starts = np.zeros(len(geometry.angles), bool)
+    if positions is not None:
+        starts[1:] = np.diff(positions) <= 0
+    if parts := segments_of(geometry):
+        starts[np.cumsum(parts.trajectory_lengths)[:-1]] = True
+    return np.cumsum(starts)
 
 
 def initial_center_change(
@@ -55,8 +66,10 @@ def cone_frames(geometry: ScanGeometry) -> np.ndarray | None:
 __all__ = [
     "CenterSelection",
     "FitSchedule",
+    "acquisition_segments",
     "angular_focus",
     "cone_frames",
+    "disturbed_report",
     "fit_poses",
     "fit_schedule",
     "initial_center_change",

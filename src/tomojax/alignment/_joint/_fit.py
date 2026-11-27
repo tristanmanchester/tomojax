@@ -35,6 +35,7 @@ from tomojax.core.validation import validate_physical_poses
 from tomojax.recon.fista_tv import resolve_tv_metric, voxel_noise_weight
 
 from ._columns import ColumnNoise, calibrate_columns
+from ._disturbance import disturbance_score
 from ._noise import MAX_SAMPLES, Windows, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
@@ -85,6 +86,7 @@ if TYPE_CHECKING:
         ray_geometry: str
         pose_columns: list[str]
         image_preconditioner: str
+        disturbance_score: list[float]
         noise_estimator: str
         motion_penalty: str
         gauge: str
@@ -408,6 +410,19 @@ def fit_schedule(
     return FitSchedule(base, dbin, margin, levels)
 
 
+def preview_disturbance(
+    projections: np.ndarray, grid: Grid, detector: Detector, config: AlignConfig, order: ViewOrder
+) -> np.ndarray:
+    """Read the joint fit's coarsest observations without creating any image or ray operators."""
+    _, dbin, bins = working_scale(grid, detector, config=config)
+    multiple = dbin * math.lcm(*bins)
+    h = detector.nv // multiple * multiple
+    w = detector.nu // multiple * multiple
+    coarse = dbin * max(bins)
+    levels, _, noise = _read(projections[:, :h, :w], [coarse])
+    return disturbance_score(*levels[0], noise / coarse, order)
+
+
 def _physical_frame(
     poses: np.ndarray,
     grid: Grid,
@@ -528,6 +543,8 @@ def fit_poses(
         prior = None
         levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(y0[:, : detector.nv - drop_v, : detector.nu - drop_u], bins)
+        coarse = bins.index(max(bins))
+        disturbance = disturbance_score(*binned[coarse], noise / bins[coarse], order)
         column_noise = calibrate_columns(
             binned,
             bins,
@@ -624,6 +641,7 @@ def fit_poses(
         "ray_geometry": "parallel" if frames is None else "cone",
         "pose_columns": [["alpha", "beta", "phi", "x", "z", "y"][i] for i in parameters.local],
         "image_preconditioner": ops.projection.diagonal_kind,
+        "disturbance_score": disturbance.tolist(),
         "noise_estimator": "normalized_fourth_difference_mad",
         "motion_penalty": "group_student_t_innovations",
         "gauge": "rigid" if frames is None else "rigid_and_scale",

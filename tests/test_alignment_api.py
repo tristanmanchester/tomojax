@@ -40,6 +40,7 @@ def _fitter(monkeypatch, *, changes=None, poses=None):
         record = {
             "fit": list(names),
             "calibration": changes or {},
+            "disturbance_score": [0.0] * len(nominal),
             "report": {"isolated_views": [], "unusual_views": [], "advisories": []},
             "seconds": 0.0,
         }

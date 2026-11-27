@@ -2487,17 +2487,57 @@
           "description": "The least loss width, as a fraction of the data's contrast. Default is 0.5.",
           "x-unit": "1"
         },
+        "exclude_views": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          },
+          "default": [],
+          "description": "Zero-based, half-open view ranges to leave out of the joint fit. A pair (start, stop) excludes start through stop minus one. Their pose updates are interpolated in acquisition time within each trajectory. All input projections are retained in the result. Default is empty."
+        },
+        "detector_columns": {
+          "enum": [
+            "both",
+            "fixed",
+            "none",
+            "transient"
+          ],
+          "default": "none",
+          "description": "Column errors to model in the joint fit. \"fixed\" estimates offsets shared by all views. \"transient\" estimates row-common disturbances per view and weights their residual variance. \"both\" fits both terms. Default is \"none\".",
+          "x-choices": [
+            "none",
+            "fixed",
+            "transient",
+            "both"
+          ]
+        },
         "image_tv_weight": {
           "anyOf": [
             {
               "type": "number"
             },
             {
-              "type": "null"
+              "enum": [
+                "coverage"
+              ]
             }
           ],
-          "default": null,
-          "description": "Total-variation weight on the fit's image, as a fraction of its contrast; 0 leaves the image unregularized. The default scales the penalty by measured noise and by changes in detector coverage between neighboring voxels.",
+          "default": 0.0,
+          "description": "Total-variation weight on the fit's image, as a fraction of its contrast; 0 (default) leaves the image unregularized. \"coverage\" scales the penalty by measured noise and changes in detector coverage between neighboring voxels.",
+          "x-choices": [
+            "coverage"
+          ],
           "x-unit": "1"
         },
         "image_tv_huber": {

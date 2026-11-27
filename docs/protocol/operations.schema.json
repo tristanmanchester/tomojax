@@ -2161,16 +2161,45 @@
           "type": "number",
           "default": 0.5
         },
+        "exclude_views": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "prefixItems": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "integer"
+              }
+            ],
+            "items": false
+          },
+          "default": []
+        },
+        "detector_columns": {
+          "enum": [
+            "both",
+            "fixed",
+            "none",
+            "transient"
+          ],
+          "default": "none"
+        },
         "image_tv_weight": {
           "anyOf": [
             {
               "type": "number"
             },
             {
-              "type": "null"
+              "enum": [
+                "coverage"
+              ]
             }
           ],
-          "default": null
+          "default": 0.0
         },
         "image_tv_huber": {
           "type": "number",

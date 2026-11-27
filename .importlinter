@@ -87,8 +87,6 @@ source_modules =
     tomojax._scan
 forbidden_modules =
     tomojax.core.geometry
-ignore_imports =
-    tomojax._workflow.evaluation -> tomojax.core.geometry.cone
 
 [importlinter:contract:rich-stays-in-the-cli]
 name = Only the console script imports Rich, never the library or the worker

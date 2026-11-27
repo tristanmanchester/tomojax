@@ -17,6 +17,7 @@ import numpy as np
 from tomojax._data import views_of
 from tomojax._parameters import AnnotationModule
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
+from tomojax.core.host_volume import selected_stack
 from tomojax.core.registration import recorded_length_unit, registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
@@ -213,7 +214,7 @@ class Scan:
             If indices are empty, unordered, repeated or out of bounds.
         """
         kept = view_indices(views, self.projections.shape[0])
-        return selected_scan(self, kept, np.asarray(self.projections)[kept])
+        return selected_scan(self, kept, selected_stack(self.projections, kept))
 
     def __post_init__(self) -> None:
         if self.projections.ndim == 2:

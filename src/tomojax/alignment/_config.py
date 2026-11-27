@@ -10,6 +10,7 @@ from typing import Literal
 from tomojax.errors import InvalidParameter
 
 type Interpolation = Literal["linear", "cubic"]
+type Coverage = Literal["coverage"]
 type DetectorColumns = Literal["none", "fixed", "transient", "both"]
 type Motion = Literal["independent", "smooth"]
 
@@ -81,6 +82,11 @@ class AlignConfig:
         deviations. Default is 2.5.
     loss_contrast_floor : float, optional
         The least loss width, as a fraction of the data's contrast. Default is 0.5.
+    exclude_views : tuple of (int, int), optional
+        Zero-based, half-open view ranges to leave out of the joint fit. A pair
+        (start, stop) excludes start through stop minus one. Their pose updates
+        are interpolated in acquisition time within each trajectory. All input
+        projections are retained in the result. Default is empty.
     detector_columns : {"none", "fixed", "transient", "both"}, optional
         Column errors to model in the joint fit. "fixed" estimates offsets shared
         by all views. "transient" estimates row-common disturbances per view and
@@ -120,8 +126,9 @@ class AlignConfig:
     rotation_sigma: float = field(default=0.5, metadata={"unit": "degree"})
     loss_width: float = field(default=2.5, metadata={"unit": "noise_sigma"})
     loss_contrast_floor: float = field(default=0.5, metadata={"unit": "1"})
+    exclude_views: tuple[tuple[int, int], ...] = ()
     detector_columns: DetectorColumns = "none"
-    image_tv_weight: float | Literal["coverage"] = field(default=0.0, metadata={"unit": "1"})
+    image_tv_weight: float | Coverage = field(default=0.0, metadata={"unit": "1"})
     image_tv_huber: float = field(default=1.0, metadata={"unit": "1"})
     margin: float = field(default=1 / 16, metadata={"unit": "1"})
     refine_smoothing: float = field(default=8.0, metadata={"unit": "native_pixel"})

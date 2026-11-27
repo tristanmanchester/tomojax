@@ -12,7 +12,9 @@ from tomojax._scan.model import Reconstruction, describe, record_of, with_grid
 from tomojax._workflow.planning import UNDECLARED_GEOMETRY, resolve_grid
 from tomojax.alignment._integration import (
     CenterSelection,
+    acquisition_segments,
     angular_focus,
+    disturbed_report,
     fit_poses,
     initial_center_change,
     opposite_samples,
@@ -32,6 +34,37 @@ if TYPE_CHECKING:
     from tomojax.geometry import Grid
 
 
+def retained_views(ranges: tuple[tuple[int, int], ...], segments: np.ndarray) -> np.ndarray:
+    """Input indices entering the fit, with a measured reference in each trajectory."""
+    import operator
+
+    keep = np.ones(len(segments), bool)
+    for interval in ranges:
+        start, stop = map(operator.index, interval)
+        if not 0 <= start < stop <= len(keep):
+            raise InvalidParameter("exclude_views", f"expected 0 <= start < stop <= {len(keep)}")
+        keep[start:stop] = False
+    if keep.sum() < 2 or len(np.unique(segments[keep])) != len(np.unique(segments)):
+        raise InvalidParameter("exclude_views", "keep at least two views and one per trajectory")
+    return np.flatnonzero(keep)
+
+
+def interpolate_updates(
+    delta: np.ndarray,
+    train_at: np.ndarray,
+    test_at: np.ndarray,
+    training_segments: np.ndarray,
+    held_segments: np.ndarray,
+) -> np.ndarray:
+    """Interpolate fitted pose increments in acquisition time separately in each trajectory."""
+    fitted = np.empty((len(held_segments), delta.shape[1]))
+    for group in np.unique(held_segments):
+        a, b = training_segments == group, held_segments == group
+        for col in range(delta.shape[1]):
+            fitted[b, col] = np.interp(test_at[b], train_at[a], delta[a, col])
+    return fitted
+
+
 def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     """Jointly fit one image and the selected global and per-view parameters."""
     from tomojax._workflow.calibration import publish_calibration
@@ -39,6 +72,13 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     grid = plan.grid
     if grid is not None:
         scan = with_grid(scan, grid)
+    original = scan
+    frames = plan.frames
+    segments = acquisition_segments(scan.geometry, scan.view_positions)
+    kept = retained_views(plan.config.exclude_views, segments)
+    if plan.config.exclude_views:
+        scan = scan.selected(kept)
+        frames = None if frames is None else frames[kept]
     views = len(scan.angles)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
@@ -56,7 +96,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             fit=plan.fit,
             initial_center=initial_center,
             keep_grid=grid is not None,
-            frames=plan.frames,
+            frames=frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
             view_positions=scan.view_positions,
             schedule=plan.schedule,
@@ -71,10 +111,23 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             "to let the fit bound its own working scale."
         ) from exc
     changes = record["calibration"]
-    corrected, values = publish_calibration(scan, fitted, changes, native_pixel_size=native)
+    if plan.config.exclude_views:
+        if fitted is not None:
+            positions = original.view_positions
+            at = np.arange(len(original.angles)) if positions is None else positions
+            fitted = interpolate_updates(fitted, at[kept], at, segments[kept], segments)
+        for name in ("isolated_views", "unusual_views"):
+            record["report"][name] = kept[np.asarray(record["report"][name], dtype=int)].tolist()
+    corrected, values = publish_calibration(original, fitted, changes, native_pixel_size=native)
     corrected = with_grid(corrected, working)
     calibration = {name: {"value": values[name], "change": changes[name]} for name in changes}
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
+    scores = np.full(len(segments), np.nan)
+    scores[kept] = record["disturbance_score"]
+    del info["disturbance_score"]
+    info["disturbed_views"] = disturbed_report(scores, original.angles, segments)
+    if plan.config.exclude_views:
+        info["fit_views"] = kept.tolist()
     _warn_about_views(record["report"])
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
@@ -226,14 +279,10 @@ def transfer_alignment(
             )
             delta[:, 3:] -= previous[:, 3:]
         delta[:, :3] = rotations.as_euler("YXZ")[:, [1, 0, 2]]
-        fitted = np.empty((len(held_segments), 6))
         train_at, test_at = train.view_positions, test.view_positions
         if train_at is None or test_at is None:
             raise ValueError("transferring local motion needs each view's acquisition position")
-        for group in np.unique(held_segments):
-            a, b = training_segments == group, held_segments == group
-            for col in range(6):
-                fitted[b, col] = np.interp(test_at[b], train_at[a], delta[a, col])
+        fitted = interpolate_updates(delta, train_at, test_at, training_segments, held_segments)
     detector = test.detector
     return publish_calibration(
         test, fitted, corrections, native_pixel_size=(detector.du, detector.dv)

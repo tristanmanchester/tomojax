@@ -182,6 +182,24 @@ def host_array(
     return host_volume(shape, Path(tempfile.gettempdir()) if large else None, dtype=dtype)
 
 
+def selected_stack(source: Any, ids: np.ndarray) -> np.ndarray:
+    """Copy selected frames in acquisition order, bounding resident and temporary memory."""
+    target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
+    batch = max(1, (32 << 20) // (math.prod(source.shape[1:]) * source.dtype.itemsize))
+    for first in range(0, len(ids), batch):
+        progress.check_canceled()
+        group = ids[first : first + batch]
+        if hasattr(source, "frames_at"):
+            target[first : first + len(group)] = source[group]
+        else:
+            for row, view in enumerate(group, first):
+                target[row] = source[int(view)]
+        if isinstance(source, np.ndarray):
+            release_planes(source, int(group[0]), int(group[-1]) + 1)
+        release_planes(target, first, first + len(group))
+    return target
+
+
 def host_volume(
     shape: tuple[int, ...], directory: Path | None = None, *, dtype: DTypeLike = np.float32
 ) -> np.ndarray:
