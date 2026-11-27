@@ -175,11 +175,11 @@ _SAME_DIRECTION = 1e-3
 
 def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
     """Choose a method with a reason and an optional recommendation."""
-    from tomojax.core.geometry.cone import cone_parts
     from tomojax.geometry import (
         ConeSegments,
         LaminographyGeometry,
         RotationAxisGeometry,
+        beam_of,
     )
     from tomojax.recon.fdk import check_angular_coverage
 
@@ -199,7 +199,8 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         # Segments with detector offsets can still belong to one circular orbit.
         orbits = {
             (beam.source_to_axis, beam.source_height, beam.axis_offset)
-            for _, beam, _ in cone_parts(base) or ()
+            for segment in base.segments
+            if (beam := beam_of(segment)) is not None
         }
         if len(base.trajectory_lengths) > 1 or len(orbits) > 1:
             return "cgls", "CGLS fits the cone-beam segments jointly.", None

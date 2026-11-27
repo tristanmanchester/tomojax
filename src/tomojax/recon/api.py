@@ -549,7 +549,7 @@ def _coupled_detector_volume[T](
     warm_start: bool,
     diagnostics: dict[str, object] | None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
-    """An oblique filter line crosses native rows; Joseph updates couple neighboring voxel planes."""
+    """Oblique filter lines cross rows. Joseph updates couple neighboring voxel planes."""
     import numpy as np
 
     from tomojax.core import checkpoint

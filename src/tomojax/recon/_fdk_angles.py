@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from tomojax._typed_arrays import Float64Array
-
     from tomojax.core.geometry.base import Detector, Geometry
     from tomojax.core.geometry.cone import ConeBeam
 

@@ -27,7 +27,6 @@ from ._continuation import (
     parallel_axis_distance,
     radius_views,
 )
-
 from ._detector_rows import DetectorRows, RowSamples
 
 if TYPE_CHECKING:

@@ -273,7 +273,11 @@ class FilteredChords:
         samples = RowSamples(
             np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
         )
-        coordinates = np.stack((samples.u, samples.v - self.native))
+        # Round the full-detector coordinates once. Cropping before the float32
+        # conversion changes the cubic fractions in a slab.
+        coordinates = np.stack(
+            (samples.u.astype(np.float32), samples.v.astype(np.float32) - self.native)
+        )
         lo, hi = (side[self.first : self.stop] for side in self.fan.bounds[index])
         mask = (np.arange(det.nu) >= lo[:, None]) & (np.arange(det.nu) < hi[:, None])
         angular = mask.astype(np.float32)
