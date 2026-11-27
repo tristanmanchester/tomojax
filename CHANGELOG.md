@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Studio Explore lists the available export formats and their options. Choose a destination to preview the file count, payload size and reader calibration before queueing the export.
+
 - Interrupted TIFF slice directories, raw files and MetaImage exports can resume from synced slabs when the input file and options match. The CLI, Python, worker and MCP use the same journal and destination lock.
 
 - Export scan projections or sinograms with their measured angles, poses and acquisition positions. Select detector windows and views before export through Python, the CLI, the worker or MCP.

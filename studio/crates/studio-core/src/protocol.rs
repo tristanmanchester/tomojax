@@ -732,6 +732,50 @@ mod tests {
     }
 
     #[test]
+    fn additional_export_format_drives_fields_and_operation() {
+        let mut document: Value =
+            serde_json::from_str(include_str!("../../../../src/tomojax/cli/parameters.json"))
+                .unwrap();
+        document["$defs"]["Export"]["properties"]["path"]["x-formats"]
+            .as_array_mut()
+            .unwrap()
+            .push(
+                serde_json::json!({"name":"Test volume", "suffixes":[".example"],"layout":"file",
+                "spatial_only":false,"options":["crop","dtype"]}),
+            );
+        let catalog = SchemaCatalog::new(document).unwrap();
+        let format = catalog
+            .export_formats
+            .iter()
+            .find(|f| f.name == "Test volume")
+            .unwrap();
+        let path = std::path::Path::new("scan.example");
+        let options = |key: &str| {
+            Some(match key {
+                "dtype" => "uint16",
+                "crop" => "[[1,2],null,null]",
+                _ => "unexpected",
+            })
+        };
+        assert_eq!(
+            format.parameters(&catalog, false, path, options).unwrap(),
+            serde_json::json!({"path":path, "crop":[[1,2],null,null], "dtype":"uint16"})
+        );
+        assert_eq!(
+            format.parameters(&catalog, true, path, options).unwrap(),
+            serde_json::json!({"path":path, "crop":[[1,2],null,null]})
+        );
+        for format in &catalog.export_formats {
+            assert_eq!(
+                format.fields(&catalog, false).len(),
+                format.options.len(),
+                "{}",
+                format.name
+            );
+        }
+    }
+
+    #[test]
     fn scalar_form_metadata_comes_from_declared_schema() {
         let schema: Value = serde_json::from_str(include_str!(
             "../../../../docs/protocol/operations.schema.json"

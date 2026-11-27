@@ -3,7 +3,11 @@ use super::*;
 /// Freeze an observed application state with the same renderer as the window.
 /// Only tests opt in to evidence capture; ordinary --snap still opens a saved
 /// project without starting a numerical worker.
-pub(crate) fn capture_native(mut state: AppState, path: &Path) {
+pub(crate) fn capture_native(state: AppState, path: &Path) {
+    capture_native_viewport(state, path, "1440x900", "1");
+}
+
+pub(crate) fn capture_native_viewport(mut state: AppState, path: &Path, size: &str, scale: &str) {
     // Match the ordinary actions a reviewer would take before inspecting the
     // result. Numerical values and observed worker state remain untouched.
     state.ui.activity.close();
@@ -52,9 +56,9 @@ pub(crate) fn capture_native(mut state: AppState, path: &Path) {
         "--tree".into(),
         tree.display().to_string(),
         "--size".into(),
-        "1440x900".into(),
+        size.into(),
         "--scale".into(),
-        "1".into(),
+        scale.into(),
         "--theme".into(),
         "light".into(),
         "--at".into(),
@@ -489,7 +493,9 @@ fn exporting_a_standalone_reconstruction_leaves_out_the_scan_it_lacks() {
     let project = state.project.as_mut().unwrap();
     project.document.assets.push(volume);
     let input = project.capture(&id).unwrap();
-    state.queue_export(input, directory.path().join("export.nxs"), "nxs");
+    state
+        .queue_export(input, directory.path().join("export.nxs"), "nxs")
+        .unwrap();
     let job = state
         .project
         .as_ref()
@@ -1111,7 +1117,9 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
                 .unwrap()
                 .capture(state.model.active_asset.as_ref().unwrap())
                 .unwrap();
-            state.queue_export(input, directory.path().join("registered-export"), "array");
+            state
+                .queue_export(input, directory.path().join("registered-export"), "array")
+                .unwrap();
             drive(&mut state, |s| {
                 s.project
                     .as_ref()

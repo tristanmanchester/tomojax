@@ -254,8 +254,8 @@ class Viewport:
             )
 
 
-def capture(binary: Path, out_dir: Path, viewport: Viewport) -> Path:
-    """Stage the six renders and publish the output manifest after validation."""
+def capture(binary: Path, out_dir: Path, viewport: Viewport, *, live_export: bool = False) -> Path:
+    """Capture saved workspaces and, with a source build, the live export form."""
     out_dir.mkdir(parents=True, exist_ok=True)
     manifest = out_dir / "manifest.json"
     with TemporaryDirectory(prefix=".verify-", dir=out_dir) as temporary:
@@ -308,6 +308,32 @@ def capture(binary: Path, out_dir: Path, viewport: Viewport) -> Path:
             except (subprocess.SubprocessError, OSError, ValueError) as error:
                 raise ValueError(f"Studio capture failed for {label}: {error}") from error
 
+        if live_export:
+            path = stage / "export.png"
+            env.pop("TOMOJAX_STUDIO_INPUT", None)
+            env["TOMOJAX_TEST_PYTHON"] = sys.executable
+            env["TOMOJAX_EXPORT_UI_EVIDENCE"] = json.dumps(
+                [str(path), viewport.size, str(viewport.scale)]
+            )
+            _ = subprocess.run(
+                [
+                    "cargo",
+                    "test",
+                    "--locked",
+                    "-p",
+                    "tomojax-studio",
+                    "--bin",
+                    EXECUTABLE,
+                    "queued_exports_match_the_cli",
+                    "--",
+                    "--ignored",
+                ],
+                cwd=STUDIO,
+                env=env,
+                check=True,
+                timeout=240,
+            )
+            views["export"] = {"file": path.name, **asdict(validate_png(path, expected))}
         summary: dict[str, object] = {
             "size": viewport.size,
             "scale": viewport.scale,
@@ -359,11 +385,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         if binary is None:
             raise ValueError("Studio executable not found. Use --binary PATH or --build.")
-        manifest = capture(binary, cast("Path", args.out_dir), viewport)
+        manifest = capture(binary, cast("Path", args.out_dir), viewport, live_export=args.build)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"verify_studio: {error}", file=sys.stderr)
         return 1
-    print(f"Verified {len(VIEWS)} Studio screenshots. See {manifest}")
+    print(f"Verified {len(VIEWS) + int(args.build)} Studio screenshots. See {manifest}")
     return 0
 
 

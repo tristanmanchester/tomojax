@@ -155,6 +155,10 @@ Press **Ctrl+K** or click **Search commands** to run any command or open any ope
 | `TOMOJAX_STUDIO_SETTINGS` | Override the preferences file path (recent projects and custom shortcuts) for isolated runs |
 | `TOMOJAX_STUDIO_INPUT` | Project directory or acquisition path opened on startup |
 
+## Export from Explore
+
+Select a result and choose its output format in Explore. **TomoJAX result (.nxs)** saves a result for reopening. For interchange, choose a file or a parent directory and enter the options for that format. Leave an option blank to use the worker default. The crop and range fields accept JSON arrays. The worker shows the number of files, uncompressed bytes and coordinates or calibration that the reader can recover. **Queue export** becomes available when the plan matches the current input and settings. Array-only results export as registered NPY bundles.
+
 ## Verification
 
 From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio and captures the Start screen and each workspace of a small simulated project into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:

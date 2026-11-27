@@ -119,6 +119,8 @@ JSON editor; an indexed correction path targets the appropriate guided control
 when one exists, otherwise the ordered JSON editor. Correction drafts preserve
 explicit JSON null separately from omission.
 
+Explore reads the export format list from `Export.path.x-formats` and each option from the corresponding worker parameter. A change to the destination, input or options invalidates the displayed plan. The validated operation and the queued operation use the same draft. A native save and an array bundle keep their own operations.
+
 ### Solver previews and progress
 
 Reconstruction and alignment request live preview artifacts when enabled.
