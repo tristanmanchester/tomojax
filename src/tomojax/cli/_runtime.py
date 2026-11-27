@@ -39,6 +39,18 @@ def transfer_guard_context(mode: str | None = None) -> AbstractContextManager[ob
         return nullcontext()
 
 
+def beyond_detector(info: Mapping[str, object]) -> str | None:
+    """Say what share of a scan's attenuation lies beyond the detector, from 1% up.
+
+    ``info`` is a reconstruction's record or its summary; a scan that ends
+    inside the detector has nothing to say.
+    """
+    fraction = object_mapping(info.get("truncation")).get("outside_fraction")
+    if isinstance(fraction, float) and fraction >= 0.005:
+        return f"{fraction:.0%} of attenuation beyond the detector"
+    return None
+
+
 def report_automatic(info: Mapping[str, object]) -> None:
     """Keep a successful but limited automatic result visible without a manifest."""
     automatic = object_mapping(info.get("automatic"))

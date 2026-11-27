@@ -190,7 +190,8 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
     assert back.method == "fbp" and back.grid == recon.grid
     # The configuration's fields, and what names the projections the volume came from.
-    assert back.info.keys() == {"config", "source", "placement"}
+    assert back.info.keys() == {"config", "source", "placement", "truncation"}
+    assert back.info["truncation"] == recon.info["truncation"]
     assert back.info["placement"] == {
         **recon.info["placement"],
         "devices": list(recon.info["placement"]["devices"]),

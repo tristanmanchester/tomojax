@@ -37,9 +37,9 @@ from .fbp import (
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
     finite_projections,
+    row_filter,
     supports_parallel_fbp_z_integer,
 )
-from .filters import rfft_filter_array
 from .types import ReconstructionSlab
 
 if TYPE_CHECKING:
@@ -312,7 +312,7 @@ def fbp_host(
     depth = axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = rfft_filter_array(fbp_cfg.filter, local_detector.nu, detector.du, jnp.float32)
+    ramp = row_filter(fbp_cfg.filter, local_detector, projections)
     output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
@@ -344,7 +344,7 @@ def fbp_host(
                 else _stage_rows(ProjectionRows(projections, v_start, rows), poses, views, backend),
                 view_scale,
                 params,
-                ramp,
+                ramp.rows(v_start, v_start + rows),
                 0.0,
                 grid=local_grid,
                 detector=local_detector,
@@ -378,12 +378,13 @@ def _general_slabs(
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.fbp.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
-    spectrum = rfft_filter_array(cfg.fbp.filter, detector_f.nu, detector.du, jnp.float32)
+    spectrum = row_filter(cfg.fbp.filter, detector_f, projections)
     batch = min(views, projections.shape[0])
     if slices is None:
         # Filtering workspace: padded real batch plus its complex spectrum.
         rows = 1 if separable else _fft_length(detector_f.nv)
-        workspace = 16 * batch * max(rows, detector_f.nv) * (spectrum.shape[0] + detector_f.nu)
+        transform = spectrum.spectrum.shape[0]
+        workspace = 16 * batch * max(rows, detector_f.nv) * (transform + detector_f.nu)
         free = _output_memory(projections, poses) or 2**30
         slices = max(1, (free // 2 - workspace) // (4 * grid.nx * grid.ny))
     depth = min(slices, grid.nz)
@@ -546,7 +547,6 @@ def _run_slabs[T](
 ) -> Generator[ReconstructionSlab[T], None, None]:
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = rfft_filter_array(config.filter, local_detector.nu, detector.du, jnp.float32)
     params = np.zeros((len(poses), 6), np.float32)
     pending: list[tuple[ReconstructionSlab[T], jax.Array, jax.Array]] = []
     try:
@@ -571,7 +571,7 @@ def _run_slabs[T](
                 source,
                 scale,
                 params,
-                ramp,
+                row_filter(config.filter, local_detector, source),
                 0.0,
                 grid=local_grid,
                 detector=local_detector,

@@ -587,6 +587,21 @@ def reconstruct(
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
 
+    An object wider than the detector leaves every row short. ``fbp`` and
+    ``fourier`` continue each detector row past its edges as the projection of
+    a cylinder about the rotation axis fitted to the row's edges, which removes
+    the bright rim and bowl of a zero continuation; edges, contrast and detail
+    inside the field of view do not depend on it, and the absolute level is as
+    good as the model. The iterative methods fit the grid to the measured rays:
+    exact when the grid holds the object, with rim and bowl when it does not.
+    ``info["truncation"]`` says what the rows' edges show: ``edge_ratio`` (mean
+    edge value over the rows' mean, zero for a contained object),
+    ``outside_fraction`` (the share of the continued scan's attenuation beyond
+    the detector), ``interior_shift`` (the change the continuation makes on
+    the rotation axis, in the volume's units: compare it with the contrast you
+    measure), ``radius`` (median fitted cylinder radius) and
+    ``field_of_view_radius``, in the scan's length unit.
+
     ``checkpoint`` names a directory where the run saves its state, so a run
     killed by a scheduler time limit, preemption, or a node failure resumes
     when called again with the same directory, scan, and settings, returning

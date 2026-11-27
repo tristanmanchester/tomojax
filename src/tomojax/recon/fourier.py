@@ -129,9 +129,11 @@ def fourier(
     noise than FBP. Setting ``filter`` to ``"ramp"``, ``"hann"`` or
     ``"shepp-logan"`` applies FBP's linear detector-interpolation response,
     any chosen window and radial replicas inside the Cartesian frequency grid.
-    DC uses periodic angular trapezoid weights. Missing detector data are zero.
-    Truncation or angular undersampling can cause artifacts; no amplitude
-    fitting, clipping or truncation correction is applied.
+    DC uses periodic angular trapezoid weights. Rows are continued past the
+    detector's edges as in :func:`tomojax.recon.fbp`, with each edge's
+    amplitudes averaged over a sixteenth of the half turn; the Cartesian
+    transform keeps the measured detector's field, where nothing within three
+    field radii wraps into it. Angular undersampling can cause artifacts.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
     ``(nz, ny, nx)`` order. New outputs are C-contiguous for downstream volume
@@ -229,6 +231,7 @@ def fourier(
                     async_transfers=overlap,
                     shifts=sampling.shifts,
                     filter=cfg.filter,
+                    order=sampling.order,
                 )
                 if overlap:
                     _run_host_pipeline(plan, grid.nz, depth, starts, prepare, write)

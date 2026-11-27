@@ -17,7 +17,7 @@ import msgspec
 from tomojax._parameters import method_fit
 from tomojax._typed_arrays import object_mapping
 from tomojax.cli import operations as op, wire_options as w
-from tomojax.cli._runtime import solve_summary
+from tomojax.cli._runtime import beyond_detector, solve_summary
 from tomojax.cli.mcp.guidance import operation_parameters
 from tomojax.cli.mcp.supervisor import WorkerError, activity
 from tomojax.cli.mcp.tools import seeing
@@ -172,6 +172,8 @@ def summary_text(data: Object) -> str:
     )
     if auto := data.get("automatic"):
         summary.extend(auto.get("reasons", []))
+    if beyond := beyond_detector(data):
+        summary.append(beyond)
     if (poses := data.get("poses")) and poses["rms"] is not None:
         rms = ", ".join(
             f"{column['name']} {value:.4g} {column['unit']}"
@@ -433,6 +435,7 @@ class Tools:
             "diagnostics",
             "geometry",
             "automatic",
+            "truncation",
             "placement",
             "name",
             "voxels",

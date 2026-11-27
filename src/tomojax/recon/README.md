@@ -31,8 +31,8 @@ functions in `tomojax.recon` directly (`cgls`, `cgls_multires`, `fista`, `fbp_ho
 [Resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill).
 
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
-line integrals. Use `data_term="per_view_contrast"` when material lies outside
-the field of view. This profiles one constant per complete detector view in the
+line integrals to the grid; they do not model material outside it.
+`data_term="per_view_contrast"` profiles one constant per complete detector view in the
 residual, not just in the input data; the projector and its exact transpose are
 unchanged. Absolute background density is then not recoverable. This option is
 explicit: no geometry or reconstruction method silently selects it. Profiling
@@ -175,13 +175,21 @@ forward/transpose pair. This also applies to CGLS with streamed projections
 and a resident volume. Host-slab solvers and CPU execution use public storage;
 the private layout is not a user option or a different reconstruction model.
 
-Built-in parallel `fbp` zero-extends measured detector rows far enough to retain
-the ramp filter's tails at every output voxel. Zero raw data outside a detector
-do not imply zero filtered data there. This prevents corner bias when the output
-grid extends beyond the detector's inscribed field of view, without changing
-measured coordinates or fitting output amplitude. It assumes zero unmeasured
-attenuation and is not an object-truncation correction. Generic filtered-adjoint
-reconstruction, including explicit detector grids, uses the supplied support.
+`fbp`, FDK and `fourier` continue each measured detector row past the detector's
+edges before filtering it (`_continuation.py`): each side as the projection of a
+uniform cylinder about the rotation axis, `c sqrt(R² - s²)` at distance `s` from
+the axis. A detector row has one radius `R`, a least-squares fit of `p²` against
+`s²` over the outermost sixteenth of the row at both edges and up to 256 evenly
+spaced views; each view's two continuations take their amplitudes from that
+view's own edge values. The continuation ends within one detector width, and a
+row that reaches its edges at zero continues as zero, so a contained object
+reconstructs as before. `fourier` averages the amplitudes over a sixteenth of
+the half turn, because its Cartesian resampling takes only two views at each
+low frequency. Filtered rows are kept as far as the output grid projects, in
+FDK as in parallel `fbp`, so voxels outside the detector's inscribed field of
+view hold the reconstruction of the continued scan. `info["truncation"]` records
+what the rows' edges say (`edge_ratio`, `outside_fraction`, `interior_shift`,
+`radius`, `field_of_view_radius`).
 
 Direct FBP pads, filters and backprojects one view batch at a time. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;
@@ -231,7 +239,7 @@ corrections and tilted axes are not supported. Projection FFTs use six-point Kai
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
-into it. Missing detector data are assumed zero; this does not correct truncation.
+into it. Rows are continued past the detector's edges first, as for `fbp`.
 
 ```python
 from tomojax.recon import FourierConfig, fourier

@@ -33,15 +33,16 @@ def test_nondivisible_view_batches(method, host, devices, cancel, monkeypatch):
         )
         geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 19, endpoint=False))
         solve, config = fbp, FBPConfig(devices=placement, backend="jax")
-        sample = [0.02636958, 0.10950214, 0.03531956, -0.22486322, -0.01320809]
+        sample = [0.02850862, 0.11065112, 0.03739797, -0.22521386, -0.00283955]
     else:
         geometry = ConeGeometry(
             grid, detector, np.linspace(0, 360, 19, endpoint=False), ConeBeam(19, 34)
         )
         solve, config = fdk, FDKConfig(devices=placement, views_per_batch=3, backend="jax")
-        sample = [-0.0088078, 0.17438118, -0.03581462, 0.27659246, 0.03745411]
+        sample = [0.00213336, 0.18044995, -0.03095098, 0.28804696, 0.08832941]
     reference = np.asarray(solve(geometry, grid, detector, data, config=config))
-    # Voxel samples from independently running the original full solver.
+    # Voxel samples from the whole stack in one batch on the CPU; the rows of this random
+    # data end above zero, so they include its continuation past the detector.
     np.testing.assert_allclose(reference.ravel()[[0, 17, 67, 137, 209]], sample, rtol=0, atol=3e-6)
     owner, before = get_ident(), set(threads())
     updates, control = [], progress.Control()

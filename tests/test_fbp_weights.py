@@ -295,9 +295,11 @@ def test_filter_workspace_tiles_keep_odd_tail_views_and_scales(monkeypatch):
     rng = np.random.default_rng(13)
     rows = jnp.asarray(rng.normal(size=(17, 3, 19)).astype(np.float32))
     scales = jnp.linspace(0.3, 1.7, 17)
-    spectrum = jnp.fft.rfftfreq(64)
-    reference = module._filter_rows_bounded(rows, scales, spectrum)
+    # Rows of 19 columns, continued by 19 a side, in a 64-point transform.
+    spectrum = module.RowFilter(jnp.fft.rfftfreq(64), jnp.full((3, 1), 0.5, jnp.float32))
+    detector = Detector(19, 3, 1.0, 1.0)
+    reference = module._filter_rows_bounded(rows, scales, spectrum, detector)
     monkeypatch.setattr(module, "_FILTER_WORKSPACE_BYTES", 16 * 3 * 64 * 4)
-    tiled = module._filter_rows_bounded(rows, scales, spectrum)
+    tiled = module._filter_rows_bounded(rows, scales, spectrum, detector)
     # The tiled and untiled FFT batches can round differently.
     np.testing.assert_allclose(tiled, reference, rtol=1e-6, atol=2e-7)

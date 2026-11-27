@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 import operator
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -16,6 +16,7 @@ from tomojax._parameters import Filter
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
+from ._continuation import continued_width, radius_views, row_fits
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 from ._pinned import PinnedPool
@@ -112,13 +113,18 @@ class _Geometry:
             np.repeat((gaps + np.roll(gaps, 1)) / (2 * np.pi * counts), counts)
         )
         self.uniform = np.allclose(gaps, np.pi / self.nviews, rtol=1e-5, atol=np.deg2rad(2e-5))
-        self.nfft = max(64, next_fast_len(2 * detector.nu))
+        # Rows are continued past the detector's edges before their transform (see
+        # _continuation). The Cartesian grid keeps the measured detector's field: at
+        # twice its width, nothing within three field radii wraps into the field.
+        self.nfft = max(64, next_fast_len(2 * continued_width(detector.nu)))
         self.shape, self.crop = transform_grid(grid, detector)
         self.flipped = xp.asarray(flipped, dtype=xp.int8)
-        self.period_phase = complex(np.exp(2j * np.pi * (detector.nu - 1) / 2))
+        self.period_phase = complex(np.exp(2j * np.pi * (continued_width(detector.nu) - 1) / 2))
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
-        phase, deapod, table = radial_coefficients(detector.nu, self.nfft, detector.du)
+        phase, deapod, table = radial_coefficients(
+            continued_width(detector.nu), self.nfft, detector.du
+        )
         self.projection_phase = xp.asarray(phase, dtype=complex_dtype)
         self.deapod = xp.asarray(deapod, dtype=real)
         self.table = xp.asarray(table, dtype=real)
@@ -364,6 +370,7 @@ class FourierPlan:
         filter: Filter | None = None,
         async_transfers: bool = False,
         shifts: np.ndarray | None = None,
+        order: np.ndarray | None = None,
     ) -> None:
         self.cuda = backend == "cupy"
         cuda = None
@@ -380,6 +387,9 @@ class FourierPlan:
         self.filter = filter
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
+        # The views sharing in each row's continuation radius, as the scan numbers its
+        # views; ``order`` gives the scan's view at each position of the sorted half turn.
+        self.sharing = radius_views(nviews, order)
         self.upload = self.compute = self.download = None
         self._pinned = None
         self._upload_slot = None
@@ -400,6 +410,7 @@ class FourierPlan:
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
             self.nfft = geometry.nfft
+            self.fits = row_fits(detector)
             self.shape, self.crop = geometry.shape, geometry.crop
             self.flipped, self.period_phase = geometry.flipped, geometry.period_phase
             self.view_weights = geometry.view_weights
@@ -425,6 +436,35 @@ class FourierPlan:
             self.y_boundary = geometry.y_boundary
             if self.cuda:
                 self.inverse_direction, self.inverse_plan = _inverse_fft_plan(self.shape, depth)
+
+    def _angular_mean(
+        self, low: np.ndarray | CuPyValue, high: np.ndarray | CuPyValue
+    ) -> tuple[np.ndarray | CuPyValue, np.ndarray | CuPyValue]:
+        """Average each edge's continuation amplitudes over a sixteenth of the half turn.
+
+        The Cartesian samples near zero frequency each take two views of the
+        many that cross them, so a continuation whose amplitude scatters from
+        view to view would reach the image as low-frequency error. Averaging
+        over neighbouring views costs the image nothing it resolves in a term
+        this smooth. The +u edge of the sorted half turn runs on into the -u
+        edge at its start, and a view sorted from the opposing half turn has
+        its edges exchanged.
+        """
+        xp: CuPyValue = self.xp
+        views = int(low.shape[-2])
+        reach = views // 32
+        if reach == 0:
+            return low, high
+        flipped: CuPyValue = xp.not_equal(self.flipped, 0)[:, None]
+        ring: CuPyValue = xp.concatenate(
+            [xp.where(flipped, low, high), xp.where(flipped, high, low)], axis=-2
+        ).astype(xp.float64)
+        ring = xp.concatenate([ring[..., -reach - 1 :, :], ring, ring[..., :reach, :]], axis=-2)
+        ring = ring.cumsum(axis=-2)
+        ring = ring[..., 2 * reach + 1 :, :] - ring[..., : -2 * reach - 1, :]
+        ring = xp.multiply(ring, 1 / (2 * reach + 1)).astype(low.dtype)
+        plus, minus = ring[..., :views, :], ring[..., views:, :]
+        return xp.where(flipped, plus, minus), xp.where(flipped, minus, plus)
 
     def _interpolate_cuda(self, spectrum: CuPyValue) -> None:
         output = self.frequencies
@@ -475,12 +515,18 @@ class FourierPlan:
 
     def _compute_volume(self, raw: np.ndarray | CuPyValue, count: int) -> np.ndarray | CuPyValue:
         xp = self.xp
+        fits, first, last = self.fits, raw[..., : self.fits.window], raw[..., -self.fits.window :]
+        place = partial(xp.asarray, dtype=raw.dtype)
+        radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
+        low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
+        before, after = fits.tails(place, low, high, radius2)
+        raw = xp.concatenate([before, raw, after], axis=-1)
         if self.cuda:
             rows = self.depth * self.source_views
             self.mass_kernel(
                 ((rows + 7) // 8,),
                 (256,),
-                (raw, self.deapod, self.row_mass, np.int32(self.detector.nu), np.int64(rows)),
+                (raw, self.deapod, self.row_mass, np.int32(raw.shape[-1]), np.int64(rows)),
             )
         else:
             mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du

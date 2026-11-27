@@ -157,6 +157,8 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
     poses = rng.normal(0, 0.03, (24, 6)).astype(np.float32)
     geometry = _CorrectedGeometry(segments, poses, frame)
     data = rng.random((24, 10, 12)).astype(np.float32)
+    # Rows that end at zero continue as zero, which keeps the segments' sum linear.
+    data[..., :2] = data[..., -2:] = 0
 
     # Compare like for like: CUDA FDK interpolates with half-float textures.
     def initialize(*args, config):

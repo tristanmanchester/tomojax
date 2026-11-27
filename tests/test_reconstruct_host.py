@@ -152,7 +152,13 @@ def test_out_is_filled_and_returned(tmp_path, kind, storage):
         out = backing[:, :, ::2]
     result = tj.reconstruct(scan, method, out=out)
     assert result.volume is out and result.info["host_slabs"]
-    np.testing.assert_allclose(out, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
+    if kind == "cone":
+        # CUDA FDK scales its half-float textures to each row window's peak: slabs
+        # agree with the whole volume to those 11 bits, not to float32 rounding.
+        difference = np.linalg.norm(out - np.asarray(expected.volume))
+        assert difference < 1e-3 * np.linalg.norm(expected.volume)
+    else:
+        np.testing.assert_allclose(out, np.asarray(expected.volume), rtol=5e-5, atol=3e-6)
     if storage == "strided":
         np.testing.assert_array_equal(backing[:, :, 1::2], -71)
 

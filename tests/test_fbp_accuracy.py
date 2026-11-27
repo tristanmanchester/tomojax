@@ -12,7 +12,7 @@ from tomojax.recon import FBPConfig, fbp, fbp_host
 
 # check-public-imports: allow-private
 from tomojax.recon._fbp_cuda import backproject_filtered_cuda
-from tomojax.recon.fbp import _backproject_voxels_jax
+from tomojax.recon.fbp import _backproject_voxels_jax, continued_rows, row_filter
 from tomojax.recon.filters import fft_filter_rows, rfft_filter_array
 
 
@@ -67,7 +67,7 @@ def test_fbp_reconstructs_analytic_gaussian_in_physical_units(spacing: float, nu
 def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     monkeypatch, backend: str, nu: int, batch: int
 ) -> None:
-    """Compare all output voxels with an infinite discrete-convolution sum."""
+    """Compare all output voxels with an infinite discrete-convolution sum of the continued rows."""
     import importlib
 
     import jax
@@ -81,13 +81,16 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     angles = np.array([0.0, 31.0, 117.0], dtype=np.float32)
     geometry = ParallelGeometry(grid, detector, angles)
     data = np.random.default_rng(901).uniform(0.1, 2.0, size=(3, 1, nu)).astype(np.float32)
+    # Rows that end above zero continue one detector width past each edge.
+    radius2 = row_filter("ramp", detector, data).radius2
+    continued = np.asarray(continued_rows(jnp.asarray(data), detector, radius2), np.float64)[:, 0]
     x = (np.arange(9) - 4) * 0.8 + 1.7
     y = (np.arange(7) - 3) * 1.2 - 2.3
     # Midpoint angular quadrature over the scanned arc: end views cover half a gap beyond.
     weights = np.deg2rad([31.0, 58.5, 86.0])
     expected = np.zeros((7, 9), dtype=np.float64)
     outside_samples = 0
-    for angle, row, view_weight in zip(angles, data[:, 0], weights, strict=True):
+    for angle, row, view_weight in zip(angles, continued, weights, strict=True):
         radians = np.deg2rad(float(angle))
         u = np.cos(radians) * x[None, :] - np.sin(radians) * y[:, None]
         pixel = (u - 0.27) / 0.7 + (nu - 1) / 2
@@ -95,7 +98,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
         fraction = pixel - lower
         outside_samples += np.count_nonzero((pixel < 0) | (pixel > nu - 1))
         for index, weight in [(lower, 1 - fraction), (lower + 1, fraction)]:
-            offset = index[..., None] - np.arange(nu)
+            offset = index[..., None] - np.arange(-nu, 2 * nu)
             kernel = np.zeros_like(offset, dtype=np.float64)
             kernel[offset == 0] = 0.25 / 0.7
             odd = offset % 2 != 0
@@ -130,7 +133,7 @@ def test_streamed_fbp_matches_whole_stack_with_partial_batches(
         np.column_stack([rng.uniform(0.5, 1, (5, 4)), np.arange(5.0), rng.uniform(0.1, 0.3, 5)]),
         dtype=jnp.float32,
     )
-    ramp = rfft_filter_array("ramp", detector.nu, detector.du, jnp.float32)
+    ramp = row_filter("ramp", detector, rows)
 
     def run(batch_size: int, kernel: str) -> jnp.ndarray:
         return _run_fbp_streamed(
@@ -489,7 +492,13 @@ def test_oblique_fbp_window_follows_the_ramp_direction(filter_name) -> None:
     rows = jnp.asarray(np.random.default_rng(3).normal(size=(1, 40, 40)), jnp.float32)
     params = jnp.asarray([[[0.0], [1.0], [1.0], [0.0], [0.0], [1.0]]], jnp.float32)[..., 0]
     actual = _filter_views(
-        rows, jnp.ones(1), params, spectrum, jnp.float32(0.0), detector=detector, separable=False
+        rows,
+        jnp.ones(1),
+        params,
+        row_filter(filter_name, detector, rows),
+        jnp.float32(0.0),
+        detector=detector,
+        separable=False,
     )
     expected = jnp.swapaxes(fft_filter_rows(jnp.swapaxes(rows, 1, 2), spectrum), 1, 2)
     np.testing.assert_allclose(actual, expected, rtol=0, atol=1e-3)
@@ -504,3 +513,92 @@ def test_cone_fbp_refuses_a_constant_scale_it_would_ignore() -> None:
     )
     with pytest.raises(ValueError, match="exact view weights"):
         fbp(geometry, grid, detector, jnp.zeros((8, 6, 6)), config=FBPConfig(scale=0.3))
+
+
+def _field_of_view(nu: int, center: float = 0.0) -> tuple[Detector, np.ndarray]:
+    """A one-row detector spanning [-1, 1] about ``center``, and each continued ray's distance."""
+    detector = Detector(nu, 1, 2.0 / nu, 1.0, (center, 0.0))
+    distance = (np.arange(3 * nu) - nu - (nu - 1) / 2) * detector.du + center
+    return detector, distance
+
+
+def _continue(rows: np.ndarray, detector: Detector) -> tuple[np.ndarray, np.ndarray]:
+    """``rows``, one view each of one detector row, continued; and that row's squared radius."""
+    stack = jnp.asarray(rows, jnp.float32)[:, None, :]
+    radius2 = row_filter("ramp", detector, stack).radius2
+    return np.asarray(continued_rows(stack, detector, radius2))[:, 0], np.asarray(radius2)
+
+
+@pytest.mark.parametrize("center", [0.0, 0.3])
+@pytest.mark.parametrize("radius", [1.4, 2.0, 2.9])
+def test_rows_continue_exactly_as_a_cylinder_about_the_axis(radius: float, center: float) -> None:
+    # A uniform cylinder about the axis projects to 2 mu sqrt(R^2 - s^2): the continuation
+    # must reproduce it beyond both edges from the measured columns alone.
+    nu = 64
+    detector, distance = _field_of_view(nu, center)
+    profile = 2 * 0.7 * np.sqrt(np.maximum(radius**2 - distance**2, 0))
+
+    continued, radius2 = _continue(np.broadcast_to(profile[nu : 2 * nu], (5, nu)), detector)
+
+    # Squared radii are in units of the farthest continued ray.
+    assert np.sqrt(radius2[0, 0]) * np.abs(distance).max() == pytest.approx(radius, rel=1e-5)
+    np.testing.assert_allclose(continued, np.broadcast_to(profile, (5, 3 * nu)), atol=2e-5)
+
+
+def test_rows_that_end_at_zero_continue_as_zero() -> None:
+    nu = 32
+    detector, distance = _field_of_view(nu)
+    bump = np.exp(-0.5 * (distance[nu : 2 * nu] / 0.1) ** 2)
+    bump[:2] = bump[-2:] = 0  # the fitted columns: the outermost sixteenth, at least two
+
+    continued, _ = _continue(bump[None], detector)
+
+    np.testing.assert_array_equal(continued[0, :nu], 0)
+    np.testing.assert_array_equal(continued[0, 2 * nu :], 0)
+
+
+def test_level_rows_take_the_widest_cylinder_the_added_columns_hold() -> None:
+    nu = 32
+    detector, distance = _field_of_view(nu)
+
+    continued, _ = _continue(np.ones((1, nu)), detector)
+
+    # No fall to fit: the profile of a cylinder reaching the last added column.
+    after = continued[0, 2 * nu :]
+    widest = np.abs(distance).max()
+    expected = np.sqrt(
+        (widest**2 - distance[2 * nu :] ** 2) / (widest**2 - distance[2 * nu - 1] ** 2)
+    )
+    np.testing.assert_allclose(after, expected, atol=2e-6)
+    assert after[-1] == 0 and np.all(np.diff(after) < 0)
+
+
+def test_continuation_of_noise_about_zero_is_zero_on_average() -> None:
+    nu, views = 64, 40_000
+    detector, _ = _field_of_view(nu)
+    noise = np.random.default_rng(5).normal(size=(views, nu))
+
+    continued, _ = _continue(noise, detector)
+
+    # The first added column is the amplitude at the edge times the cylinder's fall over one
+    # column, under one. A least-squares line through k unit-variance values has variance
+    # 2 (2k - 1) / (k (k + 1)) at its end. Five standard errors of the mean.
+    window = nu // 16
+    spread = np.sqrt(2 * (2 * window - 1) / (window * (window + 1)))
+    for nearest in (continued[:, nu - 1], continued[:, 2 * nu]):
+        assert abs(nearest.mean()) < 5 * spread / np.sqrt(views)
+        assert 0.5 * spread < nearest.std() <= spread * 1.05  # the amplitudes follow the noise
+
+
+def test_an_edge_on_the_axis_side_of_an_offset_detector_continues_level() -> None:
+    # The axis lies beyond the low edge: rays between that edge and the axis are nearer the
+    # axis than any measured one, where a cylinder's projection is level to first order.
+    nu = 32
+    detector, distance = _field_of_view(nu, 1.5)
+    assert distance[nu] > 0
+
+    continued, _ = _continue(np.full((1, nu), 3.0), detector)
+
+    between = np.abs(distance[:nu]) <= distance[nu]
+    assert between.sum() > 4
+    np.testing.assert_allclose(continued[0, :nu][between], 3.0, rtol=1e-6)

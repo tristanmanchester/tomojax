@@ -409,6 +409,8 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
     from tomojax.geometry import ConeSegments
 
     geometry, grid, detector, data = scan(nz=17)
+    # Rows that end at zero continue as zero, which keeps the views' sum linear.
+    data[..., :2] = data[..., -2:] = 0
     parts, expected = [], np.zeros((grid.nz, grid.ny, grid.nx), np.float32)
     cfg = FDKConfig(backend=backend, views_per_batch=3)
     for index, angle in enumerate(geometry.angles):
@@ -453,10 +455,11 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
 def test_prepared_batches_bound_input_transfer_storage(limit):
     from importlib import import_module
 
-    geometry, _, detector, _ = scan()
+    geometry, grid, detector, _ = scan()
     detector = replace(detector, nu=2048, nv=1024)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(8)], np.float64)
     prep = import_module("tomojax.recon.fdk")._prepare(
-        geometry, detector, 8, FDKConfig(backend="jax", views_per_batch=limit)
+        geometry, grid, detector, poses, FDKConfig(backend="jax", views_per_batch=limit)
     )
     assert prep.batch == min(limit, 8)
     window = prep.window(3, 259)

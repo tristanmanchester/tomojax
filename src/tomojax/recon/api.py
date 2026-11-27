@@ -553,7 +553,10 @@ def reconstruct_arrays(
         If method, configuration, shapes or geometry are incompatible, warm_start
         is requested for a noniterative method, or out is unsupported.
     """
+    from tomojax.recon._truncation import truncation_record
+
     cfg = method_config(method, config=config, warm_start=warm_start or None)
+    truncation = truncation_record(geometry, detector, projections)
     if cfg.method == "fourier":
         import numpy as np
 
@@ -568,7 +571,8 @@ def reconstruct_arrays(
             config=replace(cfg, backend=backend),
             out=out,
         )
-        return volume, {"config": cfg, "host_slabs": True, "backend": backend}
+        record = {"config": cfg, "host_slabs": True, "backend": backend}
+        return volume, {**record, "truncation": truncation}
     if out is not None and method not in {"fbp", "fista", "cgls", "sirt", "mlem"}:
         raise ValueError(f"method {method!r} does not take out")
     if out is not None and method not in {"fbp", "fista", "cgls"}:
@@ -578,15 +582,17 @@ def reconstruct_arrays(
             raise ValueError(f"method {method!r} takes out for cone-beam geometry only")
     det_grid = _detector_grid(geometry, detector)
     if cfg.method == "fbp":
-        return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
+        volume, record = fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
+        return volume, {**record, "truncation": truncation}
     from tomojax import progress
 
     with progress.task(
         "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
     ):
-        return _iterative_result(
+        volume, record = _iterative_result(
             geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
         )
+        return volume, {**record, "truncation": truncation}
 
 
 def _iterative_result(

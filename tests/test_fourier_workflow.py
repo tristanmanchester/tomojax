@@ -41,12 +41,15 @@ def test_fourier_workflow_preserves_geometry_and_recovers_independent_gaussian(b
         import cupy
 
         device = f"gpu:{cupy.cuda.runtime.getDevice()}"
+    truncation = actual.info.pop("truncation")
     assert actual.info == {
         "config": cfg,
         "host_slabs": True,
         "backend": backend,
         "placement": {"devices": (device,), "strategy": "slabbed", "retries": {}},
     }
+    # The Gaussian's tails reach the detector's edges at under a thousandth of its peak.
+    assert abs(truncation["edge_ratio"]) < 1e-2 and truncation["outside_fraction"] < 1e-2
     expected = fourier(scan.geometry, grid, scan.detector, scan.projections, config=cfg)
     np.testing.assert_array_equal(actual.volume, expected)
     x = (np.arange(grid.nx) - (grid.nx - 1) / 2) + 0.4

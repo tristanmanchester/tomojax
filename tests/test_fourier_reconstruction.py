@@ -515,7 +515,11 @@ def test_independent_physical_gaussian(backend, kind):
 def test_redundant_exposures_share_one_angular_cell(backend):
     grid, detector, geometry, data, _ = scan()
     exposures = np.repeat(data, 3, axis=0)
-    exposures += np.random.default_rng(723).normal(0, 0.02, exposures.shape).astype(np.float32)
+    noise = np.random.default_rng(723).normal(0, 0.02, exposures.shape).astype(np.float32)
+    # Rows that end at zero continue as zero, which keeps the reconstruction linear.
+    edge = detector.nu // 8
+    noise[..., :edge] = noise[..., -edge:] = 0
+    exposures += noise
     config = FourierConfig(backend=backend)
     expected = fourier(
         geometry,
@@ -860,6 +864,8 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     angles = angles[np.random.default_rng(17).permutation(13)]
     data = np.random.default_rng(321).normal(size=(13, 7, 17)).astype(np.float32)
     data += ((-1.0) ** np.arange(17))[None, None, :]
+    # Rows that end at zero continue as zero: the reference transforms the rows as given.
+    data[..., :2] = data[..., -2:] = 0
     reference = dense_full_spectrum_reference(grid, detector, angles, data)
     actual = fourier(
         ParallelGeometry(grid, detector, angles),

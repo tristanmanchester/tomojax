@@ -246,7 +246,8 @@ def test_fdk_reconstructs_a_full_turn_on_an_offset_detector(backend, offset):
         config = FDKConfig(backend=backend)
         volume = fdk(geometry, grid, detector, _analytic(shapes, geometry), config=config)
         errors.append(np.linalg.norm(np.asarray(volume) - truth) / np.linalg.norm(truth))
-    assert errors[1] < 1.05 * errors[0] < 0.1
+    # Both keep their filtered tails in the grid's corners, outside either field of view.
+    assert errors[1] < 1.1 * errors[0] and errors[0] < 0.07
 
 
 @pytest.mark.parametrize("backend", ["jax", cuda])

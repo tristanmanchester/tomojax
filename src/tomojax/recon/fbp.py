@@ -28,9 +28,9 @@ from tomojax.core.validation import (
 from tomojax.errors import InvalidParameter
 
 from ._backend import reconstruction_backend
+from ._fbp_filter import RowFilter, continued_rows, detector_columns, ramp_rows, row_filter
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
-from .filters import fft_filter_rows, rfft_filter_array
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -159,19 +159,26 @@ def _filter_views(
     rows: jnp.ndarray,
     view_scale: jnp.ndarray,
     params: jnp.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: jnp.ndarray,
     *,
     detector: Detector,
     separable: bool,
 ) -> jnp.ndarray:
-    """Apply each view's exact FBP filter to rows already padded to ``detector``.
+    """Apply each view's exact FBP filter to measured rows, over the filter ``detector``.
 
-    Separable scans multiply a 1D ramp along u by a per-view scale. Otherwise the
-    redundancy count N depends on both detector frequencies; see ``_fbp_weights``.
+    Rows are continued along u past the detector's edges first. Separable scans
+    multiply a 1D ramp along u by a per-view scale. Otherwise the redundancy
+    count N depends on both detector frequencies; see ``_fbp_weights``.
     """
+    pad_v = (detector.nv - rows.shape[1]) // 2
     if separable:
-        return _filter_rows_bounded(rows, view_scale, spectrum)
+        filtered = _filter_rows_bounded(rows, view_scale, filter, detector)
+        return jnp.pad(filtered, ((0, 0), (pad_v, pad_v), (0, 0))) if pad_v else filtered
+    spectrum = filter.spectrum
+    nu = rows.shape[-1]
+    continued = continued_rows(rows, detector, filter.radius2)
+    rows = jnp.pad(continued, ((0, 0), (pad_v, pad_v), (0, 0)))
     n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
     transformed = jnp.fft.rfft2(rows, s=(n_v, n_u))
     fu = jnp.fft.rfftfreq(n_u, detector.du).astype(jnp.float32)[None, None, :]
@@ -191,20 +198,21 @@ def _filter_views(
     oblique = jnp.where((fu == 0) & (fv == 0), length * spectrum[0], jnp.abs(along) * along_window)
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
-    return filtered[:, : detector.nv, : detector.nu]
+    return detector_columns(filtered[:, : detector.nv], nu, detector)
 
 
 _FILTER_WORKSPACE_BYTES = 128 * 1024**2
 
 
 def _filter_rows_bounded(
-    rows: jnp.ndarray, view_scale: jnp.ndarray, spectrum: jnp.ndarray
+    rows: jnp.ndarray, view_scale: jnp.ndarray, filter: RowFilter, detector: Detector
 ) -> jnp.ndarray:
     """Bound FFT scratch without changing backprojection batches or their sums."""
     n = rows.shape[0]
-    capacity = max(1, _FILTER_WORKSPACE_BYTES // (16 * rows.shape[1] * 2 * (spectrum.shape[0] - 1)))
+    n_fft = 2 * (filter.spectrum.shape[0] - 1)
+    capacity = max(1, _FILTER_WORKSPACE_BYTES // (16 * rows.shape[1] * n_fft))
     if capacity >= n:
-        return fft_filter_rows(rows * view_scale[:, None, None], spectrum)
+        return ramp_rows(rows * view_scale[:, None, None], filter, detector)
     size = 1 << (capacity.bit_length() - 1)
     batches = (n + size - 1) // size
     padded = jnp.pad(rows, ((0, batches * size - n), (0, 0), (0, 0)))
@@ -213,16 +221,10 @@ def _filter_rows_bounded(
     def step(_: None, index: jnp.ndarray) -> tuple[None, jnp.ndarray]:
         block = jax.lax.dynamic_slice_in_dim(padded, index * size, size)
         scale = jax.lax.dynamic_slice_in_dim(weights, index * size, size)
-        return None, fft_filter_rows(block * scale[:, None, None], spectrum)
+        return None, ramp_rows(block * scale[:, None, None], filter, detector)
 
     _, values = jax.lax.scan(step, None, jnp.arange(batches))
-    return values.reshape(batches * size, rows.shape[1], rows.shape[2])[:n]
-
-
-def _pad_detector(rows: jnp.ndarray, detector: Detector) -> jnp.ndarray:
-    """Zero-extend measured rows symmetrically to the filter detector."""
-    pad_v, pad_u = (detector.nv - rows.shape[1]) // 2, (detector.nu - rows.shape[2]) // 2
-    return jnp.pad(rows, ((0, 0), (pad_v, pad_v), (pad_u, pad_u))) if pad_u or pad_v else rows
+    return values.reshape(batches * size, rows.shape[1], detector.nu)[:n]
 
 
 def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
@@ -247,7 +249,7 @@ def _run_fbp_streamed(
     projections: jnp.ndarray,
     view_scale: jnp.ndarray,
     params: jnp.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: jnp.ndarray,
     *,
     grid: Grid,
@@ -267,7 +269,7 @@ def _run_fbp_streamed(
     if cache_filtered and backend == "cuda" and separable and z_mode == "integer":
         from ._fbp_cuda import backproject_filtered_cuda
 
-        filtered = _filter_axial_stack(projections, view_scale, spectrum, detector, b)
+        filtered = _filter_axial_stack(projections, view_scale, filter, detector, b)
         return backproject_filtered_cuda(
             poses, filtered, grid=grid, detector=detector, z_mode=z_mode
         )
@@ -278,12 +280,12 @@ def _run_fbp_streamed(
         rows = jax.lax.dynamic_slice(projections, (start, 0, 0), (b, nv, nu))
         # Shift the final fixed-size batch back into range and exclude overlaps.
         valid = start + jnp.arange(b) >= chunk * b
-        rows = _pad_detector(jnp.where(valid[:, None, None], rows, 0.0), detector)
+        rows = jnp.where(valid[:, None, None], rows, 0.0)
         filtered = _filter_views(
             rows,
             jax.lax.dynamic_slice(view_scale, (start,), (b,)),
             jax.lax.dynamic_slice(params, (start, 0), (b, params.shape[1])),
-            spectrum,
+            filter,
             arc_length,
             detector=detector,
             separable=separable,
@@ -309,7 +311,7 @@ def _run_fbp_streamed(
 def _filter_axial_stack(
     projections: jnp.ndarray,
     view_scale: jnp.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     detector: Detector,
     batch_size: int,
 ) -> jnp.ndarray:
@@ -328,8 +330,7 @@ def _filter_axial_stack(
         start = chunk * batch_size
         rows = jax.lax.dynamic_slice(data, (start, 0, 0), (batch_size, nv, nu))
         weights = jax.lax.dynamic_slice(scale, (start,), (batch_size,))
-        filtered = fft_filter_rows(_pad_detector(rows, detector) * weights[:, None, None], spectrum)
-        return None, filtered
+        return None, ramp_rows(rows * weights[:, None, None], filter, detector)
 
     _, filtered = jax.lax.scan(step, None, jnp.arange(batches))
     return filtered.reshape(batches * batch_size, detector.nv, detector.nu)[:n]
@@ -365,7 +366,7 @@ def _fbp_accumulate_batch(
     rows: jnp.ndarray,
     view_scale: jnp.ndarray,
     params: jnp.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: jnp.ndarray,
     *,
     grid: Grid,
@@ -376,10 +377,10 @@ def _fbp_accumulate_batch(
 ) -> jnp.ndarray:
     """Filter one batch of views and add its backprojection to ``accum`` in place."""
     filtered = _filter_views(
-        _pad_detector(rows, detector),
+        rows,
         view_scale,
         params,
-        spectrum,
+        filter,
         arc_length,
         detector=detector,
         separable=separable,
@@ -400,7 +401,7 @@ def _fbp_from_resident(
     projections: jax.Array,
     view_scale: np.ndarray,
     params: np.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: float,
     *,
     grid: Grid,
@@ -425,7 +426,7 @@ def _fbp_from_resident(
         projections,
         view_scale,
         params,
-        jax.device_put(spectrum, device),
+        jax.device_put(filter, device),
         jnp.float32(arc_length),
         grid=grid,
         detector=detector,
@@ -442,7 +443,7 @@ def _fbp_from_host(
     projections: np.ndarray | jax.Array | ProjectionRows,
     view_scale: np.ndarray,
     params: np.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: float,
     *,
     grid: Grid,
@@ -467,7 +468,7 @@ def _fbp_from_host(
             projections,
             view_scale,
             params,
-            spectrum,
+            filter,
             arc_length,
             grid=grid,
             detector=detector,
@@ -484,7 +485,7 @@ def _fbp_from_host(
             projections,
             view_scale,
             params,
-            spectrum,
+            filter,
             arc_length,
             grid=grid,
             detector=detector,
@@ -503,7 +504,7 @@ def _host_batches(
     projections: np.ndarray | ProjectionRows,
     view_scale: np.ndarray,
     params: np.ndarray,
-    spectrum: jnp.ndarray,
+    filter: RowFilter,
     arc_length: float,
     *,
     grid: Grid,
@@ -544,7 +545,7 @@ def _host_batches(
                 accum = _fbp_accumulate_batch(
                     accum,
                     *current,
-                    spectrum,
+                    filter,
                     jnp.float32(arc_length),
                     grid=grid,
                     detector=detector,
@@ -630,11 +631,10 @@ def _lattice_motion(
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     """Keep the zero-extended ramp convolution at every reconstructed voxel.
 
-    Raw samples outside the measured row are zero, but filtered samples are not.
-    Cropping the filter output to the measured detector discards negative tails
-    needed by voxels outside its inscribed field of view. Bound all z rotations
-    of voxel centers, with symmetric padding preserving the acquired coordinates.
-    This does not infer missing attenuation in genuinely truncated acquisitions.
+    Filtered samples are nonzero beyond the measured row. Cropping the filter
+    output to the measured detector discards tails needed by voxels outside its
+    inscribed field of view. Bound all z rotations of voxel centers, with
+    symmetric padding preserving the acquired coordinates.
     """
     ox, oy, _ = grid_volume_origin(grid)
     rx = max(abs(ox), abs(ox + (grid.nx - 1) * grid.vx))
@@ -694,7 +694,7 @@ class _Plan:
     params: np.ndarray
     arc_length: float
     separable: bool
-    spectrum: jnp.ndarray
+    filter: RowFilter
     grid: Grid
     detector: Detector  # the filter's, padded
     backend: str
@@ -725,7 +725,7 @@ class _Plan:
                         put(self.projections[part]),
                         put(jnp.asarray(self.view_scale[part])),
                         put(jnp.asarray(self.params[part])),
-                        put(self.spectrum),
+                        put(self.filter),
                         jnp.float32(self.arc_length),
                     )
                     acc = None
@@ -745,7 +745,7 @@ class _Plan:
                         self.projections[part],
                         self.view_scale[part],
                         self.params[part],
-                        self.spectrum,
+                        self.filter,
                         self.arc_length,
                         batch_size=size,
                         groups=groups,
@@ -783,7 +783,7 @@ def _plan(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    spectrum = rfft_filter_array(cfg.filter, filter_detector.nu, float(detector.du), jnp.float32)
+    filter = row_filter(cfg.filter, filter_detector, projections)
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,
@@ -792,12 +792,12 @@ def _plan(
         params=np.asarray(params, np.float32),
         arc_length=float(arc_length),
         separable=bool(separable),
-        spectrum=spectrum,
+        filter=filter,
         grid=grid,
         detector=filter_detector,
         backend=backend,
         batch=_parallel_filter_batch_size(
-            n_views, filter_detector.nv * n_fft_v, 2 * (spectrum.shape[0] - 1)
+            n_views, filter_detector.nv * n_fft_v, 2 * (filter.spectrum.shape[0] - 1)
         ),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")
         if parallel
@@ -826,10 +826,18 @@ def fbp(
     share their angular weight equally. Frequencies no view
     measures, such as laminography's missing cone, reconstruct as zero.
 
+    Rows are continued past the detector's edges before they are filtered:
+    each side as the projection of a uniform cylinder about the rotation axis,
+    with one radius for the detector row, fitted to its views' fall towards
+    both edges, and each view's amplitudes from its own edge values. A row that
+    ends at zero continues as zero. For an object wider than the detector this
+    removes the bright rim and bowl of a zero continuation and leaves the
+    interior's absolute level as good as the cylinder model.
+
     Backprojection is voxel-driven with bilinear detector interpolation and
-    retains filtered tails through the full output volume, assuming zero raw
-    attenuation beyond the measured detector. This is not a correction for
-    truncated objects. An explicit ``det_grid`` must be the detector lattice
+    retains filtered tails through the full output volume: outside the
+    detector's field of view the volume is the reconstruction of the continued
+    scan. An explicit ``det_grid`` must be the detector lattice
     rotated and shifted in its plane (a detector roll); its rays are the
     canonical lattice's under a detector-plane motion of the poses.
 
@@ -942,6 +950,7 @@ def parallel_fbp(
                 grid=replace(grid, nz=1, vol_origin=(ox, oy, 0.0), vol_center=None),
                 detector=replace(plan.detector, nv=1, center=(plan.detector.center[0], 0.0)),
                 projections=proj[:, row : row + 1, :],
+                filter=plan.filter.rows(row, row + 1),
             )
         split = view_split(cfg.devices, n_views)
         if split is None:

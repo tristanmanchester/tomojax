@@ -118,6 +118,7 @@ def fourier_slabs[T](
                     backend,
                     filter=config.filter,
                     async_transfers=backend == "cupy",
+                    order=order,
                 )
                 with closing(
                     _run_plan(plan, read, order, positions, start, geometry.detector_roll)

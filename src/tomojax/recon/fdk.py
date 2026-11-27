@@ -40,9 +40,11 @@ from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_projection_stack
 from tomojax.recon._backend import reconstruction_backend
+from tomojax.recon._continuation import Continuation, cone_axis_distance, continued_columns
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
+from tomojax.recon._fdk_filter import continued_rows, filter_operator, filter_rows, grid_columns
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon.filters import get_fbp_filter_np
 
@@ -56,7 +58,7 @@ if TYPE_CHECKING:
     from tomojax.recon.types import ReconstructionSlab
 
 
-# The CUDA path filters rows up to this wide by matrix product (see _filter_operator):
+# The CUDA path filters rows up to this wide by matrix product (see filter_operator):
 # on an RTX 4070 that beats the FFTs 3x at 768 pixels and breaks even near 2500.
 _DENSE_FILTER_MAX = 2048
 
@@ -276,44 +278,6 @@ def _batch_cosines(
     return z / jnp.sqrt(x * x + y * y + z * z)
 
 
-def _filter_operator(spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int) -> np.ndarray:
-    """The ``(nu, pad_lo + nu + pad_hi)`` matrix that ramp-filters rows as ``spectrum`` does.
-
-    Filtering is a circular convolution with the zero-padded row; as a matrix
-    product it runs on the GPU's matrix units several times faster than the
-    FFTs for rows up to a couple of thousand pixels.
-    """
-    n_fft = 2 * (spectrum.shape[0] - 1)
-    impulse = np.fft.irfft(spectrum.astype(np.float64), n=n_fft)
-    columns = np.arange(-pad_lo, nu + pad_hi)
-    return impulse[(columns[None, :] - np.arange(nu)[:, None]) % n_fft].astype(np.float32)
-
-
-def _filter(
-    views: jax.Array,
-    cosine: jax.Array,
-    weights: jax.Array,
-    kernel: jax.Array,
-    pad_lo: int = 0,
-    pad_hi: int = 0,
-) -> jax.Array:
-    """Weight and ramp-filter rows, keeping ``pad_lo``/``pad_hi`` columns beyond them.
-
-    Filtered rows extend past the data; an offset detector's backprojection
-    needs that tail on its short side (see :func:`_virtual_columns`).
-    """
-    # Angular (Parker, offset-detector) weights vary along the row, so they
-    # apply before the ramp filter, as do the cosine weights.
-    rows = views * cosine * weights[:, None, :]
-    n_fft = 2 * (int(kernel.shape[0]) - 1)
-    nu = views.shape[-1]
-    spectrum = jnp.fft.rfft(rows, n=n_fft, axis=-1) * kernel
-    out = jnp.fft.irfft(spectrum, n=n_fft, axis=-1)
-    if pad_lo:
-        return jnp.concatenate([out[..., n_fft - pad_lo :], out[..., : nu + pad_hi]], axis=-1)
-    return out[..., : nu + pad_hi]
-
-
 def _backproject_jax(
     filtered: jax.Array,
     coeff: jax.Array,
@@ -352,7 +316,7 @@ def _backproject_jax(
 
 @partial(
     jax.jit,
-    static_argnames=("grid", "detector", "scale", "cuda", "pad_lo", "pad_hi"),
+    static_argnames=("grid", "detector", "scale", "cuda", "pad_lo", "pad_hi", "distance"),
     donate_argnames=("out",),
 )
 def _fdk_batch(
@@ -363,6 +327,7 @@ def _fdk_batch(
     weights: jax.Array,
     kernel: jax.Array,
     operator: jax.Array | None,
+    radius2: jax.Array,
     out: jax.Array,
     *,
     grid: Grid,
@@ -371,16 +336,18 @@ def _fdk_batch(
     cuda: bool,
     pad_lo: int,
     pad_hi: int,
+    distance: tuple[float, ...],
 ) -> jax.Array:
     # The batch's views of the scan's coefficients and weights.
     coeff = jax.lax.dynamic_slice_in_dim(coeff, start, views.shape[0])
     weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
-    measured = replace(detector, nu=views.shape[-1])
-    cosine = _batch_cosines(cosine, start, views.shape[0], measured)
+    nu = views.shape[-1]
+    wide = replace(detector, nu=nu + 2 * continued_columns(nu))
+    cosine = _batch_cosines(cosine, start, views.shape[0], wide)
+    rows = continued_rows(views, weights, cosine, radius2, distance)
     if operator is not None:
-        rows = views * cosine * weights[:, None, :]
         return backproject_cuda(rows, coeff, grid, detector, scale, out, operator)
-    filtered = _filter(views, cosine, weights, kernel, pad_lo, pad_hi)
+    filtered = filter_rows(rows, kernel, nu, pad_lo, pad_hi)
     backproject = backproject_cuda if cuda else _backproject_jax
     return backproject(filtered, coeff, grid, detector, scale, out)
 
@@ -405,8 +372,10 @@ class _Prepared:
     views_per_batch: int
     pad_lo: int = 0
     pad_hi: int = 0
-    # The filter as a matrix (see _filter_operator), for the CUDA kernel's rows.
+    # The filter as a matrix (see filter_operator), for the CUDA kernel's rows.
     operator: jax.Array | None = None
+    # Distance from the rotation axis of each ray of a continued row.
+    distance: tuple[float, ...] = ()
 
     @property
     def batch(self) -> int:
@@ -463,17 +432,19 @@ class _Prepared:
 
 def _prepare(
     geometry: Geometry,
+    grid: Grid,
     detector: Detector,
-    n_views: int,
+    poses: np.ndarray,
     cfg: FDKConfig,
     columns: Detector | None = None,
 ) -> _Prepared:
-    """FDK weights, filter and virtual columns for ``detector``.
+    """FDK weights, filter and virtual columns for ``detector`` and the voxels of ``grid``.
 
     ``columns``, a detector with the same columns (the full detector of a band
     of rows), sets the per-column angular weights and virtual columns, so every
     band of a rolled detector gets the same ones.
     """
+    n_views = len(poses)
     columns = detector if columns is None else columns
     parts = cone_parts(geometry, detector)
     if parts is None:
@@ -484,29 +455,39 @@ def _prepare(
     column_parts = cone_parts(geometry, columns)
     assert column_parts is not None
     padding = [_virtual_columns(beam, own) for _, beam, own in column_parts]
+    padding.append(grid_columns(column_parts, grid, poses))
     pad_lo, pad_hi = np.max(padding, axis=0).tolist()
     # A shared detector-pitch ramp is linear in magnification. Fold each
     # view's remaining inverse magnification into its angular weight.
     weights = view_weights(geometry, columns, n_views)
     weights *= magnification / ConeModel(parts).magnification(n_views)[:, None]
-    # The kernel spans the virtual row too, so its tail does not wrap around.
+    # The kernel spans the continued and the virtual row, so no column the
+    # backprojection reads sees either wrap around.
     width = detector.nu + pad_lo + pad_hi
-    kernel = get_fbp_filter_np(cfg.filter, width, du_iso, "float32")
+    pad = continued_columns(detector.nu)
+    kernel = get_fbp_filter_np(
+        cfg.filter, detector.nu + pad + max(pad_lo, pad_hi), du_iso, "float32"
+    )
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
-        operator = jax.device_put(_filter_operator(kernel, detector.nu, pad_lo, pad_hi))
+        operator = jax.device_put(filter_operator(kernel, detector.nu, pad_lo, pad_hi))
+    # Cosine weights of the continued columns too: the same detector, wider.
+    continued = tuple(
+        (count, beam, replace(own, nu=own.nu + 2 * pad)) for count, beam, own in parts
+    )
     return _Prepared(
         cuda=cuda,
         detector=detector,
         # device_put, unlike jnp.asarray, compiles nothing for a new shape.
         weights=jax.device_put(np.asarray(weights, np.float32)),
-        cosine=jax.device_put(_cosines(parts, n_views)),
+        cosine=jax.device_put(_cosines(continued, n_views)),
         kernel=jax.device_put(kernel),
         operator=operator,
         scale=1.0 / magnification,
         views_per_batch=int(cfg.views_per_batch),
         pad_lo=pad_lo,
         pad_hi=pad_hi,
+        distance=tuple(cone_axis_distance(parts[0][1], parts[0][2], pad).tolist()),
     )
 
 
@@ -541,6 +522,12 @@ def fdk(
     quadrature covers the whole scan, independently of segment boundaries.
     Noncircular trajectories retain FDK's approximate character.
 
+    Rows are continued past the detector's edges before they are filtered, as
+    in :func:`tomojax.recon.fbp`, after the angular weights: an edge whose rays
+    an opposing view measures has its weight fall to zero and continues as
+    zero. Filtered rows are kept as far as the grid projects, so voxels outside
+    the field of view hold the reconstruction of the continued scan.
+
     Parameters
     ----------
     geometry : Geometry
@@ -571,8 +558,9 @@ def fdk(
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fdk projections"
     )
-    prep = _prepare(geometry, detector, n_views, cfg)
-    coeff = prep.coefficients(geometry, grid, detector, stack_view_poses(geometry, n_views))
+    poses = stack_view_poses(geometry, n_views)
+    prep = _prepare(geometry, grid, detector, np.asarray(poses, np.float64), cfg)
+    coeff = prep.coefficients(geometry, grid, detector, poses)
     result = _accumulate(grid, projections, prep, coeff, cfg.devices)
     return result.block_until_ready() if progress.for_unit("batches") is not None else result
 
@@ -587,6 +575,10 @@ def _accumulate(
     """Filter and sum validated views using coefficients in this volume's voxel frame."""
     n_views = int(coeff.shape[0])
     virtual = prep.virtual(prep.detector)
+    pad = continued_columns(prep.detector.nu)
+    radius2 = Continuation(np.asarray(prep.distance), prep.detector.nu, pad).stack_radius(
+        projections
+    )
     # Physical placement is already in coeff. Equal-sized slabs share the
     # filtering/backprojection executable, rather than compiling every origin.
     kernel_grid = replace(grid, vol_origin=None, vol_center=None)
@@ -597,6 +589,7 @@ def _accumulate(
         """The weighted backprojection of ``views``, on ``device`` (JAX's default for None)."""
         here = prep.on(device, views)
         share = jax.device_put(coeff[views.start : views.stop], device)
+        radius = jax.device_put(radius2, device)
         out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32, device=device)
         target = next(iter(out.devices()))
         starts = list(range(0, len(views), prep.batch))
@@ -624,6 +617,7 @@ def _accumulate(
                             here.weights,
                             here.kernel,
                             here.operator,
+                            radius,
                             out,
                             grid=kernel_grid,
                             detector=virtual,
@@ -631,6 +625,7 @@ def _accumulate(
                             cuda=prep.cuda,
                             pad_lo=prep.pad_lo,
                             pad_hi=prep.pad_hi,
+                            distance=prep.distance,
                         )
                     # Keep only this batch and its prefetched successor live.
                     out.block_until_ready()
@@ -767,7 +762,7 @@ def fdk_slabs[T](
         free = device_free_memory_bytes() or 2 * 1024**3
         depth = max(1, min(32, int(free // (3 * 4 * grid.nx * grid.ny))))
         poses = np.asarray(stack_view_poses(geometry, n_views), np.float64)
-        prep = _prepare(geometry, detector, n_views, replace(config, devices=device))
+        prep = _prepare(geometry, grid, detector, poses, replace(config, devices=device))
         coeff = prep.coefficients(geometry, grid, detector, jnp.asarray(poses, jnp.float32))
         with checkpoint.slabs() as finished:
             for start in range(finished.prefix, grid.nz, depth):
@@ -970,7 +965,7 @@ class _Slabs:
         if device is not None:
             fdk = replace(fdk, devices=device)
         with jax.default_device(device):
-            prep = _prepare(self.geometry, self.detector, len(self.projections), fdk)
+            prep = _prepare(self.geometry, self.grid, self.detector, self.poses, fdk)
             coeff = prep.coefficients(
                 self.geometry, self.grid, self.detector, jnp.asarray(self.poses, jnp.float32)
             )
