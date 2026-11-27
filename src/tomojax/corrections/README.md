@@ -64,8 +64,14 @@ for loading frames and choosing steps.
 
 ## Flat fields
 
-A view recorded between two flat sets takes a blend of them. The views
-themselves set the weights: no step or option turns this on.
+A view recorded between two flat sets takes a blend of them. `flat_weights`
+chooses how it is weighted: `"views"` (the default) measures the weights from the
+views, as described below, and `"position"` interpolates linearly in each view's
+position between the sets. The keyword is on `Frames.corrected`,
+`tj.reconstruct_slabs`, `correct_frames` and `corrected_row_source`; the CLI takes
+`tomojax correct --flat-weights position`, and the worker's and MCP server's
+`correct` and `reconstruct_slabs` take `flat_weights`. The `flat_dark` record's
+`flat_weights` setting says which was used.
 
 Two flat sets differ either because the beam or the detector changed between
 them, or because one of them does not show what the views saw (part of the
@@ -98,14 +104,21 @@ uncertainty.
   edge that only one set has is not in the views, so the flat carries its level
   across the edge instead of stepping there.
 
-The `flat_dark` record reports what was found (the last two only when the
-views set a weight somewhere):
+With `"views"`, the `flat_dark` record reports what was found (all but the
+first only when the views set a weight somewhere):
 
 | Key | Meaning |
 | --- | --- |
 | `flat_weights_from_views` | Fraction of the detector where the views, not position, set the weights |
 | `later_flat_weight` | The later set's weight at the start and at the end of the interval, averaged where the views set it (`[0, 1]` is linear interpolation) |
 | `flat_structure_unmatched` | RMS of the sets' fine structure that the views show in neither set, in line-integral units |
+| `flat_moved_by_views` | Fraction of the detector where the views' flat differs from the blend by position by more than 1% at the start or end of an interval |
+
+When `flat_moved_by_views` is above 1%, a warning gives that share of the
+detector, the later set's weights there, and what to do: one of the flat sets
+does not show the beam the views had, which is news about the acquisition. Python logs it on the `tomojax` logger, the
+CLI prints it, and the worker and MCP server return it as a note with the
+result. Below that, nothing is shown.
 
 The views carry no measurement of the beam's broad level where they show no
 unattenuated beam, so a region that both sets cover with something the views
@@ -114,6 +127,12 @@ do not show keeps a broad error beyond what continuity recovers. When
 are better: `tj.load_frames("scan.nxs", flats="other_scan.nxs")` or
 `tomojax correct scan.nxs --flats other_scan.nxs` takes the other file's flat
 frames (and `darks=` its dark frames) as one set.
+
+The weights describe fine structure and carry the level with it. When the sets
+also differ in level for another reason, such as a beam that decays between
+them while a speck or stripe changes early, a region whose views match the
+later set's structure takes the later set's level from the start, and the flat
+steps where the region begins. `flat_weights="position"` avoids that.
 
 A set of one frame has no measured noise, and scans with one flat set or a
 white level have nothing to blend: both are corrected as before.

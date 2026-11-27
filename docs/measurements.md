@@ -469,6 +469,18 @@ What remains is broad half rings outside the radius where one set is clear (320�
 
 On the middle band of all 51 rotation scans of the same visit, the 31 with clean flats give slices equal to the fourth decimal of the slice's spread and identical center fits with and without the weights (the views set at most 0.65% of them). Seven scans whose flat sets differ by a 0.02% structure move by 0.003–0.016 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
 
+### Scans from Diamond I13 and the ESRF
+
+The same comparison on every scan on the test laptop with two multi-frame flat sets around its views, from other beamlines (RTX 4070, branch `t3/flat-weights-switch`, 2026-11-27): eleven 1801–3001-view I13 scans of an in-situ series spread from 159802 to 159975 (2160 × 2560, 40 or 100 flats per set, the beam decaying about 10% between the sets) and the ESRF `bamboo` NXtomo example (1000 views of 540 × 640, 25 flats per set). Three 8-row bands at a quarter, half and three quarters of the detector, `Rings()` on, Fourier slices at one center; change is the RMS difference between `flat_weights="position"` and `"views"` inside 0.35 of the slice width from the axis, in units of the slice's robust spread.
+
+| Scans | `flat_weights_from_views` | `flat_moved_by_views` | Change in the slices | Center fit |
+| --- | ---: | ---: | ---: | --- |
+| I13, 10 scans | 0.002–0.020 | 0–0.0074 | 0–0.0033 | equal to 0.01 px |
+| I13 159975 | 0.106 | 0.075 | 0–0.0064; 0.17–0.18 in rows 2100–2148 | equal to 0.01 px |
+| ESRF bamboo | 0.020 | 0.0094 | 0.0053–0.0059 | equal to 0.01 px |
+
+On I13 159975 the weights make the slices worse where they cross the bottom 70 detector rows: the first views there show the later set's fine structure (specks and stripes) but still the earlier set's beam level, and the weights give them the later set's level too, 7.5% lower. The slice gains a spot on the axis and a one-sided shading of about one spread. 159910 has the same fault over 0.74% of the detector. The warning fires on 159975 and not on 159910.
+
 ### Simulated flat-field faults
 
 A 512 px slice of a particle-packed disc, 768 views over a half turn, 64 detector rows, 33,000 photons per flat pixel, the same photon noise in every case (CPU). Error is the RMS difference from the slice corrected with each view's true flat, inside the object, in units of that slice's robust spread:

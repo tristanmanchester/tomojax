@@ -8,9 +8,13 @@
   neither stays fixed through the scan (so `Rings()` can remove its fine part), and the
   flat's level is kept continuous across an edge that only one set has. Sets that differ
   by noise, by level, or smoothly along a detector row are interpolated in position as
-  before, as are sets of one frame. The step reads about one view in 64 beforehand and
-  takes no option. The `flat_dark` record reports `flat_weights_from_views`,
-  `later_flat_weight`, and `flat_structure_unmatched`
+  before, as are sets of one frame. The step reads about one view in 64 beforehand.
+  `flat_weights="position"` (`--flat-weights position`, `flat_weights` in the worker's and
+  MCP server's `correct` and `reconstruct_slabs`) interpolates by position alone, and the
+  `flat_dark` record's `flat_weights` setting says which was used. The record reports
+  `flat_weights_from_views`, `later_flat_weight`, `flat_structure_unmatched` and
+  `flat_moved_by_views`, the share of the detector where the views move the flat by more
+  than 1%; above 1% of the detector a warning says so and names both remedies
   ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
 - `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI) use
   that file's flat or dark frames. Previously every frame in the file was averaged.
