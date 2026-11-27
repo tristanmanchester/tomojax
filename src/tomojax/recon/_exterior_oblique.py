@@ -97,36 +97,37 @@ class ObliqueExterior:
         """Fill the bounded auxiliary detector, continuing only actual measured chords."""
         views, rows, cols = data.shape
         full = host_array((views, coarse.nv, 3 * coarse.nu), copies=4)
-        missing = np.broadcast_to(unseen[:, None, :], full.shape).copy()
+        missing = host_array(full.shape, dtype=bool)
+        missing[:] = unseen[:, None, :]
         vertical = np.arange(coarse.nv)
         batch = max(1, (16 << 20) // (4 * rows * cols))
         pad = coarse.nu
         groups: dict[tuple[DetectorRows, ConeBeam | None], list[_Panel]] = {}
         for panel in self.panels:
-            layout = panel.layout
-            groups.setdefault((layout, panel.beam), []).append(panel)
+            groups.setdefault((panel.layout, panel.beam), []).append(panel)
+        for (layout, beam), panels in groups.items():
             det = replace(coarse, center=layout.measured.center)
             low, high = layout.limits(det, vertical)
             u, v = layout.coordinates(det, vertical)
             samples = RowSamples(
                 np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
             )
-            for begin in range(panel.first, panel.stop, batch):
-                progress.check_canceled()
-                part = slice(begin, min(begin + batch, panel.stop))
-                block = data[part]
-                transfer = getattr(block, "get", None)
-                host = np.asarray(transfer() if transfer is not None else block)
-                measured = samples.read(np.rot90(host, -panel.turns, axes=(1, 2)), 0)
-                for row, (lo, hi) in enumerate(zip(low, high, strict=True)):
-                    full[part, row, pad + lo : pad + hi] = measured[:, row, lo:hi]
-        for (layout, beam), panels in groups.items():
-            det = replace(coarse, center=layout.measured.center)
-            low, high = layout.limits(det, vertical)
+            columns = np.arange(det.nu)
+            inside = (columns >= low[:, None]) & (columns < high[:, None])
+            for panel in panels:
+                for begin in range(panel.first, panel.stop, batch):
+                    progress.check_canceled()
+                    part = slice(begin, min(begin + batch, panel.stop))
+                    block = data[part]
+                    transfer = getattr(block, "get", None)
+                    host = np.asarray(transfer() if transfer is not None else block)
+                    measured = samples.read(np.rot90(host, -panel.turns, axes=(1, 2)), 0)
+                    np.copyto(full[part, :, pad : pad + det.nu], measured, where=inside)
             indices = np.concatenate([np.arange(p.first, p.stop) for p in panels])
             selected = indices[radius_views(len(indices))]
-            for row, (lo, hi) in enumerate(zip(low, high, strict=True)):
-                width = int(hi - lo)
+            for row in range(det.nv):
+                lo, hi = low.item(row), high.item(row)
+                width = hi - lo
                 if not width:
                     continue
                 start, stop = pad + lo, pad + hi
@@ -149,8 +150,11 @@ class ObliqueExterior:
         return full, missing
 
     def measured_rays(
-        self, blocks: Iterator[tuple[slice, Float32Array | CuPyValue]], *, positive: bool
-    ) -> Iterator[tuple[slice, Float32Array]]:
+        self,
+        blocks: Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]],
+        *,
+        positive: bool,
+    ) -> Iterator[tuple[slice[int, int, None], Float32Array]]:
         """Sample each horizontal background on the original measured detector pixels."""
         horizontal = self.detector
         panel_index = 0
@@ -171,7 +175,7 @@ class ObliqueExterior:
                 stop = min(part.stop, panel.stop)
                 native = samples.read(host[begin - part.start : stop - part.start], 0)
                 if positive:
-                    np.maximum(native, 0, out=native)
+                    _ = np.maximum(native, 0, out=native)
                 yield slice(begin, stop), np.rot90(native, panel.turns, axes=(1, 2))
                 begin = stop
                 if begin == panel.stop:

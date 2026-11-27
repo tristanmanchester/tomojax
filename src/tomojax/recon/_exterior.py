@@ -263,7 +263,9 @@ def storage(
     block = min(views, max(1, (16 << 20) // (4 * detector.nv * detector.nu)))
     images = 4 * block * detector.nv * detector.nu
     project = 4 * (wide.nz + 2) * wide.ny * wide.nx + images
-    host = full_data + completed + completed // 3 + 3 * volume + 4 * images
+    # Rolled chords have a distinct measured interval on each horizontal row.
+    mask = math.prod(shape) if oblique is not None else 0
+    host = full_data + completed + completed // 3 + 3 * volume + 4 * images + mask
     fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
     return host, max(resident_bytes(wide, fitted_shape), project)
 
