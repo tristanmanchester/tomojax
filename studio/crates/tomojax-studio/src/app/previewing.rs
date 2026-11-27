@@ -158,7 +158,9 @@ impl AppState {
             .catalog
             .definition(&definition)
             .map(|schema| &schema["properties"]);
-        let inputs = if !processing {
+        let inputs = if self.validating_export() {
+            self.current_form_input().into_iter().collect()
+        } else if !processing {
             Vec::new()
         } else if properties.is_some_and(|p| {
             ["sources", "volume", "projections"]

@@ -599,23 +599,23 @@ fn a_back_projection_belongs_to_the_projections_it_used() {
 
 #[test]
 fn export_offers_what_each_kind_of_result_can_be_written_as() {
-    let mut model = crate::ui::model::UiModel {
-        active_asset: Some("a".into()),
-        ..Default::default()
-    };
-    for (export, chosen, expected) in [
-        (Export::Dataset, "float32", "nxs"),
-        (Export::Volume, "float32", "float32"),
+    let mut state = AppState::init();
+    state.model.active_asset = Some("a".into());
+    for (kind, selected, expected) in [
+        (Export::Dataset, "ImageJ TIFF", "ImageJ TIFF"),
+        (Export::Dataset, "OME-Zarr 0.5", "nxs"),
+        (Export::Volume, "OME-Zarr 0.5", "OME-Zarr 0.5"),
         (Export::Volume, "array", "nxs"),
-        (Export::Array, "float32", "array"),
+        (Export::Array, "ImageJ TIFF", "array"),
         (Export::Unavailable, "nxs", ""),
     ] {
-        model.assets = vec![AssetView {
+        state.model.assets = vec![AssetView {
             id: "a".into(),
-            export,
+            export: kind,
             ..Default::default()
         }];
-        assert_eq!(model.export_format(chosen), expected, "{export:?} {chosen}");
+        state.ui.export_format = selected.into();
+        assert_eq!(state.active_export_format(), expected);
     }
 }
 

@@ -273,7 +273,10 @@ pub enum Product {
         registration: CenterRegistrationPlan,
     },
     OppositeViewsPlan(CenterRegistrationPlan),
-    Validated,
+    Validated {
+        #[serde(default)]
+        details: Value,
+    },
 }
 
 impl Product {
@@ -306,7 +309,7 @@ impl Product {
             Self::JointPlan { .. } => "joint_plan",
             Self::SinogramFocusPlan { .. } => "sinogram_focus_plan",
             Self::OppositeViewsPlan(_) => "opposite_views_plan",
-            Self::Validated => "validated",
+            Self::Validated { .. } => "validated",
         }
     }
 
@@ -565,6 +568,56 @@ impl Response {
 #[derive(Debug, Clone)]
 pub struct SchemaCatalog {
     document: Value,
+    pub export_formats: Vec<ExportFormat>,
+}
+
+/// One interchange destination advertised by the worker on Export.path.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExportFormat {
+    pub name: String,
+    pub suffixes: Vec<String>,
+    pub layout: String,
+    pub options: Vec<String>,
+    pub spatial_only: bool,
+}
+
+impl ExportFormat {
+    pub fn fields(&self, catalog: &SchemaCatalog, mask: bool) -> Vec<Parameter> {
+        catalog
+            .parameters("Export")
+            .into_iter()
+            .filter(|p| {
+                self.options.contains(&p.name)
+                    && !(mask && matches!(p.name.as_str(), "dtype" | "range" | "binning"))
+            })
+            .collect()
+    }
+
+    pub fn parameters<'a>(
+        &self,
+        catalog: &SchemaCatalog,
+        mask: bool,
+        path: &std::path::Path,
+        text: impl Fn(&str) -> Option<&'a str>,
+    ) -> Result<Value, String> {
+        let mut value = serde_json::json!({"path": path});
+        for field in self.fields(catalog, mask) {
+            let Some(input) = text(&field.name).map(str::trim).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let string = field.schema["type"] == "string"
+                || field.choices.iter().any(Value::is_string)
+                || field.schema["anyOf"]
+                    .as_array()
+                    .is_some_and(|types| types.iter().any(|t| t["type"] == "string"));
+            value[&field.name] = if string {
+                Value::String(input.into())
+            } else {
+                serde_json::from_str(input).map_err(|e| format!("{}: {e}", field.name))?
+            };
+        }
+        Ok(value)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -583,7 +636,16 @@ impl SchemaCatalog {
         if !document.get("$defs").is_some_and(Value::is_object) {
             return Err("The worker description has no parameter definitions".into());
         }
-        Ok(Self { document })
+        let export_formats = document
+            .pointer("/$defs/Export/properties/path/x-formats")
+            .map(|v| serde_json::from_value(v.clone()))
+            .transpose()
+            .map_err(|e| format!("Invalid export format table: {e}"))?
+            .unwrap_or_default();
+        Ok(Self {
+            document,
+            export_formats,
+        })
     }
 
     pub fn document(&self) -> &Value {

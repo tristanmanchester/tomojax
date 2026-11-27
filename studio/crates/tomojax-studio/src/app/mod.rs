@@ -2,6 +2,7 @@
 mod actions;
 mod controls;
 mod editing;
+mod export;
 mod jobs;
 mod local;
 mod previewing;

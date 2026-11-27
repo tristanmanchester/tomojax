@@ -1,6 +1,7 @@
 //! Terrarium: a persistent project around a live scientific image workspace.
 mod controls;
 pub mod corrections;
+mod export;
 mod inspector;
 pub mod model;
 mod overlays;

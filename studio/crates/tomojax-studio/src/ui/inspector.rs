@@ -712,12 +712,12 @@ fn explore(state: &AppState) -> El {
                 .child(help(format!("{} sampled pixels", stats.sampled_pixels))),
         ));
     }
-    if !state
-        .model
-        .export_format(&state.ui.export_format)
-        .is_empty()
-    {
-        sections.push(export_format(state));
+    if !state.active_export_format().is_empty() {
+        if state.interchange_format().is_some() {
+            sections.insert(0, super::export::form(state));
+        } else {
+            sections.push(super::export::form(state));
+        }
     }
     let mut content = col().gap(18.);
     for (index, section) in sections.into_iter().enumerate() {
@@ -994,37 +994,6 @@ fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&s
     picker
 }
 
-fn export_format(state: &AppState) -> El {
-    let mut choices = row().gap(4.);
-    let format = state.model.export_format(&state.ui.export_format);
-    let formats: &[(&str, &str)] = match format {
-        "" => &[],
-        "array" => &[("array", "NPY bundle")],
-        _ if state.model.tiff_export() => &[
-            ("nxs", "NXtomo"),
-            ("float32", "TIFF 32"),
-            ("uint16", "TIFF 16"),
-        ],
-        _ => &[("nxs", "NXtomo")],
-    };
-    for &(value, title) in formats {
-        choices = choices.child(choice(
-            &format!("export-format-{value}"),
-            title,
-            format == value,
-            true,
-            UiAction::SetExportFormat(value.into()),
-        ));
-    }
-    let mut export = col().gap(9.).child(choices);
-    if format == "uint16" {
-        export = export.child(help(
-            "16-bit TIFF rescales values to integers over a percentile range.",
-        ));
-    }
-    section("Export", export)
-}
-
 fn footer(state: &AppState) -> El {
     if state.model.preview.is_some() {
         return super::preview::footer(state);
@@ -1076,28 +1045,7 @@ fn footer(state: &AppState) -> El {
                 .h(40.),
             );
         }
-        Workspace::Explore => {
-            content = content.child(
-                action_button_icon(
-                    "export-result",
-                    match state.model.export_format(&state.ui.export_format) {
-                        "float32" => "Export TIFF (float32)",
-                        "uint16" => "Export TIFF (uint16)",
-                        "array" => "Export NPY bundle",
-                        _ => "Export NXtomo",
-                    },
-                    Icon::Export,
-                    true,
-                    !state
-                        .model
-                        .export_format(&state.ui.export_format)
-                        .is_empty(),
-                    UiAction::Export(state.model.export_format(&state.ui.export_format).into()),
-                )
-                .w_full()
-                .h(40.),
-            );
-        }
+        Workspace::Explore => content = content.child(super::export::submit(state)),
         Workspace::Compare | Workspace::Jobs => return el(),
     }
     col().w_full().child(separator()).child(content)

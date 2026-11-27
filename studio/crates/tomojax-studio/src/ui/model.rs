@@ -152,6 +152,8 @@ pub struct UiState {
     pub operation_menu: bool,
     pub choice_menu: Option<String>,
     pub export_format: String,
+    pub export_path: Option<std::path::PathBuf>,
+    pub export_edits: BTreeMap<String, TextEdit>,
     pub selected_job: Option<String>,
     pub command_index: usize,
     pub collapsed_assets: BTreeSet<String>,
@@ -200,6 +202,8 @@ impl Default for UiState {
             operation_menu: false,
             choice_menu: None,
             export_format: "nxs".into(),
+            export_path: None,
+            export_edits: BTreeMap::new(),
             selected_job: None,
             command_index: 0,
             collapsed_assets: BTreeSet::new(),
@@ -287,19 +291,6 @@ impl UiModel {
             .iter()
             .find(|asset| Some(&asset.id) == self.active_asset.as_ref())
     }
-    /// The export format that applies to the active result: TIFF slices are
-    /// written for volumes only, and an array-only result exports as NPY.
-    pub fn export_format<'a>(&self, chosen: &'a str) -> &'a str {
-        match self.active().map(|asset| asset.export) {
-            Some(Export::Volume) if chosen != "array" => chosen,
-            Some(Export::Volume | Export::Dataset) => "nxs",
-            Some(Export::Array) => "array",
-            Some(Export::Unavailable) | None => "",
-        }
-    }
-    pub fn tiff_export(&self) -> bool {
-        self.export_format("float32") == "float32"
-    }
     pub fn selection_count(&self) -> usize {
         self.selected_assets
             .len()
@@ -353,10 +344,10 @@ impl AssetKind {
 /// What Explore can export a result as.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Export {
-    /// A scan or frames: an NXtomo dataset.
+    /// A scan or alignment with measured projections.
     #[default]
     Dataset,
-    /// A reconstruction, simulation or alignment image: NXtomo or TIFF slices.
+    /// A result containing a spatial volume.
     Volume,
     /// An array-only result: a registered NPY bundle.
     Array,
@@ -366,6 +357,7 @@ pub enum Export {
 #[derive(Clone, Debug, Default)]
 pub struct AssetView {
     pub export: Export,
+    pub mask: bool,
     pub id: String,
     pub name: String,
     pub kind: AssetKind,
@@ -692,6 +684,7 @@ pub enum UiAction {
     CompareMode(CompareMode),
     SetCompareSplit(f32),
     SetExportFormat(String),
+    QueueExport,
     RemoveMeasurement(String),
     SetCompareLeft(String),
     SetCompareRight(String),

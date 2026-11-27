@@ -539,7 +539,12 @@ impl AppState {
                     self.ui.compare_plane = plane;
                 }
             }
-            UiAction::SetExportFormat(format) => self.ui.export_format = format,
+            UiAction::SetExportFormat(format) => {
+                self.ui.export_format = format;
+                self.ui.export_path = None;
+                self.ui.choice_menu = None;
+            }
+            UiAction::QueueExport => self.queue_current_export()?,
             UiAction::RemoveMeasurement(id) => self
                 .model
                 .measurements
@@ -641,7 +646,7 @@ impl AppState {
             "jobs" => UiAction::SetWorkspace(Workspace::Jobs),
             "queue" => UiAction::QueueOperation(self.ui.operation.clone()),
             "simulate" => UiAction::Simulate,
-            "export" => UiAction::Export(self.model.export_format(&self.ui.export_format).into()),
+            "export" => UiAction::Export(self.active_export_format().into()),
             "fit" => UiAction::FitView,
             "window" => UiAction::AutoWindow,
             // In Compare the plane shortcuts choose Compare's plane.
@@ -667,124 +672,6 @@ impl AppState {
             _ => return Err("Unknown command".into()),
         };
         self.action(action, tx)
-    }
-
-    fn export_dialog(&mut self, format: &str, tx: &mut Tx) -> Result<(), String> {
-        if format.is_empty() {
-            return Err("Raw frames can be exported once corrected".into());
-        }
-        let id = self
-            .model
-            .active_asset
-            .clone()
-            .ok_or("Select a result to export")?;
-        let input = self.project.as_ref().ok_or("No project")?.capture(&id)?;
-        if !matches!(
-            input.kind.as_str(),
-            "scan" | "frames" | "reconstruction" | "simulation" | "alignment"
-        ) {
-            tx.open_folder(
-                FileDialogOptions {
-                    title: "Choose a parent directory for the registered NPY array bundle".into(),
-                    ..Default::default()
-                },
-                move |s: &mut AppState, result, _| match result {
-                    Ok(Some(parent)) => {
-                        let path = parent.join(format!(
-                            "{}-array",
-                            input.name.replace(['/', '\\', ':'], "_")
-                        ));
-                        s.queue_export(input, path, "array");
-                    }
-                    Ok(None) => {}
-                    Err(error) => s.model.error = Some(error.to_string()),
-                },
-            );
-            return Ok(());
-        }
-        let format = format.to_owned();
-        if matches!(format.as_str(), "tiff" | "float32" | "uint16") {
-            tx.open_folder(
-                FileDialogOptions {
-                    title: "Choose a parent directory for TIFF slices".into(),
-                    ..Default::default()
-                },
-                move |s: &mut AppState, result, _| match result {
-                    Ok(Some(path)) => {
-                        let destination = path.join(format!(
-                            "{}-slices",
-                            input.name.replace(['/', '\\', ':'], "_")
-                        ));
-                        s.queue_export(input, destination, &format);
-                    }
-                    Ok(None) => {}
-                    Err(error) => s.model.error = Some(error.to_string()),
-                },
-            );
-        } else {
-            tx.save_file(
-                FileDialogOptions {
-                    title: "Export result".into(),
-                    file_name: Some(format!(
-                        "{}.{}",
-                        input.name,
-                        if format == "raw" { "raw" } else { "nxs" }
-                    )),
-                    ..Default::default()
-                },
-                move |s: &mut AppState, result, _| match result {
-                    Ok(Some(path)) => s.queue_export(input, path, &format),
-                    Ok(None) => {}
-                    Err(error) => s.model.error = Some(error.to_string()),
-                },
-            );
-        }
-        Ok(())
-    }
-
-    pub(super) fn queue_export(
-        &mut self,
-        input: project::CapturedInput,
-        path: PathBuf,
-        format: &str,
-    ) {
-        if path.exists() {
-            self.model.error = Some(
-                "That output already exists. Choose a new path to preserve the original.".into(),
-            );
-            return;
-        }
-        let op = if format == "array" {
-            "export_array"
-        } else if format == "nxs" {
-            "save"
-        } else {
-            "export"
-        };
-        let params = if op == "save" {
-            // A reconstruction saved without its scan has none to include.
-            let scan = input.kind != "reconstruction"
-                || self
-                    .project
-                    .as_ref()
-                    .and_then(|p| p.document.asset(&input.asset))
-                    .is_none_or(|asset| {
-                        asset.inspection.pointer("/projection/found") != Some(&Value::Bool(false))
-                    });
-            json!({"path":path,"include_scan":scan})
-        } else {
-            json!({"path":path,"dtype":if format=="uint16"{"uint16"}else{"float32"}})
-        };
-        let mut job = project::Job::new(op, params, vec![input]);
-        job.name = format!("Export {format}");
-        job.destination = Some(path);
-        if let Some(project) = &mut self.project {
-            let id = job.id.clone();
-            project.document.jobs.push(job);
-            self.mark_dirty();
-            self.ui.activity.follow(vec![id]);
-            self.refresh_model();
-        }
     }
 
     fn remember_view(&mut self) {

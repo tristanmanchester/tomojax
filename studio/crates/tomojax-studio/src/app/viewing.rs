@@ -907,6 +907,19 @@ impl AppState {
                     .map(|(key, edit)| (format!("correction:{key}"), edit.text.clone())),
             )
             .collect();
+        draft_choices.insert("studio:export_format".into(), self.ui.export_format.clone());
+        if let Some(path) = &self.ui.export_path {
+            draft_edits.insert(
+                "studio:export_path".into(),
+                path.to_string_lossy().into_owned(),
+            );
+        }
+        draft_edits.extend(
+            self.ui
+                .export_edits
+                .iter()
+                .map(|(name, edit)| (format!("export:{name}"), edit.text.clone())),
+        );
         self.window.save(&mut draft_edits, &mut draft_choices);
         project::Workspace {
             active: self.model.active_asset.clone(),
@@ -991,6 +1004,23 @@ impl AppState {
             "Jobs" => Workspace::Jobs,
             _ => Workspace::Explore,
         };
+        self.ui.export_format = context
+            .draft_choices
+            .get("studio:export_format")
+            .cloned()
+            .unwrap_or_else(|| "nxs".into());
+        self.ui.export_path = context
+            .draft_edits
+            .get("studio:export_path")
+            .map(PathBuf::from);
+        self.ui.export_edits = context
+            .draft_edits
+            .iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix("export:")
+                    .map(|name| (name.to_string(), rune::TextEdit::new(value.clone())))
+            })
+            .collect();
         self.restore_view(context);
         self.set_operation(
             if context.operation.is_empty() {
@@ -1160,6 +1190,7 @@ impl AppState {
                             Some([pitch("x")?, pitch("y")?, pitch("z")?])
                         });
                         AssetView {
+                            mask: array.is_some_and(|a| a.domain == "mask"),
                             export: match a.kind.as_str() {
                                 "reconstruction" | "simulation" => Export::Volume,
                                 "alignment" if a.volume().is_some() => Export::Volume,

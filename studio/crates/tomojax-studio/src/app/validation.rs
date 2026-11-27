@@ -170,7 +170,36 @@ fn accepts_operation(catalog: &SchemaCatalog, wrapper: &str, operation: &str) ->
 }
 
 impl AppState {
+    pub(super) fn validating_export(&self) -> bool {
+        self.ui.workspace == Workspace::Explore
+            && self.ui.export_path.is_some()
+            && self.interchange_format().is_some()
+    }
+
+    pub(crate) fn export_plan_current(&self) -> bool {
+        self.validating_export()
+            && self.validation.view.phase == Phase::Valid
+            && self.validation.signature.as_ref() == Some(&self.validation_signature())
+            && matches!(self.validation.view.plan, Some(Product::Validated { ref details }) if details["format"] == self.active_export_format())
+    }
+
+    fn validated_operation_name(&self) -> &str {
+        if self.validating_export() {
+            "export"
+        } else if self.ui.operation == "plan" {
+            "reconstruct"
+        } else {
+            &self.ui.operation
+        }
+    }
+
     fn validation_signature(&self) -> Value {
+        if self.validating_export() {
+            return json!({
+                "export": self.active_export_format(), "parameters": self.export_parameters(),
+                "active": self.model.active_asset, "input": self.current_form_input(),
+            });
+        }
         let edits: HashMap<_, _> = self
             .ui
             .parameter_edits
@@ -230,12 +259,18 @@ impl AppState {
         let signature = self.validation_signature();
         let mut changed = self.validation.observe(signature, now);
         self.validation.view.plan_signature = forms::plan_signature(&self.ui, &self.catalog);
-        if !processing || self.shutting_down {
+        if (!processing && !self.validating_export()) || self.shutting_down {
             changed |= self.validation.status(Phase::Idle, "");
             self.model.validation = self.validation.view.clone();
             return changed;
         }
-        let parameters = match forms::parameters_detailed(&self.ui, &self.catalog) {
+        let draft = if self.validating_export() {
+            self.export_parameters()
+                .map_err(|e| DraftError::new("export", e))
+        } else {
+            forms::parameters_detailed(&self.ui, &self.catalog)
+        };
+        let parameters = match draft {
             Ok(parameters) => parameters,
             Err(error) => {
                 if changed || self.validation.view.phase != Phase::Invalid {
@@ -271,11 +306,7 @@ impl AppState {
                 .validation
                 .status(Phase::Waiting, "Waiting for TomoJAX");
         }
-        let operation = if self.ui.operation == "plan" {
-            "reconstruct"
-        } else {
-            &self.ui.operation
-        };
+        let operation = self.validated_operation_name();
         if !self
             .model
             .backend
@@ -386,11 +417,7 @@ impl AppState {
     }
 
     fn validation_operation(&mut self, parameters: Value) -> Result<Option<Value>, DraftError> {
-        let operation = if self.ui.operation == "plan" {
-            "reconstruct"
-        } else {
-            self.ui.operation.as_str()
-        };
+        let operation = self.validated_operation_name();
         let mut value = parameters.as_object().cloned().unwrap_or_default();
         value.insert("type".into(), json!(operation));
         let definition = forms::definition(operation);
@@ -408,6 +435,25 @@ impl AppState {
             DraftError::new("source", "Select an input to validate these settings.")
         })?;
         self.validation.input_context = Some(json!(input));
+        if self.validating_export() {
+            self.previews
+                .ensure_input(input.clone())
+                .map_err(|e| DraftError::new("source", e))?;
+            let product = self
+                .previews
+                .source_product(&input)
+                .map_err(|e| DraftError::new("source", e))?;
+            let Some(handle) = product.and_then(Product::handle) else {
+                return Ok(None);
+            };
+            let member = value.remove("member").unwrap_or_else(|| json!("self"));
+            value.insert(
+                "source".into(),
+                json!({"type": "member", "handle": handle, "member": member}),
+            );
+            self.validation.view.scope = input.name;
+            return Ok(Some(Value::Object(value)));
+        }
         if properties.get("path").is_some() {
             value.insert("path".into(), json!(input.path));
             self.validation.view.scope = input.name;
@@ -589,7 +635,21 @@ impl AppState {
             } => {
                 self.validation.in_flight = None;
                 match (&output.value, request.work) {
-                    (Product::Validated, Work::Validate) => {
+                    (Product::Validated { details }, Work::Validate)
+                        if self.validating_export() =>
+                    {
+                        self.validation.next = Next::Complete;
+                        if details["format"] == self.active_export_format() {
+                            self.validation.view.plan = Some(output.value.clone());
+                            self.validation.status(Phase::Valid, "Ready to export");
+                        } else {
+                            self.validation.status(
+                                Phase::Invalid,
+                                "Choose a destination with the selected format’s suffix.",
+                            );
+                        }
+                    }
+                    (Product::Validated { .. }, Work::Validate) => {
                         let operation = self
                             .validation
                             .planned_operation

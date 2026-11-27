@@ -328,7 +328,11 @@ impl AppState {
                 operation.insert("sources".into(), json!(sources));
             }
             "save" | "export" => {
-                operation.insert("source".into(), source(0, false)?);
+                let mut member = source(0, false)?;
+                if let Some(selected) = operation.remove("member") {
+                    member["member"] = selected;
+                }
+                operation.insert("source".into(), member);
                 operation.insert("force".into(), Value::Bool(false));
             }
             "project" | "backproject" => {
@@ -507,7 +511,9 @@ impl AppState {
                 } else if let Product::Files { paths } = &output.value {
                     self.complete_job(&job, None);
                     self.model.status = format!("Exported {} output files", paths.len());
-                } else if output.value.is_plan() || matches!(output.value, Product::Validated) {
+                } else if output.value.is_plan()
+                    || matches!(output.value, Product::Validated { .. })
+                {
                     let summary = serde_json::to_string_pretty(&output.value).unwrap_or_default();
                     if let Some(project) = &mut self.project
                         && let Some(j) = project.document.job_mut(&job)
@@ -1045,6 +1051,8 @@ pub(super) fn registered_array(input: &crate::project::CapturedInput) -> Option<
             projections: array.clone(),
         }
     } else {
-        Product::Validated
+        Product::Validated {
+            details: Value::Null,
+        }
     })
 }
