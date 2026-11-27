@@ -16,7 +16,7 @@ import msgspec
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
 from tomojax.cli._staging import Stages
-from tomojax.errors import classify
+from tomojax.errors import Canceled, classify
 from tomojax.wire import progress as w
 from tomojax.wire.arrays import Array, Coordinates, Member, Npy, Record
 
@@ -313,7 +313,9 @@ class Session:
             if self._stale(job):
                 error = w.Error(2, "superseded", "superseded")
             elif job.control.canceled:
-                error = w.Error(2, "canceled", "canceled")
+                # A checkpointed run says where its saved state is.
+                stopped = isinstance(failure, Canceled)
+                error = classify(failure) if stopped else w.Error(2, "canceled", "canceled")
             elif failure is not None:
                 error = classify(failure)
             else:

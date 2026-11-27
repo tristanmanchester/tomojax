@@ -502,6 +502,9 @@ pub struct WorkerError {
     pub message: String,
     #[serde(default)]
     pub path: Option<String>,
+    /// The directory holding a stopped run's saved state, when the run had one.
+    #[serde(default)]
+    pub checkpoint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

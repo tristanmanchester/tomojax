@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Checkpoint and resume work through the worker and the MCP server. `reconstruct`,
+  `reconstruct_slabs` and `align` take `checkpoint` (a directory, relative paths against the
+  project directory). A checkpointed run that is canceled (`control` cancel, Ctrl-C on the
+  CLI, `Control.cancel()` in Python) or sent `SIGTERM` saves at its next work boundary
+  before stopping; `tomojax serve` now handles `SIGTERM` by shutting down that way. The
+  stopped run's error names its directory: `tomojax.errors.Canceled.checkpoint`, a
+  `checkpoint` field on the CLI's JSON `error` record, the worker's `error` and the MCP tool
+  error, whose `next` says how to resume. A checkpoint records what run it holds, how it was
+  started (the command line and working directory, or the worker operation and its inputs'
+  provenance), and when it was created and last saved; `tj.inspect(DIR)["checkpoint"]`,
+  `tomojax inspect DIR` and the MCP `inspect` tool report it, and the MCP `inspect` of a
+  directory lists the checkpoints in it. A worker slab reconstruction keeps finished slabs
+  in `DIR/volume.npy` until it completes. `tomojax reconstruct --help` lists `--checkpoint`;
+  `--seed` moves to the expert options.
+
 - Every surface reports what the reader found and how a solve ended. `tj.inspect` (and
   `tomojax inspect`, the worker's `inspect` and the MCP `inspect` tool) adds `loading`: the
   length unit, where the rotation center comes from, whether the geometry is recorded, the

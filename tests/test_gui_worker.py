@@ -382,6 +382,7 @@ def test_replays_fixed_session_transcript(client):
                 }
             if expected["type"] == "error":
                 expected["error"].setdefault("path", None)
+                expected["error"].setdefault("checkpoint", None)
             assert actual == expected
             if actual.get("record", {}).get("event") == "started":
                 c.mark(b"G")

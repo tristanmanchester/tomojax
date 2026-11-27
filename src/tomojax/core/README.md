@@ -42,8 +42,9 @@ from the root:
   positive mixture of exponentials, with its inverse and its fit to path
   lengths, used by `tomojax.corrections.BeamHardening`.
 - `tomojax.core.checkpoint`: atomic directory-based checkpoint store, periodic
-  save schedule, main-thread `SIGTERM` handling, and loop/slab helpers used by
-  `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`.
+  save schedule, main-thread `SIGTERM` handling, saving on a watch's cancel,
+  loop/slab helpers used by `tj.reconstruct`, `tj.reconstruct_slabs`, and
+  `tj.align`, and `describe`, the run and saves a checkpoint holds.
 
 ## Dependencies
 

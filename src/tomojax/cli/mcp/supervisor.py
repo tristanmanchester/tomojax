@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 import msgspec
 
+from tomojax._typed_arrays import object_mapping
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -33,12 +35,17 @@ class WorkerProtocolError(RuntimeError):
     """The worker rejected a command before admission."""
 
 
+STOP_GRACE = 120.0
+"""Seconds a stopped worker running checkpointed jobs has to save them and exit."""
+
+
 class WorkerError(ValueError):
     """A terminal failure, including its worker kind and parameter path."""
 
     def __init__(self, error: Object) -> None:
         self.kind = error.get("kind", "invalid_request")
         self.path = error.get("path")
+        self.checkpoint = error.get("checkpoint")
         super().__init__(error["message"])
 
 
@@ -105,6 +112,7 @@ class Pending:
     execution: bool
     activity: Activity
     accept: Callable[[Object], Object] | None
+    saves: bool = False  # a checkpointed run, which saves its state when stopped
 
 
 class Generation:
@@ -136,11 +144,13 @@ class Generation:
         data = msgspec.json.encode({"id": rid, "command": command})
         if len(data) > 1024 * 1024:
             raise ValueError("Worker request exceeds 1 MiB")
+        operation = object_mapping(command.get("operation"))
         job = Pending(
             asyncio.get_running_loop().create_future(),
             command["type"] not in FAST,
             activity.get() or Activity(),
             accept,
+            operation.get("checkpoint") is not None,
         )
         self.count += 1
         self.pending[rid] = job
@@ -315,6 +325,12 @@ class Supervisor:
             try:
                 await g.exit.wait()
             finally:
+                saving = any(job.saves for job in g.pending.values())
+                if saving and proc.returncode is None:  # it saves before the worker exits
+                    with suppress(ProcessLookupError):
+                        proc.send_signal(signal.SIGTERM)
+                    with suppress(TimeoutError):
+                        _ = await asyncio.wait_for(asyncio.shield(proc.wait()), STOP_GRACE)
                 with suppress(ProcessLookupError):
                     os.killpg(proc.pid, signal.SIGKILL)
                 await proc.wait()

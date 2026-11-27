@@ -110,6 +110,8 @@ def _display(
         print(json.dumps(payload, indent=2, sort_keys=True))
         return
     print(format_inspection_report(report))
+    if report["checkpoint"] is not None:
+        return
     if previews is not None:
         _print_previews(previews)
     if preview_error is not None:

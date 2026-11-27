@@ -59,7 +59,7 @@ tomojax reconstruct scan.nxs -o recon.nxs --method cgls --watch-dir watch
 
 ## Resume a run after a kill
 
-Pass `checkpoint=DIR` to `tj.reconstruct`, `tj.reconstruct_slabs`, or `tj.align`, or `--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`, to save a run's state in `DIR`. You can also set `checkpoint = "DIR"` in a `--config` TOML file; on `tomojax reconstruct`, `--checkpoint` is an expert option listed by `--config-keys` rather than `--help`. If the run is killed by a scheduler time limit, preemption, or a node failure, run the same call again with the same directory, input, and settings. TomoJAX resumes from the saved state and returns what an uninterrupted run returns. `DIR` is created if absent and deleted when the call returns (for CLI commands, after all output files are written).
+Pass `checkpoint=DIR` to `tj.reconstruct`, `tj.reconstruct_slabs`, or `tj.align`, `--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`, or `checkpoint` to the worker's and MCP server's `reconstruct`, `reconstruct_slabs` and `align`, to save a run's state in `DIR`. You can also set `checkpoint = "DIR"` in a `--config` TOML file. If the run is killed by a scheduler time limit, preemption, or a node failure, run the same call again with the same directory, input, and settings. TomoJAX resumes from the saved state and returns what an uninterrupted run returns. `DIR` is created if absent and deleted when the call returns (for CLI commands, after all output files are written).
 
 ```python
 recon = tj.reconstruct(scan, "cgls", iterations=200, checkpoint="recon.ckpt")
@@ -70,6 +70,10 @@ result = tj.align(scan, fit="translations", checkpoint="align.ckpt")
 tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 200 --checkpoint recon.ckpt
 tomojax align scan.nxs -o aligned.nxs --fit translations --checkpoint align.ckpt
 ```
+
+Canceling a checkpointed run also saves it. Ctrl-C on the command line, `control` with `cancel` in the worker or MCP server, and `Control.cancel()` on a `progress.watch` finish the current iteration, slab, or step, save, and stop with `tomojax.errors.Canceled`, whose `checkpoint` attribute names `DIR`; the CLI's JSON `error` record, the worker's error, and the MCP tool error carry the same `checkpoint` field. A cancel outside a checkpointed loop (while loading, say) stops at once and the error still names `DIR`, which holds whatever was saved.
+
+To find out what a checkpoint holds, inspect its directory: `tomojax inspect DIR`, `tj.inspect(DIR)["checkpoint"]`, or the MCP `inspect` tool. The report names the run (operation, method and settings, input file, TomoJAX version), how it was requested (the command line and its working directory, or the worker operation with its inputs' provenance), when it was created and last saved, each saved entry, its size, and whether a running process holds it. Inspecting a directory with the MCP `inspect` tool lists the checkpoints in its subdirectories.
 
 What each run saves:
 
@@ -94,7 +98,7 @@ Each save writes a new `state-NNNNNN` directory of fsynced `.npy` files beside t
 
 ### Signals, hard kills, and refused checkpoints
 
-On `SIGTERM` inside a checkpointed loop on the main thread, TomoJAX finishes the current iteration, slab, or alignment step, writes a checkpoint, and raises `tomojax.errors.Canceled` with a message naming the directory. The CLI prints that message and exits with status `130`. `SIGTERM` outside a checkpointed loop (for example, while loading a scan) terminates the process as usual. In a background thread, `SIGTERM` is not intercepted and only periodic saves run.
+On `SIGTERM` inside a checkpointed loop on the main thread, TomoJAX finishes the current iteration, slab, or alignment step, writes a checkpoint, and raises `tomojax.errors.Canceled` with a message naming the directory. The CLI prints that message and exits with status `130`. `SIGTERM` outside a checkpointed loop (for example, while loading a scan) terminates the process as usual. In a background thread of your own program, `SIGTERM` is not intercepted and only periodic saves run. The worker (`tomojax serve`, which the MCP server runs) handles `SIGTERM` itself: it stops admitting requests and cancels every job, so a checkpointed job saves, ends with a `canceled` error naming its checkpoint, and the worker exits once the jobs have ended.
 
 On a hard kill (`SIGKILL`, a node failure, or a `SIGTERM` whose current step plus save runs past the scheduler grace period), no final save runs and the next run resumes from the last completed periodic or slab save. Because `checkpoint.json` is replaced atomically after the new entry is synced, a kill during a save leaves the previous entry intact, and any incomplete entry directory is deleted on the next open.
 
@@ -146,7 +150,7 @@ A resumed run continues from the exact arrays and scalars the next iteration rea
 
 In `tj.align`, step metrics of finished levels are restored from JSON as Python `float` values where an uninterrupted run holds NumPy `float32` scalars (equal values, different types).
 
-`checkpoint=` is available on `tj.reconstruct`, `tj.reconstruct_slabs`, `tj.align`, `tomojax reconstruct`, and `tomojax align`. Direct expert solver calls (`tomojax.recon.cgls`, `cgls_multires`, `fista`, `fbp_host`, `fdk_host`, `fourier`, and the other functions in `tomojax.recon`), the local worker (`tomojax serve`), the MCP server (`tomojax mcp`), and TomoJAX Studio do not expose it. Direct axial center fits (`tj.align(scan, fit="center")` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop.
+`checkpoint=` is available on `tj.reconstruct`, `tj.reconstruct_slabs`, `tj.align`, `tomojax reconstruct`, `tomojax align`, and the worker's and MCP server's `reconstruct`, `reconstruct_slabs` and `align`. A worker slab reconstruction keeps its finished slabs in `DIR/volume.npy` until the run completes, one volume of extra disk, because its staged output does not survive a kill. Direct expert solver calls (`tomojax.recon.cgls`, `cgls_multires`, `fista`, `fbp_host`, `fdk_host`, `fourier`, and the other functions in `tomojax.recon`) and TomoJAX Studio do not expose it. Direct axial center fits (`tj.align(scan, fit="center")` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop.
 
 ### Checkpoint a Slurm job
 

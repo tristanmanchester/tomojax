@@ -61,16 +61,47 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     >>> report = tj.inspect("scan.nxs")  # doctest: +SKIP
     >>> report["valid"], report["angles"]["coverage"]  # doctest: +SKIP
     """
+    from tomojax.core.checkpoint import describe
     from tomojax.io import validate_dataset
     from tomojax.io.api import inspect_dataset
 
     with progress.task("inspect", Path(path).name, None, ""):
-        issues = validate_dataset(Path(path))["issues"]
-        report = inspect_dataset(Path(path))
-        loading = _loading(Path(path)) if report["projection"]["found"] else None
-        return cast(
-            "Inspection", {**report, "loading": loading, "valid": not issues, "issues": issues}
-        )
+        report: Mapping[str, object]
+        if Path(path).is_dir() and (saved := describe(path)) is not None:
+            report = {**_no_dataset(path), "checkpoint": saved}
+        else:
+            issues = validate_dataset(Path(path))["issues"]
+            dataset = inspect_dataset(Path(path))
+            loading = _loading(Path(path)) if dataset["projection"]["found"] else None
+            checked: dict[str, object] = {
+                "loading": loading,
+                "checkpoint": None,
+                "valid": not issues,
+                "issues": issues,
+            }
+            report = {**dataset, **checked}
+        return cast("Inspection", report)
+
+
+def _no_dataset(path: str | PathLike[str]) -> dict[str, object]:
+    """The dataset sections of a report on a path that holds none (a checkpoint)."""
+    absent = {"found": False}
+    return {
+        "schema_version": 1,
+        "input_path": str(path),
+        "projection": {**absent, "path": None, "shape": None, "dtype": None, "n_views": None},
+        "angles": {**absent, "path": None, "count": None, "units": None, "coverage": None},
+        "geometry": {**absent, "type": None, "meta_found": False, "meta_keys": []},
+        "detector_metadata": {**absent, "nu": None, "nv": None, "du": None, "dv": None},
+        "flats_darks": {"image_key_found": False, "flat_count": 0, "dark_count": 0},
+        "corrections": [],
+        "alignment": {**absent, "params_found": False},
+        "memory_estimates": {"feasible": False, "modes": {}, "notes": "not a dataset"},
+        "volume": {**absent, "shape": None, "axes": None, "method": None},
+        "loading": None,
+        "valid": True,
+        "issues": [],
+    }
 
 
 def _loading(path: Path) -> dict[str, object]:

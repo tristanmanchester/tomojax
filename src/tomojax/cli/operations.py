@@ -96,6 +96,7 @@ class Reconstruct(ReconstructSettings, tag="reconstruct"):
     """Reconstruct the supplied scan on its resolved grid."""
 
     source: Source
+    checkpoint: str | None = None
 
 
 class ReconstructSlabs(Record, tag="reconstruct_slabs"):
@@ -110,6 +111,7 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     corrections: tuple[Step, ...] = ()
     warm_start: bool | None = None
     epsilon: float = 1e-6
+    checkpoint: str | None = None
 
 
 class AlignSettings(Record, tag="align", kw_only=True):
@@ -132,6 +134,7 @@ class Align(AlignSettings, tag="align"):
     """Return geometry-corrected scan and fitted pose table."""
 
     source: Source
+    checkpoint: str | None = None
 
 
 class Interleaved(Record, tag="interleaved"):
@@ -363,9 +366,10 @@ class Plane(Record, tag="plane"):
     index: Count
 
 
-class Slice(Reconstruct, tag="slice", kw_only=True):
+class Slice(ReconstructSettings, tag="slice", kw_only=True):
     """Select a plane from the specified full method."""
 
+    source: Source
     axis: Literal["z", "y", "x"]
     index: Count
 

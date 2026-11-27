@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 
     from tomojax.cli._progress import ProgressParser
     from tomojax.cli.products import Provenance
+    from tomojax.core.json_values import JsonValue
 
 EXPERT_EPILOG = (
     "Expert settings are TOML keys for --config; --config-keys lists them with their defaults."
@@ -51,18 +52,31 @@ def add_checkpoint(parser: argparse.ArgumentParser) -> None:
         "--checkpoint",
         metavar="DIR",
         default=None,
-        help="Keep the run's state in DIR, to resume from after SIGTERM, a time limit or a "
-        "failed node by running the same command again; DIR is deleted when the run ends",
+        help="Keep the run's state in DIR: SIGTERM or Ctrl-C saves it and stops (exit 130), "
+        "and the same command run again resumes, also after a time limit or a failed node; "
+        "DIR is deleted when the run ends",
     )
 
 
-def checkpointed[T](path: str | None, operation: Callable[[], T]) -> T:
-    """Run ``operation`` owning the checkpoint at ``path`` (None: none) until it has saved."""
+def checkpointed[T](
+    path: str | None, operation: Callable[[], T], *, request: JsonValue = None
+) -> T:
+    """Run ``operation`` owning the checkpoint at ``path`` (None: none) until it has saved.
+
+    The checkpoint records ``request``, by default this command line and its
+    working directory, so a later reader knows what to run again.
+    """
     if path is None:
         return operation()
+    import shlex
+    import sys
+
     from tomojax.core.checkpoint import opened
 
-    with opened(path):
+    if request is None:
+        command = shlex.join(["tomojax", *sys.argv[1:]])
+        request = {"command": command, "cwd": str(Path.cwd())}
+    with opened(path, request=request):
         return operation()
 
 

@@ -9,9 +9,11 @@ from importlib import metadata, resources
 import os
 from pathlib import Path
 import select
+import signal
 import socket
 import tempfile
-from threading import Lock
+import threading
+from threading import Event, Lock
 from typing import TYPE_CHECKING
 
 import msgspec
@@ -127,6 +129,7 @@ def _transport(
     wake: socket.socket,
     stdin: int,
     stdout: int,
+    terminated: Event,
 ) -> int:
     """Poll the pipes. Darwin requires POLLHUP to be requested for idle stdout."""
     poll = select.poll()
@@ -137,7 +140,7 @@ def _transport(
     pending = memoryview(b"")
     lines = _Input()
     try:
-        while not session.closing and not box.lost:
+        while not session.closing and not box.lost and not terminated.is_set():
             if not pending:
                 pending = box.take()
             poll.register(stdout, select.POLLHUP | (select.POLLOUT if pending else 0))
@@ -180,17 +183,37 @@ def serve(
     ):
         writer.setblocking(False)
         box = _Outbox(writer)
+        terminated = Event()
+        _stop_on_sigterm(terminated, writer)
         inventory = executor.submit(ready).result() if callable(ready) else ready
         session = Session(Path(root), execute, box.send, inventory, description)
         box.send(inventory)
         running = executor.submit(session.work)
         running.add_done_callback(_executor_done)
         try:
-            return _transport(session, running, box, reader, stdin, stdout)
+            return _transport(session, running, box, reader, stdin, stdout, terminated)
         finally:
             session.stop()
             running.result()
             session.close()
+
+
+def _stop_on_sigterm(terminated: Event, wake: socket.socket) -> None:
+    """On SIGTERM (a scheduler's kill), shut down as at EOF and exit once the jobs end.
+
+    Shutdown cancels every job: a checkpointed one saves its state at its next
+    boundary first, and its ``canceled`` terminal names the checkpoint. The handler
+    only flags the transport, whose loop then runs the shutdown.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        return
+
+    def terminate(_signum: int, _frame: object) -> None:
+        terminated.set()
+        with suppress(BlockingIOError):
+            _ = wake.send(b".")
+
+    _ = signal.signal(signal.SIGTERM, terminate)
 
 
 def _executor_done(future: Future[None]) -> None:

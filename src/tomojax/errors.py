@@ -29,7 +29,20 @@ class InvalidParameter(ValueError):
 
 
 class Canceled(Exception):
-    """The operation stopped at a work boundary."""
+    """The operation stopped at a work boundary.
+
+    Parameters
+    ----------
+    message : str, optional
+        Why and where it stopped; ``"canceled"`` by default.
+    checkpoint : str or None, optional
+        The directory holding the stopped run's saved state: the same call with
+        this checkpoint resumes. None when the run had no checkpoint.
+    """
+
+    def __init__(self, message: str = "canceled", *, checkpoint: str | None = None) -> None:
+        super().__init__(message)
+        self.checkpoint = checkpoint
 
 
 @contextmanager
@@ -97,7 +110,7 @@ def classify(exc: Exception) -> Error:
         if isinstance(cause, InvalidParameter):
             return Error(2, "invalid_parameter", str(exc), cause.path)
         if isinstance(cause, Canceled):
-            return Error(2, "canceled", str(exc))
+            return Error(2, "canceled", str(exc), checkpoint=cause.checkpoint)
         if isinstance(cause, MemoryError) or _device_allocation_failed(cause):
             return Error(2, "out_of_memory", str(exc))
         if isinstance(cause, OSError | ValueError | KeyError):

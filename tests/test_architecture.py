@@ -138,7 +138,6 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--tv-weight": ("reconstruct", "tv_weight"),
         "--nonnegative": ("reconstruct", "nonnegative"),
         "--warm-start": ("reconstruct", "warm_start"),
-        "--seed": ("reconstruct", "seed"),
         "--grid": ("reconstruct", "grid"),
         "--region": ("reconstruct", "region"),
         "--apply-poses": ("load", "apply_poses"),
@@ -146,6 +145,7 @@ _CLI_VOCABULARY: dict[str, dict[str, tuple[str, str] | str]] = {
         "--preview": "file output",
         "--manifest": "file output",
         "--watch-dir": "file output: images of the solve as it progresses (progress.previews)",
+        "--checkpoint": ("reconstruct", "checkpoint"),
         "--progress": "terminal display",
     },
     "align": {

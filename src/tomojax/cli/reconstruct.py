@@ -61,7 +61,6 @@ _PUBLIC = (
     "--tv-weight",
     "--nonnegative",
     "--warm-start",
-    "--seed",
     "--grid",
     "--region",
     "--apply-poses",
@@ -69,6 +68,7 @@ _PUBLIC = (
     "--preview",
     "--manifest",
     "--watch-dir",
+    "--checkpoint",
     "--progress",
     "--dry-run",
 )

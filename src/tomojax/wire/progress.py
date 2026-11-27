@@ -109,11 +109,16 @@ class Result(Progress, tag="result"):
 
 
 class Error(Progress, tag="error"):
-    """Operational failure with an optional nested parameter path."""
+    """Operational failure with an optional nested parameter path.
+
+    ``checkpoint`` names the directory holding a stopped run's saved state: the
+    same operation with that checkpoint resumes it.
+    """
 
     kind: ErrorKind
     message: str
     path: str | None = None
+    checkpoint: str | None = None
 
 
 type Event = Started | Placed | Advanced | Finished | Note | Paused | Resumed | Preview

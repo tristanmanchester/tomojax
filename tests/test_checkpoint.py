@@ -74,6 +74,33 @@ SOLVES = [
 ]
 
 
+def test_a_cancel_saves_the_state_and_names_the_checkpoint(tmp_path: Path) -> None:
+    scan = _scan()
+    whole = tj.reconstruct(scan, "sirt", iterations=200).volume
+    stop = progress.Control()
+    advances = [0]
+
+    def cancel_after_three(event: progress.Event) -> None:
+        if isinstance(event, progress.Advanced):
+            advances[0] += 1
+            if advances[0] == 3:
+                stop.cancel()  # the default schedule has not saved yet: the cancel saves
+
+    with (
+        progress.watch(cancel_after_three, control=stop),
+        pytest.raises(Canceled, match="canceled after saving its state") as stopped,
+    ):
+        tj.reconstruct(scan, "sirt", iterations=200, checkpoint=tmp_path / "run")
+    assert stopped.value.checkpoint == str(tmp_path / "run")
+    report = tj.inspect(tmp_path / "run")["checkpoint"]
+    assert report is not None
+    assert report["run"]["method"] == "sirt"  # type: ignore[index]
+    assert report["saved"] is not None
+    resumed = tj.reconstruct(scan, "sirt", iterations=200, checkpoint=tmp_path / "run")
+    np.testing.assert_array_equal(resumed.volume, whole)
+    assert not (tmp_path / "run").exists()
+
+
 @pytest.mark.usefixtures("every_boundary")
 @pytest.mark.parametrize(("method", "options"), SOLVES)
 def test_a_stopped_solve_resumes_to_the_uninterrupted_volume(
@@ -308,7 +335,7 @@ def test_a_save_interrupted_part_way_leaves_the_previous_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     session = checkpoint.Session(tmp_path)
-    session.bind({"run": "a"})
+    session.bind({"run": "a"}, {"operation": "test"})
     session.save("solve-0", (np.arange(4.0), np.ones(3)), {"count": 1})
     writes = [0]
     write = np.lib.format.write_array
@@ -586,7 +613,8 @@ _COMMAND = textwrap.dedent(
 )
 
 
-def test_the_command_line_stops_on_sigterm_and_resumes(tmp_path: Path) -> None:
+@pytest.mark.parametrize("stop", [signal.SIGTERM, signal.SIGINT], ids=["sigterm", "ctrl-c"])
+def test_the_command_line_stops_and_resumes(tmp_path: Path, stop: signal.Signals) -> None:
     scan = _scan()
     tj.save(tmp_path / "scan.nxs", scan)
     args = ["reconstruct", "scan.nxs", "--method", "sirt", "--iterations", "400"]
@@ -607,9 +635,12 @@ def test_the_command_line_stops_on_sigterm_and_resumes(tmp_path: Path) -> None:
         if event.get("unit") == "iterations":
             solve = event["task"]
         elif event.get("event") == "advanced" and event["task"] == solve:
-            stopped.send_signal(signal.SIGTERM)  # inside the solve: it saves, then stops
+            stopped.send_signal(stop)  # inside the solve: it saves, then stops
             break
+    error = json.loads(stopped.stdout.read().splitlines()[-1])
     assert stopped.wait() == 130
+    assert error["kind"] == "canceled"
+    assert error["checkpoint"] == str(tmp_path / "run")
     assert (tmp_path / "run" / "checkpoint.json").is_file()
     assert command("-o", "part.nxs", "--checkpoint", "run").wait() == 0
 

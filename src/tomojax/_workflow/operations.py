@@ -696,6 +696,11 @@ def reconstruct_resolved(
     with (
         checkpointing(
             checkpoint,
+            described={
+                "method": method,
+                "config": plan.config,
+                "source": scan.source.source_path if scan.source else None,
+            },
             operation="reconstruct",
             settings=(plan.config, plan.warm_start, plan.cylinder, scan.geometry),
             input=scan.projections,
@@ -908,6 +913,11 @@ def _reconstruct_slabs_context(
         with (
             checkpointing(
                 checkpoint,
+                described={
+                    "method": method,
+                    "config": cfg,
+                    "source": frames.source.source_path if frames.source else None,
+                },
                 operation="reconstruct_slabs",
                 settings=(cfg, target, bound, epsilon, warm_start, frames.geometry),
                 input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
@@ -1229,8 +1239,15 @@ def align_resolved(
     from tomojax.core.checkpoint import checkpointing
 
     settings = plan if isinstance(plan, CenterSelection) else replace(plan, info={})
+    described: dict[str, object] = (
+        {"method": plan.method}
+        if isinstance(plan, CenterSelection)
+        else {"method": "joint", "fit": plan.fit, "config": plan.config}
+    )
+    source = scan.source.source_path if scan.source else None
     with checkpointing(
         checkpoint,
+        described={**described, "source": source},
         operation="align",
         settings=(settings, scan.geometry),
         input=(scan.projections, scan.view_positions),

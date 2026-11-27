@@ -464,11 +464,12 @@ class tomojax.progress.Advanced(
         time: 'float',
         eta: 'float | None' = None,
     ) -> None
-class tomojax.progress.Canceled
+class tomojax.progress.Canceled(message: 'str' = 'canceled', *, checkpoint: 'str | None' = None) -> 'None'
 class tomojax.progress.Control() -> 'None'
     .boundary(self) -> 'None'
     .cancel(self) -> 'None'
     .canceled
+    .deferring(self) -> 'Iterator[None]'
     .pause(self) -> 'None'
     .resume(self) -> 'None'
     .state

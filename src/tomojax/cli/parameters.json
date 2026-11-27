@@ -2567,6 +2567,18 @@
           },
           "description": "Measured line integrals with their acquisition geometry."
         },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directory of the run's saved state, created if absent; None saves nothing."
+        },
         "method": {
           "enum": [
             "auto",
@@ -2796,10 +2808,7 @@
           "warm_start": "warm_start",
           "seed": "seed",
           "devices": "devices",
-          "checkpoint": {
-            "owner": "python",
-            "description": "Directory of the run's saved state, created if absent; None saves nothing."
-          }
+          "checkpoint": "checkpoint"
         }
       }
     },
@@ -2954,6 +2963,18 @@
           "type": "number",
           "default": 1e-06,
           "description": "Positive finite lower bound for flat field and transmission."
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directory recording the finished slabs, created if absent; None records nothing."
         }
       },
       "required": [
@@ -2972,10 +2993,7 @@
           "config": "config",
           "warm_start": "warm_start",
           "epsilon": "epsilon",
-          "checkpoint": {
-            "owner": "python",
-            "description": "Directory recording the finished slabs, created if absent; None records nothing."
-          }
+          "checkpoint": "checkpoint"
         }
       }
     },
@@ -3006,6 +3024,18 @@
             }
           },
           "description": "Measured line integrals with their declared acquisition geometry."
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Directory of the fit's saved state, created if absent; None saves nothing."
         },
         "fit": {
           "anyOf": [
@@ -3219,10 +3249,7 @@
           "interpolation": "interpolation",
           "resolution": "resolution",
           "config": "config",
-          "checkpoint": {
-            "owner": "python",
-            "description": "Directory of the fit's saved state, created if absent; None saves nothing."
-          }
+          "checkpoint": "checkpoint"
         }
       }
     },
@@ -4574,24 +4601,6 @@
             "slice"
           ]
         },
-        "source": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PathInput"
-            },
-            {
-              "$ref": "#/$defs/Member"
-            }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "path": "#/$defs/PathInput",
-              "member": "#/$defs/Member"
-            }
-          },
-          "description": "Measured line integrals with their acquisition geometry."
-        },
         "method": {
           "enum": [
             "auto",
@@ -4796,6 +4805,24 @@
           ],
           "default": null,
           "description": "Devices sharing views for supported methods; None uses the default device."
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their acquisition geometry."
         },
         "axis": {
           "enum": [
@@ -4827,24 +4854,6 @@
             "center_sweep"
           ]
         },
-        "source": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PathInput"
-            },
-            {
-              "$ref": "#/$defs/Member"
-            }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "path": "#/$defs/PathInput",
-              "member": "#/$defs/Member"
-            }
-          },
-          "description": "Measured line integrals with their acquisition geometry."
-        },
         "method": {
           "enum": [
             "auto",
@@ -5049,6 +5058,24 @@
           ],
           "default": null,
           "description": "Devices sharing views for supported methods; None uses the default device."
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "#/$defs/Member"
+            }
+          },
+          "description": "Measured line integrals with their acquisition geometry."
         },
         "axis": {
           "enum": [

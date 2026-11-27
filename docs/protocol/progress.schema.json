@@ -520,7 +520,7 @@
     },
     "Error": {
       "title": "Error",
-      "description": "Operational failure with an optional nested parameter path.",
+      "description": "Operational failure with an optional nested parameter path.\n\n    ``checkpoint`` names the directory holding a stopped run's saved state: the\n    same operation with that checkpoint resumes it.",
       "type": "object",
       "properties": {
         "event": {
@@ -547,6 +547,17 @@
           "type": "string"
         },
         "path": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "checkpoint": {
           "anyOf": [
             {
               "type": "string"

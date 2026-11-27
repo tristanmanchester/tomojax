@@ -2246,6 +2246,17 @@
             }
           }
         },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "method": {
           "enum": [
             "auto",
@@ -2564,6 +2575,17 @@
         "epsilon": {
           "type": "number",
           "default": 1e-06
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -2600,6 +2622,17 @@
               "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
             }
           }
+        },
+        "checkpoint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "fit": {
           "anyOf": [
@@ -3914,23 +3947,6 @@
             "slice"
           ]
         },
-        "source": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PathInput"
-            },
-            {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "path": "#/$defs/PathInput",
-              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          }
-        },
         "method": {
           "enum": [
             "auto",
@@ -4103,6 +4119,23 @@
             }
           ],
           "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
         },
         "axis": {
           "enum": [
@@ -4134,23 +4167,6 @@
             "center_sweep"
           ]
         },
-        "source": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/PathInput"
-            },
-            {
-              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          ],
-          "discriminator": {
-            "propertyName": "type",
-            "mapping": {
-              "path": "#/$defs/PathInput",
-              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
-            }
-          }
-        },
         "method": {
           "enum": [
             "auto",
@@ -4323,6 +4339,23 @@
             }
           ],
           "default": null
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathInput"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "path": "#/$defs/PathInput",
+              "member": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Member"
+            }
+          }
         },
         "axis": {
           "enum": [

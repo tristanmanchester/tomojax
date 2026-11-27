@@ -290,6 +290,7 @@ class Control:
         self._condition = Condition()
         self._state: _State = "running"
         self._canceled = False
+        self._deferring = 0
 
     def pause(self) -> None:
         """Request a pause at the next work boundary."""
@@ -333,17 +334,41 @@ class Control:
         with self._condition:
             return self._canceled
 
+    @contextmanager
+    def deferring(self) -> Iterator[None]:
+        """Within, a cancel waits for the code that saves state at its own boundary.
+
+        A checkpointed loop enters this block: on cancel it saves at its next
+        boundary and raises :class:`Canceled` itself, so the work boundaries inside
+        it let the cancel pass. Outside the block a cancel stops the work at the
+        next boundary.
+
+        Yields
+        ------
+        None
+            The extent of the deferral.
+        """
+        with self._condition:
+            self._deferring += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._deferring -= 1
+
     def boundary(self) -> None:
         """Mark a work boundary: block while paused, or raise when canceled.
 
         Raises
         ------
         Canceled
-            If the operation was canceled.
+            If the operation was canceled, unless a checkpointed loop defers it.
         """
         while True:
             with self._condition:
                 if self._canceled:
+                    if self._deferring:
+                        return
                     raise Canceled()
                 if self._state == "running":
                     return
@@ -354,7 +379,7 @@ class Control:
                 active.watcher.emit(Paused, active.id)
             with self._condition:
                 self._condition.wait_for(lambda: self._canceled or self._state != "paused")
-                if self._canceled:
+                if self._canceled and not self._deferring:
                     raise Canceled()
             if active is not None:
                 active.watcher.pause_time += monotonic() - start
@@ -745,6 +770,18 @@ def handler_failed(exc: BaseException) -> bool:
     """Identify a handler exception at an internal recovery boundary."""
     watcher = _watch.get()
     return watcher is not None and watcher.error is exc
+
+
+def active_control() -> Control | None:
+    """The control of the innermost watch in the calling context, if it has one.
+
+    Returns
+    -------
+    Control or None
+        The token a controller uses to pause or cancel the watched work.
+    """
+    watcher = _watch.get()
+    return None if watcher is None else watcher.control
 
 
 def check_canceled() -> None:

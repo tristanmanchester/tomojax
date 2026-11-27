@@ -157,9 +157,6 @@ def description() -> dict[str, Any]:
                 if name == "out" and operation is op.Reconstruct:
                     by_name[name] = {"owner": "worker", **info}
                     continue
-                if name == "checkpoint":  # resuming is for Python and command-line runs
-                    by_name[name] = {"owner": "python", **info}
-                    continue
                 if name not in props:
                     wire_name = {
                         "steps": "corrections",
@@ -189,7 +186,7 @@ def description() -> dict[str, Any]:
     ):
         props = definitions[target.__name__]["properties"]
         for name, field in definitions[source.__name__]["properties"].items():
-            if name != "type":
+            if name != "type" and name in props:
                 props[name] = field
     return schema
 

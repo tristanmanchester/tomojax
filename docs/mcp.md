@@ -75,7 +75,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | Tool | What it does |
 | --- | --- |
 | `status` | Versions, devices, GPU memory, live handles and running jobs |
-| `inspect` | Report on a file, list the datasets in a directory, or show an HDF5 tree |
+| `inspect` | Report on a file and what loading it reads, list the datasets and checkpoints in a directory, show an HDF5 tree, or describe a checkpoint |
 | `open` | Load a scan, raw frames or a saved result as a handle, with metadata overrides |
 | `describe` | Expert settings for an operation or solver, with defaults and units |
 | `correct` | Flat/dark correction, zingers, phase retrieval, rings, beam hardening and binning |
@@ -111,9 +111,15 @@ Handles last until you close them, the worker restarts, or the server exits. Sav
 
 Every result has a short text summary, the same fields as structured content, and labeled PNG panels where an image helps: three central planes after `reconstruct`, working slices (and a pose plot when per-view motion is fitted) after joint `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a center sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
 
-Long jobs send progress with the current stage, its metrics and an estimate of the time left. Clients that support the MCP tasks extension receive long calls as tasks they can poll and cancel; other clients wait for the result. Cancel a job from the client or with `control`; it stops at the next work boundary (an iteration, slab, or alignment step).
+Long jobs send progress with the current stage, its metrics and an estimate of the time left. Clients that support the MCP tasks extension receive long calls as tasks they can poll and cancel; other clients wait for the result. Cancel a job from the client or with `control`; it stops at the next work boundary (an iteration, slab, or alignment step), saving first when it has a `checkpoint`.
 
-The server runs one worker process with one queue, so GPU jobs run one after another. Running out of GPU memory returns an ordinary error with suggestions, and the existing handles stay. If the worker process itself dies, the server reports which handles were lost and starts a new worker. The MCP tools do not write restartable checkpoints to disk; for long runs that must survive a process kill, run Python or the CLI with `checkpoint=` or `--checkpoint` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)).
+The server runs one worker process with one queue, so GPU jobs run one after another. Running out of GPU memory returns an ordinary error with suggestions, and the existing handles stay. If the worker process itself dies, the server reports which handles were lost and starts a new worker.
+
+### Long jobs that must survive a kill
+
+`reconstruct`, `reconstruct_slabs` and `align` take `checkpoint`, a directory where the run saves its state at its work boundaries ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). When a run stops before it finishes, because the agent canceled it with `control`, the scheduler sent `SIGTERM`, or the session ended, it saves first and the tool returns a `canceled` error whose `checkpoint` field names the directory and whose `next` says how to resume. Call the same tool again with the same arguments on the same input to continue; the directory is deleted when the run completes. A kill that allows no save (`SIGKILL`, a lost node) resumes from the last periodic save.
+
+Handles do not outlive the server, so a later session cannot reuse `@scan-…` IDs. Before a long run, `save` the input scan and run from its path; the call can then be repeated exactly. To pick up another session's work, `inspect` the working directory, which lists `checkpoints`, then `inspect` a checkpoint: it reports the run's operation, method and settings, the request that started it (its tool arguments and the provenance of its inputs), when it was last saved, and whether a running process still holds it.
 
 ## Point at a feature
 

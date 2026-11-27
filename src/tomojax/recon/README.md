@@ -22,7 +22,8 @@ fields are the keys of a `tomojax reconstruct --config` TOML file
 (`tomojax reconstruct --method NAME --config-keys` lists them).
 
 Checkpoint and resume (`checkpoint=DIR` on `tj.reconstruct` and
-`tj.reconstruct_slabs`, or `--checkpoint DIR` on `tomojax reconstruct`) covers
+`tj.reconstruct_slabs`, `--checkpoint DIR` on `tomojax reconstruct`, or `checkpoint` on
+the worker's and MCP server's `reconstruct` and `reconstruct_slabs`) covers
 the iterative solvers (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) and the host-slab
 and raw-slab loops (`fbp`, `fdk`, `fourier`, `sirt`, `mlem`). Calling the lower-level
 functions in `tomojax.recon` directly (`cgls`, `cgls_multires`, `fista`, `fbp_host`,

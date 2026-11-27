@@ -81,8 +81,6 @@ def test_every_public_workflow_parameter_has_a_wire_field_or_owner(description):
             for name, target in mapping.items():
                 if (func, name) == (tj.reconstruct, "out"):
                     assert target["owner"] == "worker"
-                elif name == "checkpoint":
-                    assert target["owner"] == "python"
                 else:
                     assert properties[target]["description"]
 

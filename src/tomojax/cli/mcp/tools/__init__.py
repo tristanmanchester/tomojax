@@ -3,17 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import base64
 from functools import partial
 from importlib import resources
 import json
-import os
 from pathlib import Path
 import re
 import time
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from mcp_types import CallToolResult, ImageContent, ResourceLink, TextContent
+from mcp_types import CallToolResult, ResourceLink, TextContent
 import msgspec
 
 from tomojax._parameters import method_fit
@@ -24,6 +22,7 @@ from tomojax.cli.mcp.guidance import operation_parameters
 from tomojax.cli.mcp.supervisor import WorkerError, activity
 from tomojax.cli.mcp.tools import seeing
 from tomojax.cli.mcp.tools.budget import bounded
+from tomojax.cli.mcp.tools.files import inspect_directory, preview_image, tree
 from tomojax.cli.mcp.tools.references import PRIMARY, resolve, wire_arguments
 from tomojax.cli.mcp.tools.schemas import expected, schema
 from tomojax.cli.mcp.tools.workflows import MODELS, forms
@@ -144,90 +143,10 @@ def elapsed_samples(samples: list[Object]) -> list[Object]:
     ]
 
 
-def preview_image(path: Path) -> ImageContent:
-    """The central projection, or the central z slice of a volume saved without its scan."""
-    from io import BytesIO
-
-    from PIL import Image
-
-    from tomojax.cli import _images, _previews
-
-    if path.suffix.lower() == ".npz":
-        from tomojax.io.projection_layout import saved_npz_layout
-
-        _, arrays = saved_npz_layout(path)
-        stack = arrays["projections" if "projections" in arrays else "volume"]
-        pixels = stack[len(stack) // 2]  # the central view, or the central z plane
-    else:
-        pixels = _previews.projection_image(path)
-        if pixels is None:
-            (plane,) = _previews.saved_requests(path, None)[:1]
-            pixels = _previews.saved_plane(path, *plane)
-    image = Image.fromarray(_images.to_uint8(pixels, _images.limits(pixels)))
-    image.thumbnail((1024, 1024))
-    buffer = BytesIO()
-    image.save(buffer, format="PNG")
-    return ImageContent(
-        type="image", mime_type="image/png", data=base64.b64encode(buffer.getvalue()).decode()
-    )
-
-
-def tree(path: Path) -> Object:
-    """List HDF5 dataset names, shapes and dtypes without loading their values."""
-    import h5py
-
-    datasets = {}
-    if path.is_file() and h5py.is_hdf5(path):
-        with h5py.File(path, "r") as file:
-
-            def visit(name: str, item: Any) -> None:
-                if isinstance(item, h5py.Dataset):
-                    datasets["/" + name] = {"shape": list(item.shape), "dtype": str(item.dtype)}
-
-            file.visititems(visit)
-    return datasets
-
-
-def inspect_directory(path: Path) -> CallToolResult:
-    """Summarize acquisition entry points and count TIFF frames in one directory pass."""
-    formats = {
-        ".xtekct": "Nikon",
-        ".txrm": "Zeiss",
-        ".txm": "Zeiss",
-        ".log": "acquisition log",
-        ".info": "acquisition metadata",
-        ".xml": "acquisition metadata",
-        ".npz": "NumPy archive",
-        ".mat": "PSI MATLAB acquisition",
-        **dict.fromkeys((".nxs", ".nx", ".hdf", ".hdf5", ".h5"), "HDF5"),
-    }
-    found: dict[str, str] = {}
-    subdirectories: list[str] = []
-    directory_count = frames = candidates = 0
-    with os.scandir(path) as entries:
-        for entry in entries:
-            suffix = Path(entry.name).suffix.lower()
-            if entry.is_dir():
-                directory_count += 1
-                if len(subdirectories) < 64:
-                    subdirectories.append(entry.name)
-            elif suffix in {".tiff", ".tif"} and entry.is_file():
-                frames += 1
-            elif suffix in formats and entry.is_file():
-                candidates += 1
-                if len(found) < 64:
-                    found[entry.path] = formats[suffix]
-    return result(
-        {
-            "directory": str(path),
-            "datasets": dict(sorted(found.items())),
-            "candidate_count": candidates,
-            "subdirectories": sorted(subdirectories),
-            "subdirectory_count": directory_count,
-            "tiff_files": frames,
-            "omitted": candidates - len(found),
-        }
-    )
+def local(base: Path, path: str) -> str:
+    """A path the call writes, against ``base`` when relative, without resolving its last part."""
+    destination = base / Path(path).expanduser()
+    return str(destination.parent.resolve() / destination.name)
 
 
 def summary_text(data: Object) -> str:
@@ -303,8 +222,8 @@ class Tools:
     async def inspect(self, args: Inspect) -> CallToolResult:
         """Inspect through the worker with directory discovery and unrecognized-HDF5 fallback."""
         path = (self.supervisor.base / Path(args.path).expanduser()).resolve()
-        if path.is_dir():
-            return await asyncio.to_thread(inspect_directory, path)
+        if path.is_dir() and not (path / "checkpoint.json").is_file():
+            return result(await asyncio.to_thread(inspect_directory, path))
         g = await self.supervisor.worker()
 
         async def report(item: Path) -> Object:
@@ -316,6 +235,7 @@ class Tools:
                 k: full[k]
                 for k in (
                     "input_path",
+                    "checkpoint",
                     "valid",
                     "issues",
                     "loading",
@@ -343,6 +263,8 @@ class Tools:
                     "next": "Select data_path and angles_path for open.",
                 }
             )
+        if saved := object_mapping(data.get("checkpoint")):
+            return result(saved, text=f"Checkpoint of {saved['run']}. {saved['resume']}")
         shape = data.get("projection", {}).get("shape") or data.get("volume", {}).get("shape")
         issues = "; ".join(data.get("issues", []))
         text = f"{path.name}, shape {shape}. {issues or 'Inspection passed.'}"
@@ -382,13 +304,13 @@ class Tools:
         params = msgspec.to_builtins(args)
         dry = params.pop("dry_run", False)
         detail = params.pop("detail", "summary")
-        command = (
+        command: Object = (
             params["operation"] if name in ("edit_scan", "preview") else {"type": name, **params}
         )
         model = MODELS[command["type"]]
-        if "path" in command:
-            destination = self.supervisor.base / Path(command["path"]).expanduser()
-            command["path"] = str(destination.parent.resolve() / destination.name)
+        # Files and directories the call writes resolve against the project directory.
+        written: dict[str, str] = {k: command[k] for k in ("path", "checkpoint") if command.get(k)}
+        command.update({key: local(self.supervisor.base, path) for key, path in written.items()})
         roi = command.pop("roi", None) if model in (op.Slice, op.CenterSweep) else None
         if roi is not None:
             lo, hi = roi["zyx".index(command["axis"])]
@@ -662,6 +584,7 @@ def tool_error(
     """
     kind = err.kind if isinstance(err, WorkerError) else "invalid_parameter"
     path = err.path if isinstance(err, WorkerError) else None
+    checkpoint = err.checkpoint if isinstance(err, WorkerError) else None
     message = str(err)
     hint = None
     if isinstance(err, msgspec.ValidationError):
@@ -683,11 +606,18 @@ def tool_error(
         "internal": "Check status for worker and device information.",
     }
     next_step = hints.get(kind, f"Check the {name} tool parameters and retry.")
+    if checkpoint is not None:
+        next_step = (
+            f"Its state is saved in {checkpoint}: call {name} again with the same arguments, "
+            "on the same input, to resume (inspect shows what the checkpoint holds)."
+        )
     if choices:
         next_step = "Choose one of " + ", ".join(map(str, choices)) + "."
     elif hint:
         next_step = f"Give {hint}."
     data = {"kind": kind, "path": path, "message": message, "next": next_step}
+    if checkpoint is not None:
+        data["checkpoint"] = checkpoint
     return result(data, text=f"{kind}: {message}. {next_step}", error=True)
 
 
@@ -729,6 +659,7 @@ def workflow_output() -> Object:
             "manifest": {"type": "object"},
             "info": {"type": "object"},
             "continuation": {"type": "string"},
+            "checkpoint": {"type": "string"},
         },
         "anyOf": [
             {"required": [k]} for k in ("handle", "paths", "type", "message", "continuation")
@@ -766,6 +697,12 @@ OUTPUTS: dict[str, Object] = {
         "geometry": ANY,
         "directory": TEXT,
         "datasets": ANY,
+        "loading": ANY,
+        "checkpoints": LIST,
+        "run": ANY,
+        "request": {},
+        "entries": ANY,
+        "resume": TEXT,
     },
     "describe": {"operation": TEXT, "parameters": ANY},
     "control": {"action": TEXT, "tools": LIST},
@@ -787,7 +724,13 @@ def output_schema(name: str) -> Object:
     """The declared structured result of one tool."""
     if name in {*MODELS, "edit_scan", "open"}:
         return workflow_output()
-    common = {"continuation": TEXT, "message": TEXT, "next": TEXT, "notes": LIST}
+    common = {
+        "continuation": TEXT,
+        "message": TEXT,
+        "next": TEXT,
+        "notes": LIST,
+        "checkpoint": TEXT,
+    }
     return {"type": "object", "properties": {**OUTPUTS.get(name, {}), **common}}
 
 

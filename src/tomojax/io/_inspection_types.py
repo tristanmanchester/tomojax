@@ -207,6 +207,13 @@ class Inspection(InspectionReport):
     loading : dict or None
         What loading the file as a scan reads (:class:`LoadingReport`); None when
         the file holds no projections.
+    checkpoint : dict or None
+        For a checkpoint directory (``checkpoint=`` of a stopped run), what it
+        holds: the run (operation, method, settings, input file, version), how it
+        was requested (a command line, or a worker operation and its inputs'
+        provenance), when it was created and last saved, each saved entry's
+        scalars, its size in bytes, whether a running process holds it, and how to
+        resume. None for a dataset, whose sections are then the ones above.
     valid : bool
         Whether the check found no issue.
     issues : list of str
@@ -214,6 +221,7 @@ class Inspection(InspectionReport):
     """
 
     loading: LoadingReport | None
+    checkpoint: dict[str, object] | None
     valid: bool
     issues: list[str]
 

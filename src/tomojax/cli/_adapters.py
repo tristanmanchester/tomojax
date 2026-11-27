@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from functools import partial, singledispatchmethod
 from pathlib import Path
@@ -38,7 +39,7 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, scan_layout, source
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
-from tomojax.cli._options import ancestor_paths, check_destinations
+from tomojax.cli._options import ancestor_paths, check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import scan_axes, unit_of
 from tomojax.cli.products import VOLUME_DATASET
@@ -48,9 +49,12 @@ from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+    from contextlib import AbstractContextManager
     from os import PathLike
 
     from tomojax._workflow.evaluation import SplitSettings
+    from tomojax.core.json_values import JsonValue
 
 type Work = Callable[[], Root | p.DataProduct | ex.NewHandle]
 
@@ -404,15 +408,16 @@ class Admission:
         )
 
     @prepare.register
-    def fit(self, operation: op.Reconstruct | op.Align) -> Work:
+    def fit(self, operation: op.Reconstruct | op.Slice | op.Align) -> Work:
         layout_only = self.validating or self.plan
         scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=layout_only)
         options = arguments(
             operation,
             self.context,
-            omit=("source", "axis", "index", "centers"),
+            omit=("source", "axis", "index", "centers", "checkpoint"),
             layout_only=layout_only,
         )
+        checkpoint = None if isinstance(operation, op.Slice) else operation.checkpoint
         if not isinstance(operation, op.Align):
             options["metadata_only"] = layout_only
         if isinstance(operation, op.Align):
@@ -420,7 +425,7 @@ class Admission:
 
             def apply_alignment() -> tj.Alignment:
                 with alignment_task(operation.method, operation.fit):
-                    return align_resolved(scan, alignment)
+                    return align_resolved(scan, alignment, checkpoint=checkpoint)
 
             compute = apply_alignment
             work = alignment
@@ -439,13 +444,19 @@ class Admission:
             work = plans[0]
         else:
             work = resolve_reconstruction(scan, **options)
-            compute = partial(reconstruct_resolved, work)
+            compute = partial(reconstruct_resolved, work, checkpoint=checkpoint)
         snapshots = sample(work)
         for snapshot in snapshots:
             self.context.snapshot(snapshot)
         if self.plan:
             return partial(plan_product, scan, work, snapshot=snapshots)
-        return compute
+        if checkpoint is None:
+            return compute
+        return partial(checkpointed, checkpoint, compute, request=self.request())
+
+    def request(self) -> JsonValue:
+        """How a checkpointed run was requested: the operation and its inputs' provenance."""
+        return {"operation": msgspec.to_builtins(self.manifest)}
 
     @prepare.register
     def region(self, operation: op.RegionPreview) -> Work:
@@ -562,7 +573,7 @@ class Admission:
             settings = arguments(
                 operation,
                 self.context,
-                omit=("source", "path", "force"),
+                omit=("source", "path", "force", "checkpoint"),
                 layout_only=self.validating,
             )
             grid, cfg, _ = slab_settings(item, **settings)
@@ -590,15 +601,15 @@ class Admission:
                 )
                 stage = self.context.staging.output(path, force=operation.force)
                 manifest = self.context.staging.output(sidecar, force=operation.force)
-                with (
-                    slab_volume(stage, record.to_nxtomo_metadata(), grid.shape) as volume,
-                    tj.reconstruct_slabs(item, **settings) as slabs,
-                ):
+                with slab_volume(stage, record.to_nxtomo_metadata(), grid.shape) as volume:
                     volume.attrs["long_name"] = "volume"
-                    for interval, slab in slabs:
-                        volume[interval] = slab.volume
-                        del slab
-                        self.context.control.boundary()
+                    checkpoint = operation.checkpoint
+                    write_slabs(
+                        partial(tj.reconstruct_slabs, item, **settings),
+                        volume,
+                        None if checkpoint is None else Path(checkpoint),
+                        self.request(),
+                    )
                 manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
                 return p.Files((str(path), str(sidecar)))
 
@@ -717,6 +728,48 @@ class Admission:
             return p.Files(tuple(self.details["paths"]))
 
         return write
+
+
+def write_slabs(
+    slabs: Callable[..., AbstractContextManager[Iterator[tuple[slice, tj.Reconstruction]]]],
+    volume: h5py.Dataset,
+    checkpoint: Path | None,
+    request: JsonValue,
+) -> None:
+    """Fill ``volume`` from ``slabs(checkpoint=...)``, keeping finished slabs in ``checkpoint``.
+
+    The staged output does not survive a kill, so with a checkpoint the finished
+    slabs go to ``volume.npy`` in it, which a resumed run reopens; the slabs after
+    the last finished one are made and the whole volume is copied out at the end.
+    The checkpoint's own records go first when it completes, so a directory left
+    holding only ``volume.npy`` is refused rather than mistaken for a finished run.
+    """
+    from tomojax.core.checkpoint import opened
+
+    kept = None if checkpoint is None else checkpoint / "volume.npy"
+    with nullcontext() if checkpoint is None else opened(checkpoint, request=request):
+        with slabs(checkpoint=checkpoint) as finished:
+            target = (
+                volume
+                if kept is None
+                else np.lib.format.open_memmap(
+                    kept, mode="r+" if kept.exists() else "w+", dtype=np.float32, shape=volume.shape
+                )
+            )
+            for interval, slab in finished:
+                target[interval] = slab.volume
+                if isinstance(target, np.memmap):
+                    target.flush()
+                del slab
+                progress.check_canceled()  # a pause holds here; a cancel waits for the save
+        if isinstance(target, np.memmap):
+            for start in range(0, len(target), 16):
+                volume[start : start + 16] = target[start : start + 16]
+            del target
+    if kept is not None and checkpoint is not None:
+        kept.unlink()
+        with suppress(OSError):
+            checkpoint.rmdir()
 
 
 def export_summary(

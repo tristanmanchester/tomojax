@@ -39,7 +39,10 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
 ## Commands
 
 - `inspect`: `tj.inspect`, describing a dataset and checking that it can be reconstructed;
-  `--json` prints the report as JSON. `--preview-dir DIR` writes PNGs: the central
+  `--json` prints the report as JSON. Its Loading section says what loading reads from the
+  file alone: pixel units when no pixel size is recorded, a rotation center or geometry
+  the file does not record, or the frames a stopped scan was cut to. Given a checkpoint
+  directory, it reports the stopped run instead. `--preview-dir DIR` writes PNGs: the central
   projection when the file holds projections, and slices named
   `slice_<axis>_<index>.png`. A saved reconstruction's slices are read from the file
   (its three central planes by default); a scan's are reconstructed (its central z
@@ -77,11 +80,13 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `effective_iterations` in `--manifest` to see whether an automatic solve stopped
   at the threshold or at the cap. The output
   holds the volume, its geometry and record, and names the input projections;
-  `--include-scan` keeps them too. `--checkpoint DIR` (an expert option listed by
-  `--config-keys`, also accepted as `checkpoint` in `--config`) saves solver state and
-  finished slabs in `DIR` so a killed run resumes when the same command runs again,
-  exiting `130` on `SIGTERM` after saving and deleting `DIR` once all outputs are
-  written ([resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill)).
+  `--include-scan` keeps them too. `--checkpoint DIR` (also accepted as `checkpoint` in
+  `--config`) saves solver state and finished slabs in `DIR` so a killed run resumes
+  when the same command runs again, exiting `130` on `SIGTERM` or Ctrl-C after saving and
+  deleting `DIR` once all outputs are written; `tomojax inspect DIR` shows what it holds
+  and the command line that started it
+  ([resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill)).
+  `--seed`, SPDHG's view order, is an expert option not listed by `--help`.
   `--dry-run` prints the plan: the method and why,
   the grid, and the estimated memory against the memory available.
 - `align`: estimate the named geometry corrections with `tj.align`, on top of the poses saved in
@@ -163,9 +168,10 @@ such as `✓ binning 2  4/12 steps  objective 4.38 → 0.0833  13.5s`. `bar` off
 terminal prints only those finished lines and warnings; `none` prints warnings only.
 Press Ctrl-C to cancel at the next batch, solver chunk, or alignment step. The
 command exits 130 after cleanup. A second Ctrl-C interrupts immediately. When
-`--checkpoint DIR` is set on `reconstruct` or `align`, `SIGTERM` finishes the
-current iteration, slab, or step, saves state to `DIR`, prints a message naming
-`DIR`, and exits 130.
+`--checkpoint DIR` is set on `reconstruct` or `align`, Ctrl-C or `SIGTERM`
+finishes the current iteration, slab, or step, saves state to `DIR`, prints a
+message naming `DIR`, and exits 130; with `--progress json` the `error` record
+carries `checkpoint: DIR`.
 
 `reconstruct --watch-dir DIR` and `align --watch-dir DIR` rewrite PNGs of the
 solve's central planes in DIR as the solve progresses (`slice_z.png`, `slice_y.png`,

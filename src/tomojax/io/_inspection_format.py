@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -41,6 +42,10 @@ def format_inspection_report(report: Inspection) -> str:
     str
         Human-readable multiline summary for terminal output.
     """
+    if (saved := report["checkpoint"]) is not None:  # a stopped run's saved state
+        keys = ("path", "run", "request", "created", "saved", "entries", "bytes", "in_use")
+        rows = [f"  {key + ':':<9} {json.dumps(saved.get(key))}" for key in keys]
+        return "\n".join(["Checkpoint", *rows, f"  {saved['resume']}"])
     corrections = report["corrections"]
     geometry = report["geometry"]
     sections = [

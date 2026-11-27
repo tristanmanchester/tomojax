@@ -9,19 +9,26 @@ leaves the previous state usable.
 
 A checkpointed loop saves at a boundary (an iteration, a slab, an alignment step)
 once :data:`INTERVAL` seconds, and :data:`SAVE_SHARE` times the last save's
-duration, have passed since the last save. After SIGTERM it saves at its next
-boundary and raises :class:`~tomojax.errors.Canceled`. SIGTERM outside a
+duration, have passed since the last save. After SIGTERM, or a cancel through the
+watching :class:`~tomojax.progress.Control`, it saves at its next boundary and
+raises :class:`~tomojax.errors.Canceled` naming the checkpoint. SIGTERM outside a
 checkpointed loop ends the process as it would without a checkpoint. A finished
 slab is saved when it finishes. The owner of a checkpoint removes it when the run
 completes.
+
+``checkpoint.json`` also describes the run for a reader: its operation, method,
+input file and version, how it was requested (a command line, or a worker
+operation and its inputs' provenance), and when it was created and last saved.
+:func:`describe` reports it.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager, nullcontext, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, fields, is_dataclass
+from datetime import UTC, datetime
 import fcntl
 import hashlib
 import json
@@ -34,11 +41,12 @@ import shutil
 import signal
 import threading
 from time import monotonic
-from typing import TYPE_CHECKING, NamedTuple, Protocol, TypedDict, runtime_checkable
+from typing import TYPE_CHECKING, NamedTuple, Protocol, Required, TypedDict, runtime_checkable
 import zlib
 
 import numpy as np
 
+from tomojax import progress
 from tomojax.core.files import replaced_when_complete
 from tomojax.core.host_volume import mapped_storage
 from tomojax.errors import Canceled, InvalidParameter
@@ -67,11 +75,15 @@ class _Entry(TypedDict):
     record: dict[str, JsonValue]
 
 
-class _Manifest(TypedDict):
-    format: int
-    identity: dict[str, str] | None
-    entries: dict[str, _Entry]
-    next: int
+class _Manifest(TypedDict, total=False):
+    format: Required[int]
+    identity: Required[dict[str, str] | None]
+    entries: Required[dict[str, _Entry]]
+    next: Required[int]
+    run: dict[str, JsonValue]
+    request: JsonValue
+    created: str
+    saved: str
 
 
 @dataclass(frozen=True)
@@ -103,6 +115,15 @@ def _scalar(value: object) -> object:
     return item()
 
 
+def _read(manifest: Path) -> _Manifest:
+    record: _Manifest = json.loads(manifest.read_text())
+    return record
+
+
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 def _fsync_directory(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY)
     try:
@@ -114,7 +135,7 @@ def _fsync_directory(path: Path) -> None:
 class Session:
     """One checkpoint directory, locked by this process while the run is open."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, request: JsonValue = None) -> None:
         manifest = path / _MANIFEST
         if path.is_dir() and not manifest.exists() and any(p.name != _LOCK for p in path.iterdir()):
             raise InvalidParameter(
@@ -130,7 +151,7 @@ class Session:
             os.close(self._lock)
             raise InvalidParameter("checkpoint", f"{path} is in use by another process") from None
         self.manifest: _Manifest = (
-            json.loads(manifest.read_text())
+            _read(manifest)
             if manifest.exists()
             else {"format": _FORMAT, "identity": None, "entries": {}, "next": 0}
         )
@@ -147,13 +168,22 @@ class Session:
         self.stop: int | None = None
         self.saved_at, self.save_seconds = monotonic(), 0.0
         self.counters: dict[str, int] = {}
+        self.request = request
+        # A cancel through the watch saves at the next boundary, as SIGTERM does.
+        self.control = progress.active_control()
 
-    def bind(self, identity: Mapping[str, str]) -> None:
-        """Adopt ``identity`` for a new checkpoint, or check that it is the saved run's."""
+    def bind(self, identity: Mapping[str, str], run: Mapping[str, JsonValue]) -> None:
+        """Adopt ``identity`` for a new checkpoint, or check that it is the saved run's.
+
+        A new checkpoint also records ``run``, its readable description, and the
+        request that started it.
+        """
         with self.guard:
             known = self.manifest["identity"]
             if known is None:
-                self.manifest["identity"] = dict(identity)
+                self.manifest.update(
+                    identity=dict(identity), run=dict(run), request=self.request, created=_now()
+                )
                 self._write_manifest()
             elif known != dict(identity):
                 differ = [
@@ -213,6 +243,7 @@ class Session:
                 _fsync_directory(directory)
                 entry: _Entry = {"directory": name, "arrays": len(arrays), "record": dict(record)}
                 self.manifest["entries"][key] = entry
+                self.manifest["saved"] = _now()
                 self._write_manifest()
             except BaseException:
                 if previous is None:
@@ -238,24 +269,36 @@ class Session:
             _ = part.write_text(json.dumps(self.manifest, default=_scalar))
         _fsync_directory(self.path)
 
+    def canceled(self) -> bool:
+        """Whether the run's watch asked it to stop."""
+        return self.control is not None and self.control.canceled
+
     def due(self) -> bool:
         """Whether a loop at a boundary should save now."""
         wait = max(INTERVAL, SAVE_SHARE * self.save_seconds)
-        return self.stop is not None or monotonic() - self.saved_at >= wait
+        stopping = self.stop is not None or self.canceled()
+        return stopping or monotonic() - self.saved_at >= wait
+
+    def stopped(self, reason: str) -> Canceled:
+        """The error that ends a stopped run, naming this checkpoint."""
+        message = f"{reason}: run again with checkpoint {self.path} to resume"
+        return Canceled(message, checkpoint=str(self.path))
 
     def stop_if_requested(self) -> None:
-        """Raise :class:`Canceled` once the state is saved after SIGTERM."""
+        """Raise :class:`Canceled` once the state is saved after SIGTERM or a cancel."""
         if self.stop is not None:
-            name = signal.Signals(self.stop).name
-            raise Canceled(f"stopped by {name}: run again with checkpoint {self.path} to resume")
+            raise self.stopped(f"stopped by {signal.Signals(self.stop).name}")
+        if self.canceled():
+            raise self.stopped("canceled after saving its state")
 
     @contextmanager
     def looping(self) -> Iterator[None]:
-        """Within the block, SIGTERM waits for the loop's next boundary."""
+        """Within the block, SIGTERM and a cancel wait for the loop's next boundary."""
         with self.guard:
             self.loops += 1
         try:
-            yield
+            with self.control.deferring() if self.control is not None else nullcontext():
+                yield
         finally:
             with self.guard:
                 self.loops -= 1
@@ -299,15 +342,17 @@ def _deliver(handler: _Handler, signum: int, frame: FrameType | None) -> None:
 
 
 @contextmanager
-def opened(path: str | os.PathLike[str]) -> Iterator[Session]:
+def opened(path: str | os.PathLike[str], *, request: JsonValue = None) -> Iterator[Session]:
     """Own the checkpoint at ``path`` for the block, and remove it when the block completes.
 
     In the main thread, SIGTERM inside a checkpointed loop is held for the loop's
     next boundary, which saves and stops; elsewhere it acts as before. A SIGTERM no
     loop acted on is delivered when the block ends. The checkpoint is kept when
-    the block fails, is stopped or calls :func:`keep_checkpoint`.
+    the block fails, is stopped or calls :func:`keep_checkpoint`; a cancel that
+    stops it names the checkpoint. ``request`` records how the run was started (a
+    command line, a worker operation) in a new checkpoint.
     """
-    session = Session(Path(path).resolve())
+    session = Session(Path(path).resolve(), request)
     main = threading.current_thread() is threading.main_thread()
     previous: _Handler = signal.getsignal(signal.SIGTERM) if main else None
     handling = main and previous != signal.SIG_IGN
@@ -326,6 +371,10 @@ def opened(path: str | os.PathLike[str]) -> Iterator[Session]:
     try:
         yield session
         completed = True
+    except Canceled as exc:  # canceled outside a loop: the saved state still resumes
+        if exc.checkpoint is None and session.manifest["identity"] is not None:
+            raise session.stopped("canceled") from exc
+        raise
     finally:
         _place.reset(token)
         if handling:
@@ -340,23 +389,37 @@ def opened(path: str | os.PathLike[str]) -> Iterator[Session]:
 
 
 @contextmanager
-def checkpointing(path: str | os.PathLike[str] | None, **run: object) -> Iterator[None]:
+def checkpointing(
+    path: str | os.PathLike[str] | None,
+    *,
+    described: Mapping[str, object],
+    **run: object,
+) -> Iterator[None]:
     """Run the block in the checkpoint at ``path`` (None: none) of the run ``run`` describes.
 
-    ``run`` holds the parts of the run's :func:`identity`. A checkpoint already
-    open at ``path`` (as the command line opens one around loading and saving)
-    is joined; otherwise this block owns it.
+    ``run`` holds the parts of the run's :func:`identity`; ``described`` is what a
+    reader is told about it (method, settings, input file), arrays by their shape. A
+    checkpoint already open at ``path`` (as the command line opens one around
+    loading and saving) is joined; otherwise this block owns it.
     """
     if path is None:
         yield
         return
+    from tomojax._version import __version__
+
+    operation = run.get("operation")
+    summary: dict[str, object] = {"operation": operation, "version": __version__, **described}
+    readable = {
+        key: _canonical(value, lambda a: {"shape": list(a.shape), "dtype": np.dtype(a.dtype).name})
+        for key, value in summary.items()
+    }
     place = _place.get()
     if place is not None and place.session.path == Path(path).resolve():
-        place.session.bind(identity(**run))
+        place.session.bind(identity(**run), readable)
         yield
         return
     with opened(path) as session:
-        session.bind(identity(**run))
+        session.bind(identity(**run), readable)
         yield
 
 
@@ -582,23 +645,27 @@ def _array_digest(value: _Array) -> str:
     return digest.hexdigest()
 
 
-def _canonical(value: object) -> JsonValue:
-    """A JSON value standing for ``value``: its fields, items, or array contents by digest."""
+def _canonical(
+    value: object,
+    array: Callable[[_Array], JsonValue] = lambda a: {"array": _array_digest(a)},
+) -> JsonValue:
+    """A JSON value standing for ``value``: its fields, items, and arrays as ``array`` gives."""
     if value is None or isinstance(value, bool | int | float | str):
         return value
     if isinstance(value, _Array):
-        return {"array": _array_digest(value)}
+        return array(value)
     if is_dataclass(value) and not isinstance(value, type):
-        named = {item.name: _canonical(getattr(value, item.name)) for item in fields(value)}
+        named = {item.name: _canonical(getattr(value, item.name), array) for item in fields(value)}
         return {"type": type(value).__name__, "fields": named}
     if isinstance(value, Mapping):
         mapping: Mapping[object, object] = value
-        return {str(key): _canonical(item) for key, item in mapping.items()}
+        return {str(key): _canonical(item, array) for key, item in mapping.items()}
     if isinstance(value, list | tuple | set | frozenset):
         collection: Iterable[object] = value
-        items = [_canonical(item) for item in collection]
+        items = [_canonical(item, array) for item in collection]
         return sorted(items, key=json.dumps) if isinstance(value, set | frozenset) else items
-    return re.sub(r" at 0x[0-9a-fA-F]+", "", repr(value))  # devices and the like
+    text = str(value) if isinstance(value, os.PathLike) else repr(value)
+    return re.sub(r" at 0x[0-9a-fA-F]+", "", text)  # devices and the like
 
 
 def identity(**parts: object) -> dict[str, str]:
@@ -618,6 +685,54 @@ def identity(**parts: object) -> dict[str, str]:
     }
 
 
+def describe(path: str | os.PathLike[str]) -> dict[str, JsonValue] | None:
+    """What the checkpoint at ``path`` holds, or None when ``path`` holds no checkpoint.
+
+    The report names the run (operation, method and settings, input file, version),
+    how it was requested, when it was created and last saved, each saved entry's
+    scalars (such as a loop's completed steps), its size on disk, and whether a
+    running process holds it.
+    """
+    directory = Path(path)
+    manifest_file = directory / _MANIFEST
+    if not manifest_file.is_file():
+        return None
+    manifest = _read(manifest_file)
+    in_use = False
+    lock = directory / _LOCK
+    if lock.exists():
+        descriptor = os.open(lock, os.O_RDONLY)
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            in_use = True
+        finally:
+            os.close(descriptor)
+    entries = manifest["entries"]
+    saved: dict[str, JsonValue] = {
+        key: {
+            name: item
+            for name, item in entry["record"].items()
+            if item is None or isinstance(item, bool | int | float | str)
+        }
+        for key, entry in sorted(entries.items())
+    }
+    size = sum(f.stat().st_size for f in directory.rglob("*") if f.is_file())
+    return {
+        "path": str(directory.resolve()),
+        "run": manifest.get("run"),
+        "request": manifest.get("request"),
+        "created": manifest.get("created"),
+        "saved": manifest.get("saved"),
+        "entries": saved,
+        "bytes": size,
+        "in_use": in_use,
+        "resume": f"Run the same operation, on the same input and settings, with checkpoint "
+        f"{directory.resolve()}; it continues from the saved state and removes the "
+        "directory when it completes.",
+    }
+
+
 __all__ = [
     "IDLE",
     "INTERVAL",
@@ -629,6 +744,7 @@ __all__ = [
     "Slabs",
     "active",
     "checkpointing",
+    "describe",
     "identity",
     "keep_checkpoint",
     "loop",
