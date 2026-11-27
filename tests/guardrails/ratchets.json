@@ -59,7 +59,7 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5487,
+    "reportAny": 5486,
     "reportMissingImports": 61,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 881,
