@@ -308,8 +308,15 @@ def slab_file(array: np.ndarray) -> tuple[int, int] | None:
     """
     mapping = getattr(array, "_mmap", None)
     kept, name = _owned_descriptor(array), getattr(array, "filename", None)
-    if mapping is None or not array.flags.c_contiguous:
+    if (
+        not isinstance(mapping, mmap.mmap)
+        or not array.flags.c_contiguous
+        or getattr(array, "mode", None) == "c"
+    ):
         return None
+    # Hand dirty shared pages to the file before the fd starts its slab reads.
+    # A network filesystem may otherwise return the previous contents to preadv.
+    mapping.flush()
     if kept is not None:
         descriptor = os.dup(kept)
     elif name is not None:
