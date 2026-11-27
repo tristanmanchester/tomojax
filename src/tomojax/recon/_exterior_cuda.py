@@ -73,7 +73,6 @@ class DeviceRows:
         self.data = data
         self.cp = array_module()
         self.input = self.cp.from_dlpack(data)
-        self.output: jax.Array | None = None
         self.buffer: CuPyValue = None
         self.removed = self.cp.zeros((), np.float64)
 
@@ -86,25 +85,38 @@ class DeviceRows:
                 return cls(data)
         return None
 
-    def write(self, part: slice, rows: slice, block: CuPyValue) -> None:
+    def _zero_buffer(self) -> CuPyValue:
         from tomojax.core.host_transfer import allocate_device
 
-        (device,) = self.data.devices()
-        with self.cp.cuda.Device(device.local_hardware_id):
-            if self.output is None:
-                self.output = allocate_device(
-                    self.data.shape, dtype=np.dtype(np.float32), device=device
-                )
-                self.buffer = self.cp.from_dlpack(self.output)
+        # This stack lives through one fine solve. A caching pool may reserve
+        # several times its size even after the caller discards the slab.
+        try:
+            with self.cp.cuda.using_allocator(None):
+                return self.cp.zeros(self.data.shape, dtype=np.float32)
+        except (self.cp.cuda.memory.OutOfMemoryError, self.cp.cuda.runtime.CUDARuntimeError) as err:
+            if isinstance(err, self.cp.cuda.runtime.CUDARuntimeError) and err.status != 2:
+                # cudaErrorMemoryAllocation is the only recoverable runtime error here.
+                raise
+            # A preallocated JAX pool can still have room on a full device.
+            (device,) = self.data.devices()
+            storage = allocate_device(self.data.shape, dtype=np.dtype(np.float32), device=device)
+            return self.cp.from_dlpack(storage)
+
+    def write(self, part: slice, rows: slice, block: CuPyValue) -> None:
+        with self.cp.cuda.Device(self.input.device.id):
+            if self.buffer is None:
+                self.buffer = self._zero_buffer()
             self.buffer[part, rows] = block
             self.removed += self.cp.sum(self.cp.asarray(block), dtype=np.float64)
 
     def result(self) -> tuple[jax.Array | None, float]:
-        if self.output is None:
+        if self.buffer is None:
             return None, 0.0
+        from jax.dlpack import from_dlpack
+
         with self.cp.cuda.Device(self.input.device.id):
             measured = float(self.input.sum(dtype=np.float64))
-            return self.output, float(self.removed) / measured if measured else 0.0
+            return from_dlpack(self.buffer), float(self.removed) / measured if measured else 0.0
 
 
 def project_cone(

@@ -465,8 +465,7 @@ def outside_data(
             geometry, grid, detector, data, config, room=room, native=native
         )
         if native and result is not None:
-            # The fine JAX solve cannot reuse CuPy blocks held by the auxiliary
-            # fit. All surviving device samples belong to the input's JAX pool.
+            # The fine JAX solve cannot reuse cached CuPy blocks from the fit.
             from ._cgls_cuda import array_module, native_device
 
             cp = array_module()

@@ -319,6 +319,33 @@ def test_device_detector_means_preserve_host_rounding_for_every_leaf_width():
 
 
 @pytest.mark.gpu
+@pytest.mark.parametrize("preallocated", [False, True])
+def test_private_exterior_storage_keeps_unmodeled_rows_zero(monkeypatch, preallocated):
+    import jax
+
+    # check-public-imports: allow-private
+    from tomojax.recon._exterior_cuda import DeviceRows
+
+    cp = pytest.importorskip("cupy")
+    data = jax.device_put(np.ones((3, 4, 5), np.float32))
+    rows = DeviceRows.on_selected_device(data)
+    assert rows is not None
+    if preallocated:
+
+        def outside_pool_full(allocator):
+            raise cp.cuda.runtime.CUDARuntimeError(2)  # cudaErrorMemoryAllocation
+
+        monkeypatch.setattr(cp.cuda, "using_allocator", outside_pool_full)
+    rows.write(slice(None), slice(1, 2), cp.full((3, 1, 5), 2.0, dtype=np.float32))
+    background, share = rows.result()
+    expected = np.zeros(data.shape, np.float32)
+    expected[:, 1] = 2.0
+    np.testing.assert_array_equal(background, expected)
+    np.testing.assert_array_equal(data, np.ones_like(expected))
+    assert share == 0.5
+
+
+@pytest.mark.gpu
 def test_binned_detector_has_the_same_exterior_on_host_and_device():
     import jax
 
