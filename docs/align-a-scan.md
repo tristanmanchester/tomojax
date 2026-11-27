@@ -216,13 +216,40 @@ The CLI prints shared corrections (such as `center` in native pixels or angles i
    print(held_out_error(np.zeros((len(index), 6))), held_out_error(poses))
    ```
 
+### Inspect an object crossing the field of view
+
+Every joint fit returns `result.info["disturbed_views"]`. It compares unexpected attenuation along columns at the top and bottom of the detector, using the coarsest measurements already read by the fit. A score above 0.5 means the signal shared by the two bands exceeds both their disagreement and the estimated pixel noise. `angles_deg` gives the angles of the first and last flagged exposures in each run. `ranges` gives the corresponding zero-based input indices as half-open intervals. A score of `None` means there were too few paired measurements or you excluded that exposure. The fit uses all views by default.
+
+To screen a corrected scan before solving for a volume or poses, run this from Python. The preflight reads the native detector once and uses the default joint resolution schedule. Pass the intended `resolution` when you change its default.
+
+```python
+from tomojax.alignment import AlignConfig
+from tomojax.alignment.api import disturbed_views
+
+report = disturbed_views(scan.projections, scan.geometry, view_positions=scan.view_positions)
+print(report["message"], report["ranges"])
+```
+
+Inspect the flagged projections. A support pole sweeping across the field, an electronic column offset, and motion of a vertically uniform specimen can produce similar signals. If you confirm that a crossing obscures the specimen, use its reported ranges or supply your own. For example, this fit leaves out views 120 through 133 inclusive.
+
+```python
+result = tj.align(scan, config=AlignConfig(exclude_views=((120, 134),)))
+# After reviewing all reported intervals, use tuple(map(tuple, report["ranges"])) instead.
+```
+
+Only the retained projections enter the image and geometry solve. Excluded views receive a pose increment interpolated in acquisition time within their own trajectory. At an unbracketed end they receive the nearest measured increment. Their existing poses still apply. A slip within a gap cannot be located from the retained measurements. The result keeps every projection and records the retained input indices in `info["fit_views"]`. Per-view fit statistics such as `offsets` follow those retained indices.
+
+Reconstruct `result.scan` to keep the measured rays with those interpolated poses. To omit confirmed obstructions from the reconstruction as well, reconstruct `result.scan.selected(result.info["fit_views"])`. A contiguous angular gap gives directional streaks and costs more detail as it grows. Compare slices on the same grid and gray scale. `RejectViews()` is a separate correction for abrupt changes in mean flux, such as a shutter closing. It drops the affected exposures during correction.
+
+The CLI reads these settings from a TOML file. For the same manual exclusion, put `exclude_views = [[120, 134]]` in `fit.toml` and run `tomojax align scan.nxs -o aligned.nxs --config fit.toml`. Worker and MCP `align` accept `config={"type": "AlignConfig", "exclude_views": [[120, 134]]}`. Each reports the crossing angles and review instruction.
+
 ### Working grid and per-view background
 
 For joint fits, `tj.align` fits on a bounded working grid of at most 16 million voxels and a detector of at most 320 pixels per side, binned no coarser than one voxel at the object (passing `grid=` fixes the grid and adjusts binning to match). Native projections are read and binned in a single sequential pass on the host: slabs whose pixels are all finite sum contiguous rows in `float64` before reducing columns and allocate no per-block weight array, while slabs with non-finite pixels average observed samples and store their observed fractions on first use. On full-frame synchrotron scans, the corrected `float32` projection stack on the host accounts for most of process RSS (for example, 164.8 GiB of 173.1 GiB peak RSS on the 8,000-view Diamond K11-52544 scan; see [full-scale alignment measurements](measurements.md#full-scale-native-detector-alignment)). The working volume extends slightly above and below the grid so shifted material stays inside the model, then crops back on return. Joint alignment runs on one GPU even when several GPUs are visible. `result.image` is this working-grid volume (filtered with `[1, 2, 1] / 4` along detector rows and columns to suppress Nyquist mismatch, so it carries fine-scale texture); reconstruct `result.scan` to get a full-resolution volume. Direct parallel `fit="center"` and `method="opposite-views"` fit no working volume and leave `result.image` and `result.grid` as `None`.
 
-The joint fit estimates detector errors shared down a column. Repeated curvature across rows and exposures identifies fixed stripes, with the faintest rays providing a reference. The fit estimates a changing column signal from the faint rays after accounting for the specimen’s measured row differences. Its covariance between the top and bottom quarters of the detector measures how much recurs at both ends. This sets both the correction and the uncertainty carried into the image and pose fit. Differences between rows and the mean of each exposure retain their measured precision. A specimen that fills every row can produce exactly the same projection as a detector offset. Distinguishing them requires an independent flat or a view in which the specimen moves across that column.
+To model attenuation shared down a column during alignment, set `AlignConfig(detector_columns="fixed")` for stationary stripes, `"transient"` for changing attenuation, or `"both"` for both components. Repeated curvature across rows and exposures identifies fixed stripes, with the faintest rays providing a reference. The fit estimates a changing column signal from the faint rays after accounting for the specimen’s measured row differences. Its covariance between the top and bottom quarters of the detector measures how much recurs at both ends. This sets both the correction and the uncertainty carried into the image and pose fit. Differences between rows and the mean of each exposure retain their measured precision. A specimen that fills every row can produce exactly the same projection as a detector offset. Distinguishing them requires an independent flat or a view in which the specimen moves across that column.
 
-The default image prior scales with the noise of the faint rays. In each view the fit measures how the fraction of a voxel’s footprint inside the detector changes between neighboring voxels. The root mean square of these differences weights the local total variation, allowing material to continue smoothly across detector edges. An explicit `image_tv_weight` applies uniform regularization over the working volume. Set it to 0 for an unregularized image.
+With `image_tv_weight="coverage"`, the image prior scales with the noise of the faint rays. In each view the fit measures how the fraction of a voxel’s footprint inside the detector changes between neighboring voxels. The root mean square of these differences weights the local total variation, allowing material to continue smoothly across detector edges. A numeric `image_tv_weight` sets uniform regularization over the working volume. The default is 0.
 
 
 Inside every joint step, the solver profiles out each view's offset and vertical row ramp relative to the scan-wide mean level so flux fluctuations or phase offsets do not mimic vertical motion (the data themselves are untouched; `info["offsets"]` records the fitted pairs). The shared mean level stays in the residual because removing it lets the solver invent a constant-projection disc.
@@ -258,7 +285,9 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 | `rotation_sigma` | 0.5 degrees | Prior scale on per-view rotations | Match known stage wobble |
 | `loss_width` | 2.5 noise deviations | Robust loss transition from quadratic to linear | Lower for heavy outliers (zingers, diffraction) |
 | `loss_contrast_floor` | 0.5 of contrast | Minimum loss width on low-noise scans | Tune alongside `loss_width` |
-| `image_tv_weight`, `image_tv_huber` | Auto, 1.0 | Total variation on the working image | Auto scales by noise and local detector visibility. A number sets uniform strength, with 0 disabling the penalty. |
+| `exclude_views` | `()` | Input index intervals omitted from the fit | Exclude confirmed obstructions using half-open ranges |
+| `detector_columns` | `"none"` | Fixed offsets, transient column structure, or both | Choose `"fixed"`, `"transient"`, or `"both"` when column errors affect pose recovery |
+| `image_tv_weight`, `image_tv_huber` | 0, 1.0 | Total variation on the working image | `"coverage"` scales by noise and local detector visibility. A positive number sets uniform strength. |
 | `margin` | 1/16 of height | Vertical padding above and below the grid during fitting | Raise if large vertical shifts bring outside material into view |
 | `refine_smoothing`, `refine_neighbors` | 8 native pixels, 5 views | Edge filter width and neighborhood for refinement | Rarely |
 

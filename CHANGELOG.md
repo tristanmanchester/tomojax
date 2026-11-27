@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Joint alignment reports possible objects crossing the field of view with per-view scores,
+  exposure ranges and angles. Review the projections, then set `AlignConfig.exclude_views`
+  to exclude confirmed ranges. The result retains all projections and interpolates their
+  pose increments within each trajectory. `tomojax.alignment.api.disturbed_views` screens
+  the coarsest measurements before a fit.
+- `AlignConfig.detector_columns` enables fixed offsets, transient column shadows, or both.
+  `image_tv_weight="coverage"` enables noise-scaled regularization at changes in detector
+  coverage. Both options default to off and are available through Python, CLI TOML, worker and MCP.
 - Joint alignment estimates fixed stripes and transient column shadows from separated detector
   rows. The volume fit uses measured noise to regularize differences between neighboring
   voxels where their detector coverage changes. An explicit `image_tv_weight` sets uniform regularization.
