@@ -26,7 +26,7 @@ from tomojax.core.host_volume import host_array
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._continuation import Continuation
-from ._exterior_oblique import ObliqueExterior
+from ._exterior_rows import ObliqueExterior, detector_means
 from ._truncation import axis_distance
 from .cgls import CGLSConfig, cgls, resident_bytes
 
@@ -38,26 +38,6 @@ if TYPE_CHECKING:
     from .mlem import MLEMConfig
     from .sirt import SIRTConfig
     from .spdhg_tv import SPDHGConfig
-
-
-def _bin(values: Float32Array, count: int, axis: int) -> Float32Array:
-    """Equal-area averages over a detector axis, including fractional end cells."""
-    length = int(values.shape[axis])
-    if length == count:
-        return values
-    source = values.swapaxes(axis, -1)
-    if length % count == 0:
-        shape = (*map(int, source.shape[:-1]), count, length // count)
-        means = source.reshape(shape).mean(axis=-1, dtype=np.float32)
-    else:
-        edges = np.linspace(0, length, count + 1, dtype=np.float64)
-        cell = edges.astype(np.intp)
-        totals = np.add.reduceat(source, cell[:-1], axis=-1, dtype=np.float64)
-        partial = (edges[1:-1] - cell[1:-1]) * source[..., cell[1:-1]]
-        totals[..., :-1] += partial
-        totals[..., 1:] -= partial
-        means = (totals * (count / length)).astype(np.float32)
-    return means.swapaxes(axis, -1)
 
 
 def _poses(geometry: Geometry, views: int) -> Float32Array:
@@ -202,7 +182,7 @@ class _Sampling:
 
                 block = host_detector_block(block, d.nu)
             host = np.asarray(block, dtype=np.float32)
-            middle[i : i + batch] = _bin(_bin(host, d.nu, -1), d.nv, -2)
+            middle[i : i + batch] = detector_means(host, d)
         fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu)
         radius = fit.stack_radius(middle)[None]
         batch = max(1, (16 << 20) // (8 * d.nv * d.nu))
@@ -241,14 +221,12 @@ def storage(
     from ._axial_slabs import independent_planes
 
     full_data = 4 * views * detector.nv * detector.nu
-    independent = independent_planes(geometry, grid, detector)
+    geometry, detector, turns, oblique = ObliqueExterior.for_scan(geometry, detector, views)
+    independent = oblique is None and independent_planes(geometry, grid, detector)
     rows = detector.nv
     if independent:
         grid = replace(grid, nz=1)
         detector = replace(detector, nv=1)
-    oblique = ObliqueExterior.for_scan(geometry, detector, views)
-    if oblique is not None:
-        geometry, detector = oblique.geometry, oblique.detector
     sample = _Sampling.fitting(geometry, grid, detector, views, room)
     if independent:
         depth = sample.depth(geometry, views, rows, room) if room is not None else 1
@@ -267,7 +245,8 @@ def storage(
     mask = math.prod(shape) if oblique is not None else 0
     host = full_data + completed + completed // 3 + 3 * volume + 4 * images + mask
     fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
-    return host, max(resident_bytes(wide, fitted_shape), project)
+    device = max(resident_bytes(wide, fitted_shape), project)
+    return host, device + (full_data if turns else 0)
 
 
 def _stride(geometry: Geometry, grid: Grid) -> int:
@@ -483,15 +462,25 @@ def outside_data(
 class _HostRows:
     """Collect bounded model blocks in a zeroed host stack, allocating only on the first hit."""
 
-    def __init__(self, data: np.ndarray | jax.Array) -> None:
+    def __init__(self, data: np.ndarray | jax.Array, turns: int) -> None:
+        self.shape = data.shape
+        self.turns = turns
         self.input = data
+        if turns:
+            if isinstance(data, np.ndarray):
+                self.input = np.rot90(data, -turns, axes=(1, 2))
+            else:
+                import jax.numpy as jnp
+
+                self.input = jnp.rot90(data, -turns, axes=(1, 2))
         self.output: Float32Array | None = None
         self.removed = 0.0
 
     def write(self, part: slice, rows: slice, block: Float32Array | CuPyValue) -> None:
         if self.output is None:
-            self.output = host_array(self.input.shape, copies=2)
-        target = self.output[part, rows]
+            self.output = host_array(self.shape, copies=2)
+        horizontal = np.rot90(self.output, -self.turns, axes=(1, 2)) if self.turns else self.output
+        target = horizontal[part, rows]
         if isinstance(block, np.ndarray):
             target[:] = block
         elif target.flags.c_contiguous:
@@ -525,8 +514,10 @@ def _background(
 ) -> tuple[np.ndarray | jax.Array | None, float]:
     from ._axial_slabs import independent_planes
 
-    independent = independent_planes(geometry, grid, detector)
-    rows = detector.nv
+    views = data.shape[0]
+    geometry, detector, turns, oblique = ObliqueExterior.for_scan(geometry, detector, views)
+    rows = detector.nv if oblique is None else data.shape[1]
+    independent = oblique is None and independent_planes(geometry, grid, detector)
     if independent:
         assert isinstance(geometry, ParallelGeometry)
         origin = grid_volume_origin(grid)
@@ -534,10 +525,6 @@ def _background(
         detector = replace(detector, nv=1, center=(detector.center[0], 0.0))
         geometry = replace(geometry, grid=grid, detector=detector)
 
-    views = data.shape[0]
-    oblique = ObliqueExterior.for_scan(geometry, detector, views)
-    if oblique is not None:
-        geometry, detector = oblique.geometry, oblique.detector
     with checkpoint.loop("exterior-sampling") as sampling:
         if sampling.saved is None:
             sample = _Sampling.fitting(geometry, grid, detector, views, room)
@@ -554,8 +541,8 @@ def _background(
     if not isinstance(data, np.ndarray) and native and len(data.devices()) == 1:
         from ._exterior_cuda import DeviceRows
 
-        result = DeviceRows.on_selected_device(data)
-    result = result or _HostRows(data)
+        result = DeviceRows.on_selected_device(data, turns=turns)
+    result = result or _HostRows(data, turns)
     for z in range(0, rows, depth):
         section = slice(z, min(z + depth, rows))
         count = section.stop - z

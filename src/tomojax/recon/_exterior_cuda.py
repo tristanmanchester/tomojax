@@ -69,20 +69,23 @@ def host_detector_block(block: CuPyValue, columns: int) -> Float32Array:
 class DeviceRows:
     """Keep fine samples and their private background on the input device."""
 
-    def __init__(self, data: jax.Array) -> None:
+    def __init__(self, data: jax.Array, turns: int) -> None:
         self.data = data
         self.cp = array_module()
+        self.turns = turns
         self.input = self.cp.from_dlpack(data)
+        if turns:
+            self.input = self.cp.rot90(self.input, -turns, axes=(1, 2))
         self.buffer: CuPyValue = None
         self.removed = self.cp.zeros((), np.float64)
 
     @classmethod
-    def on_selected_device(cls, data: jax.Array) -> DeviceRows | None:
+    def on_selected_device(cls, data: jax.Array, *, turns: int = 0) -> DeviceRows | None:
         (device,) = data.devices()
         cp = array_module()
         with native_device(cp) as current:
             if device.platform == "gpu" and device.local_hardware_id == current.id:
-                return cls(data)
+                return cls(data, turns)
         return None
 
     def _zero_buffer(self) -> CuPyValue:
@@ -110,7 +113,10 @@ class DeviceRows:
         with self.cp.cuda.Device(self.input.device.id):
             if self.buffer is None:
                 self.buffer = self._zero_buffer()
-            self.buffer[part, rows] = block
+            horizontal = (
+                self.cp.rot90(self.buffer, -self.turns, axes=(1, 2)) if self.turns else self.buffer
+            )
+            horizontal[part, rows] = block
             self.removed += self.cp.sum(self.cp.asarray(block), dtype=np.float64)
 
     def result(self) -> tuple[jax.Array | None, float]:

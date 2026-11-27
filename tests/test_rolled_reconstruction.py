@@ -180,3 +180,30 @@ def test_raw_oblique_cone_slabs_follow_reindexed_rays_and_share_the_whole_scan_r
     )
     for name, value in expected.info["truncation"].items():
         assert info["truncation"][name] == pytest.approx(value, rel=2e-5, abs=1e-7)
+
+
+@pytest.mark.parametrize("on_device", [False, True])
+def test_quarter_turn_preserves_the_fitted_rays_of_independent_planes(on_device):
+    # check-public-imports: allow-private
+    from tomojax.recon import CGLSConfig
+    from tomojax.recon._exterior import outside_data
+
+    width, rows = 80, 3
+    pitch = 2 / width
+    grid = tj.Grid(width, width, rows, pitch, pitch, pitch)
+    det = tj.Detector(width, rows, pitch, pitch)
+    g = tj.ParallelGeometry(grid, det, np.linspace(0, 180, width, endpoint=False))
+    x = (np.arange(width) - (width - 1) / 2) * pitch
+    radii = np.array([0.8, 1.2, 1.6])[:, None]
+    profiles = 0.06 * np.sqrt(np.maximum(radii**2 - x**2, 0))
+    data = np.broadcast_to(profiles, (width, rows, width)).astype(np.float32)
+    rotated = np.ascontiguousarray(np.rot90(data, axes=(1, 2)))
+    panel = replace(det, nu=rows, nv=width)
+    same = replace(g, detector=panel, detector_roll=90)
+    if on_device:
+        data, rotated = jax.device_put(data), jax.device_put(rotated)
+    bg, share = outside_data(g, grid, det, data, CGLSConfig())
+    other, turned_share = outside_data(same, grid, panel, rotated, CGLSConfig())
+    assert other is not None and bg is not None and share > 0
+    assert turned_share == pytest.approx(share, rel=1e-6)
+    np.testing.assert_array_equal(np.rot90(np.asarray(other), -1, axes=(1, 2)), bg)

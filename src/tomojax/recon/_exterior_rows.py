@@ -1,4 +1,4 @@
-"""The exterior fit on physical horizontal chords of a rolled detector."""
+"""Detector sampling and physical horizontal chords for the coarse exterior fit."""
 
 from __future__ import annotations
 
@@ -25,6 +25,33 @@ if TYPE_CHECKING:
     from tomojax._typed_arrays import Float32Array
     from tomojax.core.cuda_types import CuPyValue
     from tomojax.core.geometry import ConeBeam
+
+
+def _bin(values: Float32Array, count: int, axis: int) -> Float32Array:
+    """Equal-area averages over a detector axis, including fractional end cells."""
+    length = int(values.shape[axis])
+    if length == count:
+        return values
+    source = values.swapaxes(axis, -1)
+    if length % count == 0:
+        shape = (*map(int, source.shape[:-1]), count, length // count)
+        means = source.reshape(shape).mean(axis=-1, dtype=np.float32)
+    else:
+        edges = np.linspace(0, length, count + 1, dtype=np.float64)
+        cell = edges.astype(np.intp)
+        totals = np.add.reduceat(source, cell[:-1], axis=-1, dtype=np.float64)
+        partial = (edges[1:-1] - cell[1:-1]) * source[..., cell[1:-1]]
+        totals[..., :-1] += partial
+        totals[..., 1:] -= partial
+        means = (totals * (count / length)).astype(np.float32)
+    return means.swapaxes(axis, -1)
+
+
+def detector_means(values: Float32Array, detector: Detector) -> Float32Array:
+    """Area-average native detector samples onto a coarser aligned lattice."""
+    if values.strides[-1] != values.itemsize:
+        values = np.ascontiguousarray(values)
+    return _bin(_bin(values, detector.nu, -1), detector.nv, -2)
 
 
 @dataclass(frozen=True)
@@ -55,16 +82,17 @@ def _horizontal(geometry: Geometry, detector: Detector) -> Geometry:
 
 @dataclass(frozen=True)
 class ObliqueExterior:
-    geometry: Geometry
     detector: Detector
     panels: tuple[_Panel, ...]
 
     @classmethod
-    def for_scan(cls, geometry: Geometry, detector: Detector, views: int) -> ObliqueExterior | None:
+    def for_scan(
+        cls, geometry: Geometry, detector: Detector, views: int
+    ) -> tuple[Geometry, Detector, int, ObliqueExterior | None]:
         parts = cone_parts(geometry, detector)
         roll = float(getattr(geometry, "detector_roll", 0.0))
         if not roll and not any(beam.detector_roll for _, beam, _ in parts or ()):
-            return None
+            return geometry, detector, 0, None
         panels: list[_Panel] = []
         first = 0
         for count, beam, own in parts or ((views, None, detector),):
@@ -89,7 +117,11 @@ class ObliqueExterior:
             du=du,
             dv=dv,
         )
-        return cls(_horizontal(geometry, panel), panel, tuple(panels))
+        horizontal = _horizontal(geometry, panel)
+        turns = panels[0].turns % 4
+        if all(p.layout.roll == 0 and p.turns % 4 == turns for p in panels):
+            return horizontal, panel, turns, None
+        return horizontal, panel, 0, cls(panel, tuple(panels))
 
     def completed(
         self, data: np.ndarray | jax.Array | CuPyValue, coarse: Detector, unseen: NDArray[np.bool_]
@@ -108,10 +140,12 @@ class ObliqueExterior:
         for (layout, beam), panels in groups.items():
             det = replace(coarse, center=layout.measured.center)
             low, high = layout.limits(det, vertical)
-            u, v = layout.coordinates(det, vertical)
-            samples = RowSamples(
-                np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
-            )
+            samples = None
+            if layout.roll or layout.measured != replace(self.detector, center=det.center):
+                u, v = layout.coordinates(det, vertical)
+                samples = RowSamples(
+                    np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
+                )
             columns = np.arange(det.nu)
             inside = (columns >= low[:, None]) & (columns < high[:, None])
             for panel in panels:
@@ -121,7 +155,10 @@ class ObliqueExterior:
                     block = data[part]
                     transfer = getattr(block, "get", None)
                     host = np.asarray(transfer() if transfer is not None else block)
-                    measured = samples.read(np.rot90(host, -panel.turns, axes=(1, 2)), 0)
+                    native = np.rot90(host, -panel.turns, axes=(1, 2))
+                    measured = (
+                        detector_means(native, det) if samples is None else samples.read(native, 0)
+                    )
                     np.copyto(full[part, :, pad : pad + det.nu], measured, where=inside)
             indices = np.concatenate([np.arange(p.first, p.stop) for p in panels])
             selected = indices[radius_views(len(indices))]
