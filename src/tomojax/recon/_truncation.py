@@ -328,13 +328,13 @@ def _measure(
     nu = len(distance) // 3
     pad = continued_columns(nu)
     fits = Continuation(distance, nu, pad, outer_only=outer_only)
-    width = abs(np.gradient(distance))
+    width: Host = np.abs(np.gradient(distance))
     outside = np.r_[0:pad, pad + nu : pad + nu + pad]
-    edges = abs(distance[[pad, pad + nu - 1]])
-    fov = max(edges) if outer_only else min(edges)
+    edges = (abs(distance.item(pad)), abs(distance.item(pad + nu - 1)))
+    fov = max(edges) + float(width.item(pad)) / 2 if outer_only else min(edges)
     measured_width = width[pad : pad + nu]
     if outer_only:
-        offset = (distance[pad] + distance[pad + nu - 1]) / (2 * measured_width[0])
+        offset = (distance.item(pad) + distance.item(pad + nu - 1)) / (2 * measured_width.item(0))
         measured_width = measured_width * conjugate_weights(nu, offset)
     # An axis outside a panel can coincide with a padded pixel. Only rays
     # outside the complete field contribute to its continuation on a full turn.

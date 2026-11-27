@@ -28,7 +28,9 @@ class OpposedDirections:
         flipped: np.ndarray | tuple[int, ...],
         place: Callable[[np.ndarray], CuPyValue],
     ) -> None:
-        directed: Float64Array = np.asarray(folded) + np.asarray(flipped, dtype=np.float64) * np.pi
+        directed: Float64Array = (
+            np.asarray(folded, np.float64) + np.asarray(flipped, dtype=np.float64) * np.pi
+        )
         nodes, first, counts = np.unique(directed, return_index=True, return_counts=True)
         # Only average repeated exposures. Unique profiles stay in their input
         # slots, including the thousands of ordinary views of an inclusive scan.
@@ -38,7 +40,7 @@ class OpposedDirections:
             (first[counts == n], order[starts[counts == n, None] + np.arange(n)])
             for n in np.unique(counts[counts > 1])
         ]
-        knots = np.unique(folded)
+        knots = np.unique(np.asarray(folded, np.float64))
         self.angles = tuple(np.repeat(knots, 2))
         self.flipped = np.tile(np.array([0, 1], dtype=np.int8), len(knots))
         wanted = np.ravel(np.column_stack((knots, knots + np.pi)))
@@ -48,7 +50,7 @@ class OpposedDirections:
         span = np.remainder(nodes[right] - nodes[left], 2 * np.pi)
         fraction = np.remainder(nodes[right] - wanted, 2 * np.pi) / span
         left = np.where(fraction == 0, right, left)
-        self.exact = np.all(fraction == 0)
+        self.exact = bool(np.array_equal(nodes[right], wanted))
         self.identity = (
             self.exact
             and np.array_equal(first[right], np.arange(len(directed)))

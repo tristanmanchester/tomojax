@@ -25,8 +25,8 @@ def _angular_samples(
     """Bracket both halves of the same angular grid, retaining acquisition indices."""
     nodes, order = np.unique(np.remainder(angles, 360.0), return_index=True)
     count = min(width, len(nodes) // 2)
-    targets = np.remainder(
-        nodes.item(0) + np.arange(2 * count, dtype=np.float64) * (180 / count), 360.0
+    targets: Float64Array = np.remainder(
+        float(nodes.item(0)) + np.arange(2 * count, dtype=np.float64) * (180 / count), 360.0
     )
     hi = np.searchsorted(nodes, targets) % len(nodes)
     lo = (hi - 1) % len(nodes)
@@ -41,7 +41,7 @@ def _covariance(a: Float64Array, b: Float64Array, lags: NDArray[np.intp]) -> Flo
     cross = np.zeros(nfft // 2 + 1, dtype=np.complex128)
     for i in range(0, len(a), 64):
         x, y = (np.fft.rfft(v[i : i + 64], nfft) for v in (a, b))
-        cross += (x * y.conj()).sum(axis=0, dtype=np.complex128)
+        _ = np.add(cross, (x * y.conj()).sum(axis=0, dtype=np.complex128), out=cross)
     xx, yy = (
         np.append(0.0, np.cumsum(np.einsum("ij,ij->j", v, v), dtype=np.float64)) for v in (a, b)
     )
@@ -87,13 +87,13 @@ def turn_center(
     rho = np.divide(numerator, energy, out=np.zeros_like(energy), where=energy > 0).clip(0, 1)
     pairs = count * (width - abs(lags))
     # A correlation in a few shared pixels is more likely to occur by chance.
-    lower: Float64Array = rho[0] - np.sqrt(2 * math.log(len(lags)) / pairs)
+    lower = np.asarray(rho[0] - np.sqrt(2 * math.log(len(lags)) / pairs), np.float64)
     if lower.max() <= 0:
         return None
     score = lower.copy()
     for index, scale in enumerate(bands[1:], start=1):
         # Excess explained gradient variance, in sampling-error units.
-        score += np.sqrt(pairs / scale) * rho[index] ** 2
+        _ = np.add(score, np.sqrt(pairs / scale) * rho[index] ** 2, out=score)
     best = int(np.argmax(score))
     delta = 0.0
     if 0 < best < len(score) - 1:

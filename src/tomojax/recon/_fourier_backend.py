@@ -144,10 +144,10 @@ class _Geometry:
         )
         self.nfft = max(64, next_fast_len(2 * width))
         self.shape, self.crop = transform_grid(grid, detector)
-        self.flipped = xp.asarray(flipped, dtype=xp.int8)
+        self.flipped = xp.asarray(flipped, dtype=np.int8)
         self.period_phase = complex(np.exp(2j * np.pi * (width - 1) / 2))
-        real = xp.float32 if self.cuda else xp.float64
-        complex_dtype = xp.complex64 if self.cuda else xp.complex128
+        real = np.float32 if self.cuda else np.float64
+        complex_dtype = np.complex64 if self.cuda else np.complex128
         phase, deapod, table = radial_coefficients(width, self.nfft, detector.du)
         self.projection_phase = xp.asarray(phase, dtype=complex_dtype)
         self.deapod = xp.asarray(deapod, dtype=real)
@@ -230,10 +230,10 @@ class _Geometry:
         stop = px // 2 if px % 2 == 0 else px // 2 + 1
         shape = (1, stop - 1) if mirror else (py, px // 2 + 1)
         arrays = (
-            xp.empty(shape, xp.float64),
-            xp.empty(shape, xp.float32),
-            xp.empty(shape, xp.complex64),
-            xp.empty(shape, xp.complex64),
+            xp.empty(shape, np.float64),
+            xp.empty(shape, np.float32),
+            xp.empty(shape, np.complex64),
+            xp.empty(shape, np.complex64),
         )
         # Repeated source angles were combined before these coordinates were built.
         knots = np.asarray(angles) - angles[0]
@@ -452,7 +452,7 @@ class FourierPlan:
             geometry = _plan_geometry(
                 grid, detector, nviews, flipped, angles, backend, filter, exterior
             )
-            self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
+            self.shifts = None if shifts is None else xp.asarray(shifts, dtype=np.float32)
             self.source_views, self.geometry = nviews, geometry
             self.exterior = (
                 FourierExterior(
@@ -460,8 +460,8 @@ class FourierPlan:
                     detector,
                     nviews,
                     order,
-                    geometry.flipped,
-                    self.geometry.nfft,
+                    flipped,
+                    geometry.nfft,
                     outer_only=bool(full_turn and detector.center[0]),
                 )
                 if exterior == "cylinder"
@@ -478,9 +478,9 @@ class FourierPlan:
                         translated=True,
                         exterior=self.exterior is not None,
                     )
-                self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
+                self.row_mass = xp.empty((depth, nviews), dtype=np.float64)
             py, px = self.geometry.shape
-            dtype = xp.complex64 if self.cuda else xp.complex128
+            dtype = np.complex64 if self.cuda else np.complex128
             self.frequencies = xp.empty((depth, py, px // 2 + 1), dtype=dtype)
             if self.cuda:
                 self.inverse_direction, self.inverse_plan = _inverse_fft_plan(
@@ -547,7 +547,7 @@ class FourierPlan:
             raw = raw * self.redundancy
         if self.cuda:
             rows = self.depth * self.source_views
-            fft_rows = xp.empty((*raw.shape[:-1], self.geometry.nfft), dtype=xp.float32)
+            fft_rows = xp.empty((*raw.shape[:-1], self.geometry.nfft), dtype=np.float32)
             self.geometry.mass_kernel(
                 ((rows + 7) // 8,),
                 (256,),
@@ -563,7 +563,7 @@ class FourierPlan:
             )
         else:
             mass = (
-                xp.sum(raw, axis=-1, dtype=xp.float64) @ self.geometry.view_weights
+                xp.sum(raw, axis=-1, dtype=np.float64) @ self.geometry.view_weights
             ) * self.detector.du
             raw *= self.geometry.deapod
             fft_rows = raw
@@ -610,7 +610,7 @@ class FourierPlan:
         if self.cuda:
             # cuFFT may destroy the input; the next slab overwrites every
             # frequency. Its inverse is unnormalized: normalize only the crop.
-            volume = xp.empty((self.depth, *self.geometry.shape), dtype=xp.float32)
+            volume = xp.empty((self.depth, *self.geometry.shape), dtype=np.float32)
             self.inverse_plan.fft(self.frequencies, volume, self.inverse_direction)
             normalization = self.geometry.shape[0] * self.geometry.shape[1]
         else:
@@ -662,7 +662,7 @@ class FourierPlan:
         np.copyto(staged, samples)
         try:
             with self.upload:
-                source = xp.empty(staged.shape, dtype=xp.float32)
+                source = xp.empty(staged.shape, dtype=np.float32)
                 # We own staged through the copy event. CuPy's asarray watch
                 # list would retain the last pinned upload after the plan dies.
                 # Fully zero-extended slabs have no measured rows to transfer.

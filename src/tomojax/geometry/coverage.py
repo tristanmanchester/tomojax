@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -60,7 +61,9 @@ def ordered_arc(angles: Float64Array) -> tuple[NDArray[np.intp], Float64Array, b
     sorted_angles = angles[order[0]] + np.append(0.0, np.cumsum(gaps))
     # At the half-step boundary a missing angular cell is as plausible as jitter.
     # Treat the boundary consistently across sorting, angle units and wraparound.
-    full_turn = circular_gaps.item(largest) < 1.5 * float(np.median(gaps)) - 32 * np.spacing(_TURN)
+    full_turn = float(circular_gaps.item(largest)) < 1.5 * float(np.median(gaps)) - 32 * math.ulp(
+        _TURN
+    )
     return order, sorted_angles, bool(full_turn)
 
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field, is_dataclass, replace
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -885,7 +886,7 @@ def frame_output_grid(
 
         d = geometry.detector
         field = parallel_field(geometry)
-        width = d.nu if field is None else int(np.ceil(2 * field[1]))
+        width = d.nu if field is None else math.ceil(2 * field[1])
         grid = Grid(width, width, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
     elif binning > 1:
         g = geometry.grid

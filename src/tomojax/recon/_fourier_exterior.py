@@ -24,18 +24,32 @@ class FourierExterior:
         detector: Detector,
         views: int,
         order: np.ndarray | None,
-        flipped: CuPyValue,
+        flipped: np.ndarray | tuple[int, ...],
         nfft: int,
         *,
         outer_only: bool = False,
     ) -> None:
-        self.xp, self.flipped, self.nfft = xp, flipped, nfft
+        self.xp, self.nfft = xp, nfft
+        idx = np.arange(views, dtype=np.intp)
+        if outer_only:
+            # Measured sides are separate circles, each in directed view order.
+            orbit = np.concatenate((idx[::2], idx[1::2]))
+            circles = np.stack((orbit, orbit + views))
+        else:
+            # At the half-turn boundary +u continues into -u. An opposing
+            # exposure swaps the two ends at its folded direction.
+            swap = np.asarray(flipped, dtype=np.bool_)
+            circles = np.concatenate(
+                (np.where(swap, idx, idx + views), np.where(swap, idx + views, idx))
+            )[None, :]
+        self.circles = xp.asarray(circles)
+        self.restore = xp.asarray(np.argsort(circles.ravel()))
         self.fits = row_fits(detector, outer_only=outer_only)
         self.sharing = xp.asarray(radius_views(views, order))
         if xp is not np:
             phase, taper, _ = radial_coefficients(3 * detector.nu, 3 * nfft, detector.du)
-            self.tail_phase = xp.asarray(phase, dtype=xp.complex64)
-            self.tail_taper = xp.asarray(taper, dtype=xp.float32)
+            self.tail_phase = xp.asarray(phase, dtype=np.complex64)
+            self.tail_taper = xp.asarray(taper, dtype=np.float32)
 
     def _angular_mean(
         self, low: np.ndarray | CuPyValue, high: np.ndarray | CuPyValue
@@ -55,33 +69,16 @@ class FourierExterior:
         reach = views // 32
         if reach == 0:
             return low, high
-        if self.fits.outer_only:
-            # The far edge samples the same signed radius around a complete
-            # circle. Each pair in the folded ordering is a half turn apart.
-            order = xp.asarray(np.r_[0:views:2, 1:views:2])
-            inverse = xp.argsort(order)
-
-            def smooth(edge: CuPyValue) -> CuPyValue:
-                ordered = edge[:, order]
-                padded = xp.concatenate(
-                    (ordered[:, -reach - 1 :], ordered, ordered[:, :reach]), axis=1
-                )
-                summed = padded.cumsum(axis=1, dtype=xp.float64)
-                return (
-                    (summed[:, 2 * reach + 1 :] - summed[:, : -2 * reach - 1]) / (2 * reach + 1)
-                ).astype(edge.dtype)[:, inverse]
-
-            return smooth(low), smooth(high)
-        flipped: CuPyValue = xp.not_equal(self.flipped, 0)[:, None]
-        ring: CuPyValue = xp.concatenate(
-            [xp.where(flipped, low, high), xp.where(flipped, high, low)], axis=-2
-        ).astype(xp.float64)
-        ring = xp.concatenate([ring[..., -reach - 1 :, :], ring, ring[..., :reach, :]], axis=-2)
-        ring = ring.cumsum(axis=-2)
-        ring = ring[..., 2 * reach + 1 :, :] - ring[..., : -2 * reach - 1, :]
-        ring = xp.multiply(ring, 1 / (2 * reach + 1)).astype(low.dtype)
-        plus, minus = ring[..., :views, :], ring[..., views:, :]
-        return xp.where(flipped, plus, minus), xp.where(flipped, minus, plus)
+        edges = xp.concatenate((low[..., 0], high[..., 0]), axis=1)
+        ring = edges[:, self.circles]
+        ring = xp.concatenate((ring[..., -reach - 1 :], ring, ring[..., :reach]), axis=-1)
+        summed = ring.cumsum(axis=-1, dtype=np.float64)
+        window = 2 * reach + 1
+        mean = xp.multiply(summed[..., window:] - summed[..., :-window], 1 / window).astype(
+            low.dtype
+        )
+        ordered = mean.reshape(len(low), 2 * views)[:, self.restore]
+        return ordered[:, :views, None], ordered[:, views:, None]
 
     def transform(
         self, raw: CuPyValue, redundancy: CuPyValue | None = None
@@ -103,8 +100,8 @@ class FourierExterior:
             left, right = fits.tails(place, unit, unit, radius2)
             nu = fits.nu
             exterior_mass = (
-                left.sum(axis=-1, dtype=xp.float64) * low[..., 0]
-                + right.sum(axis=-1, dtype=xp.float64) * high[..., 0]
+                left.sum(axis=-1, dtype=np.float64) * low[..., 0]
+                + right.sum(axis=-1, dtype=np.float64) * high[..., 0]
             )
             # Both profiles use the original, three-width centered coordinate.
             pair = xp.concatenate(

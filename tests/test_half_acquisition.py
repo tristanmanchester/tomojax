@@ -79,8 +79,47 @@ def test_offset_detector_continues_only_beyond_the_complete_orbit(method):
     p = np.broadcast_to(chord.astype("f4"), (181, 1, 48))
     result = tj.reconstruct(tj.Scan(p, g), method)
     rec = result.info["truncation"]
-    assert rec["field_of_view_radius"] == pytest.approx(41.5)
+    assert rec["field_of_view_radius"] == pytest.approx(42.0)  # panel edge at 47.5, axis at 5.5
     assert rec["radius"] == pytest.approx(radius, rel=0.01)
     x = np.arange(84) - 41.5
     r = np.hypot(x[:, None], x)
     assert np.mean(np.asarray(result.volume)[0, r < 32]) == pytest.approx(mu, rel=0.04)
+
+
+def test_resumed_offset_slabs_keep_their_physical_field_and_repeated_exposures(tmp_path):
+    from tomojax.recon import FourierConfig
+
+    # The closing view repeats zero; the second copy has a different exposure
+    # error. Their mean is the analytic profile. Distinct rows catch slab strides.
+    angles = np.arange(121) * 3.0
+    det = tj.Detector(39, 5, 1, 1, center=(-13.25, 0))
+    grid = tj.Grid(66, 66, 5, 1, 1, 1)
+    u = np.arange(det.nu) - (det.nu - 1) / 2 + det.center[0]
+    xy = np.arange(grid.nx) - (grid.nx - 1) / 2
+    theta = np.deg2rad(angles)
+    attenuation = []
+    truth = []
+    for k in range(5):
+        x, y, sigma = -14 + 7 * k, -4 + k, 2.0
+        distance = u - (x * np.cos(theta) - y * np.sin(theta))[:, None]
+        p = np.sqrt(2 * np.pi) * sigma * 0.1 * np.exp(-0.5 * (distance / sigma) ** 2)
+        p[0] += 0.02 * np.cos(u)
+        p[-1] -= 0.02 * np.cos(u)
+        attenuation.append(p)
+        truth.append(0.1 * np.exp(-0.5 * ((xy - x) ** 2 + (xy[:, None] - y) ** 2) / sigma**2))
+    counts = (1000 * np.exp(-np.stack(attenuation, axis=1))).astype(np.float32)
+    frames = tj.Frames(counts, tj.ParallelGeometry(grid, det, angles), white_level=1000)
+    settings = {"config": FourierConfig(slices_per_batch=2), "checkpoint": tmp_path / "resume"}
+    output = np.zeros(grid.shape)
+    with tj.reconstruct_slabs(frames, "fourier", **settings) as slabs:
+        z, first = next(slabs)
+        output[z] = first.volume
+        next(slabs)
+    info = {}
+    with tj.reconstruct_slabs(frames, "fourier", info=info, **settings) as slabs:
+        for z, remaining in slabs:
+            assert z.start >= 2
+            output[z] = remaining.volume
+    for actual, expected in zip(output, truth, strict=True):
+        assert np.linalg.norm(actual - expected) < 0.035 * np.linalg.norm(expected)
+    assert info["truncation"]["field_of_view_radius"] == pytest.approx(32.75)
