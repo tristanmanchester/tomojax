@@ -376,17 +376,22 @@ def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | N
     degrees = np.asarray(geometry.angles, dtype=np.float64)
     if type(geometry) is ParallelGeometry:
         return degrees, None, False
-    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))])
-    if not np.allclose(poses[:, 2, :3], [0, 0, 1], atol=2e-7, rtol=0):
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))], np.float64)
+    measured = poses[:, :2, 0]
+    angle = np.arctan2(measured[:, 1], measured[:, 0])
+    axial = np.zeros((len(poses), 3, 3))
+    axial[:, 0, 0] = axial[:, 1, 1] = np.cos(angle)
+    axial[:, 1, 0], axial[:, 0, 1] = np.sin(angle), -np.sin(angle)
+    axial[:, 2, 2] = 1
+    if not np.allclose(poses[:, :3, :3], axial, atol=2e-7, rtol=0):
         raise ValueError("fourier_reconstruct: axial slices require rotations about z")
     # Keep the precision of recorded angles if the rotations are exactly those
     # angles rounded to the pose precision (e.g. a translation-only fit).
     radians = np.deg2rad(degrees)
     nominal = np.stack([np.cos(radians), np.sin(radians)], axis=1)
-    measured = poses[:, :2, 0]
     fitted = not np.array_equal(measured.astype(np.float32), nominal.astype(np.float32))
     if fitted:
-        degrees = np.rad2deg(np.arctan2(measured[:, 1], measured[:, 0]))
+        degrees = np.rad2deg(angle)
     translations = poses[:, [0, 2], 3]
     return degrees, translations if np.any(translations) else None, fitted
 

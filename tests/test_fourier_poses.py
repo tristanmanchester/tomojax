@@ -107,6 +107,20 @@ def test_fourier_rejects_out_of_plane_pose_corrections_before_writing():
     np.testing.assert_array_equal(out, 123)
 
 
+def test_fourier_requires_rigid_axial_poses():
+    class Sheared(tj.ParallelGeometry):
+        def pose_matrix(self, i):
+            pose = np.array(super().pose_matrix(i))
+            pose[0, 2] = 0.1
+            return pose
+
+    grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(8, 3, 1, 1)
+    geometry = Sheared(grid, detector, np.arange(8) * 20)
+    scan = tj.Scan(np.ones((8, 3, 8), np.float32), geometry)
+    with pytest.raises(ValueError, match="rotations about z"):
+        tj.reconstruct(scan, "fourier")
+
+
 def test_preflight_reads_bounded_view_and_detector_row_batches():
     from tomojax._workflow.planning import resolve_reconstruction
 
