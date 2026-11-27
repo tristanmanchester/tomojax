@@ -513,12 +513,9 @@ def _model(
     volume, native = _fit(geometry, wide, complete, full, coarse)
     predicted: Float64Array = np.zeros(d.nv)
     residual: Float32Array = host_array((views, d.nv, d.nu))
-    expected = full[..., d.nu : 2 * d.nu]
     for part, block in _project(geometry, complete, wide, poses, volume, coarse, native=native):
         predicted += np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
-        modeled = block[..., d.nu : 2 * d.nu]
-        residual[part] = expected[part] - modeled
-        expected[part] = modeled
+        residual[part] = (full[part] - block)[..., d.nu : 2 * d.nu]
     scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
     if not scale.any():
         return None, 0.0
@@ -538,13 +535,7 @@ def _model(
         progress.check_canceled()
         across = horizontal.interpolate(residual[part])
         mismatch = vertical.interpolate(across.swapaxes(1, 2)).swapaxes(1, 2)
-        total = vertical.interpolate(
-            horizontal.interpolate(expected[part]).swapaxes(1, 2)
-        ).swapaxes(1, 2)
-        # The measured-model difference belongs to the whole ray. Allocate only
-        # the exterior share to its background, as for two additive intensities.
-        fraction = np.divide(block, total, out=np.zeros_like(block), where=total > 0)
-        source[part] = (block + np.clip(fraction, 0, 1) * mismatch) * amplitude
+        source[part] = (block + mismatch) * amplitude
         if config.method == "mlem":
             _ = np.clip(source[part], 0, None, out=source[part])
         removed += sum_float64(source[part])
