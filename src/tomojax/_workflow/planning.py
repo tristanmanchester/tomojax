@@ -21,8 +21,8 @@ if TYPE_CHECKING:
 
 UNDECLARED_GEOMETRY = (
     "requires declared acquisition geometry: this file records no rotation axis or pixel "
-    "scale. Declare it when loading: geometry= a ParallelGeometry (or another) in Python, "
-    '--geometry parallel on tomojax correct, or geometry {"kind": "parallel"} in the '
+    "scale. Declare it when loading: pass geometry=... to tomojax.load in Python, "
+    '--geometry parallel to tomojax correct, or geometry {"kind": "parallel"} to the '
     "worker's or MCP server's open"
 )
 
