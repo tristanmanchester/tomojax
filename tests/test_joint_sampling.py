@@ -45,13 +45,16 @@ def test_partial_blocks_average_their_finite_pixels():
     np.testing.assert_array_equal(precision[[0, 3]], 1)
 
 
-def test_the_native_detector_window_is_released_after_binning(tmp_path):
+@pytest.mark.parametrize("sparse_contrasts", [False, True])
+def test_the_native_detector_window_is_released_after_binning(tmp_path, sparse_contrasts):
     maps = Path("/proc/self/smaps")
     if not maps.exists():
         pytest.skip("mapping RSS requires Linux procfs")
     path = tmp_path / "native.bin"
     projections = np.memmap(path, np.float32, "w+", shape=(33, 257, 263))
     projections[:] = np.random.default_rng(4).normal(size=projections.shape)
+    if sparse_contrasts:
+        projections[:, :, ::4] = np.nan
     projections.flush()
 
     def resident_bytes():

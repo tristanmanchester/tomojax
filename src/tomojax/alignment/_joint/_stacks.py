@@ -278,12 +278,15 @@ class LevelStacks:
                     )
                     self.placed[name] = "device"
                     continue
-            # The host stacks are held together, so the storage rule counts them together.
-            beside = sum(self.sizes[n] for n in self.names if n not in self.placed)
-            array = host_array(shape, dtype=dtype, copies=beside / max(1, self.sizes[name]))
-            self._keys.callback(close_work_file, array)
-            if name in data:
-                array[...] = data[name]
+            # Observations and precision are immutable for the level. A host
+            # handle can borrow their padded array through the last batch read.
+            array = data.get(name)
+            if array is None:
+                beside = sum(
+                    self.sizes[n] for n in self.names if n not in self.placed and n not in data
+                )
+                array = host_array(shape, dtype=dtype, copies=beside / max(1, self.sizes[name]))
+                self._keys.callback(close_work_file, array)
             key = self._keys.enter_context(host_source(array))
             self.stacks[name] = Stack(key, host=True, shape=shape, dtype=dtype, batch=self.batch)
             self.placed[name] = "host"
