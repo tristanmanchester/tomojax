@@ -137,7 +137,7 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     Calibration (flats and darks) is the dataset check's to report, in ``issues``.
     """
     from tomojax._loading.loader import loading_geometry
-    from tomojax.geometry.coverage import parallel_field
+    from tomojax.geometry.coverage import full_parallel_turn, horizontal_detector, panel_field
 
     try:
         record, geometry = loading_geometry(path)
@@ -153,11 +153,12 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     metadata = object_mapping(record.geometry_metadata if record is not None else None)
     acquisition = object_mapping(metadata.get("acquisition"))
     coverage = {}
-    field = parallel_field(geometry)
-    if field is not None:
+    if full_parallel_turn(geometry):
         coverage["full_turn"] = True
-        if metadata.get("detector_center_status") != "not_recorded":
-            near, far = field
+        roll = float(getattr(geometry, "detector_roll", 0.0))
+        if roll % 90 == 0 and metadata.get("detector_center_status") != "not_recorded":
+            panel = horizontal_detector(geometry.detector, roll)
+            near, far = panel_field(panel.nu, panel.center[0] / panel.du)
             coverage.update(
                 axis_to_edge_px=near, field_of_view_px=2 * far, overlap_px=max(0.0, 2 * near)
             )

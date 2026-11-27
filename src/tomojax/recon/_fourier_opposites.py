@@ -41,10 +41,12 @@ class OpposedDirections:
             for n in np.unique(counts[counts > 1])
         ]
         knots = np.unique(np.asarray(folded, np.float64))
-        self.angles = tuple(np.repeat(knots, 2))
-        self.flipped = np.tile(np.array([0, 1], dtype=np.int8), len(knots))
         wanted = np.ravel(np.column_stack((knots, knots + np.pi)))
-        self.order = np.argsort(np.argsort(wanted))
+        self.sampling = (
+            tuple(np.repeat(knots, 2)),
+            np.tile(np.array([0, 1], dtype=np.int8), len(knots)),
+            np.argsort(np.argsort(wanted)),
+        )
         right = np.searchsorted(nodes, wanted) % len(nodes)
         left = (right - 1) % len(nodes)
         span = np.remainder(nodes[right] - nodes[left], 2 * np.pi)

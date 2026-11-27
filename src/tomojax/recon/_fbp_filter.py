@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache, partial
 from typing import TYPE_CHECKING, NamedTuple
 
@@ -9,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
-from tomojax.geometry.coverage import conjugate_weights
+from tomojax.geometry.coverage import conjugate_weights, full_parallel_turn
 
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
 from ._row_filter import filter_rows, filtered_profiles
@@ -17,7 +18,32 @@ from .filters import get_fbp_filter_np, rfft_filter_array
 
 if TYPE_CHECKING:
     from tomojax._parameters import Filter
-    from tomojax.core.geometry import Detector
+    from tomojax.core.geometry import Detector, Geometry
+
+    from .fbp import FBPConfig
+
+
+def horizontal_projections(
+    data: np.ndarray | jnp.ndarray,
+    geometry: Geometry,
+    detector: Detector,
+    roll: float,
+    cfg: FBPConfig,
+) -> tuple[np.ndarray | jnp.ndarray, Detector, FBPConfig, bool]:
+    """Return physical rows and whether their uniform-width ramp needs conjugate weights."""
+    from ._detector_rows import DetectorRows
+
+    asymmetric = detector.center[0] != 0 or roll % 90 != 0
+    full_turn = asymmetric and cfg.scale is None and full_parallel_turn(geometry)
+    if not roll:
+        return data, detector, cfg, full_turn
+    layout = DetectorRows(detector, roll, full_turn)
+    rows = layout.parallel_band(data, 0, layout.horizontal.nv, native=0, exterior=cfg.exterior)
+    panel = layout.filter_detector(cfg.exterior)
+    if layout.quarter_turn:
+        return rows, panel, cfg, full_turn
+    # Each oblique chord already carries its own weights and fitted tails.
+    return rows, panel, replace(cfg, exterior="zero"), False
 
 
 class RowFilter(NamedTuple):

@@ -194,9 +194,8 @@ The CLI prints shared corrections (such as `center` in native pixels or angles i
    - `unusual_views`: views with residuals at least 3× their neighbors', such as broken frames or diffraction flashes. Inspect those frames and drop them or rerun with `RejectViews()`.
 
    Joint fits also return `result.info["disturbed_views"]` to flag views where an object may cross the field of view (see [Inspect an object crossing the field of view](#inspect-an-object-crossing-the-field-of-view)); `tomojax align` and MCP `align` print its summary message.
-   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records `focus_px`, `binning`, `views`, and `pairs`; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value. MCP `align` results return `calibration`, `diagnostics`, and (for joint fits) `disturbed_views`.
 
-   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records the half-turn focus or full-turn correlation measurements described above; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value. MCP `align` results return both `calibration` and `diagnostics`.
+   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records the half-turn focus or full-turn correlation measurements described above; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value. MCP `align` results return `calibration` and `diagnostics` for direct fits.
 5. **Check held-out views** to test smooth motion recovery. Hold out every sixth view, align the remaining views, interpolate their poses to the held-out views, and compare projection error against nominal poses after removing each view's offset and vertical ramp:
 
    ```python

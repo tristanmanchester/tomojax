@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax.core.geometry.cone import cone_parts
-from tomojax.geometry.coverage import conjugate_weights, parallel_field
+from tomojax.geometry.coverage import conjugate_weights, full_parallel_turn, panel_field
 
 from ._continuation import (
     Continuation,
@@ -71,7 +71,8 @@ class _Chord:
 class ChordSample:
     """Sample physical chords for the truncation record, including native slab reads."""
 
-    def __init__(self, chords: list[_Chord], field_radius: float) -> None:
+    def __init__(self, chords: list[_Chord], field_radius: float, *, full_turn: bool) -> None:
+        self.full_turn = full_turn
         self.chords, self.field_radius = chords, field_radius
 
     @classmethod
@@ -82,6 +83,7 @@ class ChordSample:
         parallel_roll = float(getattr(geometry, "detector_roll", 0.0))
         if not parallel_roll and not any(b.detector_roll for _, b, _ in parts or ()):
             return None
+        full_turn = full_parallel_turn(geometry)
         chosen, _ = _record_indices(n_views, height)
         chords: list[_Chord] = []
         field: dict[tuple[float, bytes], float] = {}
@@ -120,8 +122,8 @@ class ChordSample:
                 z = horizontal.center[1] + (row - (horizontal.nv - 1) / 2) * horizontal.dv
                 coordinates = distance.tobytes()
                 if row in global_rows:
-                    field[z, coordinates] = min(
-                        abs(distance.item(width)), abs(distance.item(2 * width - 1))
+                    field[z, coordinates] = _field_radius(
+                        distance, width, outer_only=full_turn and x != 0
                     )
                 if row in local:
                     sample = RowSamples(
@@ -130,7 +132,9 @@ class ChordSample:
                     )
                     band = lower.item(row) - first, upper.item(row) - first
                     chords.append(_Chord(sample, views, band, coordinates, z))
-        return cls(chords, float(np.median(list(field.values()))) if field else 0.0)
+        return cls(
+            chords, float(np.median(list(field.values()))) if field else 0.0, full_turn=full_turn
+        )
 
     def add(self, first: int, data: np.ndarray | jax.Array) -> None:
         pending: dict[bytes, list[_Chord]] = {}
@@ -165,12 +169,14 @@ class ChordSample:
         axial: list[float] = []
         for (_, coordinates), pieces in groups.items():
             data: npt.NDArray[np.float32] = np.concatenate(pieces, dtype=np.float32)[:, None, :]
-            with np.errstate(invalid="ignore", divide="ignore"):
-                terms: Host = np.asarray(
-                    _measure(coordinates, host=True, by_row=True)(data), np.float64
-                ).reshape(7)
             distance = np.frombuffer(coordinates, np.float64)
             width = data.shape[-1]
+            outer_only = self.full_turn and distance.item(width) != -distance.item(2 * width - 1)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                terms: Host = np.asarray(
+                    _measure(coordinates, host=True, by_row=True, outer_only=outer_only)(data),
+                    np.float64,
+                ).reshape(7)
             if distance.item(width) <= 0 <= distance.item(2 * width - 1):
                 axial.append(terms.item(4))
             stats.append(terms)
@@ -195,7 +201,7 @@ class ScanSample:
     def __init__(self, geometry: ScanGeometry, detector: Detector) -> None:
         distance = _axis_distance(geometry, detector, continued_columns(detector.nu))
         self.coordinates = distance.tobytes()
-        self.outer_only = bool(detector.center[0]) and parallel_field(geometry) is not None
+        self.outer_only = bool(detector.center[0]) and full_parallel_turn(geometry)
         self.views, self.rows = _record_indices(len(geometry.angles), detector.nv)
         self.statistics = np.empty((len(self.rows), 7), np.float64)
         self.present = np.zeros(len(self.rows), bool)
@@ -255,8 +261,9 @@ def truncation_record(
         negative, as zero beyond the detector counts outside material inside.
         ``radius``: the median radius of the rows' fitted cylinders, and
         ``field_of_view_radius``: the distance from the axis to the nearer
-        detector edge (farther edge for an axial parallel full turn), both in
-        the scan's length unit.
+        detector edge, or to the far edge on an offset axial parallel full turn.
+        A rolled detector reports the median over sampled horizontal chords.
+        Both radii use the scan's length unit.
 
     Notes
     -----
@@ -287,7 +294,7 @@ def truncation_values(
     measure = _measure(
         distance.tobytes(),
         host=host,
-        outer_only=bool(detector.center[0]) and parallel_field(geometry) is not None,
+        outer_only=bool(detector.center[0]) and full_parallel_turn(geometry),
     )
     if host:
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -319,6 +326,14 @@ def _combine(rows: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
     )
 
 
+def _field_radius(distance: Host, nu: int, *, outer_only: bool) -> float:
+    left, right = distance.item(nu), distance.item(2 * nu - 1)
+    if outer_only:
+        pitch = distance.item(nu) - distance.item(nu - 1)
+        return pitch * panel_field(nu, (left + right) / (2 * pitch))[1]
+    return min(abs(left), abs(right))
+
+
 @lru_cache(maxsize=16)
 def _measure(
     coordinates: bytes, *, host: bool, outer_only: bool, by_row: bool = False
@@ -330,8 +345,7 @@ def _measure(
     fits = Continuation(distance, nu, pad, outer_only=outer_only)
     width: Host = np.abs(np.gradient(distance))
     outside = np.r_[0:pad, pad + nu : pad + nu + pad]
-    edges = (abs(distance.item(pad)), abs(distance.item(pad + nu - 1)))
-    fov = max(edges) + float(width.item(pad)) / 2 if outer_only else min(edges)
+    fov = _field_radius(distance, nu, outer_only=outer_only)
     measured_width = width[pad : pad + nu]
     if outer_only:
         offset = (distance.item(pad) + distance.item(pad + nu - 1)) / (2 * measured_width.item(0))

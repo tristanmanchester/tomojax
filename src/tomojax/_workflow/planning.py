@@ -223,23 +223,15 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
 
 def _parallel_method(scan: Scan, recommendation: str | None) -> tuple[Method, str, str | None]:
     """Choose the axial inverse from the measured directions and any out-of-plane motion."""
-    from tomojax.geometry import ParallelGeometry
+    from tomojax.geometry.coverage import axial_trajectory, full_rotation
 
-    directions = np.asarray(scan.angles)
-    if type(scan.geometry) is not ParallelGeometry:
-        # Pure axial angle corrections describe the same Fourier experiment
-        # as an encoder list. Keep the general FBP route for moving samples.
-        from tomojax.recon.fourier import axial_trajectory
-
-        try:
-            directions, shifts = axial_trajectory(scan.geometry)
-        except ValueError:
-            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
-        if shifts is not None:
-            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+    try:
+        directions, shifts = axial_trajectory(scan.geometry, np.asarray(scan.angles))
+    except ValueError:
+        return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+    if shifts is not None:
+        return "fbp", "FBP uses the scan's per-view geometry.", recommendation
     if recommendation is None:
-        from tomojax.geometry.coverage import full_rotation
-
         arc = "full-turn" if full_rotation(directions) else "half-turn"
         return "fourier", f"Fourier inversion uses the scan's {arc} coverage.", None
     reason = (

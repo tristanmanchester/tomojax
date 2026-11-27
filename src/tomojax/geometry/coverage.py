@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 from typing import TYPE_CHECKING
 
@@ -11,22 +12,19 @@ if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from tomojax._typed_arrays import Float64Array
+    from tomojax.geometry import Detector, Geometry
 
 _TURN = 2 * np.pi
 # Views within a millionth of a turn are one direction measured again.
 REPEAT_TOLERANCE = _TURN * 1e-6
 
 
-def group_repeats(
-    angles: np.ndarray, *, tolerance: float = REPEAT_TOLERANCE
-) -> tuple[Float64Array, NDArray[np.intp], NDArray[np.intp]]:
+def group_repeats(angles: np.ndarray) -> tuple[Float64Array, NDArray[np.intp], NDArray[np.intp]]:
     """Distinct directions in ``[0, 2 pi)``, each view's group, and group sizes.
 
     Angles in radians within a millionth of a turn of a neighbor share a
-    group by default, whichever whole turn they are labeled with and whatever
-    their rounding, so a direction measured twice keeps one angular cell.
-    ``tolerance`` is in radians; literal high-precision acquisition angles can
-    request only roundoff-scale grouping instead of fitted-pose tolerance.
+    group across rounding and whole turns, so a direction measured twice
+    keeps one angular cell.
     """
     canonical = np.remainder(np.asarray(angles, np.float64), _TURN)
     order = np.argsort(canonical)
@@ -36,7 +34,7 @@ def group_repeats(
     unwrapped = canonical[order[0]] + np.append(
         0.0, np.cumsum(np.remainder(np.diff(canonical[order]), _TURN))
     )
-    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > tolerance))
+    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > REPEAT_TOLERANCE))
     repeats = np.bincount(sorted_groups)
     representatives = np.bincount(sorted_groups, weights=unwrapped) / repeats
     groups = np.empty_like(sorted_groups)
@@ -85,9 +83,7 @@ def conjugate_weights(nu: int, center_px: float) -> NDArray[np.float32]:
     s = np.arange(nu, dtype=np.float64) - (nu - 1) / 2 + center_px
     lo, hi = center_px - nu / 2, center_px + nu / 2
     parameters = np.array([lo, hi, 1.0])
-    own = reliability(s, parameters)
-    opposite = reliability(-s, parameters)
-    return np.asarray(2 * own / (own + opposite), dtype=np.float32)
+    return np.asarray(2 * conjugate_share(s, parameters), dtype=np.float32)
 
 
 def reliability(ray: Float64Array, parameters: Float64Array) -> Float64Array:
@@ -98,20 +94,84 @@ def reliability(ray: Float64Array, parameters: Float64Array) -> Float64Array:
     return np.tan(np.pi / 4 * np.clip(distance / width, 0, 1)) ** 2
 
 
-def parallel_field(geometry: object) -> tuple[float, float] | None:
-    """Distances from the axis to the near and far horizontal edges in pixels.
+def conjugate_share(
+    ray: Float64Array, panel: Float64Array, total: Float64Array | None = None
+) -> Float64Array:
+    """Share of a conjugate ray on this panel, including a supplied multi-panel total."""
+    own = reliability(ray, panel)
+    if total is None:
+        total = own + reliability(-ray, panel)
+    return np.divide(own, total, out=np.zeros_like(total), where=total > 0)
 
-    These define the doubly measured and complete field radii of a stationary
-    axial parallel full turn. A negative near distance means a central gap.
-    """
+
+def axial_trajectory(
+    geometry: Geometry, angles: np.ndarray
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Axial rotation and detector translation from the projector's world-from-object poses."""
     from tomojax.geometry import ParallelGeometry
 
-    if (
-        type(geometry) is not ParallelGeometry
-        or geometry.detector_roll
-        or not full_rotation(np.asarray(geometry.angles))
-    ):
-        return None
-    detector = geometry.detector
-    offset = abs(detector.center[0]) / detector.du
-    return detector.nu / 2 - offset, detector.nu / 2 + offset
+    degrees = np.asarray(angles, dtype=np.float64)
+    if type(geometry) is ParallelGeometry:
+        return degrees, None
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))], np.float64)
+    measured = poses[:, :2, 0]
+    angle = np.arctan2(measured[:, 1], measured[:, 0])
+    axial = np.zeros((len(poses), 3, 3))
+    axial[:, 0, 0] = axial[:, 1, 1] = np.cos(angle)
+    axial[:, 1, 0], axial[:, 0, 1] = np.sin(angle), -np.sin(angle)
+    axial[:, 2, 2] = 1
+    if not np.allclose(poses[:, :3, :3], axial, atol=2e-7, rtol=0):
+        raise ValueError("fourier_reconstruct: axial slices require rotations about z")
+    # Keep the precision of recorded angles if the rotations are exactly those
+    # angles rounded to the pose precision (e.g. a translation-only fit).
+    radians = np.deg2rad(degrees)
+    nominal = np.stack([np.cos(radians), np.sin(radians)], axis=1)
+    fitted = not np.array_equal(measured.astype(np.float32), nominal.astype(np.float32))
+    if fitted:
+        degrees = np.rad2deg(angle)
+    translations = poses[:, [0, 2], 3]
+    return degrees, translations if np.any(translations) else None
+
+
+def full_parallel_turn(geometry: Geometry) -> bool:
+    """Whether the measured orbit is axial and stationary over a full rotation."""
+    from tomojax.geometry import ParallelGeometry
+
+    base = getattr(geometry, "base", geometry)
+    if not isinstance(base, ParallelGeometry):
+        return False
+    try:
+        angles, shifts = axial_trajectory(
+            geometry, np.asarray(getattr(geometry, "angles", base.angles))
+        )
+    except ValueError:  # An out-of-plane pose does not have axial conjugates.
+        return False
+    return shifts is None and full_rotation(angles)
+
+
+def panel_field(width: int, center_px: float) -> tuple[float, float]:
+    """Near and far edge distances for a horizontal detector chord, in pixels."""
+    return width / 2 - abs(center_px), width / 2 + abs(center_px)
+
+
+def detector_axes(roll: float) -> tuple[float, float]:
+    """Cosine and sine of the detector roll with exact signed quarter turns."""
+    turns, residual = divmod(roll, 90.0)
+    c, s = math.cos(math.radians(residual)), math.sin(math.radians(residual))
+    return ((c, s), (-s, c), (-c, -s), (s, -c))[int(turns) % 4]
+
+
+def horizontal_detector(detector: Detector, roll: float) -> Detector:
+    """Axis-aligned sampling lattice enclosing the detector footprint."""
+    if not roll:
+        return detector
+    c, s = detector_axes(roll)
+    du = 1 / math.hypot(c / detector.du, s / detector.dv)
+    dv = 1 / math.hypot(s / detector.du, c / detector.dv)
+    width, height = detector.nu * detector.du, detector.nv * detector.dv
+    nu = max(1, math.ceil((abs(c) * width + abs(s) * height) / du - 1e-10))
+    nv = max(1, math.ceil((abs(s) * width + abs(c) * height) / dv - 1e-10))
+    if min(detector.nu, detector.nv) == 1 and roll % 90:
+        # Anchor the lattice on the measured center of a single-pixel strip.
+        nu, nv = nu | 1, nv | 1
+    return replace(detector, nu=nu, nv=nv, du=du, dv=dv)

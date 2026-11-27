@@ -13,7 +13,7 @@ from tomojax import progress
 from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
-from tomojax.geometry.coverage import parallel_field
+from tomojax.geometry.coverage import full_rotation
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import (
@@ -102,7 +102,13 @@ def fourier_slabs[T](
     backend = resolve_fourier_backend(config.backend)
     if info is not None:
         info["backend"] = backend
-    layout = DetectorRows(detector, geometry.detector_roll) if geometry.detector_roll else None
+    asymmetric = detector.center[0] != 0 or geometry.detector_roll % 90 != 0
+    full_turn = asymmetric and full_rotation(np.asarray(geometry.angles))
+    layout = (
+        DetectorRows(detector, geometry.detector_roll, full_turn)
+        if geometry.detector_roll
+        else None
+    )
     if layout is not None:
         detector = layout.filter_detector(config.exterior)
     depth = fourier_slab_depth(grid, detector, config.slices_per_batch, backend)
@@ -126,7 +132,8 @@ def fourier_slabs[T](
                     backend,
                     filter=config.filter,
                     exterior=config.exterior if layout is None or layout.quarter_turn else "zero",
-                    full_turn=parallel_field(geometry) is not None,
+                    full_turn=full_turn,
+                    weighted_chords=layout is not None and not layout.quarter_turn,
                     async_transfers=backend == "cupy",
                     order=order,
                 )

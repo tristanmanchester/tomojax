@@ -15,8 +15,8 @@ from tomojax.core import checkpoint
 from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
-from tomojax.geometry import ParallelGeometry, grid_volume_origin
-from tomojax.geometry.coverage import parallel_field
+from tomojax.geometry import grid_volume_origin
+from tomojax.geometry.coverage import axial_trajectory, full_rotation
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import FourierPlan, fourier_slab_depth, resolve_fourier_backend
@@ -239,7 +239,9 @@ def fourier(
                     sampling.angles,
                     depth,
                     backend,
-                    full_turn=parallel_field(geometry) is not None,
+                    full_turn=sampling.full_turn,
+                    weighted_chords=sampling.layout is not None
+                    and not sampling.layout.quarter_turn,
                     async_transfers=overlap,
                     shifts=sampling.shifts,
                     filter=cfg.filter,
@@ -279,6 +281,7 @@ class _Sampling:
     rows: np.ndarray
     vertical: np.ndarray | None
     layout: DetectorRows | None
+    full_turn: bool
     exterior: _parameters.Exterior
 
     def sample(
@@ -341,10 +344,12 @@ def _sampling_coordinates(
 ) -> _Sampling:
     """Resolve the physical detector rows, view order and translations shared by plan and run."""
     require_parallel_beam(geometry, "fourier_reconstruct")
-    directions, translations = axial_trajectory(geometry)
+    directions, translations = axial_trajectory(geometry, np.asarray(geometry.angles))
     order, flipped, angles = sorted_half_turn(directions)
     roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
-    layout = DetectorRows(detector, roll) if roll else None
+    asymmetric = detector.center[0] != 0 or roll % 90 != 0
+    full_turn = asymmetric and translations is None and full_rotation(directions)
+    layout = DetectorRows(detector, roll, full_turn) if roll else None
     if layout is not None:
         detector = layout.filter_detector(exterior)
     plan_detector, shifts, vertical = detector, None, None
@@ -369,33 +374,17 @@ def _sampling_coordinates(
     ):
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
     return _Sampling(
-        plan_detector, order, flipped, angles, shifts, positions, vertical, layout, exterior
+        plan_detector,
+        order,
+        flipped,
+        angles,
+        shifts,
+        positions,
+        vertical,
+        layout,
+        full_turn,
+        exterior,
     )
-
-
-def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | None]:
-    """Axial rotation and detector translation from the projector's world-from-object poses."""
-    degrees = np.asarray(geometry.angles, dtype=np.float64)
-    if type(geometry) is ParallelGeometry:
-        return degrees, None
-    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))], np.float64)
-    measured = poses[:, :2, 0]
-    angle = np.arctan2(measured[:, 1], measured[:, 0])
-    axial = np.zeros((len(poses), 3, 3))
-    axial[:, 0, 0] = axial[:, 1, 1] = np.cos(angle)
-    axial[:, 1, 0], axial[:, 0, 1] = np.sin(angle), -np.sin(angle)
-    axial[:, 2, 2] = 1
-    if not np.allclose(poses[:, :3, :3], axial, atol=2e-7, rtol=0):
-        raise ValueError("fourier_reconstruct: axial slices require rotations about z")
-    # Keep the precision of recorded angles if the rotations are exactly those
-    # angles rounded to the pose precision (e.g. a translation-only fit).
-    radians = np.deg2rad(degrees)
-    nominal = np.stack([np.cos(radians), np.sin(radians)], axis=1)
-    fitted = not np.array_equal(measured.astype(np.float32), nominal.astype(np.float32))
-    if fitted:
-        degrees = np.rad2deg(angle)
-    translations = poses[:, [0, 2], 3]
-    return degrees, translations if np.any(translations) else None
 
 
 def _prepare_slab(

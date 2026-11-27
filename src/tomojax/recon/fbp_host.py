@@ -26,10 +26,10 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
-from tomojax.geometry.coverage import parallel_field
+from tomojax.geometry.coverage import full_parallel_turn
 
 from ._backend import reconstruction_backend
-from ._detector_rows import DetectorRows
+from ._fbp_filter import horizontal_projections
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     FBPConfig,
@@ -300,42 +300,40 @@ def fbp_host(
     if fbp_cfg.backend not in {"auto", "jax", "cuda"}:
         raise ValueError("fbp_host: backend must be 'auto', 'jax' or 'cuda'")
     validate_angles(geometry, "fbp_host")
-    shape = grid.shape
     n_views, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
 
     roll = float(getattr(geometry, "detector_roll", 0.0))
-    if roll:
-        # Validate caller-owned storage while the original input is available.
-        out = validate_host_arrays(projections, out, shape, device_input=True)
-        layout = DetectorRows(detector, roll)
-        projections = layout.parallel_band(
-            projections, 0, layout.horizontal.nv, native=0, exterior=fbp_cfg.exterior
-        )
-        detector = layout.filter_detector(fbp_cfg.exterior)
-        if not layout.quarter_turn:
-            fbp_cfg = replace(fbp_cfg, exterior="zero")
-            cfg = replace(cfg, fbp=fbp_cfg)
+    output = validate_host_arrays(projections, out, grid.shape, device_input=True)
+    projections, detector, fbp_cfg, rectangular = horizontal_projections(
+        projections, geometry, detector, roll, fbp_cfg
+    )
     announce()
     poses = stack_view_poses(geometry, n_views)
-    view_scale = _view_weights(poses, fbp_cfg.scale)[0]
     backend = reconstruction_backend(
         fbp_cfg.backend, cone=False, context="fbp_host", devices=poses.devices()
     )
     if type(geometry) is not ParallelGeometry:
-        return _general_slabs(poses, grid, detector, projections, cfg, out, backend, slices, views)
+        return _general_slabs(
+            poses,
+            grid,
+            detector,
+            projections,
+            fbp_cfg,
+            output,
+            backend,
+            slices,
+            views,
+            full_turn=rectangular,
+        )
+    view_scale = _view_weights(poses, fbp_cfg.scale)[0]
     depth = axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
     ramp = row_filter(
-        fbp_cfg.filter,
-        local_detector,
-        projections,
-        fbp_cfg.exterior,
-        full_turn=fbp_cfg.scale is None and parallel_field(geometry) is not None,
+        fbp_cfg.filter, local_detector, projections, fbp_cfg.exterior, full_turn=rectangular
     )
-    output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
     slab_bytes = 4 * grid.nx * grid.ny * depth
@@ -389,19 +387,25 @@ def _general_slabs(
     grid: Grid,
     detector: Detector,
     projections: np.ndarray | jax.Array,
-    cfg: FBPHostConfig,
-    out: np.ndarray | None,
+    cfg: FBPConfig,
+    output: np.ndarray,
     backend: str,
     slices: int | None,
     views: int,
+    *,
+    full_turn: bool,
 ) -> np.ndarray:
     """Reconstruct z-slabs, streaming every view batch once per slab."""
-    output = validate_host_arrays(projections, out, (grid.nz, grid.ny, grid.nx), device_input=True)
-    view_scale, params, arc_length, separable = _view_weights(poses, cfg.fbp.scale)
+    view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
     spectrum = row_filter(
-        cfg.fbp.filter, detector_f, projections, cfg.fbp.exterior, separable=separable
+        cfg.filter,
+        detector_f,
+        projections,
+        cfg.exterior,
+        separable=separable,
+        full_turn=full_turn,
     )
     batch = min(views, projections.shape[0])
     if slices is None:
@@ -540,7 +544,7 @@ def fbp_slabs[T](
                             backend,
                             depth,
                             start,
-                            full_turn=config.scale is None and parallel_field(geometry) is not None,
+                            full_turn=config.scale is None and full_parallel_turn(geometry),
                         )
                     ) as completed:
                         for slab in completed:

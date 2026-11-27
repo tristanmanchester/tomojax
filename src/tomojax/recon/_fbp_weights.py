@@ -53,7 +53,7 @@ def fbp_weights(poses: np.ndarray) -> FBPWeights:
     Poses are world-from-object transforms with rays along world +y and the
     detector u/v axes along world x/z. The axis is the normal of the cone traced
     by the object-frame ray directions, so built-in and calibrated geometries
-    are handled alike. As for FDK, a largest circular gap no greater than 1.5
+    are handled alike. As for FDK, a largest circular gap below 1.5
     typical view steps denotes a complete turn; otherwise it is the missing arc.
     Raises ``ValueError`` when the views do not determine a rotation (fewer than
     three distinct directions).

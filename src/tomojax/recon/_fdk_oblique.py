@@ -17,11 +17,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core.host_transfer import upload_host
+from tomojax.geometry.coverage import conjugate_share, ordered_arc
 
 from ._continuation import Continuation, cone_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
-from tomojax.geometry.coverage import ordered_arc, reliability
-
 from ._fdk_angles import fan_angles, grouped_angles, parker_weights
 from ._fdk_coverage import pair_reliability
 from ._fdk_filter import cosines
@@ -158,10 +157,8 @@ class FanRows:
                 parker_weights(order, arc, groups[views], step, fan, delta, panel, pair)
                 / repeats[groups[views], None]
             )
-        own = reliability(fan, panel)
-        if len(self.parts) == 1:
-            total = own + reliability(-fan, panel)
-        else:
+        total = None
+        if len(self.parts) > 1:
             current, opposite = pair_reliability(
                 angles,
                 groups,
@@ -171,7 +168,7 @@ class FanRows:
                 groups[views],
             )
             total = current + opposite
-        partition = np.divide(own, total, out=np.zeros_like(total), where=total > 0)
+        partition = conjugate_share(fan, panel, total)
         return self.measure[views, None] * partition
 
 

@@ -125,6 +125,8 @@ The fit matches changes in attenuation across the turn in the strip shared by op
 
 Use `tomojax inspect full-turn.nxs` or the MCP `inspect` tool to check the orbit. When the file records the axis, inspection also reports the axis-to-edge distance, overlap and complete field diameter in detector pixels. With an unknown axis, inspect the saved aligned scan for those dimensions. If the axis lies outside the detector, inspection gives the diameter of the central disk missed by every ray. Any change in attenuation confined to that disk produces identical measurements.
 
+With a rolled detector, the overlap and completed field can vary with height. The direct methods weight each horizontal detector line over its own measured interval. The default grid encloses all those lines. Inspection gives a single overlap and diameter when the horizontal intervals are the same at every height.
+
 At 0.54 µm pitch, a 4,992 × 4,992 × 2,160 float32 volume occupies 215.3 GB. Fit the center on a representative band before correcting the whole acquisition. Pass the fitted `detector_center` when opening the full frames in the CLI or worker. In Python pass a full-height `detector` with the fitted horizontal center to `load_frames`, then consume `tj.reconstruct_slabs` one slab at a time. The [gallery](gallery.md#parallel-half-acquisition) shows the overlap and reconstructed field.
 
 ## Diamond I13 NXtomo acquisition

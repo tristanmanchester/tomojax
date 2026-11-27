@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.geometry.coverage import detector_axes, horizontal_detector
+
 if TYPE_CHECKING:
     import jax
     from numpy.typing import NDArray
@@ -16,34 +18,60 @@ if TYPE_CHECKING:
     from tomojax.core.geometry import Detector
 
 
+def lattice_geometry(
+    detector: Detector, det_grid: tuple[jax.Array, jax.Array]
+) -> tuple[Detector, float]:
+    """Recover the physical center and in-plane roll of a rigid detector lattice."""
+    nu, nv = detector.nu, detector.nv
+    x, z = (np.asarray(a, np.float64).reshape(nv, nu) for a in det_grid)
+    origin = np.array([x.mean(), z.mean()])
+    qu = (np.arange(nu) - (nu - 1) / 2) * detector.du
+    qv = (np.arange(nv) - (nv - 1) / 2) * detector.dv
+    # Lattice axes from the extreme pixels; a single row or column is completed
+    # by the rotation's right-handed perpendicular.
+    span_u = np.array([1.0, 0.0])
+    if nu > 1:
+        span_u = np.array([x[0, -1] - x[0, 0], z[0, -1] - z[0, 0]]) / (qu[-1] - qu[0])
+    if nv > 1:
+        span_v = np.array([x[-1, 0] - x[0, 0], z[-1, 0] - z[0, 0]]) / (qv[-1] - qv[0])
+        if nu == 1:
+            span_u = np.array([span_v[1], -span_v[0]])
+    else:
+        span_v = np.array([-span_u[1], span_u[0]])
+    rotation = np.column_stack([span_u, span_v])
+    fitted_x = origin[0] + rotation[0, 0] * qu[None, :] + rotation[0, 1] * qv[:, None]
+    fitted_z = origin[1] + rotation[1, 0] * qu[None, :] + rotation[1, 1] * qv[:, None]
+    extent = float(np.max(np.abs(np.r_[x.ravel(), z.ravel()]))) + max(detector.du, detector.dv)
+    residual = max(np.max(np.abs(x - fitted_x)), np.max(np.abs(z - fitted_z)))
+    rigid = np.allclose(rotation.T @ rotation, np.eye(2), atol=1e-5) and np.linalg.det(rotation) > 0
+    if residual > 1e-5 * extent or not rigid:
+        raise ValueError(
+            "fbp: det_grid must be the detector lattice rotated and shifted in its plane"
+        )
+    center = np.asarray(detector.center, np.float64)
+    if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
+        origin, center, atol=1e-6 * extent
+    ):
+        return detector, 0.0
+    roll = math.degrees(math.atan2(rotation.item((1, 0)), rotation.item((0, 0))))
+    return replace(detector, center=(origin.item(0), origin.item(1))), roll
+
+
 @dataclass(frozen=True)
 class DetectorRows:
     """Sampling of an axis-aligned lattice about the measured detector's physical center."""
 
     measured: Detector
     roll: float
+    full_parallel_turn: bool = False
 
     @property
     def axes(self) -> tuple[float, float]:
-        # Exact signed permutations at quarter turns, including on nonsquare panels.
-        turns, residual = divmod(self.roll, 90.0)
-        c, s = math.cos(math.radians(residual)), math.sin(math.radians(residual))
-        return ((c, s), (-s, c), (-c, -s), (s, -c))[int(turns) % 4]
+        return detector_axes(self.roll)
 
     @property
     def horizontal(self) -> Detector:
-        c, s = self.axes
-        det = self.measured
-        du = 1 / math.hypot(c / det.du, s / det.dv)
-        dv = 1 / math.hypot(s / det.du, c / det.dv)
-        # Retain the complete footprint, with the same sampling at equivalent rolls.
-        width, height = det.nu * det.du, det.nv * det.dv
-        nu = max(1, math.ceil((abs(c) * width + abs(s) * height) / du - 1e-10))
-        nv = max(1, math.ceil((abs(s) * width + abs(c) * height) / dv - 1e-10))
-        if min(det.nu, det.nv) == 1 and not self.quarter_turn:
-            # Anchor the grid on the measured center of a single-pixel strip.
-            nu, nv = nu | 1, nv | 1
-        return replace(det, nu=nu, nv=nv, du=du, dv=dv)
+        return horizontal_detector(self.measured, self.roll)
 
     def coordinates(
         self, horizontal: Detector, rows: NDArray[np.int64]
@@ -122,6 +150,7 @@ class DetectorRows:
     ) -> np.ndarray:
         """Rectify a band of parallel data and continue its actual measured horizontal chords."""
         from tomojax.core.host_volume import host_array
+        from tomojax.geometry.coverage import conjugate_weights
 
         from ._continuation import Continuation, parallel_axis_distance
 
@@ -146,11 +175,15 @@ class DetectorRows:
             v = np.clip(v[:, lo:hi], 0, self.measured.nv - 1)
             samples = RowSamples(u, v).read(projections, native)[:, 0]
             begin = pad + lo
-            result[:, row - first, begin : begin + width] = samples
+            x = (lo + (width - det.nu) / 2) * det.du + det.center[0]
+            outer_only = self.full_parallel_turn and not self.quarter_turn and x != 0
+            measured = samples * conjugate_weights(width, x / det.du) if outer_only else samples
+            result[:, row - first, begin : begin + width] = measured
             if pad:
-                x = (lo + (width - 1) / 2 - (det.nu - 1) / 2) * det.du + det.center[0]
                 chord = replace(det, nu=width, center=(x, det.center[1]))
-                fit = Continuation(parallel_axis_distance(chord, width, width), width, width)
+                fit = Continuation(
+                    parallel_axis_distance(chord, width, width), width, width, outer_only=outer_only
+                )
                 low, high = samples[:, : fit.window], samples[:, -fit.window :]
                 radius = fit.radius(np.asarray, low.astype(np.float64), high.astype(np.float64))
                 before, after = fit.continued(np.asarray, samples, radius)

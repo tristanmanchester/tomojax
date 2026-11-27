@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.geometry.coverage import reliability
+from tomojax.geometry.coverage import conjugate_share, reliability
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -50,15 +50,14 @@ def _stationary_weights(
     first = 0
     for count in counts:
         ray: Float64Array = fans[first]
-        denominator: Float64Array = np.mean(
-            reliability(ray[None, :], common[:, None, :])
-            + reliability(-ray[None, :], common[:, None, :]),
-            axis=0,
-        )
-        own = reliability(ray, parameters[first])
-        weights[first : first + count] = np.divide(
-            own, denominator, out=np.zeros_like(own), where=denominator > 0
-        )
+        total = None
+        if len(common) > 1:
+            total = np.mean(
+                reliability(ray[None, :], common[:, None, :])
+                + reliability(-ray[None, :], common[:, None, :]),
+                axis=0,
+            )
+        weights[first : first + count] = conjugate_share(ray, parameters[first], total)
         first += count
     return weights
 
@@ -129,8 +128,6 @@ def full_turn_weights(
     if common is not None:
         weights = _stationary_weights(fans, parameters, common, counts)
     else:
-        own = reliability(fans, parameters[:, None, :])
         current, opposite = pair_reliability(angles, groups, repeats, fans, parameters, groups)
-        total = current + opposite
-        weights = np.divide(own, total, out=np.zeros_like(own), where=total > 0)
+        weights = conjugate_share(fans, parameters[:, None, :], current + opposite)
     return weights * measure[groups, None] / repeats[groups, None]

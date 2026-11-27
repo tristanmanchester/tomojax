@@ -28,8 +28,8 @@ from tomojax.core.validation import (
 from tomojax.errors import InvalidParameter
 
 from ._backend import reconstruction_backend
-from ._detector_rows import DetectorRows
-from ._fbp_filter import RowFilter, continued_rows, ramp_rows, row_filter
+from ._detector_rows import lattice_geometry
+from ._fbp_filter import RowFilter, continued_rows, horizontal_projections, ramp_rows, row_filter
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
 from ._row_filter import output_columns
@@ -603,45 +603,6 @@ def _can_use_direct_parallel_fbp(
     return type(geometry) is ParallelGeometry and det_grid is None
 
 
-def _lattice_geometry(
-    detector: Detector, det_grid: tuple[jnp.ndarray, jnp.ndarray]
-) -> tuple[Detector, float]:
-    """Recover the physical center and in-plane roll of a rigid detector lattice."""
-    nu, nv = detector.nu, detector.nv
-    x, z = (np.asarray(a, np.float64).reshape(nv, nu) for a in det_grid)
-    origin = np.array([x.mean(), z.mean()])
-    qu = (np.arange(nu) - (nu - 1) / 2) * detector.du
-    qv = (np.arange(nv) - (nv - 1) / 2) * detector.dv
-    # Lattice axes from the extreme pixels; a single row or column is completed
-    # by the rotation's right-handed perpendicular.
-    span_u = np.array([1.0, 0.0])
-    if nu > 1:
-        span_u = np.array([x[0, -1] - x[0, 0], z[0, -1] - z[0, 0]]) / (qu[-1] - qu[0])
-    if nv > 1:
-        span_v = np.array([x[-1, 0] - x[0, 0], z[-1, 0] - z[0, 0]]) / (qv[-1] - qv[0])
-        if nu == 1:
-            span_u = np.array([span_v[1], -span_v[0]])
-    else:
-        span_v = np.array([-span_u[1], span_u[0]])
-    rotation = np.column_stack([span_u, span_v])
-    fitted_x = origin[0] + rotation[0, 0] * qu[None, :] + rotation[0, 1] * qv[:, None]
-    fitted_z = origin[1] + rotation[1, 0] * qu[None, :] + rotation[1, 1] * qv[:, None]
-    extent = float(np.max(np.abs(np.r_[x.ravel(), z.ravel()]))) + max(detector.du, detector.dv)
-    residual = max(np.max(np.abs(x - fitted_x)), np.max(np.abs(z - fitted_z)))
-    rigid = np.allclose(rotation.T @ rotation, np.eye(2), atol=1e-5) and np.linalg.det(rotation) > 0
-    if residual > 1e-5 * extent or not rigid:
-        raise ValueError(
-            "fbp: det_grid must be the detector lattice rotated and shifted in its plane"
-        )
-    center = np.asarray(detector.center, np.float64)
-    if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
-        origin, center, atol=1e-6 * extent
-    ):
-        return detector, 0.0
-    roll = math.degrees(math.atan2(rotation.item((1, 0)), rotation.item((0, 0))))
-    return replace(detector, center=(origin.item(0), origin.item(1))), roll
-
-
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
     """Keep the zero-extended ramp convolution at every reconstructed voxel.
 
@@ -784,6 +745,7 @@ def _plan(
     cfg: FBPConfig,
     *,
     backend: str,
+    rectangular_full_turn: bool,
 ) -> _Plan:
     """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
     n_views = int(poses.shape[0])
@@ -799,10 +761,7 @@ def _plan(
         projections,
         cfg.exterior,
         separable=separable,
-        full_turn=parallel
-        and not getattr(geometry, "detector_roll", 0)
-        and arc_length == 2 * np.pi
-        and cfg.scale is None,
+        full_turn=rectangular_full_turn,
     )
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
@@ -947,15 +906,10 @@ def parallel_fbp(
         if det_grid is None:
             roll = float(getattr(geometry, "detector_roll", 0.0))
         else:
-            detector, roll = _lattice_geometry(detector, det_grid)
-        if roll:
-            layout = DetectorRows(detector, roll)
-            proj = layout.parallel_band(
-                proj, 0, layout.horizontal.nv, native=0, exterior=cfg.exterior
-            )
-            detector = layout.filter_detector(cfg.exterior)
-            if not layout.quarter_turn:
-                cfg = replace(cfg, exterior="zero")
+            detector, roll = lattice_geometry(detector, det_grid)
+        proj, detector, cfg, rectangular = horizontal_projections(
+            proj, geometry, detector, roll, cfg
+        )
         backend = reconstruction_backend(
             cfg.backend,
             cone=False,
@@ -970,6 +924,7 @@ def parallel_fbp(
             proj,
             cfg,
             backend=backend,
+            rectangular_full_turn=rectangular,
         )
         if row is not None:
             # Original filter, weights, view partition and numerical batch size. The

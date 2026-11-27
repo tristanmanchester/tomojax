@@ -399,6 +399,7 @@ class FourierPlan:
         filter: Filter | None = None,
         exterior: Exterior = DEFAULT_EXTERIOR,
         full_turn: bool = False,
+        weighted_chords: bool = False,
         async_transfers: bool = False,
         shifts: np.ndarray | None = None,
         order: np.ndarray | None = None,
@@ -435,20 +436,17 @@ class FourierPlan:
         ):
             self.opposites = (
                 OpposedDirections(angles, flipped, xp.asarray)
-                if full_turn and detector.center[0]
+                if full_turn and (detector.center[0] or weighted_chords)
                 else None
             )
             self.redundancy = None
             if self.opposites is not None:
-                angles, flipped, order = (
-                    self.opposites.angles,
-                    self.opposites.flipped,
-                    self.opposites.order,
-                )
+                angles, flipped, order = self.opposites.sampling
                 nviews = len(angles)
-                self.redundancy = xp.asarray(
-                    conjugate_weights(detector.nu, detector.center[0] / detector.du)
-                )
+                if not weighted_chords:
+                    self.redundancy = xp.asarray(
+                        conjugate_weights(detector.nu, detector.center[0] / detector.du)
+                    )
             geometry = _plan_geometry(
                 grid, detector, nviews, flipped, angles, backend, filter, exterior
             )

@@ -138,3 +138,88 @@ def test_off_panel_axis_reports_the_disk_no_view_can_measure(tmp_path):
     assert record["overlap_px"] == 0
     assert record["central_gap_px"] == pytest.approx(4)
     assert record["field_of_view_px"] == pytest.approx(52)
+
+
+@pytest.mark.parametrize("method", ["fbp", "fourier"])
+@pytest.mark.parametrize("exterior", ["zero", "cylinder"])
+def test_rolled_offset_panel_recovers_the_join_and_outer_detail(method, exterior):
+    from tomojax.recon import FBPConfig, FourierConfig
+
+    # Every physical z line crosses the tilted panel at different horizontal ends.
+    # The broad central Gaussian crosses both panels' overlap. A second peak
+    # lies outside the radius of a centered detector of the same width.
+    roll = 18
+    detector = tj.Detector(42, 29, 0.8, 1.1, center=(12.0, 0.2))
+    grid = tj.Grid(77, 77, 7, 0.7, 0.7, 1.6)
+    angles = np.linspace(3, 363, 211, endpoint=False)
+    geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll=roll)
+    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
+    v = (np.arange(detector.nv)[:, None] - (detector.nv - 1) / 2) * detector.dv
+    c, s = np.cos(np.deg2rad(roll)), np.sin(np.deg2rad(roll))
+    ray = detector.center[0] + c * u - s * v
+    height = detector.center[1] + s * u + c * v
+    theta = np.deg2rad(angles)[:, None, None]
+    z, y, x = [
+        (a - (n - 1) / 2) * h
+        for a, n, h in zip(
+            np.ogrid[: grid.nz, : grid.ny, : grid.nx],
+            grid.shape,
+            (grid.vz, grid.vy, grid.vx),
+            strict=True,
+        )
+    ]
+    projections = np.zeros((len(angles), detector.nv, detector.nu))
+    truth = np.zeros(grid.shape)
+    for cx, cy, cz, width, depth in [(0.8, -1.2, 1, 3.8, 4.5), (19, -4, -1, 1.9, 3)]:
+        distance = ray - cx * np.cos(theta) + cy * np.sin(theta)
+        projections += (
+            np.sqrt(2 * np.pi)
+            * width
+            * np.exp(-0.5 * ((distance / width) ** 2 + ((height - cz) / depth) ** 2))
+        )
+        truth += np.exp(
+            -0.5 * (((x - cx) ** 2 + (y - cy) ** 2) / width**2 + ((z - cz) / depth) ** 2)
+        )
+    config = (FBPConfig if method == "fbp" else FourierConfig)(exterior=exterior)
+    data = projections.astype(np.float32)
+    rec = tj.reconstruct(tj.Scan(data, geometry), method, config=config)
+    image = np.asarray(rec.volume)
+    frames = tj.Frames(1000 * np.exp(-data), geometry, white_level=1000)
+    with tj.reconstruct_slabs(frames, method, config=config) as slabs:
+        streamed = np.concatenate([np.asarray(slab.volume) for _, slab in slabs])
+    np.testing.assert_allclose(streamed, image, rtol=3e-4, atol=3e-5)
+    radius = np.hypot(x, y)[0]
+    for region in (radius < 6, (radius > 16) & (radius < 23)):
+        assert np.linalg.norm((image - truth)[:, region]) < 0.05 * np.linalg.norm(truth[:, region])
+
+
+@pytest.mark.parametrize("roll", [18, 90])
+def test_detector_derived_grid_contains_every_rolled_panel_corner(tmp_path, roll):
+    import h5py
+
+    detector = tj.Detector(42, 29, 0.8, 1.1, center=(12.0, -0.3))
+    geometry = tj.ParallelGeometry(
+        tj.Grid(9, 9, 3, 1, 1, 1), detector, np.arange(36) * 10, detector_roll=roll
+    )
+    path = tmp_path / "panel.nxs"
+    tj.save(path, tj.Scan(np.zeros((36, 29, 42), np.float32), geometry))
+    with h5py.File(path, "r+") as handle:
+        del handle["entry"].attrs["grid_meta_json"]
+    loaded = tj.load(path)
+    report = tj.inspect(path)
+    # Project the actual rectangle edges into the horizontal and vertical lab axes.
+    theta = np.deg2rad(roll)
+    u = np.array([-1, 1]) * 42 * 0.8 / 2
+    v = np.array([[-1], [1]]) * 29 * 1.1 / 2
+    x = 12.0 + np.cos(theta) * u - np.sin(theta) * v
+    z = np.sin(theta) * u + np.cos(theta) * v
+    for n, pitch, target in [
+        (loaded.grid.nx, loaded.grid.vx, abs(x).max()),
+        (loaded.grid.nz, loaded.grid.vz, abs(z).max()),
+    ]:
+        assert target - 1e-10 <= n * pitch / 2 < target + pitch
+    assert report["loading"]["full_turn"]
+    if roll == 90:
+        assert report["loading"]["field_of_view_px"] == pytest.approx(2 * abs(x).max() / 1.1)
+    else:
+        assert "overlap_px" not in report["loading"]  # the interval varies with height
