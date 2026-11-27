@@ -10,7 +10,7 @@ import tomojax as tj
 from tomojax.recon import FBPConfig, FourierConfig
 
 
-@pytest.mark.parametrize("method", ["fbp", "fourier"])
+@pytest.mark.parametrize("method", ["fbp", "fourier", "parallel", "lamino"])
 @pytest.mark.parametrize("magnitude", [1, 5])
 @pytest.mark.parametrize("span", [220, 360])
 def test_pose_carried_angles_reconstruct_the_same_measurements(method, magnitude, span):
@@ -24,6 +24,12 @@ def test_pose_carried_angles_reconstruct_the_same_measurements(method, magnitude
     if method == "fourier":
         geometry = tj.ParallelGeometry(grid, detector, angles)
         config = FourierConfig(backend="numpy")
+    elif method == "parallel":
+        geometry = tj.ParallelGeometry(grid, detector, angles, detector_roll=15)
+        config = FBPConfig()
+    elif method == "lamino":
+        geometry = tj.LaminographyGeometry(grid, detector, angles, tilt=25, detector_roll=15)
+        config = FBPConfig()
     else:
         geometry = tj.ConeGeometry(grid, detector, angles, tj.ConeBeam(90, 130))
         config = FBPConfig()
@@ -36,12 +42,20 @@ def test_pose_carried_angles_reconstruct_the_same_measurements(method, magnitude
     table[:, 2] = delta
     direct = tj.Scan(data, replace(geometry, angles=angles + delta))
     posed = tj.Scan(data, geometry).with_poses(table)
-    expected = tj.reconstruct(direct, method, config=config).volume
-    actual = tj.reconstruct(posed, method, config=config).volume
+    if method == "fourier":
+        from tomojax._workflow.planning import resolve_reconstruction
+
+        assert (
+            resolve_reconstruction(posed, "auto").method
+            == resolve_reconstruction(direct, "auto").method
+        )
+    inverse = "fourier" if method == "fourier" else "fbp"
+    expected = tj.reconstruct(direct, inverse, config=config).volume
+    actual = tj.reconstruct(posed, inverse, config=config).volume
     # The float32 composed poses can move interpolation coordinates by a few ulps.
     # CUDA texture coordinates have eight fractional bits; crossing a bin in
     # a few voxels amplifies these coordinate ulps.
-    tolerance = 3e-5 if method == "fbp" and jax.default_backend() == "gpu" else 5e-6
+    tolerance = 3e-5 if inverse == "fbp" and jax.default_backend() == "gpu" else 5e-6
     assert np.linalg.norm(actual - expected) < tolerance * np.linalg.norm(expected)
 
 

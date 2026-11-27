@@ -175,10 +175,10 @@ _SAME_DIRECTION = 1e-3
 
 def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
     """Choose a method with a reason and an optional recommendation."""
+    from tomojax.core.geometry.cone import cone_parts
     from tomojax.geometry import (
         ConeSegments,
         LaminographyGeometry,
-        ParallelGeometry,
         RotationAxisGeometry,
     )
     from tomojax.recon.fdk import check_angular_coverage
@@ -197,8 +197,11 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
     method, reason = "fbp", "Filtered backprojection supports the declared acquisition geometry."
     if isinstance(base, ConeSegments):
         # Segments with detector offsets can still belong to one circular orbit.
-        beams = [getattr(segment, "beam", None) for segment in base.segments]
-        if len(base.trajectory_lengths) > 1 or any(b != beams[0] for b in beams):
+        orbits = {
+            (beam.source_to_axis, beam.source_height, beam.axis_offset)
+            for _, beam, _ in cone_parts(base) or ()
+        }
+        if len(base.trajectory_lengths) > 1 or len(orbits) > 1:
             return "cgls", "CGLS fits the cone-beam segments jointly.", None
     elif isinstance(base, LaminographyGeometry | RotationAxisGeometry):
         return (
@@ -208,21 +211,36 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
             "measures from nonnegativity and regularization.",
         )
     elif getattr(base, "beam", None) is None:
-        recommendation = _coverage_advice(scan)
-        if type(scan.geometry) is not ParallelGeometry:
-            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
-        if recommendation is None:
-            return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
-        reason = (
-            "FBP, because automatic selection takes Fourier inversion only for 16 or more "
-            "directions spread over the half turn."
-        )
-        return "fbp", reason, recommendation
+        return _parallel_method(scan, _coverage_advice(scan))
     try:  # One orbit: FDK weights a full turn or 180 degrees plus the fan angle; CGLS any arc.
         check_angular_coverage(scan.geometry, scan.detector, len(scan.angles))
     except ValueError as err:
         method, reason = "cgls", f"CGLS, because {err}."
     return method, reason, None
+
+
+def _parallel_method(scan: Scan, recommendation: str | None) -> tuple[Method, str, str | None]:
+    """Choose the axial inverse from the measured directions and any out-of-plane motion."""
+    from tomojax.geometry import ParallelGeometry
+
+    if type(scan.geometry) is not ParallelGeometry:
+        # Pure axial angle corrections describe the same Fourier experiment
+        # as an encoder list. Keep the general FBP route for moving samples.
+        from tomojax.recon.fourier import axial_trajectory
+
+        try:
+            _, shifts, _ = axial_trajectory(scan.geometry)
+        except ValueError:
+            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+        if shifts is not None:
+            return "fbp", "FBP uses the scan's per-view geometry.", recommendation
+    if recommendation is None:
+        return "fourier", "Fourier inversion uses the scan's half-turn coverage.", None
+    reason = (
+        "FBP, because automatic selection takes Fourier inversion only for 16 or more "
+        "directions spread over the half turn."
+    )
+    return "fbp", reason, recommendation
 
 
 def _coverage_advice(scan: Scan) -> str | None:

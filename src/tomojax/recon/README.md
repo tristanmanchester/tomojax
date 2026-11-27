@@ -250,7 +250,7 @@ output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
 `fourier` (`tj.reconstruct(scan, "fourier")`, and the automatic choice for
-unposed axial half-turn scans) is a
+well-sampled axial half-turn scans with angles recorded directly or as axial pose rotations) is a
 Fourier-slice inverse for axial parallel half-turn scans, including
 nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
 range; views of one direction share an angular cell and are averaged. It accepts

@@ -494,7 +494,7 @@ def reconstruct(
 ) -> Reconstruction:
     """Reconstruct ``scan`` with ``method``.
 
-    ``auto`` (default) chooses Fourier inversion for unposed axial half-turn
+    ``auto`` (default) chooses Fourier inversion for axial half-turn
     scans, matched CGLS for segmented cone geometry and for cone arcs FDK cannot
     weight (under 180 degrees plus the fan angle), and FBP/FDK otherwise,
     laminography and tilted-axis scans included: for those, ``fista`` gives a
