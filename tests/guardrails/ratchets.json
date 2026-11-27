@@ -2,12 +2,12 @@
   "config_fields": {
     "AlignConfig": 23,
     "CGLSConfig": 11,
-    "FBPConfig": 4,
+    "FBPConfig": 5,
     "FBPHostConfig": 3,
-    "FDKConfig": 4,
+    "FDKConfig": 5,
     "FDKHostConfig": 2,
     "FISTAConfig": 17,
-    "FourierConfig": 3,
+    "FourierConfig": 4,
     "MLEMConfig": 5,
     "SIRTConfig": 9,
     "SPDHGConfig": 16,
@@ -60,16 +60,16 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5332,
-    "reportMissingImports": 57,
+    "reportAny": 5419,
+    "reportMissingImports": 58,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 860,
-    "reportUnknownMemberType": 1582,
-    "reportUnknownVariableType": 966,
+    "reportUnknownArgumentType": 869,
+    "reportUnknownMemberType": 1620,
+    "reportUnknownVariableType": 974,
     "reportUnusedCallResult": 141
   },
   "explicit_any": 456,
-  "type_casts": 85,
+  "type_casts": 86,
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
@@ -154,7 +154,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 68,
+    "tiny": 69,
     "forwarders": 7,
     "chained": 4
   },
