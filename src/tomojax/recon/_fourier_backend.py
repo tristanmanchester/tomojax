@@ -13,12 +13,14 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
+from tomojax.core.geometry.coverage import conjugate_weights, full_rotation
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
 from ._continuation import continued_width
 from ._fourier_exterior import FourierExterior
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
+from ._fourier_opposites import OpposedDirections
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 from ._pinned import PinnedPool
 
@@ -430,6 +432,18 @@ class FourierPlan:
             progress.preparing("plan fourier transform"),
             self.compute if self.compute is not None else nullcontext(),
         ):
+            self.opposites = None
+            self.redundancy = None
+            directed = np.asarray(angles) + np.asarray(flipped) * np.pi
+            if detector.center[0] and shifts is None and full_rotation(np.rad2deg(directed)):
+                self.opposites = OpposedDirections(xp, directed, angles)
+                nviews = self.source_views = len(self.opposites.angles)
+                angles = self.opposites.angles
+                flipped = np.tile([0, 1], nviews // 2)
+                order = np.argsort(np.argsort(np.asarray(angles) + flipped * np.pi))
+                self.redundancy = xp.asarray(
+                    conjugate_weights(detector.nu, detector.center[0] / detector.du)
+                )
             geometry = _plan_geometry(
                 grid, detector, nviews, flipped, angles, backend, filter, exterior
             )
@@ -438,7 +452,15 @@ class FourierPlan:
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
             self.nfft = geometry.nfft
             self.exterior = (
-                FourierExterior(xp, detector, nviews, order, geometry.flipped, self.nfft)
+                FourierExterior(
+                    xp,
+                    detector,
+                    nviews,
+                    order,
+                    geometry.flipped,
+                    self.nfft,
+                    outer_only=self.opposites is not None,
+                )
                 if exterior == "cylinder"
                 else None
             )
@@ -521,8 +543,12 @@ class FourierPlan:
         xp = self.xp
         tails = (np.uint64(0), np.uint64(0))
         exterior_mass = None
+        if self.opposites is not None:
+            raw = self.opposites.sample(raw)
         if self.exterior is not None:
-            raw, tails, exterior_mass = self.exterior.transform(raw)
+            raw, tails, exterior_mass = self.exterior.transform(raw, self.redundancy)
+        elif self.redundancy is not None:
+            raw = raw * self.redundancy
         if self.cuda:
             rows = self.depth * self.source_views
             fft_rows = xp.empty((*raw.shape[:-1], self.nfft), dtype=xp.float32)

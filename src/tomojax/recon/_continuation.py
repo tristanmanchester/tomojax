@@ -96,10 +96,12 @@ def continued_width(nu: int) -> int:
     return nu + 2 * continued_columns(nu)
 
 
-def row_fits(detector: Detector) -> Continuation:
+def row_fits(detector: Detector, *, outer_only: bool = False) -> Continuation:
     """The fits of a parallel-beam ``detector``'s rows, continued one detector width a side."""
     pad = continued_columns(detector.nu)
-    return Continuation(parallel_axis_distance(detector, detector.nu, pad), detector.nu, pad)
+    return Continuation(
+        parallel_axis_distance(detector, detector.nu, pad), detector.nu, pad, outer_only=outer_only
+    )
 
 
 class Continuation:
@@ -129,7 +131,8 @@ class Continuation:
     for a Python number.
     """
 
-    def __init__(self, distance: Host, nu: int, pad: int) -> None:
+    def __init__(self, distance: Host, nu: int, pad: int, *, outer_only: bool = False) -> None:
+        self.outer_only = outer_only
         self.nu, self.pad = nu, pad
         self.distance = distance
         self.scale = float(np.max(abs(distance)))
@@ -172,6 +175,11 @@ class Continuation:
     def mean_square_radius(self, place: Place, low: Rows, high: Rows) -> Rows:
         """:meth:`radius` from the sharing views' mean squared values, ``(..., 1, window)``."""
         first, last = self.sides[0][0] ** 2, self.sides[1][0] ** 2
+        if self.outer_only:
+            if abs(self.sides[0][1]) < abs(self.sides[1][1]):
+                first, low = last, high
+            else:
+                last, high = first, low
         count = first.size + last.size
         mean = float(np.sum(first) + np.sum(last)) / count
         spread = float(np.sum((first - mean) ** 2) + np.sum((last - mean) ** 2))
@@ -213,6 +221,11 @@ class Continuation:
             line = place(1 / self.window + (fit - middle) * (edge - middle) / spread)
             flattened = values * (drop / (drop + inside)) ** half * line
             amplitudes.append(flattened.sum(axis=-1, keepdims=True))
+        if self.outer_only:
+            # Only the farther edge bounds measured rays over the complete turn.
+            far = int(abs(self.sides[1][1]) > abs(self.sides[0][1]))
+            amplitudes[far] = amplitudes[far] * place(np.asarray(2.0))
+            amplitudes[1 - far] = amplitudes[1 - far] * place(np.asarray(0.0))
         return amplitudes[0], amplitudes[1]
 
     def tails(self, place: Place, low: Rows, high: Rows, radius2: Rows) -> tuple[Rows, Rows]:
@@ -252,7 +265,9 @@ class Continuation:
             import jax
 
             with jax.enable_x64(True):
-                return _device_radius(self.distance.tobytes(), nu, self.pad)(projections)
+                return _device_radius(self.distance.tobytes(), nu, self.pad, self.outer_only)(
+                    projections
+                )
         low, high = np.zeros((nv, window)), np.zeros((nv, window))
         for view in map(int, views):
             frame = np.asarray(projections[view : view + 1])
@@ -263,12 +278,14 @@ class Continuation:
 
 
 @lru_cache(maxsize=16)
-def _device_radius(distance: bytes, nu: int, pad: int) -> Callable[[jax.Array], jax.Array]:
+def _device_radius(
+    distance: bytes, nu: int, pad: int, outer_only: bool
+) -> Callable[[jax.Array], jax.Array]:
     """Compile the radius reduction on the device that owns the projections."""
     import jax
     import jax.numpy as jnp
 
-    fits = Continuation(np.frombuffer(distance, dtype=np.float64), nu, pad)
+    fits = Continuation(np.frombuffer(distance, dtype=np.float64), nu, pad, outer_only=outer_only)
 
     @jax.jit
     def radius(projections: jax.Array) -> jax.Array:

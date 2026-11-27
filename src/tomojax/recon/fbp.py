@@ -793,7 +793,14 @@ def _plan(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    filter = row_filter(cfg.filter, filter_detector, projections, cfg.exterior, separable=separable)
+    filter = row_filter(
+        cfg.filter,
+        filter_detector,
+        projections,
+        cfg.exterior,
+        separable=separable,
+        full_turn=parallel and arc_length == 2 * np.pi and cfg.scale is None,
+    )
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,

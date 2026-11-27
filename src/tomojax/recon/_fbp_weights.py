@@ -21,8 +21,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ._directions import group_repeats
-from ._fdk_angles import ordered_arc
+from tomojax.core.geometry.coverage import group_repeats, ordered_arc
 
 _TWO_PI = 2.0 * np.pi
 # Relative tolerance for treating a scan as separable.

@@ -20,8 +20,10 @@ from tomojax.core.host_transfer import upload_host
 
 from ._continuation import Continuation, cone_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
-from ._fdk_angles import fan_angles, grouped_angles, ordered_arc, parker_weights
-from ._fdk_coverage import pair_reliability, reliability
+from tomojax.core.geometry.coverage import ordered_arc, reliability
+
+from ._fdk_angles import fan_angles, grouped_angles, parker_weights
+from ._fdk_coverage import pair_reliability
 from ._fdk_filter import cosines
 from ._row_filter import filter_rows
 from .filters import get_fbp_filter_np

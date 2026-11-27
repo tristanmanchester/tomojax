@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
+from tomojax.core.geometry.coverage import conjugate_weights
 
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
 from ._row_filter import filter_rows, filtered_profiles
@@ -34,6 +35,8 @@ class RowFilter(NamedTuple):
     measured: jnp.ndarray
     profiles: jnp.ndarray | None
 
+    redundancy: jnp.ndarray | None
+
     def rows(self, first: int, stop: int) -> RowFilter:
         """The filter of detector rows ``first:stop``; rows outside the detector are zero."""
         if self.radius2 is None:
@@ -50,15 +53,20 @@ def row_filter(
     exterior: Exterior = DEFAULT_EXTERIOR,
     *,
     separable: bool = True,
+    full_turn: bool = False,
 ) -> RowFilter:
     """The filter of the rows of a ``(views, nv, nu)`` stack, read over the filter ``detector``."""
+    nu = projections.shape[-1]
+    offset = detector.center[0] / detector.du
+    redundancy = jnp.asarray(conjugate_weights(nu, offset)) if full_turn and offset else None
     if exterior == "zero":
         spectrum = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
-        return RowFilter(spectrum, None, spectrum, None)
-    nu = projections.shape[-1]
+        return RowFilter(spectrum, None, spectrum, None, redundancy)
     pad = continued_columns(nu)
     distance = parallel_axis_distance(detector, nu, pad)
-    radius2 = jnp.asarray(Continuation(distance, nu, pad).stack_radius(projections))
+    radius2 = jnp.asarray(
+        Continuation(distance, nu, pad, outer_only=redundancy is not None).stack_radius(projections)
+    )
     reach = (detector.nu - nu) // 2
     wide, measured = _spectra(filter, nu, pad, reach, float(detector.du))
     spectrum = jnp.asarray(wide)
@@ -67,7 +75,7 @@ def row_filter(
         if separable
         else None
     )
-    return RowFilter(spectrum, radius2, jnp.asarray(measured), profiles)
+    return RowFilter(spectrum, radius2, jnp.asarray(measured), profiles, redundancy)
 
 
 @lru_cache(maxsize=16)
@@ -103,11 +111,14 @@ def ramp_rows(rows: jnp.ndarray, filter: RowFilter, detector: Detector) -> jnp.n
     """Continue measured rows, ramp-filter them and read the filter detector's columns."""
     nu = rows.shape[-1]
     reach = (detector.nu - nu) // 2
-    result = filter_rows(rows, filter.measured, nu, reach, reach)
+    measured = rows if filter.redundancy is None else rows * filter.redundancy
+    result = filter_rows(measured, filter.measured, nu, reach, reach)
     radius, profiles = filter.radius2, filter.profiles
     if radius is None or profiles is None:
         return result
-    fits = Continuation(parallel_axis_distance(detector, nu, nu), nu, nu)
+    fits = Continuation(
+        parallel_axis_distance(detector, nu, nu), nu, nu, outer_only=filter.redundancy is not None
+    )
     place = partial(jnp.asarray, dtype=rows.dtype)
     low, high = fits.amplitudes(place, rows[..., : fits.window], rows[..., -fits.window :], radius)
     return result + low * profiles[0] + high * profiles[1]

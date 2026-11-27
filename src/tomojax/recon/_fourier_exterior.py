@@ -26,9 +26,11 @@ class FourierExterior:
         order: np.ndarray | None,
         flipped: CuPyValue,
         nfft: int,
+        *,
+        outer_only: bool = False,
     ) -> None:
         self.xp, self.flipped, self.nfft = xp, flipped, nfft
-        self.fits = row_fits(detector)
+        self.fits = row_fits(detector, outer_only=outer_only)
         self.sharing = xp.asarray(radius_views(views, order))
         if xp is not np:
             phase, taper, _ = radial_coefficients(3 * detector.nu, 3 * nfft, detector.du)
@@ -53,6 +55,23 @@ class FourierExterior:
         reach = views // 32
         if reach == 0:
             return low, high
+        if self.fits.outer_only:
+            # The far edge samples the same signed radius around a complete
+            # circle. Each pair in the folded ordering is a half turn apart.
+            order = xp.asarray(np.r_[0:views:2, 1:views:2])
+            inverse = xp.argsort(order)
+
+            def smooth(edge: CuPyValue) -> CuPyValue:
+                ordered = edge[:, order]
+                padded = xp.concatenate(
+                    (ordered[:, -reach - 1 :], ordered, ordered[:, :reach]), axis=1
+                )
+                summed = padded.cumsum(axis=1, dtype=xp.float64)
+                return (
+                    (summed[:, 2 * reach + 1 :] - summed[:, : -2 * reach - 1]) / (2 * reach + 1)
+                ).astype(edge.dtype)[:, inverse]
+
+            return smooth(low), smooth(high)
         flipped: CuPyValue = xp.not_equal(self.flipped, 0)[:, None]
         ring: CuPyValue = xp.concatenate(
             [xp.where(flipped, low, high), xp.where(flipped, high, low)], axis=-2
@@ -64,7 +83,9 @@ class FourierExterior:
         plus, minus = ring[..., :views, :], ring[..., views:, :]
         return xp.where(flipped, plus, minus), xp.where(flipped, minus, plus)
 
-    def transform(self, raw: CuPyValue) -> tuple[CuPyValue, tuple[CuPyValue, ...], CuPyValue]:
+    def transform(
+        self, raw: CuPyValue, redundancy: CuPyValue | None = None
+    ) -> tuple[CuPyValue, tuple[CuPyValue, ...], CuPyValue]:
         """Form the continued NumPy rows or the two CUDA spectra and their view amplitudes."""
         xp = self.xp
         fits, first, last = (
@@ -75,6 +96,8 @@ class FourierExterior:
         place = partial(xp.asarray, dtype=raw.dtype)
         radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
         low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
+        if redundancy is not None:
+            raw = raw * redundancy
         if xp is not np:
             unit = xp.ones_like(radius2)
             left, right = fits.tails(place, unit, unit, radius2)

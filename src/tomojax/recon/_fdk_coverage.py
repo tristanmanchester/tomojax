@@ -12,18 +12,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.core.geometry.coverage import reliability
+
 if TYPE_CHECKING:
     from numpy.typing import NDArray
 
     from tomojax._typed_arrays import Float64Array
-
-
-def reliability(ray: Float64Array, parameters: Float64Array) -> Float64Array:
-    """Smooth edge reliability odds, recovering Wang's sin-squared partition."""
-    lo, hi, pixel = parameters[..., 0], parameters[..., 1], parameters[..., 2]
-    width = np.maximum(np.minimum(-lo, hi), pixel)
-    distance = np.minimum(ray - lo, hi - ray)
-    return np.tan(np.pi / 4 * np.clip(distance / width, 0, 1)) ** 2
 
 
 def _members(groups: NDArray[np.int64], repeats: NDArray[np.int64]) -> NDArray[np.int64]:

@@ -10,8 +10,8 @@ import numpy as np
 from tomojax.core.geometry.cone import ConeGeometry, cone_parts
 
 from ._detector_rows import DetectorRows
-from ._directions import group_repeats
-from ._fdk_coverage import full_turn_weights, pair_reliability, reliability
+from tomojax.core.geometry.coverage import group_repeats, ordered_arc, reliability
+from ._fdk_coverage import full_turn_weights, pair_reliability
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray
@@ -75,25 +75,6 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
         azimuth[start:stop] = np.arctan2(-source[:, 0], -source[:, 1])
         start = stop
     return group_repeats(azimuth)
-
-
-def ordered_arc(angles: Float64Array) -> tuple[NDArray[np.int64], Float64Array, bool]:
-    """Order distinct angles from the largest circular gap and unwrap the arc.
-
-    A closing gap no larger than 1.5 typical view steps counts as a full turn,
-    matching FDK's full-turn tolerance without depending on angle labels.
-    """
-    if len(angles) < 2:
-        raise ValueError("FDK needs at least two distinct rotation angles")
-    order = np.argsort(angles)
-    sorted_angles = angles[order]
-    circular_gaps = np.diff(np.append(sorted_angles, sorted_angles[0] + _TURN))
-    largest = int(np.argmax(circular_gaps))
-    order = np.roll(order, -(largest + 1))
-    gaps = np.remainder(np.diff(angles[order]), _TURN)
-    sorted_angles = angles[order[0]] + np.append(0.0, np.cumsum(gaps))
-    full_turn = circular_gaps[largest] <= 1.5 * float(np.median(gaps))
-    return order, sorted_angles, bool(full_turn)
 
 
 def fan_angles(beam: ConeBeam, detector: Detector) -> Float64Array:

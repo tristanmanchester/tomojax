@@ -19,6 +19,7 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.core.devices import announce, as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
+from tomojax.core.geometry.coverage import full_rotation
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import (
@@ -327,7 +328,13 @@ def fbp_host(
     depth = axial_depth(grid.nz, slices)
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
-    ramp = row_filter(fbp_cfg.filter, local_detector, projections, fbp_cfg.exterior)
+    ramp = row_filter(
+        fbp_cfg.filter,
+        local_detector,
+        projections,
+        fbp_cfg.exterior,
+        full_turn=fbp_cfg.scale is None and full_rotation(np.asarray(geometry.angles)),
+    )
     output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
     params = np.zeros((n_views, 6), np.float32)
@@ -524,7 +531,16 @@ def fbp_slabs[T](
                 try:
                     with closing(
                         _run_slabs(
-                            grid, detector, host_poses, scale, read, config, backend, depth, start
+                            grid,
+                            detector,
+                            host_poses,
+                            scale,
+                            read,
+                            config,
+                            backend,
+                            depth,
+                            start,
+                            config.scale is None and full_rotation(np.asarray(geometry.angles)),
                         )
                     ) as completed:
                         for slab in completed:
@@ -558,6 +574,7 @@ def _run_slabs[T](
     backend: str,
     depth: int,
     start: int,
+    full_turn: bool,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)
     rows = local_detector.nv
@@ -580,7 +597,9 @@ def _run_slabs[T](
                 local_poses[:, 2, 3] = (v - source_start) * detector.dv
             finite = finite_projections(source)
             finite.copy_to_host_async()
-            ramp = row_filter(config.filter, local_detector, source, config.exterior)
+            ramp = row_filter(
+                config.filter, local_detector, source, config.exterior, full_turn=full_turn
+            )
             cache = backend == "cuda" and integer
             batch = (
                 parallel_filter_batch_size(len(poses), rows, 2 * (ramp.measured.size - 1))
