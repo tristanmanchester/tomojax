@@ -48,7 +48,6 @@ from tomojax.cli._results import unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_grid import Grid
 from tomojax.core.array_ops import check_binning
-from tomojax.core.registration import scan_axes
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
