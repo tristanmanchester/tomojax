@@ -384,6 +384,14 @@ class CenterSelection:
         from .center_registration import paired_center
 
         assert self.focus is not None
+        from tomojax.core.geometry.coverage import full_rotation
+
+        from .center_turn import turn_center
+
+        if full_rotation(np.asarray(self.geometry.angles)):
+            matched = turn_center(projections, np.asarray(self.geometry.angles))
+            if matched is not None:
+                return matched
         focus = self.focus.scores(projections, positions)
         value = paired_center(self, projections, positions, focus=focus)
         return value, {
