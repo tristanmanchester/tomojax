@@ -181,7 +181,6 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         RotationAxisGeometry,
         beam_of,
     )
-    from tomojax.recon.fdk import check_angular_coverage
 
     base: Any = scan.geometry
     while hasattr(base, "base"):
@@ -213,6 +212,8 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         )
     elif getattr(base, "beam", None) is None:
         return _parallel_method(scan, _coverage_advice(scan))
+    from tomojax.recon.fdk import check_angular_coverage
+
     try:  # One orbit: FDK weights a full turn or 180 degrees plus the fan angle; CGLS any arc.
         check_angular_coverage(scan.geometry, scan.detector, len(scan.angles))
     except ValueError as err:

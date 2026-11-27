@@ -116,9 +116,10 @@ def check_host_fbp_samples(
     from ._axial_slabs import independent_planes
     from ._host_arrays import check_measurements
     from .fbp_host import axial_depth, axial_row_starts, slab_layout
-    from .fdk import host_slab_ranges, storage_rows
 
     if is_cone_beam(geometry):
+        from .fdk import host_slab_ranges, storage_rows
+
         poses = np.asarray(stack_view_poses(geometry, projections.shape[0]), np.float64)
         slabs = host_slab_ranges(grid, as_devices(cfg.devices) or (None,), None)
         windows = [storage_rows(geometry, grid, detector, poses, lo, hi) for lo, hi in slabs]
@@ -175,16 +176,17 @@ def _host_fbp(
 
     from tomojax.core.geometry.cone import is_cone_beam
 
-    from .fbp_host import FBPHostConfig, fbp_host
-    from .fdk import FDKHostConfig, fdk_host
-
     logging.getLogger(__name__).info(
         "Reconstructing %dx%dx%d in z-slabs on the host", grid.nx, grid.ny, grid.nz
     )
     if is_cone_beam(geometry):
+        from .fdk import FDKHostConfig, fdk_host
+
         data = np.asarray(projections, np.float32)
         host = FDKHostConfig(slices_per_batch=slab_planes, fdk=fdk_config(cfg))
         return fdk_host(geometry, grid, detector, data, config=host, out=out)
+    from .fbp_host import FBPHostConfig, fbp_host
+
     host = FBPHostConfig(fbp=cfg)
     # Slabs are not shared among devices; the first selected one does the work.
     with first_device(cfg):
