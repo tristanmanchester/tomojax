@@ -117,16 +117,19 @@ def estimate_projection_noise(
     return jax.lax.stop_gradient(sigma) if on_device else sigma
 
 
-def detector_error_scale(projections: jax.Array | np.ndarray) -> jax.Array | np.float64:
+def detector_error_scale(
+    projections: jax.Array | np.ndarray, *, weights: jax.Array | np.ndarray | None = None
+) -> jax.Array | np.float64:
     """Combine measurement noise and unresolved subpixel curvature on the detector.
 
     For a uniform subpixel phase the quadratic interpolation remainder has
     mean D²/12 and variance (D²)**2/720, where D² is a second difference.
     The means along both axes add before squaring. Each squared stencil has
-    noise bias 6 sigma**2. Orthogonal stencils share their center pixel, so
+    noise bias 6 sigma**2. Only fully observed stencils enter the average.
+    Orthogonal stencils share their center pixel, so
     their covariance contributes another 8 sigma**2 to the squared sum.
     """
-    sigma = estimate_projection_noise(projections)
+    sigma = estimate_projection_noise(projections, weights=weights)
     n, nv, nu = projections.shape
     v, u = int(nv >= 3), int(nu >= 3)
     population = n * (nv - 2 * v) * (nu - 2 * u)
@@ -144,7 +147,17 @@ def detector_error_scale(projections: jax.Array | np.ndarray) -> jax.Array | np.
 
     dv = difference(v, 0)
     du = difference(0, u)
-    curvature = xp.mean(dv * dv + du * du) - 6 * (v + u) * sigma**2
-    laplacian = xp.mean((du + dv) ** 2) - (6 * (v + u) + 8 * v * u) * sigma**2
+    energy, squared_sum = dv * dv + du * du, (du + dv) ** 2
+    if weights is None:
+        curvature, laplacian = xp.mean(energy), xp.mean(squared_sum)
+    else:
+        observed = weights[views, rows, columns] > 0
+        for a, b in ((-v, 0), (v, 0), (0, -u), (0, u)):
+            observed = observed & (weights[views, rows + a, columns + b] > 0)
+        count = xp.maximum(xp.sum(observed), 1)
+        curvature = xp.sum(xp.where(observed, energy, 0)) / count
+        laplacian = xp.sum(xp.where(observed, squared_sum, 0)) / count
+    curvature -= 6 * (v + u) * sigma**2
+    laplacian -= (6 * (v + u) + 8 * v * u) * sigma**2
     mse = sigma**2 + xp.maximum(curvature, 0) / 720 + xp.maximum(laplacian, 0) / 144
     return jax.lax.stop_gradient(jnp.sqrt(mse)) if xp is jnp else np.float64(np.sqrt(mse))

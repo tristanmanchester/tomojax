@@ -171,19 +171,25 @@ def test_public_fista_physical_metric_covaries_with_units_and_amplitude(
     assert np.isfinite(flat).all()
 
 
-def test_noise_weight_raises_all_metric_ratios_without_changing_geometry():
-    from tomojax.recon._tv_metric import (  # check-public-imports: allow-private
-        TVMetric,
-        raise_tv_weight,
-    )
+def test_automatic_spdhg_respects_unmeasured_pixels_and_matches_fista_noise_scale():
+    from tomojax.recon import FISTAConfig, SPDHGConfig, fista, spdhg
 
-    metric = TVMetric((1.0, 2.0, 0.5), 2.0, 0.1, 4.0, 3.0, 0.5, 8.0, 8.0)
-    raised = raise_tv_weight(metric, 3.0)
-    np.testing.assert_allclose((raised.weight, raised.weight_over_contrast), (3.0, 6.0))
-    assert raised.delta == metric.delta and raised.gradient_scale_xyz == metric.gradient_scale_xyz
-    assert float(raise_tv_weight(metric, 1.0).weight) == metric.weight
-    # The selected dimensionless strength is not differentiated through noise.
-    assert float(jax.grad(lambda noise: raise_tv_weight(metric, noise).weight)(3.0)) == 0
+    grid = Grid(7, 7, 1, 1, 1, 1)
+    geometry = ParallelGeometry(grid, Detector(7, 1, 1, 1), [0, 45, 90, 135])
+    rng = np.random.default_rng(217)
+    y = rng.normal(size=(4, 1, 7)).astype(np.float32)
+    weights = np.ones_like(y)
+    cfg = SPDHGConfig(iterations=0, backend="jax")
+    _, f = fista(
+        geometry, grid, geometry.detector, y, config=FISTAConfig(backend="jax", iterations=0)
+    )
+    _, s = spdhg(geometry, grid, geometry.detector, y, weights=weights, config=cfg)
+    assert s["effective_tv_weight"] == pytest.approx(f["effective_tv_weight"], rel=2e-6)
+    weights[:, :, 0] = 0
+    _, finite = spdhg(geometry, grid, geometry.detector, y, weights=weights, config=cfg)
+    y[:, :, 0] = np.nan
+    _, missing = spdhg(geometry, grid, geometry.detector, y, weights=weights, config=cfg)
+    assert missing["effective_tv_weight"] == pytest.approx(finite["effective_tv_weight"])
 
 
 @pytest.mark.parametrize("pixels", [1, 2])

@@ -41,11 +41,11 @@ from tomojax.wire.metrics import Metric
 from ._chunks import Chunked, fixed_updates
 from ._data_term import project_residual
 from ._host_arrays import validate_host_views
-from ._noise import estimate_projection_noise
+from ._noise import detector_error_scale
 from ._noise_probe import probe_gradient_rms
 from ._solver_validation import validate_spdhg_config, validate_spdhg_weights
 from ._spdhg_steps import SPDHGStepSizes, make_spdhg_chunk_operators, resolve_spdhg_step_sizes
-from ._tv_metric import TVMetric, raise_tv_weight, resolve_tv_metric
+from ._tv_metric import TVMetric, resolve_tv_metric, voxel_noise_weight
 from ._tv_ops import (
     backward_difference,
     forward_difference,
@@ -96,10 +96,9 @@ class SPDHGConfig:
         Number of sampled data-block updates, each with a TV update (not full
         sweeps through the data). Default is 600.
     tv_weight : float | None, optional
-        Dimensionless physical-TV strength. None (default) estimates the noise
-        from measured projections and raises a fixed 0.00005 minimum using one
-        contrast-noise gradient probe. Explicit positive values bypass this
-        estimate; zero disables TV.
+        Dimensionless physical-TV strength. None estimates the score of detector
+        noise from the measured pixels and calibrates the penalty per isolated
+        voxel against that score. An explicit zero disables TV.
     data_term : {"absolute", "per_view_contrast"}, optional
         Absolute least squares by default. Use per_view_contrast when material
         lies outside the field of view (ROI scans, most laminography, K11).
@@ -484,36 +483,40 @@ def _prepare_spdhg_runtime(
         detector,
         projections,
         weights=weights,
-        tv_weight=5e-5 if cfg.tv_weight is None else cfg.tv_weight,
+        tv_weight=1.0 if cfg.tv_weight is None else cfg.tv_weight,
         huber_delta=cfg.huber_delta,
     )
     support = None if cfg.support is None else jnp.asarray(cfg.support, dtype=bool)
     if support is not None:
         support = pack_volume(support.reshape((1,) * (3 - support.ndim) + support.shape), model)
-    resolved_tv_weight = 5e-5 if cfg.tv_weight is None else cfg.tv_weight
+    resolved_tv_weight = cfg.tv_weight
     if cfg.tv_weight is None:
         initial_factor = float(metric.weight_over_contrast)
+        rms = 0.0
         if nv * nu > 1:
-            noise = estimate_projection_noise(projections, weights=weights)
+            noise = detector_error_scale(projections, weights=weights)
             source = (
                 host_source(np.asarray(weights))
                 if stream and weights is not None
                 else contextlib.nullcontext(None)
             )
             with source as key:
-                rms = _spdhg_noise_rms(
-                    grid,
-                    detector,
-                    poses,
-                    det_grid,
-                    weights_arr,
-                    key,
-                    None if support is None else support.astype(jnp.float32),
-                    projector=projector,
-                    views_per_batch=cfg.views_per_block,
-                ).block_until_ready()
-            metric = raise_tv_weight(metric, noise * rms)
-        resolved_tv_weight = 5e-5 * float(metric.weight_over_contrast) / (initial_factor or 1)
+                rms = (
+                    noise
+                    * _spdhg_noise_rms(
+                        grid,
+                        detector,
+                        poses,
+                        det_grid,
+                        weights_arr,
+                        key,
+                        None if support is None else support.astype(jnp.float32),
+                        projector=projector,
+                        views_per_batch=cfg.views_per_block,
+                    ).block_until_ready()
+                )
+        metric = voxel_noise_weight(metric, rms, grid.shape, cfg.support)
+        resolved_tv_weight = float(metric.weight_over_contrast) / (initial_factor or 1)
     # A zero TV weight is identically zero, including a flat input's zero delta.
     huber_delta = float(metric.delta) if float(metric.weight) > 0 else 1.0
     step_sizes = resolve_spdhg_step_sizes(
