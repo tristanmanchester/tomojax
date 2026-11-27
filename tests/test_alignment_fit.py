@@ -70,15 +70,18 @@ def test_shared_columns_broadcast_once_and_scores_sum_over_views():
 
 
 @pytest.mark.parametrize(
-    ("fit", "cone", "n"),
+    ("fit", "cone", "n", "independent"),
     [
-        ("center", False, 9),
-        (("translations", "center", "tilt", "roll"), False, 9),
-        (("translations", "rotations", "center", "tilt", "roll"), True, 9),
-        (("translations", "rotations", "center", "tilt", "roll"), True, 241),
+        ("center", False, 9, False),
+        (("translations", "center", "tilt", "roll"), False, 9, False),
+        (("translations", "rotations", "center", "tilt", "roll"), True, 9, False),
+        (("translations", "rotations", "center", "tilt", "roll"), True, 241, False),
+        (("translations", "rotations", "center", "tilt", "roll"), True, 321, True),
     ],
 )
-def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit, cone, n):
+def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(
+    fit, cone, n, independent
+):
     from scipy.interpolate import make_interp_spline
 
     parameters = Parameters(n, fit, cone=cone, lever=17)
@@ -92,12 +95,16 @@ def test_shared_pose_schur_factor_matches_a_dense_constrained_normal_system(fit,
             knot_spacing=spacing,
             delta=0.03,
             parameters=parameters,
+            independent=independent,
             rotation_scales=np.full(parameters.full_dofs, 0.05),
             noise_sigma=0.02,
         )
         a = rng.normal(size=(n, parameters.k + 2, parameters.k))
         blocks = np.einsum("nij,nik->njk", a, a) + np.eye(parameters.k)
         weights = rng.uniform(0.1, 0.7, (n - 1, parameters.nlocal))
+        if independent:
+            assert prior.matrices.chain is not None  # exercise the implicit spline representation
+            weights.fill(0)
         rhs = rng.normal(size=parameters.size)
 
         # Independent dense assembly: every view has its own local indices,

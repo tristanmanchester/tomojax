@@ -210,7 +210,9 @@ n, nz, nu, nv, views = (int(a) for a in sys.argv[1:6])
 cone, stage = sys.argv[6] == "cone", sys.argv[7]
 # One level, so the process's peak is the level's; for "fine", a short coarse level first,
 # whose volume the fine level (measured, being the last and larger) starts from.
-config = AlignConfig(levels=(2, 1), coarse_iterations=2) if stage == "fine" else AlignConfig(levels=(1,))
+config = AlignConfig(
+    levels=(2, 1) if stage == "fine" else (1,), coarse_iterations=2, motion=sys.argv[8]
+)
 dev, seen = jax.devices()[0], {}
 solve, refine = _solver.solve, _fit.refine
 
@@ -272,7 +274,7 @@ print(json.dumps(seen))
 """
 
 
-def _level_peak(*shape, geometry="laminography", stage="level"):
+def _level_peak(*shape, geometry="laminography", stage="level", motion="independent"):
     """A one-level fit's own device peak and its plan, in a fresh process on the GPU.
 
     ``stage`` "fine" measures the second of two levels, started from the first's volume;
@@ -284,7 +286,7 @@ def _level_peak(*shape, geometry="laminography", stage="level"):
     import sys
 
     env = {**os.environ, "PYTHONWARNINGS": "ignore", "JAX_PLATFORMS": "cuda,cpu"}
-    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape), geometry, stage]
+    argv = [sys.executable, "-c", _PEAK_PROBE, *map(str, shape), geometry, stage, motion]
     run = subprocess.run(argv, check=True, capture_output=True, text=True, env=env)
     return json.loads(run.stdout.strip().splitlines()[-1])
 
@@ -317,10 +319,10 @@ def test_the_plan_covers_a_levels_own_peak_and_not_much_more(geometry):
 @pytest.mark.gpu
 @pytest.mark.fresh_gpu
 def test_the_plan_takes_the_larger_transient_where_the_prior_dominates():
-    # 3000 views on a small grid: the prior's factor outweighs the Schur solve, and they never
+    # For smooth motion on 8000 views the spline factor outweighs the Schur solve. They never
     # run together, so the plan takes the larger of the two, not their sum (summed, K11
     # 67208's fine level sent j to the host for nothing, +10%).
-    m = _level_peak(48, 32, 64, 48, 3000)
+    m = _level_peak(32, 21, 64, 48, 8000, motion="smooth")
     assert max(m["transients"], key=m["transients"].get) == "prior"
     _assert_the_plan_is_the_peak(m)
 
