@@ -45,26 +45,38 @@ _OWN_CGROUP, _CGROUP_MOUNTS = Path("/proc/self/cgroup"), Path("/proc/self/mounti
 
 
 def _cgroup_room_bytes() -> int | None:
-    """Conservative no-reclaim room under visible cgroup v2 limits.
+    """Conservative no-reclaim room under visible memory cgroup limits.
 
     ``memory.high`` is a throttle boundary, not a hard allocation limit. Current
     usage includes reclaimable page cache, so this can underestimate capacity.
     Hidden ancestors cannot be measured from inside a cgroup namespace.
     """
     try:
-        paths = [
-            line[3:] for line in _OWN_CGROUP.read_text().splitlines() if line.startswith("0::")
-        ]
+        groups: dict[str, Path] = {}
+        for line in _OWN_CGROUP.read_text().splitlines():
+            _, controllers, path = line.split(":", 2)
+            groups.update(dict.fromkeys(controllers.split(","), Path(path)))
         mounts = _CGROUP_MOUNTS.read_text().splitlines()
-    except OSError:
+    except (OSError, ValueError):
         return None
-    if len(paths) != 1 or not paths[0].startswith("/") or ".." in Path(paths[0]).parts:
-        return None
-    own, rooms = Path(paths[0]), []
+    rooms = []
     for entry in mounts:
         header, separator, filesystem = entry.partition(" - ")
         fields = header.split()
-        if not separator or not filesystem.startswith("cgroup2 ") or len(fields) < 5:
+        fs = filesystem.split()
+        if not separator or len(fs) != 3 or len(fields) < 5:
+            continue
+        if fs[0] == "cgroup2":
+            own, used_file, limits = groups.get(""), "memory.current", ("memory.high", "memory.max")
+        elif fs[0] == "cgroup" and "memory" in fs[2].split(","):
+            own, used_file, limits = (
+                groups.get("memory"),
+                "memory.usage_in_bytes",
+                ("memory.limit_in_bytes",),
+            )
+        else:
+            continue
+        if own is None or not own.is_absolute() or ".." in own.parts:
             continue
         root, mount = [
             Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
@@ -75,11 +87,11 @@ def _cgroup_room_bytes() -> int | None:
         relative = own.relative_to(root)
         group = mount / relative
         for level in (group, *group.parents[: len(relative.parts)]):
-            for limit in ("memory.high", "memory.max"):
+            for limit in limits:
                 try:
                     text = (level / limit).read_text().strip()
                     if text != "max":
-                        used = int((level / "memory.current").read_text())
+                        used = int((level / used_file).read_text())
                         rooms.append(max(0, int(text) - used))
                 except (OSError, ValueError):
                     pass
@@ -373,16 +385,24 @@ def release(array: np.ndarray, start: int = 0, stop: int | None = None) -> None:
 
 
 def release_planes(array: np.ndarray, z0: int, z1: int) -> None:
-    """:func:`release` the z planes ``[z0, z1)`` of a C-ordered memmap."""
+    """:func:`release` consecutive mapped planes, including a cropped detector window."""
     owner = mapped_storage(array)
-    if owner is None or not array.flags.c_contiguous:
+    if owner is None:
         return
     mapping = getattr(owner, "_mmap", None)
-    if mapping is None:
+    if mapping is None or not hasattr(mapping, "madvise"):
         return
     planes = array[z0:z1, :, :]
-    first = planes.ctypes.data - np.frombuffer(mapping, np.uint8).ctypes.data
-    release(owner, first, first + planes.nbytes)
+    if not planes.size:
+        return
+    # A crop can leave gaps between rows and planes. Evict their address range
+    # only when the planes are stored one after another in the file.
+    plane_start, plane_stop = np.lib.array_utils.byte_bounds(planes[0])
+    if abs(planes.strides[0]) < plane_stop - plane_start:
+        return
+    start, stop = np.lib.array_utils.byte_bounds(planes)
+    base = np.frombuffer(mapping, np.uint8).ctypes.data
+    release(owner, start - base, stop - base)
 
 
 def fill(target: Any, initial: Any, *, depth: int = 32) -> Any:

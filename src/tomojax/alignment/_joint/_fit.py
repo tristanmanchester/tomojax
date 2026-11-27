@@ -30,6 +30,7 @@ from tomojax import progress
 from tomojax.alignment._config import AlignConfig, resolve_align_config
 from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
+from tomojax.core.host_volume import release_planes
 from tomojax.core.registration import scaled_images
 from tomojax.core.validation import validate_physical_poses
 from tomojax.recon.fista_tv import resolve_tv_metric, voxel_noise_weight
@@ -178,7 +179,8 @@ def _read(
     noise = Windows(measured.shape)
     for s in range(0, n, views_per_batch):
         progress.check_canceled()
-        src = np.asarray(measured[s : s + views_per_batch], np.float32)
+        block = measured[s : s + views_per_batch]
+        src = np.asarray(block, np.float32)
         finite = np.isfinite(src)
         complete = finite.all()
         filled = src if complete else np.where(finite, src, 0)
@@ -201,7 +203,8 @@ def _read(
         sample = src[-s % step :: step]
         peak = max(peak, np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0))
         noise.gather(src, start=s)
-        del src, finite, filled, sample  # release this converted slab before reading the next one
+        release_planes(block, 0, len(src))
+        del src, finite, filled, sample, block
     scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
     sd = noise.sd()
     if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
