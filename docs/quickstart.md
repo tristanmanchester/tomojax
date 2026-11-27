@@ -199,11 +199,13 @@ When an object extends past the detector edges, assuming zero attenuation outsid
 
 By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row beyond the measured field before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
 
-To turn continuation off and assume zero beyond the detector, set `exterior="zero"` in the method configuration:
+Iterative solvers use one coarse fit to those completed rows to estimate how much of each measured ray comes from outside the reconstruction grid. CGLS, SIRT, FISTA and SPDHG subtract the estimated contribution from outside the reconstruction grid before fitting the measured rays. MLEM adds its nonnegative estimate to the predicted counts. The stored scan keeps its original measurements. An FBP or FDK warm start uses the same exterior setting.
 
-- **Python:** pass `config=FBPConfig(exterior="zero")` or `config=FourierConfig(exterior="zero")` to `tj.reconstruct` or `tj.reconstruct_slabs` (`FBPConfig` applies to cone-beam FDK as well; direct `tomojax.recon.fdk` calls take `FDKConfig(exterior="zero")`).
-- **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit `--method fbp` or `--method fourier`.
-- **Worker and MCP:** pass `{"type": "FBPConfig", "exterior": "zero"}` (or `"FourierConfig"`) in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP.
+To assume zero beyond the detector, set `exterior="zero"` in the method configuration:
+
+- **Python:** pass the configuration for the chosen method, such as `config=CGLSConfig(exterior="zero")` or `config=FBPConfig(exterior="zero")` to `tj.reconstruct` or `tj.reconstruct_slabs` (`FBPConfig` applies to cone-beam FDK as well; direct `tomojax.recon.fdk` calls take `FDKConfig(exterior="zero")`).
+- **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit method, such as `--method cgls`.
+- **Worker and MCP:** pass the chosen method’s config, such as `{"type": "CGLSConfig", "exterior": "zero"}`, in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP.
 
 The selected setting is recorded in `recon.info["config"]` (`info["config"].exterior` in memory and `info["config"]["exterior"]` after reloading).
 
@@ -219,11 +221,13 @@ Every reconstruction carries `recon.info["truncation"]`, computed from the proje
 
 When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` appends `, N% of attenuation beyond the detector` to its closing line, and MCP `reconstruct` and `reconstruct_slabs` include the same phrase in their summary text.
 
-What the continuation does and does not recover:
+For iterative methods, `outside_grid` is the modeled contribution divided by the total measured line integral. `background_treatment` records `subtracted`, `additive_poisson`, or `none`.
 
-- **Interior structure and absolute level:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis. Compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) still retain partial cupping and rim error.
+How to read the reconstruction:
+
+- **Analytic reconstructions:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis. Compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) still retain partial cupping and rim error.
 - **Outside the field of view:** voxels outside the inscribed detector field hold the reconstruction of the continued scan (a model, not measured attenuation). Pass `region="cyl"` (`--region cyl`) to zero them.
-- **Iterative solvers:** `cgls`, `sirt`, `fista`, `spdhg`, and `mlem` fit the grid to the measured rays and do not model material outside it. They are accurate when the grid holds the whole object, and keep the bright rim and raised bowl when material extends past the grid (unpenalized CGLS also runs to its 50-update cap). For a truncated scan, use `fourier` or `fbp` (FDK for cone beams) for a flatter interior level, or give an iterative solver a grid large enough to hold the object.
+- **Iterative reconstructions:** the exterior fit can remove the bright rim and bowl when the object extends past the grid. Different exteriors can produce identical measured rays. The absolute level depends on the assumed exterior, and the stopping point affects fine detail.
 
 On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
 

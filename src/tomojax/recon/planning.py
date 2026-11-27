@@ -110,7 +110,7 @@ def inversion_storage(
     working = (
         min(resident, max(volume // grid.nz, 4 * batch * rows * cols) * 4) if slabbed else resident
     )
-    if not isinstance(cfg, FBPConfig):
+    if not isinstance(cfg, FBPConfig) and cfg.exterior == "cylinder":
         from ._exterior import storage
 
         auxiliary_host, auxiliary_device = storage(geometry, grid, detector, views)
@@ -157,7 +157,13 @@ def _algebraic_slabs(
     if model is None:
         return (
             axial_slab_depth(
-                geometry, grid, detector, views, cfg, free, additive=cfg.method == "mlem"
+                geometry,
+                grid,
+                detector,
+                views,
+                cfg,
+                free,
+                additive=cfg.method == "mlem" and cfg.exterior == "cylinder",
             )
             is not None
         )
@@ -169,7 +175,11 @@ def _algebraic_slabs(
         return False
     windows = cone_windows(geometry, grid, detector, model, views, common_height=False)
     sweep = algebraic_sweep(
-        cfg, views, host_output=False, warm_start=warm_start, additive=cfg.method == "mlem"
+        cfg,
+        views,
+        host_output=False,
+        warm_start=warm_start,
+        additive=cfg.method == "mlem" and cfg.exterior == "cylinder",
     )
     if pool is None:
         return True
@@ -229,7 +239,12 @@ def _recon_bytes(
             from ._axial_slabs import axial_workspace
 
             return int(
-                axial_workspace(config, volume, projections, additive=config.method == "mlem")
+                axial_workspace(
+                    config,
+                    volume,
+                    projections,
+                    additive=config.method == "mlem" and config.exterior == "cylinder",
+                )
             )
         case "spdhg":
             return (3 + 3 * (config.tv_weight != 0)) * volume + 2 * projections

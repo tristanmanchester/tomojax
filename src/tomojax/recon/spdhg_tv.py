@@ -11,7 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import (
@@ -92,6 +92,10 @@ class SPDHGConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        In scan reconstruction, "cylinder" estimates the contribution from outside
+        the grid using cylinder-continued detector rows. "zero" fits the measured
+        data directly. The analytic warm start uses the same setting.
     iterations : int or None, optional
         Number of sampled data-block updates, each with a TV update. None uses
         ceil(600 * sqrt(number of blocks)). An explicit count fixes the budget.
@@ -100,11 +104,8 @@ class SPDHGConfig:
         noise from the measured pixels and calibrates the penalty per isolated
         voxel against that score. An explicit zero disables TV.
     data_term : {"absolute", "per_view_contrast"}, optional
-        Absolute least squares by default. Use per_view_contrast when material
-        lies outside the field of view (ROI scans, most laminography, K11).
-        It discards each view's baseline and gives up the absolute density level.
-        Keep absolute fitting for contained objects: removing their view means
-        discards measured information and can worsen the reconstruction.
+        Absolute least squares fits line integrals. "per_view_contrast" removes
+        one constant per detector view and leaves the absolute level undetermined.
     regularizer : Regularizer, optional
         Regularization model: "tv" or "huber_tv". Default is 'tv'.
     huber_delta : float, optional
@@ -141,6 +142,7 @@ class SPDHGConfig:
 
     method: ClassVar[Literal["spdhg"]] = "spdhg"
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
     iterations: int | None = None
     tv_weight: float | None = None
     data_term: DataTerm = "absolute"
@@ -168,6 +170,7 @@ class SPDHGConfig:
     stream: bool | None = None
 
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "spdhg")
         validate_spdhg_config(self)
         _ = validate_regularizer(self.regularizer, self.huber_delta, context="spdhg_tv config")

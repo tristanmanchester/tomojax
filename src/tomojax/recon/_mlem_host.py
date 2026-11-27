@@ -64,7 +64,15 @@ def solve(
 
         # Before planning the sweeps: XLA keeps the device memory FDK has used.
         x = validate_host_arrays(data, out, (grid.nz, grid.ny, grid.nx), "mlem")
-        _ = fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
+        _ = fbp_start(
+            geometry,
+            grid,
+            detector,
+            data,
+            config=FBPConfig(exterior=cfg.exterior),
+            det_grid=None,
+            out=x,
+        )
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
         **algebraic_sweep(cfg, data.shape[0], host_output=out is not None, warm_start=warm_start,

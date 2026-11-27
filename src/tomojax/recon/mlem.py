@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends import device_free_memory_bytes
 from tomojax.backends.host_stream import host_source, should_stream
@@ -103,6 +103,10 @@ class MLEMConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        In scan reconstruction, "cylinder" estimates the contribution from outside
+        the grid using cylinder-continued detector rows. "zero" fits the measured
+        data directly. The analytic warm start uses the same setting.
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.
@@ -122,6 +126,7 @@ class MLEMConfig:
 
     method: ClassVar[Literal["mlem"]] = "mlem"
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
     iterations: int = 50
     subsets: int = 1
     support: jax.Array | np.ndarray | None = None
@@ -129,6 +134,7 @@ class MLEMConfig:
     backend: ProjectorBackend = "auto"
 
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "mlem")
         for name, minimum in (("iterations", 0), ("subsets", 1), ("views_per_batch", 1)):
             if operator.index(getattr(self, name)) < minimum:
@@ -533,7 +539,12 @@ def run_mlem(
 
             init_x = jnp.maximum(
                 fbp_start(
-                    geometry, grid, detector, projections, config=FBPConfig(), det_grid=det_grid
+                    geometry,
+                    grid,
+                    detector,
+                    projections,
+                    config=FBPConfig(exterior=cfg.exterior),
+                    det_grid=det_grid,
                 ),
                 0,
             )

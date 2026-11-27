@@ -1287,6 +1287,13 @@
             "CGLSConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
+        },
         "data_term": {
           "enum": [
             "absolute",
@@ -1388,6 +1395,13 @@
           "enum": [
             "FISTAConfig"
           ]
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
         },
         "iterations": {
           "type": "integer",
@@ -1568,6 +1582,13 @@
             "SPDHGConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
+        },
         "iterations": {
           "anyOf": [
             {
@@ -1732,6 +1753,13 @@
             "SIRTConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
+        },
         "iterations": {
           "anyOf": [
             {
@@ -1840,6 +1868,13 @@
           "enum": [
             "MLEMConfig"
           ]
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
         },
         "iterations": {
           "type": "integer",

@@ -677,13 +677,17 @@ def reconstruct_arrays(
     with progress.task(
         "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
     ):
-        with progress.preparing("estimate exterior projection"):
-            background, share = outside_data(geometry, grid, detector, projections, cfg)
-            treatment = Treatment.record(cfg.method, share, applied=background is not None)
-            warm_data = projections if warm_start and background is not None else None
-            if background is not None and cfg.method != "mlem":
-                projections = subtract_background(projections, background)
-                background = None
+        background, share = None, 0.0
+        warm_data = None
+        if cfg.exterior == "cylinder":
+            with progress.preparing("estimate exterior projection"):
+                background, share = outside_data(geometry, grid, detector, projections, cfg)
+                if background is not None and cfg.method != "mlem":
+                    warm_data = projections if warm_start else None
+                    projections = subtract_background(projections, background)
+        treatment = Treatment.record(cfg.method, share, applied=background is not None)
+        if cfg.method != "mlem":
+            background = None
         volume, record = _iterative_result(
             geometry,
             grid,
@@ -809,7 +813,7 @@ def _iterative_incore(
         devices = getattr(cfg, "devices", None) if det_grid is None else None
         start = fbp_start(
             geometry, grid, detector, projections if warm_data is None else warm_data,
-            config=recon.FBPConfig(devices=devices),
+            config=recon.FBPConfig(devices=devices, exterior=cfg.exterior),
             det_grid=det_grid, out=out,
         )  # fmt: skip
         lower = getattr(cfg, "lower_bound", None)

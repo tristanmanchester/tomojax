@@ -576,7 +576,9 @@ def reconstruct(
     estimate the part of each measured line integral formed outside the grid
     from a coarse reconstruction of those completed rows. CGLS, SIRT, FISTA and
     SPDHG subtract it from the data they fit. MLEM adds it to the predicted
-    count. The stored scan keeps its measured values.
+    count. Set ``exterior="zero"`` in the selected iterative configuration to
+    fit the original measurements and use zero padding for an analytic warm start.
+    The stored scan keeps its measured values.
     Every reconstruction records ``info["truncation"]`` regardless of
     ``exterior`` or method: ``edge_ratio`` (mean edge value over the rows' mean,
     zero for a contained object), ``outside_fraction`` (the share of the

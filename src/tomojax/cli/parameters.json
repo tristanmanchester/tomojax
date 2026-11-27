@@ -1471,13 +1471,25 @@
             "CGLSConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "In scan reconstruction, \"cylinder\" estimates the contribution from outside the grid using cylinder-continued detector rows. \"zero\" fits the measured data directly. The analytic warm start uses the same setting.",
+          "x-choices": [
+            "cylinder",
+            "zero"
+          ]
+        },
         "data_term": {
           "enum": [
             "absolute",
             "per_view_contrast"
           ],
           "default": "absolute",
-          "description": "Absolute least squares by default. Contrast profiles one unknown constant per detector view. Use it when material lies outside the field of view; absolute background density is lost and contained-object accuracy can worsen.",
+          "description": "Absolute least squares fits line integrals. \"per_view_contrast\" removes one constant per detector view and leaves the absolute level undetermined.",
           "x-choices": [
             "absolute",
             "per_view_contrast"
@@ -1597,6 +1609,18 @@
             "FISTAConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "In scan reconstruction, \"cylinder\" estimates the contribution from outside the grid using cylinder-continued detector rows. \"zero\" fits the measured data directly. The analytic warm start uses the same setting.",
+          "x-choices": [
+            "cylinder",
+            "zero"
+          ]
+        },
         "iterations": {
           "type": "integer",
           "default": 200,
@@ -1608,7 +1632,7 @@
             "per_view_contrast"
           ],
           "default": "absolute",
-          "description": "\"absolute\" (default) fits line integrals. Use \"per_view_contrast\" when material lies outside the field of view: it profiles an unknown constant per view, so absolute background density is not recoverable. This costs accuracy on contained objects; do not select it for contained scans.",
+          "description": "Absolute least squares fits line integrals. \"per_view_contrast\" removes one constant per detector view and leaves the absolute level undetermined.",
           "x-choices": [
             "absolute",
             "per_view_contrast"
@@ -1806,6 +1830,18 @@
             "SPDHGConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "In scan reconstruction, \"cylinder\" estimates the contribution from outside the grid using cylinder-continued detector rows. \"zero\" fits the measured data directly. The analytic warm start uses the same setting.",
+          "x-choices": [
+            "cylinder",
+            "zero"
+          ]
+        },
         "iterations": {
           "anyOf": [
             {
@@ -1836,7 +1872,7 @@
             "per_view_contrast"
           ],
           "default": "absolute",
-          "description": "Absolute least squares by default. Use per_view_contrast when material lies outside the field of view (ROI scans, most laminography, K11). It discards each view's baseline and gives up the absolute density level. Keep absolute fitting for contained objects: removing their view means discards measured information and can worsen the reconstruction.",
+          "description": "Absolute least squares fits line integrals. \"per_view_contrast\" removes one constant per detector view and leaves the absolute level undetermined.",
           "x-choices": [
             "absolute",
             "per_view_contrast"
@@ -1999,6 +2035,18 @@
             "SIRTConfig"
           ]
         },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "In scan reconstruction, \"cylinder\" estimates the contribution from outside the grid using cylinder-continued detector rows. \"zero\" fits the measured data directly. The analytic warm start uses the same setting.",
+          "x-choices": [
+            "cylinder",
+            "zero"
+          ]
+        },
         "iterations": {
           "anyOf": [
             {
@@ -2120,6 +2168,18 @@
         "type": {
           "enum": [
             "MLEMConfig"
+          ]
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "In scan reconstruction, \"cylinder\" estimates the contribution from outside the grid using cylinder-continued detector rows. \"zero\" fits the measured data directly. The analytic warm start uses the same setting.",
+          "x-choices": [
+            "cylinder",
+            "zero"
           ]
         },
         "iterations": {

@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax.backends.host_stream import host_source, should_stream
 from tomojax.core.devices import announce
@@ -83,6 +83,10 @@ class SIRTConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        In scan reconstruction, "cylinder" estimates the contribution from outside
+        the grid using cylinder-continued detector rows. "zero" fits the measured
+        data directly. The analytic warm start uses the same setting.
     iterations : int, optional
         Number of complete sweeps. None stops a full-data solve at the estimated
         projection discrepancy or 50 sweeps. Ordered subsets use 50 sweeps.
@@ -110,6 +114,7 @@ class SIRTConfig:
 
     method: ClassVar[Literal["sirt"]] = "sirt"
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
     iterations: int | None = None
     subsets: int = 1
     relaxation: float = 1.0
@@ -134,6 +139,7 @@ class SIRTConfig:
         return self.iterations is None and self.subsets == 1 and self.relaxation <= 1
 
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "sirt")
         if self.iterations is not None:
             check_count(self.iterations, "iterations", minimum=0, context="sirt")

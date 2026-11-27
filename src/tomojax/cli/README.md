@@ -84,7 +84,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--region cyl` zeros the volume outside the cylinder every view sees. By
   default (`exterior = "cylinder"`), `fbp` (including cone-beam FDK) and
   `fourier` continue each detector row past both edges with a cylinder model
-  for truncated scans; pass `exterior = "zero"` in `--config` with an explicit
+  for truncated scans. Iterative methods use a coarse fit to those rows to model the contribution from outside the grid. Pass `exterior = "zero"` in `--config` with an explicit
   `--method` to assume zero beyond the detector. `reconstruct` records
   `truncation` (`edge_ratio`, `outside_fraction`, `interior_shift`, `radius`,
   `field_of_view_radius`) in the output file and `--manifest`, and appends

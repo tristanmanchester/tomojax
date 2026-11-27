@@ -117,6 +117,7 @@ class FourierConfig(Record, tag="FourierConfig"):
 class CGLSConfig(Record, tag="CGLSConfig"):
     """Wire fields of CGLSConfig."""
 
+    exterior: Literal["cylinder", "zero"] = "cylinder"
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
     iterations: int | None = None
     tolerance: float | None = None
@@ -133,6 +134,7 @@ class CGLSConfig(Record, tag="CGLSConfig"):
 class FISTAConfig(Record, tag="FISTAConfig"):
     """Wire fields of FISTAConfig."""
 
+    exterior: Literal["cylinder", "zero"] = "cylinder"
     iterations: int = 200
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
     tv_weight: float | None = None
@@ -155,6 +157,7 @@ class FISTAConfig(Record, tag="FISTAConfig"):
 class SPDHGConfig(Record, tag="SPDHGConfig"):
     """Wire fields of SPDHGConfig."""
 
+    exterior: Literal["cylinder", "zero"] = "cylinder"
     iterations: int | None = None
     tv_weight: float | None = None
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
@@ -176,6 +179,7 @@ class SPDHGConfig(Record, tag="SPDHGConfig"):
 class SIRTConfig(Record, tag="SIRTConfig"):
     """Wire fields of SIRTConfig."""
 
+    exterior: Literal["cylinder", "zero"] = "cylinder"
     iterations: int | None = None
     subsets: int = 1
     relaxation: float = 1.0
@@ -190,6 +194,7 @@ class SIRTConfig(Record, tag="SIRTConfig"):
 class MLEMConfig(Record, tag="MLEMConfig"):
     """Wire fields of MLEMConfig."""
 
+    exterior: Literal["cylinder", "zero"] = "cylinder"
     iterations: int = 50
     subsets: int = 1
     support: Storage | None = None

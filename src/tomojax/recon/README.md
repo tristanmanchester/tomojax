@@ -30,10 +30,7 @@ functions in `tomojax.recon` directly (`cgls`, `cgls_multires`, `fista`, `fbp_ho
 `fdk_host`, `fourier`, and the others) does not expose `checkpoint=`. See
 [Resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill).
 
-CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
-line integrals to the grid; they do not model material outside it (for scans
-whose object extends past the detector, `fbp`, FDK and `fourier` continue rows
-with a cylinder model by default, described below).
+CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting the line integrals after the configured exterior correction.
 `data_term="per_view_contrast"` profiles one constant per complete detector view in the
 residual, not just in the input data; the projector and its exact transpose are
 unchanged. Absolute background density is then not recoverable. This option is
@@ -182,7 +179,7 @@ forward/transpose pair. This also applies to CGLS with streamed projections
 and a resident volume. Host-slab solvers and CPU execution use public storage;
 the private layout is not a user option or a different reconstruction model.
 
-The analytic configs (`FBPConfig`, `FDKConfig` and `FourierConfig`) accept
+All reconstruction method configs accept
 `exterior="cylinder"` (default) or `exterior="zero"` to select the model beyond
 the detector. With the cylinder, `fbp`, FDK and `fourier` continue each measured
 detector row past both detector edges before filtering (`_continuation.py`):

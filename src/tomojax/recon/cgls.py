@@ -8,7 +8,7 @@ from typing import ClassVar, Literal, get_args
 
 import numpy as np
 
-from tomojax import _typed_arrays, progress
+from tomojax import _parameters, _typed_arrays, progress
 from tomojax._parameters import check_backend
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Geometry, Grid
@@ -82,10 +82,13 @@ class CGLSConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        In scan reconstruction, "cylinder" estimates the contribution from outside
+        the grid using cylinder-continued detector rows. "zero" fits the measured
+        data directly. The analytic warm start uses the same setting.
     data_term : {"absolute", "per_view_contrast"}, optional
-        Absolute least squares by default. Contrast profiles one unknown constant
-        per detector view. Use it when material lies outside the field of view;
-        absolute background density is lost and contained-object accuracy can worsen.
+        Absolute least squares fits line integrals. "per_view_contrast" removes
+        one constant per detector view and leaves the absolute level undetermined.
     iterations : int, optional
         Maximum number of updates. None enables statistical stopping on an
         unpenalized solve with implicit tolerances and caps work at 50 updates.
@@ -119,6 +122,7 @@ class CGLSConfig:
 
     method: ClassVar[Literal["cgls"]] = "cgls"
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
     data_term: DataTerm = "absolute"
     iterations: int | None = None
     tolerance: float | None = None
@@ -132,6 +136,7 @@ class CGLSConfig:
     devices: _typed_arrays.Device | Sequence[_typed_arrays.Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         iterations, batch = (
             operator.index(50 if self.iterations is None else self.iterations),
             operator.index(self.views_per_batch),

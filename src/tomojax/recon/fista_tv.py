@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import ProjectorBackend, check_backend
 from tomojax._typed_arrays import Device
 from tomojax.backends.host_stream import host_source, stream_view_bytes
@@ -186,13 +186,15 @@ class FISTAConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        In scan reconstruction, "cylinder" estimates the contribution from outside
+        the grid using cylinder-continued detector rows. "zero" fits the measured
+        data directly. The analytic warm start uses the same setting.
     iterations : int, optional
         Maximum number of FISTA updates. Default is 200.
     data_term : DataTerm, optional
-        "absolute" (default) fits line integrals. Use "per_view_contrast" when
-        material lies outside the field of view: it profiles an unknown constant
-        per view, so absolute background density is not recoverable. This costs
-        accuracy on contained objects; do not select it for contained scans.
+        Absolute least squares fits line integrals. "per_view_contrast" removes
+        one constant per detector view and leaves the absolute level undetermined.
     tv_weight : float | None, optional
         Dimensionless physical-TV weight. None (default) estimates detector
         noise from Haar differences and RMS linear interpolation error from
@@ -255,6 +257,7 @@ class FISTAConfig:
 
     method: ClassVar[Literal["fista"]] = "fista"
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
     iterations: int = 200
     data_term: DataTerm = "absolute"
     tv_weight: float | None = None
@@ -274,6 +277,7 @@ class FISTAConfig:
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "fista")
         _ = validate_fista_config(self)
         _ = validate_regularizer(self.regularizer, self.huber_delta, context="fista config")
