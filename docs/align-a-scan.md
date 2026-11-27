@@ -295,7 +295,7 @@ The fit reads native projections in batches of views and prepares all working re
 
 When correction puts the projections in a temporary file, allow four bytes of disk space per native detector pixel in every view. For Diamond K11-52544 (8,000 × 2,160 × 2,560) that is 164.8 GiB. Set `TMPDIR` to scratch storage with that much free space before loading the scan. TomoJAX uses the host or job memory limit when choosing between RAM and disk. [Large scans](large-scans.md) · [Alignment measurements](measurements.md#alignment)
 
-With several visible GPUs, the image solver projects batches of views in parallel and accumulates their backprojections in acquisition order. Linearization, line search and final pose refinement use the primary GPU. `result.info["placement"]["devices"]` lists the devices that worked on the fit.
+Small working levels use one GPU. On larger levels the image solver projects batches of views across the visible GPUs and accumulates their backprojections in acquisition order. Linearization, line search and final pose refinement use the primary GPU. `result.info["placement"]["devices"]` lists the devices that worked on the fit.
 
 Inside every joint step, the solver profiles out each view's offset and vertical row ramp relative to the scan-wide mean level so flux fluctuations or phase offsets do not mimic vertical motion (the data themselves are untouched; `info["offsets"]` records the fitted pairs). The shared mean level stays in the residual because removing it lets the solver invent a constant-projection disc.
 

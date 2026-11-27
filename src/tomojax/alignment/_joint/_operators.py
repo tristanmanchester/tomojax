@@ -227,7 +227,8 @@ class Operators:
         # Bound the temporary value/pose columns to about 32 MiB when more
         # than one view fits.
         column_bytes = detector.nv * detector.nu * (1 + self.dofs) * 4
-        self.batch = min(batch_size, self.n, max(1, 32 * 2**20 // column_bytes))
+        self.views_per_workspace = max(1, 32 * 2**20 // column_bytes)
+        self.batch = min(batch_size, self.n, self.views_per_workspace)
         self.nb = math.ceil(self.n / self.batch)
         self.padded_n = self.nb * self.batch
         self.image_shape = (self.padded_n, detector.nv, detector.nu)

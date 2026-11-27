@@ -661,8 +661,8 @@ def test_sharing_uneven_view_batches_preserves_the_fit(size, views, shift):
     if len(devices) < 2:
         pytest.skip("two devices required")
     scan = tj.simulate("shepp", size=size, n_views=views, translation_sigma=shift).scan
-    with jax.default_device(devices[0]):
-        reference = tj.align(scan, grid=scan.grid)
+    reference = tj.align(scan, grid=scan.grid)
+    assert reference.info["placement"]["devices"] == (f"{devices[0].platform}:{devices[0].id}",)
     with sharing(devices):
         shared = tj.align(scan, grid=scan.grid)
     assert shared.info["placement"]["devices"] == tuple(f"{d.platform}:{d.id}" for d in devices)

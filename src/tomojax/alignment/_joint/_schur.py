@@ -48,9 +48,18 @@ type SchurOperands = tuple[
 def batch_split(ops: Operators) -> ViewSplit | None:
     """Share complete view batches on the allocated GPUs, respecting an explicit default device."""
     devices = shared_devices()
-    if devices is None and jax.config.jax_default_device is None and jax.default_backend() == "gpu":
-        devices = tuple(jax.local_devices())
-    if devices is None or len(devices) < 2 or ops.nb < 2:
+    if devices is None:
+        # Give each GPU at least one workspace of projector values and pose columns.
+        # For smaller problems, mesh setup and collectives cost more than the projections.
+        shares = ops.n // ops.views_per_workspace
+        if (
+            shares < 2
+            or jax.config.jax_default_device is not None
+            or jax.default_backend() != "gpu"
+        ):
+            return None
+        devices = tuple(jax.local_devices()[:shares])
+    if len(devices) < 2 or ops.nb < 2:
         return None
     return view_split(devices[: ops.nb], ops.nb)
 
