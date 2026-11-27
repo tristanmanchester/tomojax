@@ -24,6 +24,17 @@ from tomojax.core import host_volume
         ({"/proc/self/mountinfo": "1 0 0:1 /other /cg ro - cgroup2 cg rw"}, 102400),
         ({"/proc/self/mountinfo": "1 0 0:1 /leaf /cg/leaf ro - cgroup2 cg rw"}, 50),
         ({"/proc/self/cgroup": "0::/../leaf"}, 102400),
+        (
+            {
+                "/proc/self/cgroup": "4:memory:/slurm/job/step\n0::/leaf",
+                "/proc/self/mountinfo": "1 0 0:1 /slurm /cg ro - cgroup cgroup rw,memory",
+                "/cg/job/memory.usage_in_bytes": "30",
+                "/cg/job/memory.limit_in_bytes": "120",
+                "/cg/job/step/memory.usage_in_bytes": "20",
+                "/cg/job/step/memory.limit_in_bytes": "9223372036854771712",
+            },
+            90,
+        ),
     ],
 )
 def test_host_capacity_respects_visible_cgroups(monkeypatch, updates, expected):
