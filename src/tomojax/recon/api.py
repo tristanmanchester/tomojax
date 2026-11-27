@@ -668,14 +668,15 @@ def reconstruct_arrays(
         volume, record = fbp_volume(geometry, grid, detector, projections, cfg, None, out)
         return volume, {**record, "truncation": truncation}
     from tomojax import progress
-    from tomojax.recon._exterior import outside_data, subtract_background
+    from tomojax.recon._exterior import Treatment, outside_data, subtract_background
     from tomojax.recon._host_arrays import validate_host_arrays
 
     det_grid = _detector_grid(geometry, detector)
     if out is not None:
         _ = validate_host_arrays(projections, out, grid.shape, method, device_input=True)
     background, share = outside_data(geometry, grid, detector, projections, cfg)
-    applied = background is not None
+    treatment = Treatment.record(cfg.method, share, applied=background is not None)
+    warm_data = projections if warm_start and background is not None else None
     if background is not None and cfg.method != "mlem":
         projections = subtract_background(projections, background)
         background = None
@@ -692,22 +693,9 @@ def reconstruct_arrays(
             warm_start=warm_start,
             out=out,
             background=background,
+            warm_data=warm_data,
         )
-        return volume, {
-            **record,
-            "truncation": {
-                **truncation,
-                "outside_grid": share,
-                "data_model": "continued_exterior" if applied else "measured",
-                "background_treatment": (
-                    "additive_poisson"
-                    if background is not None
-                    else "subtracted"
-                    if applied
-                    else "none"
-                ),
-            },
-        }
+        return volume, {**record, "truncation": {**truncation, **treatment._asdict()}}
 
 
 def _iterative_result(
@@ -720,6 +708,7 @@ def _iterative_result(
     *,
     warm_start: bool,
     background: np.ndarray | None = None,
+    warm_data: np.ndarray | jnp.ndarray | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Plan independent axial slabs before allocating a full warm initializer."""
@@ -757,18 +746,20 @@ def _iterative_result(
                 data: jnp.ndarray | np.ndarray,
                 _initial: jnp.ndarray | np.ndarray | None,
                 local_support: jnp.ndarray | np.ndarray | None,
-                local_background: np.ndarray | None,
+                section: slice,
             ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
                 return _iterative_incore(
                     local, local.grid, local.detector, data,
                     replace(algebraic, support=local_support), None,
-                    warm_start=warm_start, solver=solver, background=local_background,
+                    warm_start=warm_start, solver=solver,
+                    background=None if background is None else background[:, section],
+                    warm_data=None if warm_data is None else warm_data[:, section],
                 )  # fmt: skip
 
             result = axial_slabs(
                 geometry, grid, detector, projections, initial=None, support=support,
                 config=algebraic,
-                solve=solve, summarize=summary, background=background,
+                solve=solve, summarize=summary,
             )  # fmt: skip
             if result is not None:
                 volume, record = result
@@ -783,6 +774,7 @@ def _iterative_result(
         warm_start=warm_start,
         out=out,
         background=background,
+        warm_data=warm_data,
     )
 
 
@@ -796,6 +788,7 @@ def _iterative_incore(
     *,
     warm_start: bool,
     background: np.ndarray | None = None,
+    warm_data: np.ndarray | jnp.ndarray | None = None,
     solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
@@ -814,7 +807,8 @@ def _iterative_incore(
 
         devices = getattr(cfg, "devices", None) if det_grid is None else None
         start = fbp_start(
-            geometry, grid, detector, projections, config=recon.FBPConfig(devices=devices),
+            geometry, grid, detector, projections if warm_data is None else warm_data,
+            config=recon.FBPConfig(devices=devices),
             det_grid=det_grid, out=out,
         )  # fmt: skip
         lower = getattr(cfg, "lower_bound", None)

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
+
+import numpy as np
 
 from tomojax.wire.resources import Placement, Snapshot
 
 if TYPE_CHECKING:
-    from tomojax.geometry import ScanGeometry
+    import jax
+
+    from tomojax.geometry import Grid, ScanGeometry
     from tomojax.recon.api import MethodConfig
 
     from .cgls import CGLSConfig
@@ -38,15 +42,15 @@ def prediction_block_views(geometry: ScanGeometry, config: MethodConfig) -> int 
 def inversion_storage(
     cfg: MethodConfig,
     geometry: ScanGeometry,
-    data: Any,
+    data: np.ndarray | jax.Array,
     snapshot: tuple[Snapshot, ...],
     *,
     warm_start: bool,
 ) -> Placement:
     """Estimate host and device bytes from the arrays and the current placement policy."""
     grid, detector = geometry.grid, geometry.detector
-    views, rows, cols = data.shape
-    hosts = int(data.nbytes)
+    views, rows, cols = map(int, data.shape)
+    hosts = data.nbytes
     projections = 4 * views * rows * cols
     devices = tuple(dict.fromkeys(s.device for s in snapshot))
     room = snapshot[0].available if snapshot else None
@@ -107,8 +111,6 @@ def inversion_storage(
         min(resident, max(volume // grid.nz, 4 * batch * rows * cols) * 4) if slabbed else resident
     )
     if not isinstance(cfg, FBPConfig):
-        import numpy as np
-
         from ._exterior import storage
 
         auxiliary_host, auxiliary_device = storage(geometry, grid, detector, views)
@@ -175,7 +177,7 @@ def _algebraic_slabs(
 def _cgls_slabs(
     cfg: CGLSConfig,
     geometry: ScanGeometry,
-    data: Any,
+    data: np.ndarray | jax.Array,
     free: int | None,
     pool: int | None,
     *,
@@ -208,7 +210,7 @@ def _cgls_slabs(
 
 
 def _recon_bytes(
-    config: MethodConfig, volume: int, projections: int, grid: Any, shape: tuple[int, ...]
+    config: MethodConfig, volume: int, projections: int, grid: Grid, shape: tuple[int, ...]
 ) -> int:
     """Resident working set including the iterate, auxiliary volumes and measured views."""
     match config.method:

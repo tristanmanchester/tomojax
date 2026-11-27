@@ -33,6 +33,8 @@ from ._data_term import project_residual
 from .cgls import CGLSConfig, resident_bytes
 
 if TYPE_CHECKING:
+    from types import ModuleType
+
     import jax
 
     from tomojax.core.cuda_types import CuPyValue
@@ -71,25 +73,21 @@ def available(
 
         platforms = jax.config.jax_platforms or jax.config.read("jax_platform_name")
         device = jax.config.jax_default_device
-        if device is not None and (
-            isinstance(device, str)
-            or device.platform != "gpu"
-            or "cuda" not in device.client.platform_version.lower()
-        ):
+        if device is not None and (isinstance(device, str) or not backend_policy.cuda_backend()):
             return False
     if platforms and platforms.split(",")[0] not in {"cuda", "gpu"}:
         return False
     return importlib.util.find_spec("cupy") is not None
 
 
-def array_module() -> CuPyValue:
+def array_module() -> ModuleType:
     """The optional native array module, loaded when a CUDA solve is selected."""
     import cupy as cp
 
     return cp
 
 
-def native_device(cp: CuPyValue) -> CuPyValue:
+def native_device(cp: ModuleType) -> CuPyValue:
     """CuPy device matching the active reconstruction placement."""
     if "jax" in sys.modules:
         import jax
@@ -97,7 +95,7 @@ def native_device(cp: CuPyValue) -> CuPyValue:
         device = jax.config.jax_default_device
         if device is not None and not isinstance(device, str):
             return cp.cuda.Device(device.local_hardware_id)
-    return cp.cuda.Device(cp.cuda.runtime.getDevice())
+    return cp.cuda.Device()
 
 
 def native_fits(cfg: CGLSConfig, grid: Grid, shape: tuple[int, ...], free: int | None) -> bool:

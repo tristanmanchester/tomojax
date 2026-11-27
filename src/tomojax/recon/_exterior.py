@@ -9,7 +9,6 @@ import math
 from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
-from scipy.ndimage import zoom
 
 from tomojax import progress
 from tomojax._typed_arrays import (
@@ -24,7 +23,6 @@ from tomojax.core import checkpoint
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.host_volume import host_array
-from tomojax.core.robust import MAD_TO_SD
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._continuation import Continuation
@@ -48,7 +46,7 @@ def _bin(values: Float32Array, count: int, axis: int) -> Float32Array:
         return values
     source = values.swapaxes(axis, -1)
     if length % count == 0:
-        shape = tuple(map(int, source.shape[:-1])) + (count, length // count)
+        shape = (*map(int, source.shape[:-1]), count, length // count)
         means = numpy_float32_array(np.mean(source.reshape(shape), axis=-1, dtype=np.float32))
     else:
         edges = np.linspace(0, length, count + 1, dtype=np.float64)
@@ -102,14 +100,13 @@ def _unseen(
                 )
                 columns: Float64Array = (hit - center) @ horizontal / own.du
             # A box crossing the source plane has no bounded detector silhouette.
-            crossing = np.min(depth, axis=1) * np.max(depth, axis=1) <= 0
+            crossing = np.logical_and(np.any(depth <= 0, axis=1), np.any(depth >= 0, axis=1))
             columns[crossing, :2] = [-np.inf, np.inf]
             u[first:last] = columns
             first = last
     column = np.arange(detector.nu, dtype=np.float64) - (detector.nu - 1) / 2
-    return np.logical_or(
-        column + 0.5 < np.min(u, axis=1, keepdims=True),
-        column - 0.5 > np.max(u, axis=1, keepdims=True),
+    return np.all(column[None, None, :] + 0.5 < u[..., None], axis=1) | np.all(
+        column[None, None, :] - 0.5 > u[..., None], axis=1
     )
 
 
@@ -185,6 +182,12 @@ class _Sampling:
 
 def storage(geometry: Geometry, grid: Grid, detector: Detector, views: int) -> tuple[int, int]:
     """Peak auxiliary host and device bytes, including the private projection stack."""
+    from ._axial_slabs import independent_planes
+
+    full_data = 4 * views * detector.nv * detector.nu
+    if independent_planes(geometry, grid, detector) and grid.nz > 1:
+        grid = replace(grid, nz=1)
+        detector = replace(detector, nv=1)
     distance = axis_distance(geometry, detector, detector.nu)
     sample = _Sampling.for_scan(grid, detector, max_float(np.abs(distance)))
     d, wide = sample.detector, sample.grid
@@ -194,7 +197,14 @@ def storage(geometry: Geometry, grid: Grid, detector: Detector, views: int) -> t
     volume = 4 * math.prod(wide.shape)
     # Completed rows and their measured-column residual survive through reprojection.
     # A streamed host result and the extended exterior lattice can coexist.
-    host = measured + completed + completed // 3 + 3 * volume + (16 << 20)
+    host = (
+        full_data
+        + (measured if measured < full_data else 0)
+        + completed
+        + completed // 3
+        + 3 * volume
+        + (64 << 20)
+    )
     block = min(views, max(1, min(64, (16 << 20) // (4 * detector.nv * detector.nu))))
     project = 4 * (wide.nz + 2) * wide.ny * wide.nx + 4 * block * detector.nv * detector.nu
     fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
@@ -296,6 +306,30 @@ def _project(
         yield part, numpy_float32_array(block)
 
 
+class Treatment(NamedTuple):
+    """The data model recorded with the fine solve and in its checkpoint."""
+
+    outside_grid: float
+    data_model: str
+    background_treatment: str
+
+    @classmethod
+    def record(cls, method: str, share: float, *, applied: bool) -> Treatment:
+        treatment = (
+            cls(
+                share,
+                "continued_exterior",
+                "additive_poisson" if method == "mlem" else "subtracted",
+            )
+            if applied
+            else cls(0.0, "measured", "none")
+        )
+        with checkpoint.loop("projection-model") as model:
+            if model.saved is None:
+                model.save((), treatment)
+        return treatment
+
+
 def outside_data(
     geometry: Geometry,
     grid: Grid,
@@ -339,6 +373,27 @@ def outside_data(
     return source, removed / measured if measured else 0.0
 
 
+@dataclass(frozen=True)
+class _LinearAxis:
+    lower: NDArray[np.intp]
+    upper: NDArray[np.intp]
+    fraction: Float32Array
+
+    @classmethod
+    def cells(cls, source: int, target: int) -> _LinearAxis:
+        coordinate = np.clip((np.arange(target) + 0.5) * source / target - 0.5, 0, source - 1)
+        lower = coordinate.astype(np.intp)
+        return cls(
+            lower, np.minimum(lower + 1, source - 1), (coordinate - lower).astype(np.float32)
+        )
+
+    def interpolate(self, rows: Float32Array) -> Float32Array:
+        """Linear interpolation along the last axis, clamped at both end centres."""
+        left = np.take(rows, self.lower, axis=-1)
+        right = np.take(rows, self.upper, axis=-1)
+        return numpy_float32_array(left + (right - left) * self.fraction)
+
+
 def _model(
     geometry: Geometry,
     grid: Grid,
@@ -359,29 +414,33 @@ def _model(
     if not mask.any():
         return None, 0.0
     full = sample.completed(geometry, data)
-    observed = numpy_float64_array(np.einsum("vru,vu->vr", full, mask, dtype=np.float64))
+    observed = np.sum(full, axis=-1, where=mask[:, None, :], dtype=np.float64)
     # Positive exterior attenuation, fitted to the integral of the virtual rays
-    # that no voxel can reach. Adjacent-view differences estimate its standard
-    # error. Soft thresholding estimates a nonnegative mass for each coarse row.
+    # that no voxel can reach. The number of missed rays varies by view and can
+    # be zero over most of a turn. The second moment of adjacent differences
+    # retains the variance of the views that actually contribute.
     uncertainty: Float64Array | float = (
-        MAD_TO_SD * np.median(np.abs(np.diff(observed, axis=0)), axis=0) / math.sqrt(2 * views)
-        if views > 1
-        else 0.0
+        np.sqrt(np.mean(np.diff(observed, axis=0) ** 2, axis=0) / (2 * views)) if views > 1 else 0.0
     )
     mass: Float64Array = np.maximum(
-        observed.mean(axis=0) - math.sqrt(2 * math.log(2 * views)) * uncertainty, 0.0
+        np.mean(observed, axis=0, dtype=np.float64)
+        - math.sqrt(2 * math.log(2 * views)) * uncertainty,
+        0.0,
     )
     if not mass.any():
         return None, 0.0
-    coarse = CGLSConfig(backend=config.backend, devices=getattr(config, "devices", None))
+    # The completed stack includes correlated, synthetic rays. Its residual
+    # does not have the measured scan's noise law.
+    coarse = CGLSConfig(
+        iterations=50, backend=config.backend, devices=getattr(config, "devices", None)
+    )
     with first_device(coarse) if coarse.devices is not None else nullcontext():
         volume, native = _fit(geometry, wide, complete, full, coarse)
         predicted: Float64Array = np.zeros(d.nv)
         residual: Float32Array = host_array((views, d.nv, d.nu))
         for part, block in _project(geometry, complete, wide, poses, volume, coarse, native=native):
             predicted += (
-                numpy_float64_array(np.einsum("vru,vu->r", block, mask[part], dtype=np.float64))
-                / views
+                np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
             )
             residual[part] = (full[part] - block)[..., d.nu : 2 * d.nu]
         scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
@@ -396,19 +455,16 @@ def _model(
             wide = replace(wide, nz=wide.nz + 2)
         row = (np.arange(nv) + 0.5) * d.nv / nv - 0.5
         amplitude = np.interp(row, np.arange(d.nv), scale).astype(np.float32)[:, None]
+        vertical, horizontal = _LinearAxis.cells(d.nv, nv), _LinearAxis.cells(d.nu, nu)
         source: Float32Array = host_array(data.shape, copies=2)
         removed = 0.0
         for part, block in _project(
             geometry, detector, wide, poses, outside, coarse, native=native
         ):
             progress.check_canceled()
-            first = part.start
-            for k in range(len(block)):
-                i = first + k
-                mismatch = zoom(
-                    residual[i], (nv / d.nv, nu / d.nu), order=1, mode="nearest", grid_mode=True
-                )
-                source[i] = (block[k] + mismatch) * amplitude
+            across = horizontal.interpolate(residual[part])
+            mismatch = vertical.interpolate(across.swapaxes(1, 2)).swapaxes(1, 2)
+            source[part] = (block + mismatch) * amplitude
             if config.method == "mlem":
                 _ = np.clip(source[part], 0, None, out=source[part])
             removed += sum_float64(source[part])

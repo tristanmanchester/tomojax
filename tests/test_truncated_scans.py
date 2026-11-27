@@ -109,6 +109,9 @@ def test_checkpoint_preserves_the_exterior_during_the_final_fit(tmp_path) -> Non
 
     with progress.watch(cancel, control=control), pytest.raises(Canceled):
         tj.reconstruct(scan, "sirt", iterations=12, checkpoint=path)
+    saved = tj.inspect(path)["checkpoint"]["entries"]["projection-model-0"]
+    assert saved["background_treatment"] == "subtracted"
+    assert saved["outside_grid"] == plain.info["truncation"]["outside_grid"]
     resumed = tj.reconstruct(scan, "sirt", iterations=12, checkpoint=path)
     np.testing.assert_array_equal(resumed.volume, plain.volume)
     assert resumed.info["truncation"] == plain.info["truncation"]

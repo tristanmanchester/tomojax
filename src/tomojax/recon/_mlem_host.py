@@ -52,7 +52,7 @@ def solve(
     Voxels no subset sees are zero; zero initial voxels stay zero.
     """
     subsets, iterations, support = cfg.subsets, cfg.iterations, cfg.support
-    data = host_projections(projections, "mlem", nonnegative=True)
+    data: np.ndarray = host_projections(projections, "mlem", nonnegative=True)
     if not np.isfinite(np.asarray(poses)).all():
         raise ValueError("mlem: poses must be finite")
     x = None
