@@ -695,15 +695,21 @@ class Admission:
 
     @prepare.register
     def export(self, operation: op.Export) -> Work:
-        from tomojax._loading.files import volume_source
+        from tomojax._loading.files import export_source
         from tomojax.io.api import ExportSource, plan_export
 
         lease = self.context.leases[operation.source]
         held = lease.value
         if isinstance(held, ex.RegisteredArray):
-            if operation.source.member not in ("volume", "image", "phantom", "mask"):
-                raise InvalidParameter("source", "choose a three-dimensional volume or mask")
+            if operation.source.member not in ("volume", "image", "phantom", "mask", "projections"):
+                raise InvalidParameter(
+                    "source", "choose projections, a three-dimensional volume or a mask"
+                )
             held = lease.owner
+            if operation.source.member == "projections" and isinstance(
+                held, tj.Reconstruction | tj.Alignment | tj.Simulation
+            ):
+                held = held.scan
         if isinstance(held, ex.Feature):
             member = ExportSource(
                 held.name,
@@ -715,10 +721,10 @@ class Admission:
                 held.__getitem__,
                 {"recipe": held.recipe},
             )
-        elif isinstance(held, tj.Reconstruction | tj.Simulation | tj.Alignment):
-            member = volume_source(held)
+        elif isinstance(held, tj.Reconstruction | tj.Simulation | tj.Alignment | tj.Scan):
+            member = export_source(held)
         else:
-            raise InvalidParameter("source", "choose a volume or mask to export")
+            raise InvalidParameter("source", "choose projections, a volume or a mask to export")
         path = Path(operation.path)
         plan = plan_export(
             path,

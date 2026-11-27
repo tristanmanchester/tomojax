@@ -195,7 +195,7 @@ def tomojax.backproject(
 def tomojax.estimate_region(scan: 'Scan') -> 'RegionEstimate'
 def tomojax.export(
         path: 'str | PathLike[str]',
-        item: 'Reconstruction | Alignment | Simulation',
+        item: 'Reconstruction | Alignment | Simulation | Scan',
         *,
         dtype: 'ExportDtype | None' = None,
         range: 'tuple[float, float] | None' = None,

@@ -3971,7 +3971,7 @@
         },
         "source": {
           "$ref": "#/$defs/Member",
-          "description": "Reconstruction volume, alignment working image or simulation phantom. An integer or boolean volume supplies mask labels."
+          "description": "Reconstruction volume, alignment working image, simulation phantom or scan projections. An integer or boolean volume supplies mask labels."
         },
         "path": {
           "type": "string",
@@ -4208,7 +4208,7 @@
             }
           ],
           "default": null,
-          "description": "Half-open (start, stop) pairs, slices, or None in stored (z, y, x) order."
+          "description": "Half-open intervals in stored (z, y, x) or (view, v, u) order."
         },
         "binning": {
           "type": "integer",

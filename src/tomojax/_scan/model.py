@@ -680,6 +680,34 @@ def record_of(
     return replace_dataset(record, metadata=metadata)
 
 
+def projection_record(
+    scan: Scan, bounds: tuple[tuple[int, int], ...], binning: int
+) -> dict[str, object]:
+    """Register the rays and acquisition positions written by a projection export."""
+    from tomojax._data import metadata_record
+
+    (first, stop), rows, cols = bounds
+    kept = np.arange(first, stop)
+    source = record_of(scan, include_projections=False)
+    geometry = scan.geometry
+    if (first, stop) != (0, len(scan.angles)):
+        geometry = views_of(geometry, kept)
+        source = _selected_truth(source, kept) or source
+    if rows != (0, scan.detector.nv) or cols != (0, scan.detector.nu):
+        window = detector_window(slice(*rows), slice(*cols), scan.detector)
+        geometry = frame_output_grid(rebuild(geometry, detector=window), scan.source)
+    if binning != 1:
+        geometry = frame_output_grid(
+            binned_geometry(geometry, binning), scan.source, binning=binning
+        )
+    dataset = geometry_record(geometry, name=scan.name, source=source)
+    positions = _positions(scan)[first:stop].tolist()
+    dataset.geometry_metadata.pop("view_positions", None)
+    result = metadata_record(dataset.to_nxtomo_metadata())
+    result["tables"]["view_positions"] = {"values": positions, "unit": "frame"}
+    return result
+
+
 def source_of(scan: Scan) -> dict[str, Any]:
     """What names ``scan``'s projections: path, shape, size and a hash of three views.
 

@@ -209,10 +209,10 @@ def test_publication_to_a_new_file_is_exclusive(tmp_path):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
-    from tomojax._loading.files import volume_source
+    from tomojax._loading.files import export_source
     from tomojax.io.api import plan_export
 
-    source = volume_source(indexed())
+    source = export_source(indexed())
     path = tmp_path / "volume.raw"
     plans = [plan_export(path, source), plan_export(path, source)]
     ready = Barrier(2)
@@ -293,12 +293,12 @@ def test_pyramid_one_pass_on_odd_and_singleton_axes(tmp_path, monkeypatch, shape
     from ome_zarr_models import open_ome_zarr
     import zarr
 
-    from tomojax._loading.files import volume_source
+    from tomojax._loading.files import export_source
     from tomojax.io._export_data import Selection  # check-public-imports: allow-private
     from tomojax.io.api import plan_export
 
     item = indexed(shape)
-    source = volume_source(item)
+    source = export_source(item)
     reads = []
 
     def read(region):

@@ -366,7 +366,7 @@ def plan_export(
         "files": files,
     }
     record = {
-        **source.record,
+        **(source.record(selection.bounds, binning) if callable(source.record) else source.record),
         "format": 2,
         "kind": "export",
         "arrays": {source.name: array},

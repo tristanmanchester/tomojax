@@ -124,7 +124,8 @@ def nxdata(
         label = str(linked.name).rsplit("/", 1)[1] if linked is not None else axis.name
         names.append(label)
         if linked is not None:
-            group[label] = linked
+            if label not in group:
+                group[label] = linked
         elif isinstance(axis.coordinates, Uniform):
             values = (
                 axis.coordinates.origin + np.arange(n, dtype=np.float64) * axis.coordinates.spacing
@@ -276,8 +277,6 @@ def write_projections(
     )
     group["image_key"] = det["image_key"]
     description = array_record(d.shape, d.dtype.name, axes, value_unit, domain)
-    if angle is not None:
-        description["axes"][0]["coordinates"] = {"table": "angles"}
     return {"path": d.name, **description}
 
 

@@ -23,7 +23,7 @@ def _build_parser() -> ProgressParser:
     formats = format_descriptions()
     suffixes = ", ".join((f["suffixes"] or ["slice directory"])[0] for f in formats)
     parser = ProgressParser(
-        prog="tomojax export", description=f"Export a registered volume. Destinations: {suffixes}."
+        prog="tomojax export", description=f"Export a registered array. Destinations: {suffixes}."
     )
     _ = parser.add_argument("data", metavar="INPUT", help="Saved TomoJAX file")
     add_progress(parser)
@@ -51,7 +51,7 @@ def _build_parser() -> ProgressParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Run the volume export command."""
+    """Run the registered array export command."""
     from tomojax._loading.files import saved_export_source
     from tomojax.cli._results import report_result
     from tomojax.cli.correct import crop_intervals
@@ -91,7 +91,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 plan.path,
                 () if args.dry_run else tuple(map(str, paths)),
                 report,
-                arrays={"source_volume": disk},
+                arrays={f"source_{source.name}": disk},
             )
         print(json.dumps(report, indent=2))
         return None

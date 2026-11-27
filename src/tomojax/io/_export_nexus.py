@@ -46,12 +46,20 @@ def write_nexus(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
             compression="gzip" if encoding["compress"] else None,
             shuffle=encoding["compress"],
         )
+        coordinates = {}
+        if any(a.name == "view" for a in blocks.selection.axes):
+            tables = record["tables"]
+            assert isinstance(tables, dict)
+            angles = parent.create_dataset("rotation_angle", data=tables["angles"]["values"])
+            angles.attrs["units"] = "degree"
+            coordinates["view"] = angles
         nxdata(
             parent,
             signal,
             blocks.selection.axes,
             unit=blocks.values.unit,
             domain=blocks.selection.source.domain,
+            coordinates=coordinates,
         )
         for region, block in blocks:
             signal[region] = block

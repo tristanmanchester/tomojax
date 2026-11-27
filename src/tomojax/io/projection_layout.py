@@ -10,6 +10,7 @@ import numpy as np
 
 from tomojax._data import (
     Hdf5Frames,
+    LoadedNXTomo,
     LocatedFrames,
     PinnedFrames,
     locate_frames,
@@ -68,6 +69,14 @@ class MatlabFrames:
         self.stored = stored
         self.shape = (len(stored), stored.cols, stored.rows)
 
+    def frames_at(self, which: np.ndarray | slice) -> MatlabFrames:
+        """Select phase images in acquisition order."""
+        return MatlabFrames(self.stored.frames_at(which))
+
+    def window(self, rows: slice, cols: slice) -> MatlabFrames:
+        """Select detector rows and columns in logical image order."""
+        return MatlabFrames(self.stored.window(cols, rows))
+
     def __getitem__(self, views: int | slice) -> np.ndarray:
         return self.stored[views].swapaxes(-1, -2).astype(self.dtype, copy=False)
 
@@ -86,6 +95,19 @@ class ProjectionStorage:
     located: LocatedFrames | None
 
     @classmethod
+    def from_payload(cls, path: Path, saved: LoadedNXTomo) -> ProjectionStorage:
+        """Keep selected pixels lazy while rebuilding their geometry record."""
+        stack = saved.projections
+        if stack is None:
+            raise ValueError(
+                f"{path} holds a reconstruction saved without its scan: "
+                "tj.load_reconstruction reads it"
+            )
+        shape = np.broadcast_to(np.zeros((), stack.dtype), stack.shape)
+        record = ProjectionDataset.from_nxtomo(replace(saved, projections=shape), source_path=path)
+        return cls.from_native(record, stack)
+
+    @classmethod
     def from_native(cls, record: ProjectionDataset, stack: ProjectionPixels) -> ProjectionStorage:
         """Pair a format-2 record with the pixels selected in the same open file."""
         key = record.image_key
@@ -97,8 +119,6 @@ class ProjectionStorage:
         """Restrict the selected storage without reading lazy pixels."""
         if isinstance(self.stack, np.ndarray):
             return self.stack[mask]
-        if isinstance(self.stack, MatlabFrames):
-            return MatlabFrames(self.stack.stored.frames_at(mask))
         return self.stack.frames_at(mask)
 
 
@@ -182,15 +202,7 @@ def select_storage(path: Path, *, layout_only: bool, **paths: str | None) -> Sel
         path, include_volume=False, layout_only=layout_only, lazy_projections=layout_only, **paths
     )
     if saved is not None:
-        stack = saved.projections
-        if stack is None:
-            raise ValueError(
-                f"{path} holds a reconstruction saved without its scan: "
-                "tj.load_reconstruction reads it"
-            )
-        shape = np.broadcast_to(np.zeros((), stack.dtype), stack.shape)
-        record = ProjectionDataset.from_nxtomo(replace(saved, projections=shape), source_path=path)
-        return ProjectionStorage.from_native(record, stack)
+        return ProjectionStorage.from_payload(path, saved)
     acquisition = read_acquisition(path, **paths)
     if acquisition is not None:
         return acquisition

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
+from functools import partial
 from os import PathLike
 from pathlib import Path
 from typing import cast
@@ -11,11 +12,12 @@ from typing import cast
 import numpy as np
 
 from tomojax import progress
+from tomojax._data import FrameStack, Hdf5Frames, PinnedFrames
 from tomojax._loading.registration import registered_member, unit_of
-from tomojax._scan.model import Alignment, Reconstruction
+from tomojax._scan.model import Alignment, Reconstruction, Scan, projection_record
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import object_mapping
-from tomojax.core.input_files import input_path, open_input_hdf5, reading
+from tomojax.core.input_files import input_hdf5, input_path, open_input_hdf5, reading
 from tomojax.core.registration import recorded_length_unit, volume_axes, volume_values
 from tomojax.geometry import Grid
 from tomojax.io.api import (
@@ -30,7 +32,8 @@ from tomojax.io.api import (
     saved_volume_grid,
     volume_entry,
 )
-from tomojax.wire.arrays import Array, Hdf5
+from tomojax.io.projection_layout import MatlabFrames, ProjectionPixels, ProjectionStorage
+from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:
@@ -177,25 +180,39 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     }, geometry.grid
 
 
-def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource:
-    """Pair one result's pixels with its geometry and acquisition record."""
+def export_source(
+    item: Reconstruction | Simulation | Alignment | Scan, *, samples: ProjectionPixels | None = None
+) -> ExportSource:
+    """Pair a member's window reader with its geometry and acquisition record."""
     from tomojax._scan.records import result_dataset
     from tomojax.io.api import replace_dataset
 
-    unit = unit_of(item if isinstance(item, Reconstruction) else item.scan)
-    member = registered_member(item, unit)
+    unit = unit_of(item if isinstance(item, Reconstruction | Scan) else item.scan)
+    view = Axis("view", "acquisition", "degree", Coordinates(Member("source", "angles")))
+    member = registered_member(item, unit, view=view)
     if member is None:
         raise ValueError("alignment holds no working image to export")
-    pixels = member.pixels
-    dataset = result_dataset(item)
-    record = metadata_record(replace_dataset(dataset, volume=None).to_nxtomo_metadata())
+    pixels = member.pixels if samples is None else samples
+    if isinstance(item, Scan):
+        record = partial(projection_record, item)
+    else:
+        dataset = result_dataset(item)
+        record = metadata_record(replace_dataset(dataset, volume=None).to_nxtomo_metadata())
     from tomojax.core.host_volume import mapped_storage, release_planes
 
     mapped = mapped_storage(pixels)
     if mapped is not None and mapped.filename is not None:
         _ = input_path(Path(mapped.filename))
+    elif isinstance(pixels, PinnedFrames):
+        input_hdf5(pixels.signal.file)
+    elif isinstance(pixels, Hdf5Frames | MatlabFrames):
+        storage = pixels.stored if isinstance(pixels, MatlabFrames) else pixels
+        _ = input_path(Path(storage.path), container=True)
 
     def read(region: tuple[slice, ...]) -> np.ndarray:
+        if isinstance(pixels, FrameStack | MatlabFrames):
+            views, rows, cols = region
+            return pixels.frames_at(views).window(rows, cols)[:]
         data = np.asarray(pixels[region])
         if mapped is not None and isinstance(pixels, np.ndarray):
             # Read the live mapping, including private edits made after a rename.
@@ -218,7 +235,26 @@ def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource
 @contextmanager
 def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[ExportSource, Array]]:
     """Read registered volume windows from the same open generation as the metadata."""
+    from tomojax._data import read_format_2
+    from tomojax._loading.loader import stored_scan
+
     with reading(path), open_input_hdf5(path) as file:
+        members = registered_members(file, path) if "tomojax_format" in file.attrs else {}
+        if member == "projections" or (member is None and members.keys() == {"projections"}):
+            if "projections" not in members:
+                raise ValueError(
+                    f"{path} has no format-2 projections member. For an rc6 scan, "
+                    "save a new file with tj.save(new_path, tj.load(old_path))."
+                )
+            payload = read_format_2(file, include_volume=False, lazy_projections=True)
+            selected = ProjectionStorage.from_payload(path, payload)
+            if selected.domain == "counts":
+                raise ValueError("export a corrected scan to write line integrals")
+            kept = selected.key == 0
+            pixels = selected.stack if kept.all() else selected.frames_at(kept)
+            scan = stored_scan(selected, pixels, angles=None, apply_poses=True)
+            yield export_source(scan, samples=pixels), members["projections"]
+            return
         meta, data, order = volume_entry(file)
         geom = meta.geometry_meta or {}
         name = (
@@ -231,8 +267,8 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
         if member is not None and member != name:
             raise ValueError(f"{path} has no {member} member to export; available: {name}")
         shape = tuple(data.shape[order.index(a)] for a in "zyx")
-        if "tomojax_format" in file.attrs:
-            disk = registered_members(file, path)[name]
+        if members:
+            disk = members[name]
             axes = disk.axes
         else:
             unit = recorded_length_unit(geom) or "scan_length"
@@ -271,7 +307,7 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
 
 def export(
     path: str | PathLike[str],
-    item: Reconstruction | Alignment | Simulation,
+    item: Reconstruction | Alignment | Simulation | Scan,
     *,
     dtype: ExportDtype | None = None,
     range: tuple[float, float] | None = None,  # noqa: A002 the command's --range
@@ -290,8 +326,8 @@ def export(
         with no recognized suffix holds numbered TIFF slices. For HDF5, append
         ``::/entry/group/signal`` to choose the dataset.
         Files and directories are checked against live inputs, including physical aliases.
-    item : Reconstruction, Alignment or Simulation
-        Reconstruction volume, alignment working image or simulation phantom.
+    item : Reconstruction, Alignment, Simulation or Scan
+        Reconstruction volume, alignment working image, simulation phantom or scan projections.
         An integer or boolean volume supplies mask labels.
     dtype : {"float32", "uint16", "uint8"} or None, optional
         Output type. Defaults to float32, or uint8 for a mask.
@@ -299,7 +335,7 @@ def export(
         Physical values mapped to zero and the integer maximum. The default uses
         finite 0.1 and 99.9 percentiles of up to 16 evenly spaced planes.
     crop : sequence of intervals or None, optional
-        Half-open (start, stop) pairs, slices, or None in stored (z, y, x) order.
+        Half-open intervals in stored (z, y, x) or (view, v, u) order.
     binning : int, optional
         Mean over complete spatial bins after cropping. Default is one.
     axis : str or None, optional
@@ -327,14 +363,14 @@ def export(
     >>> receipt = tj.export("detail.tif", recon, crop=(slice(10, 30), None, None))  # doctest: +SKIP
     """
     if not isinstance(path, str | PathLike) or not isinstance(
-        item, Reconstruction | Alignment | Simulation
+        item, Reconstruction | Alignment | Simulation | Scan
     ):
         raise TypeError(
-            "tj.export(path, item) expects a destination path and a Reconstruction, Alignment "
-            "or Simulation with registered geometry"
+            "tj.export(path, item) expects a destination path and a Scan, Reconstruction, "
+            "Alignment or Simulation with registered geometry"
         )
     with reading():
-        source = volume_source(item)
+        source = export_source(item)
         plan = plan_export(
             Path(path),
             source,

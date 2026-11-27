@@ -491,3 +491,51 @@ def test_container_export_paths_match_on_every_surface(
     receipt = agent.call("export", source=handle, path=argument, force=True)
     assert not receipt["isError"], receipt["content"]
     assert receipt["structuredContent"]["bytes_written"] > 0
+
+
+def test_aligned_scan_sinograms_cross_every_surface(tmp_path, worker, agent, capsys):
+    from tests.test_export_projections import measured
+
+    scan = measured()
+    native = tmp_path / "aligned.nxs"
+    tj.save(native, scan)
+    target = tmp_path / "views.raw"
+    planned = tj.export(target, scan, axis="v", dry_run=True)
+    args = ["export", str(native), "-o", str(target), "--member", "projections", "--axis", "v"]
+    assert cli([*args, "--dry-run"]) == 0
+    terminal = json.loads(capsys.readouterr().out)
+    opened = worker.request(dict(type="open", kind="scan", path=str(native)))
+    root = opened["result"]["value"]["handle"]
+    op = dict(
+        type="export",
+        source=dict(type="member", handle=root, member="projections"),
+        path=str(target),
+        axis="v",
+    )
+    verified = worker.request(dict(type="validate", operation=op))
+    handle = agent.call("open", path=str(native), kind="scan")["structuredContent"]["handle"]
+
+    def via_mcp(**options):
+        result = agent.call(
+            "export", source=handle + ".projections", path=str(target), axis="v", **options
+        )
+        assert not result["isError"], result
+        return result["structuredContent"]
+
+    for other in (terminal, verified["result"]["value"]["details"], via_mcp(dry_run=True)):
+        assert other["axes"] == planned["axes"]
+        assert other["shape"] == [6, 5, 8]
+    assert not target.exists()
+    for write in (
+        lambda: cli(args),
+        lambda: worker.request(dict(type="run", operation={**op, "force": True})),
+        lambda: via_mcp(force=True),
+    ):
+        write()
+        np.testing.assert_array_equal(
+            np.fromfile(target, "<f4").reshape(6, 5, 8), scan.projections.transpose(1, 0, 2)
+        )
+        record = tj.inspect(target)["record"]
+        np.testing.assert_array_equal(record["tables"]["poses"]["values"], scan.poses)
+        target.unlink()
+        target.with_suffix(".raw.json").unlink()

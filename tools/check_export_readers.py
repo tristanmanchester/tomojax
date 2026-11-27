@@ -195,6 +195,16 @@ def native_nexus(root: Path) -> None:
         )
         assert "definition" not in file["entry"]
         assert file["entry/instrument/detector/data"].attrs["long_name"] == "line integrals"
+    scan_plot = root / "projections.h5"
+    assert result.scan is not None
+    tj.export(scan_plot, result.scan, axis="v")
+    with h5py.File(scan_plot) as file:
+        plot = get_default(file)
+        assert plot is not None
+        assert isinstance(plot.signal, h5py.Dataset)
+        assert [axis.name.rsplit("/", 1)[-1] for axis in plot.axes] == ["v", "rotation_angle", "u"]
+        np.testing.assert_array_equal(plot.axes[1], [0.0, 37.0, 82.0])
+        np.testing.assert_array_equal(plot.signal[:], frames.transpose(1, 0, 2))
     acquisition = NXtomo()
     acquisition.load(str(path), "/entry", detector_data_as="as_numpy_array")
     assert acquisition.instrument is not None

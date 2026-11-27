@@ -73,7 +73,7 @@ WORKFLOW_HELP = {
         "include_scan to keep the source scan with a reconstruction."
     ),
     op.Export: (
-        "Export one registered volume in the format selected by the destination suffix for other "
+        "Export projections, a sinogram or a volume in the format selected by the suffix for other "
         "software. Use dry_run to check destinations before writing."
     ),
 }

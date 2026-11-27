@@ -7,11 +7,13 @@ import numpy as np
 import pytest
 import tifffile
 
+from tests import test_worker_adapters
 from tests.test_mcp_stdio import connection
 from tests.test_worker_adapters import output
 import tomojax as tj
 
-pytest_plugins = ("tests.test_worker_adapters",)
+worker = test_worker_adapters.worker
+simulation = test_worker_adapters.simulation
 pytestmark = pytest.mark.surface
 
 

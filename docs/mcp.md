@@ -162,3 +162,5 @@ The server publishes the Agent Skill's references as resources, and its workflow
 ## Transport and session lifetime
 
 The server communicates over stdio, running alongside the agent on the same Linux machine as the GPU. Live handles and active tasks persist for the lifetime of the server process; use `save` or `export` for results you want to keep across sessions.
+
+To export an aligned scan as sinograms, give `export` the scan’s `<handle>.projections` member, a destination path and `axis="v"`. Use `dry_run=true` to inspect the written axes, shape and file list.

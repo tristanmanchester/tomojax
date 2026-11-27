@@ -41,8 +41,8 @@ class ExportSource:
         Quantity measured by each sample.
     read : callable
         Reads a rectangular region of the source.
-    record : dict
-        Metadata for the object that owns this array.
+    record : dict or callable
+        Object metadata, or a function that registers the selected detector window and views.
     """
 
     name: str
@@ -52,7 +52,7 @@ class ExportSource:
     unit: str
     domain: str
     read: Callable[[Region], np.ndarray]
-    record: dict[str, object]
+    record: dict[str, object] | Callable[[tuple[tuple[int, int], ...], int], dict[str, object]]
 
     def __post_init__(self) -> None:
         if len(self.shape) != 3 or len(self.axes) != 3:

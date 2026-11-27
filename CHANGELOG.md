@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Export scan projections or sinograms with their measured angles, poses and acquisition positions. Select detector windows and views before export through Python, the CLI, the worker or MCP.
+
 - FDK, parallel FBP, and Fourier inversion filter rolled measurements along physical horizontal detector lines. Quarter turns exchange rows and columns without interpolation.
 - FDK computes angular weights, repeated-view grouping, and short-scan coverage from the effective source orbit, including pose-carried angles. Fourier inversion accepts per-view axial rotations about `z`.
 - NXtomo files written by GDA with a SmarAct ψ or z-rotation command load their projection angles when the NXtomo entry omits them, warning and reading degrees if the command carries a millimeter unit label.

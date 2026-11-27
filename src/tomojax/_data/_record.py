@@ -17,7 +17,7 @@ from tomojax._data._io_types import NXTomoMetadata
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.json_values import normalize_json
 from tomojax.core.registration import pose_columns, recorded_length_unit
-from tomojax.wire.arrays import Axis
+from tomojax.wire.arrays import Axis, Coordinates
 
 _provenance = ContextVar[Mapping[str, object] | None]("tomojax_file_provenance", default=None)
 
@@ -55,10 +55,14 @@ def array_record(
     shape: Sequence[int], dtype: str, axes: Sequence[Axis], unit: str, domain: str
 ) -> ArrayRecord:
     """Describe the stored pixels in either a saved file or an export."""
+    registered = [msgspec.to_builtins(a) for a in axes]
+    for axis, description in zip(axes, registered, strict=True):
+        if axis.name == "view" and isinstance(axis.coordinates, Coordinates):
+            description["coordinates"] = {"table": "angles"}
     return {
         "shape": list(shape),
         "dtype": dtype,
-        "axes": [msgspec.to_builtins(a) for a in axes],
+        "axes": registered,
         "unit": unit,
         "domain": domain,
     }

@@ -37,6 +37,21 @@ The complete record is embedded in a TIFF stack. A slice directory holds its rec
 
 Every export checks its primary file, payloads, records and any directory it will replace or recover against live inputs in the same process. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A hard link or symlink to an input also conflicts. If the error names an input inside an owned directory, choose another destination for the export. `force` preserves this protection.
 
+## Projections and sinograms
+
+Pass a scan to write its measured line integrals. An aligned scan carries its fitted poses. To write the projections behind a reconstruction, use `recon.scan` or select the saved `projections` member.
+
+```python
+tj.export("projections.h5", scan)
+tj.export("sinograms.tif", scan, axis="v", crop=((10, 110), None, None))
+```
+
+```bash
+tomojax export aligned.nxs -o sinograms.h5 --member projections --axis v
+```
+
+The crop is in (view, v, u) order. Binning averages detector rows and columns and retains each view. A sinogram page has one row per selected view. TIFF readers treat these rows as samples. NeXus stores the actual rotation angles in degrees. The record gives the written axis order, detector calibration, angles, poses, their translation frame and acquisition positions. A projection stack can be written as TIFF, raw, MetaImage or NeXus.
+
 ## HDF5 and OME-Zarr
 
 Give an HDF5 export a dataset path when another tool expects one.
