@@ -61,10 +61,10 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5598,
+    "reportAny": 5571,
     "reportMissingImports": 58,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 881,
+    "reportUnknownArgumentType": 880,
     "reportUnknownMemberType": 1623,
     "reportUnknownVariableType": 980,
     "reportUnusedCallResult": 141
@@ -148,7 +148,7 @@
     "src/tomojax/corrections/_engine.py::PLR0915::correct_frames",
     "src/tomojax/datasets/_impl/artifacts.py::C901::apply_simulation_artifacts",
     "src/tomojax/datasets/_impl/artifacts.py::PLR0915::apply_simulation_artifacts",
-    "src/tomojax/recon/_cgls_cuda.py::PLR0915::iterate",
+    "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
