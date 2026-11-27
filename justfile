@@ -115,11 +115,8 @@ with-gpu-lock recipe:
 accelerator-smoke-cuda-unlocked:
     TOMOJAX_REQUIRE_CUDA=1 uv run --no-sync python tools/smoke_accelerator.py
 
-# Every test with the GPU visible: unmarked tests take the CUDA paths too, which
-# CI's CPU runner and `-m gpu` alone never exercise. The workers of the second stage
-# share the GPU. In about half of such runs XLA fails to create a cuFFT plan in one
-# worker, which loses that worker's CUDA context and fails every later test in it, so
-# the tests that fail are run again in one process.
+# Run every test with CUDA visible, including unmarked accelerator paths.
+# The fresh-GPU tests run first. Retry failures from the shared-worker pass in one process.
 [private]
 test-cuda-unlocked: accelerator-smoke-cuda-unlocked
     uv run --no-sync pytest -q -m fresh_gpu
