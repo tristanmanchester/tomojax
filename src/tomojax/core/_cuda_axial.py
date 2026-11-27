@@ -7,11 +7,10 @@ all horizontal voxels. The existing generic pair handles nonseparable views.
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import jax
 from jax.experimental.buffer_callback import buffer_callback
-import jax.numpy as jnp
 import numpy as np
 
 from tomojax.core._axial_kernels import (
@@ -81,7 +80,7 @@ def transpose_axial_cuda(
     cubic = interpolation == "cubic"
     call = buffer_callback(
         partial(_transpose_launch, shape=shape, cubic=cubic, z_fast=z_fast),
-        jax.ShapeDtypeStruct(initial.shape, jnp.float32),
+        jax.ShapeDtypeStruct(initial.shape, np.float32),
         input_output_aliases={2: 0},
         vmap_method="sequential",
     )
@@ -111,10 +110,15 @@ def _banded_forward(
     # Views 16 a launch share their reads in L2; narrow scans take more, so
     # that each launch has about a wave of blocks.
     chunk = max(16, -(-512 // tiles))
-    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),)
+    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), np.float32),)
 
-    def launch(context: Any, outputs: Any, cf: Any, x: Any) -> None:
-        out, *band = outputs if staged else (outputs,)
+    def launch(
+        context: CallbackContext,
+        outputs: tuple[CallbackBuffer, ...],
+        cf: CallbackBuffer,
+        x: CallbackBuffer,
+    ) -> None:
+        out, *band = outputs
         views, stream, options = cf.shape[0], context.stream, ("--fmad=false",)
         launch_kernel(
             text,
@@ -144,14 +148,14 @@ def _banded_forward(
                     ),
                 )
 
-    shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), jnp.float32)
+    shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), np.float32)
     result = buffer_callback(
         launch,
-        (shape, *staged) if staged else shape,
+        (shape, *staged),
         command_buffer_compatible=True,
         vmap_method="sequential",
     )(coeff, volume)
-    return result[0] if staged else result
+    return result[0]
 
 
 def forward_dispatch_cuda(
@@ -177,10 +181,12 @@ def forward_dispatch_cuda(
     if vector:
         kernels.append(FORWARD_VEC4.replace("TV", str(vector_tile)))
     text = "\n".join(kernels)
-    shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), jnp.float32)
+    shape = jax.ShapeDtypeStruct((coeff.shape[0], nv, nu), np.float32)
 
     def call(c: jax.Array, x: jax.Array, mode: int) -> jax.Array:
-        def launch(context: Any, out: Any, cf: Any, image: Any) -> None:
+        def launch(
+            context: CallbackContext, out: CallbackBuffer, cf: CallbackBuffer, image: CallbackBuffer
+        ) -> None:
             dims = (grid.nx, grid.ny, grid.nz, nu, nv)
             if mode == 0:
                 tiles = -(-nu // (threads // tile_v)) * -(-nv // tile_v)
@@ -279,7 +285,12 @@ def forward_bands_cuda(
         kernel, blocks, block = "forward", (views * tiles,), threads
     starts = range(0, nz, depth)
 
-    def launch(context: Any, outputs: Any, cf: Any, x: Any) -> None:
+    def launch(
+        context: CallbackContext,
+        outputs: tuple[CallbackBuffer, CallbackBuffer],
+        cf: CallbackBuffer,
+        x: CallbackBuffer,
+    ) -> None:
         out, band = outputs
         initialize_buffer(out, stream=context.stream)
         # Generic rays whose z falls take the bands top down in a second pass.
@@ -301,12 +312,12 @@ def forward_bands_cuda(
     projections, _ = buffer_callback(
         launch,
         (
-            jax.ShapeDtypeStruct((views, nv, nu), jnp.float32),
-            jax.ShapeDtypeStruct((nx, ny, planes), jnp.float32),
+            jax.ShapeDtypeStruct((views, nv, nu), np.float32),
+            jax.ShapeDtypeStruct((nx, ny, planes), np.float32),
         ),
         command_buffer_compatible=True,
         vmap_method="sequential",
-    )(coeff.astype(jnp.float32), volume.astype(jnp.float32))
+    )(coeff.astype(np.float32), volume.astype(np.float32))
     return projections
 
 
@@ -341,7 +352,15 @@ def transpose_axial_vu_cuda(
         # Every full band can use the axial kernel's eight-plane vector loads.
         depth -= depth % 8
 
-    def add(stream: int, c: Any, y: Any, weighted: Any, target: Any, z0: int, planes: int) -> None:
+    def add(
+        stream: int,
+        c: CallbackBuffer,
+        y: CallbackBuffer,
+        weighted: CallbackBuffer,
+        target: CallbackBuffer | Offset,
+        z0: int,
+        planes: int,
+    ) -> None:
         # Aligned float4 loads amortize global-load instructions. Odd axial
         # extents retain guarded scalar reads, including the last partial run.
         vector = planes % 8 == 0
@@ -380,7 +399,13 @@ def transpose_axial_vu_cuda(
                 ),
             )
 
-    def launch(context: Any, outputs: Any, c: Any, y: Any, *x: Any) -> None:
+    def launch(
+        context: CallbackContext,
+        outputs: tuple[CallbackBuffer, ...],
+        c: CallbackBuffer,
+        y: CallbackBuffer,
+        *x: CallbackBuffer,
+    ) -> None:
         out, weighted, *band = outputs
         stream = context.stream
         if x or (not band and not chunks):
@@ -400,13 +425,13 @@ def transpose_axial_vu_cuda(
                 band[0], Offset(out, z0 * ny * nx), (nx, ny, planes), stream=stream, depth=nx
             )
 
-    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), jnp.float32),)
+    staged = () if z_fast else (jax.ShapeDtypeStruct((nx, ny, depth), np.float32),)
     shape = (nx, ny, nz) if z_fast else (nz, ny, nx)
     result, *_ = buffer_callback(
         launch,
         (
-            jax.ShapeDtypeStruct(shape if initial is None else initial.shape, jnp.float32),
-            jax.ShapeDtypeStruct((size, nu, depth), jnp.float32),
+            jax.ShapeDtypeStruct(shape if initial is None else initial.shape, np.float32),
+            jax.ShapeDtypeStruct((size, nu, depth), np.float32),
             *staged,
         ),
         input_output_aliases={} if initial is None else {2: 0},
@@ -428,8 +453,8 @@ def transpose_axial_pair_cuda(
     size, chunks = view_chunks(views, nu, nz)
     # Use two vertical rows per RHS pair and keep the same view reductions.
     depth = min(nz, 32)
-    output = jax.ShapeDtypeStruct((nx, ny, nz), jnp.float32)
-    scratch = jax.ShapeDtypeStruct((size, nu, depth), jnp.float32)
+    output = jax.ShapeDtypeStruct((nx, ny, nz), np.float32)
+    scratch = jax.ShapeDtypeStruct((size, nu, depth), np.float32)
 
     def launch(
         ctx: CallbackContext,

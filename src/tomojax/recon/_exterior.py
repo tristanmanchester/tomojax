@@ -409,6 +409,23 @@ class Treatment(NamedTuple):
     data_model: str
     background_treatment: str
 
+    @staticmethod
+    def slab_totals(
+        data: np.ndarray | jax.Array, info: dict[str, object]
+    ) -> dict[str, float | bool]:
+        """Weight a slab's fitted share by its original measured attenuation."""
+        import jax
+
+        record = info["truncation"]
+        assert isinstance(record, dict)
+        with jax.enable_x64(True):
+            mass = float(data.sum(dtype=np.float64))
+        return {
+            "measured_sum": mass,
+            "exterior_sum": mass * record["outside_grid"],
+            "exterior_applied": record["background_treatment"] != "none",
+        }
+
     @classmethod
     def from_slabs(cls, method: str, finished: checkpoint.Slabs) -> Treatment:
         """Combine additive attenuation totals and remove them from the per-slab reports."""

@@ -100,17 +100,12 @@ def iterative_slabs[T](
                 continue
             # Keep additive totals across a resume. Rows need their measured mass as
             # weight even when their own exterior is zero.
-            totals = {}
-            if (diagnostics is not None or checkpoint.active()) and config.exterior == "cylinder":
-                record = info["truncation"]
-                assert isinstance(record, dict)
-                with jax.enable_x64(True):
-                    mass = float(data.sum(dtype=np.float64))
-                totals = {
-                    "measured_sum": mass,
-                    "exterior_sum": mass * record["outside_grid"],
-                    "exterior_applied": record["background_treatment"] != "none",
-                }
+            totals = (
+                Treatment.slab_totals(data, info)
+                if config.exterior == "cylinder"
+                and (diagnostics is not None or checkpoint.active())
+                else {}
+            )
             yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
             data = context = volume = result = None
             finished.add(start, stop, info={**info, **totals})
