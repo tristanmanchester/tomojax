@@ -79,8 +79,8 @@ least 64) and measures, in cells of 16 detector pixels, how much of the
 difference between the two sets each view contains. The measurement is a
 regression on the difference's structure along detector rows, which is
 unrelated to the sample. A straight line through the interval is fitted to
-those shares at four scales, from the whole detector down to one cell, each
-with the scale above as its prior. The prior of the whole detector is linear
+those shares at three scales, from 144 pixels down to one cell, each with the
+scale above as its prior. The prior of the broadest scale is linear
 interpolation in position.
 
 - **Sets that differ by noise, by level, or smoothly along a row** tell the
@@ -102,7 +102,7 @@ The `flat_dark` record reports what was found:
 | Key | Meaning |
 | --- | --- |
 | `flat_weights_from_views` | Fraction of the detector where the views, not position, set the weights |
-| `later_flat_weight` | The later set's weight at the start and at the end of the interval, over the whole detector (`[0, 1]` is linear interpolation) |
+| `later_flat_weight` | The later set's weight at the start and at the end of the interval, averaged where the views set it (`[0, 1]` is linear interpolation) |
 | `flat_structure_unmatched` | RMS of the sets' fine structure that the views show in neither set, in line-integral units |
 
 The views carry no measurement of the beam's broad level where they show no

@@ -126,7 +126,7 @@ def view_weights(
     ends = np.zeros((sets - 1, 2, *cells), np.float32)
     ends[:, 1] = 1.0
     levels = np.zeros((sets - 1, 2, cells[0], cols), np.float32)
-    tally = np.zeros(5)  # the views' share, unmatched energy, pixels, the overall weights
+    tally = np.zeros(5)  # the views' share, unmatched energy, pixels, their weights at each end
     intervals = 0
     for i in range(sets - 1):
         inside = np.flatnonzero((lo == i) & (hi == i + 1) & (t > 0) & (t < 1))
@@ -143,7 +143,8 @@ def view_weights(
         return None, {}
     pixels = max(float(tally[2]), np.finfo(np.float64).tiny)
     share, unmatched = float(tally[0]) / pixels, float(np.sqrt(tally[1] / pixels))
-    start, end = (round(float(w) / intervals, 4) for w in tally[3:])
+    # Where the views set the weights, their mean; nowhere, linear interpolation.
+    start, end = (round(float(w / tally[0]), 4) for w in tally[3:]) if tally[0] else (0.0, 1.0)
     LOG.info(
         "flat sets weighted by the views over %.1f%% of the detector (later set %.2f at the "
         "start, %.2f at the end); fine flat structure the views do not show: %.2g RMS",
@@ -201,32 +202,24 @@ def _fitted(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weights and levels of one interval from its views' cell sums, and what they found.
 
-    Four scales are fitted, each with the scale above as its prior: the whole
-    detector (whose prior is linear interpolation), ``_BROAD`` cells each way,
-    one cell each way, and the cell alone. Returns ``(2, cells_v, cells_u)``
-    weights, ``(2, cells_v, columns)`` levels, and a tally of the views' share of
-    the broad weights, the fine-structure energy that matches neither set, the
-    pixels, and the overall weight at each end.
+    Three scales are fitted, each with the scale above as its prior: ``_BROAD``
+    cells each way (whose prior is linear interpolation), one cell each way, and
+    the cell alone. Returns ``(2, cells_v, cells_u)`` weights,
+    ``(2, cells_v, columns)`` levels, and a tally over the detector of the views'
+    share of the broad weights, the fine-structure energy that matches neither
+    set, the pixels, and the broad weight at each end where the views set it.
     """
     around = _windows(cell_sums, 1)
     normal = _normal(around, t)
-    overall, _ = _solve(normal.sum((-2, -1), keepdims=True) / 9, _LINEAR)
-    broad, share = _solve(_windows(normal, _BROAD) / 9, overall)
+    broad, share = _solve(_windows(normal, _BROAD) / 9, _LINEAR)
     near, _ = _solve(normal, broad)
     ends, _ = _solve(_normal(cell_sums.astype(np.float64), t), near)
-    area = around[4].mean(0)
+    area = share * around[4].mean(0)
     neither = (broad * (1 - broad)).mean(0)  # 0 where each end matches one set
     energy = np.maximum(around[1].mean(0), 0.0)
-    found = np.array(
-        [
-            (share * area).sum(),
-            (share * energy * neither).sum(),
-            area.sum(),
-            overall[0].item(),
-            overall[1].item(),
-        ]
-    )
-    return ends.astype(np.float32), _levels(ends, broad, share, ratio), found
+    found = [area.sum(), (share * energy * neither).sum(), around[4].mean(0).sum()]
+    found += [(area * broad[0]).sum(), (area * broad[1]).sum()]
+    return ends.astype(np.float32), _levels(ends, broad, share, ratio), np.array(found)
 
 
 @partial(jax.jit, static_argnames=("counts_steps",))
