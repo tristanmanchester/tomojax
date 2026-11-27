@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Flat sets taken before and after a scan are weighted by what the scan's views show of
+  each, instead of by each view's position between them. A set taken with something in
+  the beam is left out where the other set matches the views, a blend that matches
+  neither stays fixed through the scan (so `Rings()` can remove its fine part), and the
+  flat's level is kept continuous across an edge that only one set has. Sets that differ
+  by noise, by level, or smoothly along a detector row are interpolated in position as
+  before, as are sets of one frame. The step reads about one view in 64 beforehand and
+  takes no option. The `flat_dark` record reports `flat_weights_from_views`,
+  `later_flat_weight`, and `flat_structure_unmatched`
+  ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
+- `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI) use
+  that file's flat or dark frames. Previously every frame in the file was averaged.
 - Raw slab reconstruction saves and reports whole-scan truncation and iterative stopping diagnostics through the worker and MCP. Python callers can collect the same record with `tj.reconstruct_slabs(..., info=info)`.
 - Fourier reconstruction uploads a view-group table only when angles repeat. This removes
   an empty CUDA transfer associated with context loss during a later FBP on a shared GPU.

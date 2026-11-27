@@ -426,7 +426,7 @@ class Frames:
     ``counts`` are the sample frames, ``(views, rows, columns)``, in memory, a
     memmap or read lazily from the file; ``flats`` the frames of the beam
     alone, with ``flat_positions`` the number of views recorded before each
-    (flats taken before and after a scan are interpolated between); ``darks``
+    (sets taken before and after a scan are weighted by the views); ``darks``
     the frames with the beam off, both in memory or lazy like ``counts``.
     Scanners that calibrate their flat field record a ``white_level`` instead.
     ``view_positions`` places each view among the flats, in the units of

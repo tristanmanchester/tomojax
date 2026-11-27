@@ -69,6 +69,9 @@ def correct_frames(
     ``flats`` are flat frames and ``flat_positions`` the number of views
     recorded before each (frames at one position are one set; None, one set);
     ``white_level`` stands in for flats on scanners that record it instead.
+    A view between two sets of several frames takes the blend of them that a
+    sample of the views supports, and linear interpolation in position where the
+    views say nothing; the ``flat_dark`` record reports it.
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``). ``binning`` averages blocks of
     ``binning`` x ``binning`` detector pixels of the corrected line integrals.

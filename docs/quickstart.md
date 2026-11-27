@@ -33,7 +33,7 @@ tomojax correct raw.nxs -o corrected.nxs
 tomojax inspect corrected.nxs
 ```
 
-`correct` computes `-log((I - D) / (F - D))`, interpolating flats between the flat sets bracketing each sample view, and records the processing history in `corrected.nxs`. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
+`correct` computes `-log((I - D) / (F - D))`, blending the flat sets around each sample view with weights measured from the views ([flat fields](../src/tomojax/corrections/README.md#flat-fields)), and records the processing history in `corrected.nxs`. If a scan's own flats do not show its beam, pass another scan's file: `--flats other_scan.nxs` uses that file's flat frames. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
 When an external file omits metadata:
 
@@ -81,8 +81,10 @@ between columns as the sample rotates, and on stationary parallel-beam full
 turns it also compares opposed angular arcs.
 
 `Rings()` corrects stationary column errors only. Artifacts that vary with angle
-(bad or drifting flat fields, flux drops, or angular swirls) are not detector
-rings and are not removed, and this step does not interpolate dead pixels. A
+(flux drops or angular swirls) are not detector rings and are not removed, and
+this step does not interpolate dead pixels. Flat sets that disagree are weighted
+from the views during flat-field correction, which leaves `Rings()` an error
+fixed to detector columns. A
 circular sample feature centered on the rotation axis gives the same
 measurements as a symmetric detector offset, so compare corrected and
 uncorrected slices near the axis.

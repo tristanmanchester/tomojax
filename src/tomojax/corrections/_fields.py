@@ -35,8 +35,9 @@ class Fields:
 
     ``flats`` has shape ``(sets, rows, columns)`` in counts, or counts per second
     when exposures are supplied. ``usable`` marks pixels with measured illumination.
-    ``noise`` is each set's variance as a fraction of its squared mean, and
-    ``weights`` what the views show of each set between two (None: by position).
+    ``noise`` is each set's variance as a fraction of its squared mean (NaN for a
+    set of one frame), and ``weights`` what the views show of each set between two
+    (None: by position).
     """
 
     def __init__(
@@ -96,7 +97,7 @@ def flat_fields(
                 "the counts of an unattenuated pixel)"
             )
         level = positive_finite(white_level, "white_level")
-        sets = np.zeros(1)
+        sets, frames = np.zeros(1), [1]
         moments = ((level, zero, 1.0),)
         settings: dict[str, Json] = {"white_level": level, "darks": dark_frames}
     else:
@@ -107,6 +108,7 @@ def flat_fields(
                 f"flat_positions needs one finite position for each of the {len(flats)} flats"
             )
         sets = np.unique(where)
+        frames = [int(np.count_nonzero(where == position)) for position in sets]
 
         moments = set_moments(flats, shape, where, sets, flat_scales, dark)
         settings = {"flats": len(flats), "darks": dark_frames, "flat_sets": len(sets)}
@@ -124,7 +126,9 @@ def flat_fields(
         lit = np.isfinite(signal) & (signal > floor)
         usable &= lit
         light[i] = signal
+        # One frame measures no noise: NaN, so its difference from another set is not judged.
         noise[i] = np.divide(variance, signal * signal, out=np.zeros(shape), where=lit)
+        noise[i] = noise[i] if frames[i] > 1 else np.nan
         release_planes(light, i, i + 1)
         release_planes(noise, i, i + 1)
     if not np.any(usable):

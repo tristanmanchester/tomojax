@@ -46,7 +46,7 @@ def _beam(rng: np.random.Generator) -> np.ndarray:
 
 
 def _frames(
-    case: str, *, seed: int = 0, middle_set: bool = False
+    case: str, *, seed: int = 0, middle_set: bool = False, flats: int = FLATS
 ) -> tuple[tj.Frames, np.ndarray, np.ndarray]:
     """Frames of a named case, their true line integrals and each view's true flat."""
     rng = np.random.default_rng(seed)
@@ -75,12 +75,12 @@ def _frames(
     counts = rng.poisson(flat * np.exp(-truth)).astype(np.float32) + DARK
     ends = [beam, beam * (1 + change)]
     sets = [
-        rng.poisson(np.broadcast_to(e * s, (FLATS, ROWS, COLS)))
+        rng.poisson(np.broadcast_to(e * s, (flats, ROWS, COLS)))
         for e, s in zip(ends, shadows, strict=True)
     ]
     positions = [0, VIEWS]
     if middle_set:  # a third set halfway, through a wall of its own
-        sets.insert(1, rng.poisson(np.broadcast_to(beam * wall(0.2), (FLATS, ROWS, COLS))))
+        sets.insert(1, rng.poisson(np.broadcast_to(beam * wall(0.2), (flats, ROWS, COLS))))
         positions.insert(1, VIEWS // 2)
     geometry = tj.ParallelGeometry(
         tj.Grid(COLS, COLS, ROWS, 1.0, 1.0, 1.0),
@@ -92,7 +92,7 @@ def _frames(
         geometry,
         flats=np.concatenate(sets).astype(np.float32) + DARK,
         darks=np.full((2, ROWS, COLS), DARK, np.float32),
-        flat_positions=np.repeat(positions, FLATS),
+        flat_positions=np.repeat(positions, flats),
     )
     return frames, truth, flat
 
@@ -100,7 +100,7 @@ def _frames(
 def _by_position(frames: tj.Frames) -> np.ndarray:
     """Line integrals with the two flat sets interpolated linearly in the views' positions."""
     flats = np.asarray(frames.flats, np.float64) - DARK
-    first, last = flats[:FLATS].mean(0), flats[-FLATS:].mean(0)
+    first, last = flats[: len(flats) // 2].mean(0), flats[len(flats) // 2 :].mean(0)
     w = ((np.arange(VIEWS) + 0.5) / VIEWS)[:, None, None]
     return -np.log((np.asarray(frames.counts, np.float64) - DARK) / ((1 - w) * first + w * last))
 
@@ -133,6 +133,13 @@ def test_sets_that_differ_by_noise_or_level_stay_interpolated_by_position(case: 
     np.testing.assert_allclose(np.asarray(scan.projections), _by_position(frames), atol=1e-5)
     found = scan.corrections[0].found
     assert found["flat_weights_from_views"] == 0 and found["later_flat_weight"] == [0.0, 1.0]
+
+
+def test_sets_of_one_frame_have_no_measured_noise_and_stay_interpolated_by_position() -> None:
+    frames, _, _ = _frames("first set shadowed", flats=1)
+    scan = frames.corrected()
+    np.testing.assert_allclose(np.asarray(scan.projections), _by_position(frames), atol=1e-5)
+    assert "flat_weights_from_views" not in scan.corrections[0].found
 
 
 def test_structure_that_drifts_through_the_scan_is_followed_through_it() -> None:

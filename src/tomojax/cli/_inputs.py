@@ -74,10 +74,10 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
         "what INPUT does not record (tj.load's arguments; lengths share one unit)"
     )
     _ = group.add_argument(
-        "--flats", metavar="PATH|LEVEL", help="Flat frames (HDF5, TIFF or XRM), or one level"
+        "--flats", metavar="PATH|LEVEL", help="Flat frames (HDF5, TIFF, XRM, a scan), or one level"
     )
     _ = group.add_argument(
-        "--darks", metavar="PATH|LEVEL", help="Dark frames (HDF5, TIFF or XRM), or one level"
+        "--darks", metavar="PATH|LEVEL", help="Dark frames (HDF5, TIFF, XRM, a scan), or one level"
     )
     _ = group.add_argument(
         "--angles",

@@ -117,7 +117,7 @@ def view_weights(
     """The flat-set weights the views support, and what was found.
 
     ``fields`` are the whole detector's. Returns ``None`` when no view lies between
-    two flat sets.
+    two flat sets of more than one frame each.
     """
     lo, hi, t, scales = interpolation
     sets = len(fields.positions)
@@ -130,7 +130,8 @@ def view_weights(
     intervals = 0
     for i in range(sets - 1):
         inside = np.flatnonzero((lo == i) & (hi == i + 1) & (t > 0) & (t < 1))
-        if not inside.size:
+        # A set of one frame has no measured noise to tell its structure from.
+        if not inside.size or np.isnan(fields.noise[i : i + 2, 0, 0]).any():
             continue
         count = min(inside.size, max(64, -(-inside.size // 64)))
         picks = inside[np.unique(np.linspace(0, inside.size - 1, count).round().astype(np.intp))]
