@@ -167,12 +167,12 @@ def view_weights(
     moved, there = _moved(fields, weights)
     if moved > _NEWS:
         LOG.warning(
-            "The views do not follow the flat sets' positions: over %.0f%% of the detector "
-            "they hold the later set at %.2f at the start and %.2f at the end (position gives "
-            "0 and 1), which moves the flat by more than %g%% there. The flat field follows "
-            "the views; pass another scan's "
-            "file as flats= (tomojax correct --flats) to use its flats, or "
-            'flat_weights="position" (--flat-weights position) to blend by position.',
+            "The views do not follow the flat sets' positions over %.0f%% of the detector. "
+            "They hold the later set at %.2f at the start and %.2f at the end, moving the "
+            "flat by more than %g%% there. If a shadow covers both flat sets and no view "
+            "sees open beam there, the incident intensity is uncertain. Use clean flats "
+            "from a matching scan with flats= (tomojax correct --flats). To blend the "
+            'recorded sets by position, use flat_weights="position" (--flat-weights position).',
             100 * moved, *there, 100 * _MOVED,
         )  # fmt: skip
     elif moved:
