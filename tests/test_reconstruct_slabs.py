@@ -22,6 +22,28 @@ CASES = [
 ]
 
 
+def test_small_output_grid_reports_truncation_of_the_full_detector():
+    grid = tj.Grid(13, 11, 7, 1, 1, 1)
+    detector = tj.Detector(24, 97, 1, 1)
+    angles = np.linspace(0, 180, 91, endpoint=False)
+    geometry = tj.ParallelGeometry(grid, detector, angles)
+    columns = np.arange(detector.nu) - (detector.nu - 1) / 2
+    radii = np.linspace(7, 23, detector.nv)
+    profiles = np.sqrt(np.maximum(radii[:, None] ** 2 - columns**2, 0))
+    attenuation = np.linspace(0.01, 0.07, len(angles))[:, None, None] * profiles
+    counts = (1000 * np.exp(-attenuation)).astype(np.float32)
+    frames = tj.Frames(counts, geometry, white_level=1000)
+    config = FourierConfig(backend="numpy", slices_per_batch=3)
+    whole = tj.reconstruct(frames.corrected(), "fourier", config=config)
+    info = {}
+    with tj.reconstruct_slabs(frames, "fourier", config=config, info=info) as slabs:
+        blocks = [block.info["truncation"] for _, block in slabs]
+    assert len(blocks) == 3
+    assert info["backend"] == whole.info["backend"]
+    assert info["truncation"] == pytest.approx(whole.info["truncation"])
+    assert all(block != info["truncation"] for block in blocks)
+
+
 @pytest.mark.parametrize(("method", "cfg"), CASES)
 def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, method, cfg):
     assert "reconstruct_slabs" in api.__all__
@@ -42,11 +64,15 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, met
         slice(1, 8), slice(None)
     )
     step = Rings()
-    expected = tj.reconstruct(frames.corrected(step), method, grid=grid, config=cfg).volume
-    with tj.reconstruct_slabs(frames, method, grid=grid, corrections=[step], config=cfg) as slabs:
+    expected = tj.reconstruct(frames.corrected(step), method, grid=grid, config=cfg)
+    info = {}
+    with tj.reconstruct_slabs(
+        frames, method, grid=grid, corrections=[step], config=cfg, info=info
+    ) as slabs:
         collected = list(slabs)
     actual = np.concatenate([item.volume for _, item in collected], axis=0)
-    np.testing.assert_allclose(actual, expected, rtol=3e-5, atol=2e-6)
+    assert info["truncation"] == pytest.approx(expected.info["truncation"])
+    np.testing.assert_allclose(actual, expected.volume, rtol=3e-5, atol=2e-6)
     for section, item in collected:
         origin = grid_volume_origin(item.grid)
         np.testing.assert_allclose(origin, (-7, -8, -3 + section.start * 0.6))
@@ -99,10 +125,16 @@ def test_iterative_slabs_preserve_updates_masks_and_ownership(method, backend, w
         else MLEMConfig(**settings)
     )
     expected = tj.reconstruct(frames.corrected(), method, config=cfg, warm_start=warm_start)
-    with tj.reconstruct_slabs(frames, method, config=cfg, warm_start=warm_start) as slabs:
+    info = {}
+    with tj.reconstruct_slabs(
+        frames, method, config=cfg, warm_start=warm_start, info=info
+    ) as slabs:
         collected = list(slabs)
     actual = np.concatenate([item.volume for _, item in collected], axis=0)
     np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=1e-6)
+    assert info["effective_iterations"] == 2
+    assert info["subset_updates"] == 6
+    assert info["warm_start"] == warm_start
     assert len(collected) > 1
     assert np.count_nonzero(actual[~support]) == 0
     for section, item in collected:
@@ -188,8 +220,10 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
     cfg, step = FBPConfig(backend=backend), Rings()
     direct = tj.reconstruct(eager.corrected(step), "fbp", config=cfg)
     expected, whole = direct.volume, direct.info["truncation"]
-    with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step]) as slabs:
+    info = {}
+    with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step], info=info) as slabs:
         collected = list(slabs)
+    assert info["truncation"] == pytest.approx(whole)
     assert len(collected) == 2
     assert max(shape[1] for shape in requests) < detector.nv
     actual = np.concatenate([r.volume for _, r in collected], axis=0)

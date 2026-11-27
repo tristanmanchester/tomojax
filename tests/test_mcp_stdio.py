@@ -644,11 +644,15 @@ def test_client_cancellation_and_task_progress_scope(tmp_path):
         assert all(row.get("params", {}).get("progressToken") != "handed-off" for row in c.inbox)
 
 
-def test_slab_destination_over_stdio(tmp_path):
+@pytest.mark.parametrize("contained", [False, True])
+def test_slab_destination_over_stdio(tmp_path, contained):
     import numpy as np
 
     with h5py.File(tmp_path / "raw.h5", "w") as f:
-        f["exchange/data"] = np.random.default_rng(7).integers(350, 850, size=(12, 5, 8))
+        counts = np.random.default_rng(7).integers(350, 850, size=(12, 5, 8))
+        if contained:
+            counts[..., :2] = counts[..., -2:] = 1000
+        f["exchange/data"] = counts
         f["exchange/theta"] = np.arange(12) * 15
     with connection(tmp_path) as c:
         raw = c.call(
@@ -676,7 +680,15 @@ def test_slab_destination_over_stdio(tmp_path):
             str(tmp_path / "slabs.nxs"),
             str(tmp_path / "slabs.nxs.manifest.json"),
         ]
-        assert tj.load_reconstruction(tmp_path / "slabs.nxs").info["config"]["exterior"] == "zero"
+        info = tj.load_reconstruction(tmp_path / "slabs.nxs").info
+        assert info["config"]["exterior"] == "zero"
+        fraction = info["truncation"]["outside_fraction"]
+        assert saved["structuredContent"]["truncation"] == info["truncation"]
+        assert (fraction == 0) == contained
+        text = saved["content"][0]["text"]
+        assert ("beyond the detector" in text) == (not contained)
+        if not contained:
+            assert f"{fraction:.0%} of attenuation beyond the detector" in text
         assert list(c.call("status")["structuredContent"]["handles"]) == [ref]
         scan = c.call("correct", source=ref)["structuredContent"]["handle"]
         projected = c.call("project", source=scan, volume="slabs.nxs")

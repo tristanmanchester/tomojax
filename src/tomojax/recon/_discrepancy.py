@@ -169,11 +169,16 @@ def sirt_slab_report(finished: checkpoint.Slabs) -> dict[str, object]:
     counts = [
         value for _, record in blocks if isinstance(value := record["effective_iterations"], int)
     ]
-    info["effective_iterations"] = info["subset_updates"] = max(counts)
+    info["effective_iterations"] = max(counts)
+    info["subset_updates"] = max(
+        value for _, record in blocks if isinstance(value := record.get("subset_updates"), int)
+    )
     info["early_stop"] = all(record["early_stop"] for _, record in blocks)
     if any(record["termination"] == "iteration_limit" for _, record in blocks):
         info["termination"] = "iteration_limit"
     for name in ("projection_error_rms", "measurement_noise_rms", "pre_update_residual_rms"):
+        if name not in info:
+            continue
         energy = 0.0
         for (start, stop), record in blocks:
             value = record[name]

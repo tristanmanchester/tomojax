@@ -79,7 +79,7 @@ def test_every_public_workflow_parameter_has_a_wire_field_or_owner(description):
             assert set(mapping) == names
             assert set(get_type_hints(func)) >= names
             for name, target in mapping.items():
-                if (func, name) == (tj.reconstruct, "out"):
+                if (func, name) in {(tj.reconstruct, "out"), (tj.reconstruct_slabs, "info")}:
                     assert target["owner"] == "worker"
                 else:
                     assert properties[target]["description"]

@@ -3017,7 +3017,11 @@
           "config": "config",
           "warm_start": "warm_start",
           "epsilon": "epsilon",
-          "checkpoint": "checkpoint"
+          "checkpoint": "checkpoint",
+          "info": {
+            "owner": "worker",
+            "description": "Whole-volume diagnostics, populated when the iterator finishes."
+          }
         }
       }
     },

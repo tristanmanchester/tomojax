@@ -60,6 +60,7 @@ def fourier_slabs[T](
     read: Callable[[int, int], tuple[np.ndarray | jax.Array, T]],
     *,
     config: FourierConfig,
+    info: dict[str, object] | None = None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     """Yield independent Fourier slabs; closing drains all outstanding device work.
 
@@ -81,6 +82,8 @@ def fourier_slabs[T](
         those rows; context is retained until the slab completes.
     config : FourierConfig
         Reconstruction settings.
+    info : dict or None, optional
+        Destination for the resolved backend.
 
     Yields
     ------
@@ -97,6 +100,8 @@ def fourier_slabs[T](
     if type(geometry) is not ParallelGeometry:
         raise ValueError("reconstruct_slabs requires unposed axial ParallelGeometry")
     backend = resolve_fourier_backend(config.backend)
+    if info is not None:
+        info["backend"] = backend
     depth = fourier_slab_depth(grid, detector, config.slices_per_batch, backend)
     origin = grid_volume_origin(grid)
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))

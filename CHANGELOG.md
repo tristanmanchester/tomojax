@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Raw slab reconstruction saves and reports whole-scan truncation and iterative stopping diagnostics through the worker and MCP. Python callers can collect the same record with `tj.reconstruct_slabs(..., info=info)`.
 - Fourier reconstruction uploads a view-group table only when angles repeat. This removes
   an empty CUDA transfer associated with context loss during a later FBP on a shared GPU.
   Reconstruction stops on an unspecified cuFFT plan failure and reports confirmed lost

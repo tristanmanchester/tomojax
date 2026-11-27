@@ -335,12 +335,15 @@ def _volume_report(file: h5py.File | None) -> VolumeReport:
         else None
     )
     method = meta.get("reconstruction_method") if meta is not None else None
-    return {
+    report: VolumeReport = {
         "found": True,
         "shape": [int(v) for v in volume.shape],
         "axes": _attr_to_str(group.attrs.get("volume_axes_order")) or "zyx",
         "method": None if method is None else str(method),
     }
+    if meta and isinstance(info := meta.get("reconstruction_info"), dict):
+        report["reconstruction_info"] = info
+    return report
 
 
 def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
@@ -623,6 +626,7 @@ def _record_report(
             "shape": list(record.volume.shape),
             "axes": "zyx",
             "method": record.geometry_metadata.get("reconstruction_method"),
+            "reconstruction_info": record.geometry_metadata.get("reconstruction_info", {}),
         },
         "memory_estimates": _memory_estimates(grid_shape, projection),
     }

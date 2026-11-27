@@ -154,7 +154,7 @@ def description() -> dict[str, Any]:
             by_name = {}
             for name, info in parameters(owner).items():
                 wire_name = name
-                if name == "out" and operation is op.Reconstruct:
+                if (operation, name) in {(op.Reconstruct, "out"), (op.ReconstructSlabs, "info")}:
                     by_name[name] = {"owner": "worker", **info}
                     continue
                 if name not in props:

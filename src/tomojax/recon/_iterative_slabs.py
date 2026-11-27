@@ -31,6 +31,7 @@ def iterative_slabs[T](
     *,
     config: SIRTConfig | MLEMConfig,
     warm_start: bool = False,
+    diagnostics: dict[str, object] | None = None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     """Yield owned host volumes without ever allocating the whole output.
 
@@ -98,5 +99,9 @@ def iterative_slabs[T](
                 continue
             yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
             data = context = volume = result = None
-            finished.add(start, stop)
+            finished.add(start, stop, info=info)
             start = stop
+        if diagnostics is not None:
+            from ._discrepancy import sirt_slab_report
+
+            diagnostics.update(sirt_slab_report(finished))

@@ -80,7 +80,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `describe` | Expert settings for an operation or solver, with defaults and units |
 | `correct` | Flat/dark correction, zingers, phase retrieval, rings, beam hardening and binning |
 | `reconstruct` | Reconstruct with an automatic or named method; returns central planes |
-| `reconstruct_slabs` | Reconstruct raw frames slab by slab straight into a file, for volumes too large to hold |
+| `reconstruct_slabs` | Reconstruct raw frames slab by slab into a file. The file and summary include whole-scan truncation and iterative stopping diagnostics. The summary text reports attenuation beyond the detector when it rounds to 1% or more. |
 | `align` | Fit the rotation center, setup angles or per-view motion; returns slices for joint fits and a pose plot when per-view motion is fitted |
 | `simulate` | Simulate a scan of a phantom, with optional detector artifacts |
 | `project`, `backproject` | Apply the forward projector or its exact transpose |

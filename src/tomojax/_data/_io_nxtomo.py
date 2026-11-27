@@ -126,10 +126,11 @@ def slab_volume(
         Registered float32 attenuation dataset, writable until context exit.
     """
     with h5py.File(path, "w") as f:
-        entry = _write_entry(f, meta, None, "lzf")
+        entry = ensure_group(f, "entry", "NXentry")
         yield _volume_group(entry, meta).create_dataset(
             "volume", shape=shape, dtype=np.float32, chunks=True, compression="lzf"
         )
+        _ = _write_entry(f, meta, None, "lzf")
 
 
 def _write_entry(

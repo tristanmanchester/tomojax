@@ -381,13 +381,14 @@ def validate_slab_grid(
 
 
 def reconstruct_slabs[T](
-    geometry: Geometry,
+    geometry: ScanGeometry,
     grid: Grid,
     detector: Detector,
     read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
     *,
     config: MethodConfig,
     warm_start: bool = False,
+    info: dict[str, object] | None = None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     """Reconstruct owned axial slabs from bounded corrected detector-row reads.
 
@@ -407,10 +408,12 @@ def reconstruct_slabs[T](
         ``tomojax.reconstruct``; its class names the method.
     warm_start : bool, optional
         Start SIRT/OSEM from FBP. Default is False.
+    info : dict or None, optional
+        Destination for the completed solver diagnostics.
 
-    Returns
-    -------
-    generator of ReconstructionSlab
+    Yields
+    ------
+    ReconstructionSlab
         Owned slabs in z order, each with its source interval and context.
 
     Raises
@@ -418,6 +421,40 @@ def reconstruct_slabs[T](
     ValueError
         If the method or a setting does not support slabs.
     """
+    from ._truncation import ScanSample
+
+    if info is None:
+        yield from _solve_slabs(
+            geometry, grid, detector, read, config, warm_start=warm_start, info=None
+        )
+        return
+
+    sample = ScanSample(geometry, detector)
+
+    def sampled(first: int, stop: int) -> tuple[np.ndarray | jnp.ndarray, T]:
+        data, context = read(first, stop)
+        sample.add(first, data)
+        return data, context
+
+    diagnostics: dict[str, object] = {}
+    yield from _solve_slabs(
+        geometry, grid, detector, sampled, config, warm_start=warm_start, info=diagnostics
+    )
+    truncation = sample.record(lambda first, stop: read(first, stop)[0])
+    info.update(truncation=truncation, config=config, host_slabs=True)
+    info.update(diagnostics)
+
+
+def _solve_slabs[T](
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    read: Callable[[int, int], tuple[jnp.ndarray | np.ndarray, T]],
+    config: MethodConfig,
+    *,
+    warm_start: bool,
+    info: dict[str, object] | None,
+) -> Generator[ReconstructionSlab[T], None, None]:
     cfg = method_config(config.method, config=config, warm_start=warm_start or None)
     from tomojax.geometry import ParallelGeometry
 
@@ -426,7 +463,9 @@ def reconstruct_slabs[T](
         and isinstance(geometry, ParallelGeometry)
         and geometry.detector_roll
     ):
-        return _coupled_detector_volume(geometry, grid, detector, read, cfg, warm_start=warm_start)
+        return _coupled_detector_volume(
+            geometry, grid, detector, read, cfg, warm_start=warm_start, diagnostics=info
+        )
 
     def measured(
         first: int, stop: int
@@ -452,13 +491,21 @@ def reconstruct_slabs[T](
         case "fourier":
             from ._fourier_stream import fourier_slabs
 
-            slabs = fourier_slabs(_parallel(geometry), grid, detector, measured, config=cfg)
+            slabs = fourier_slabs(
+                _parallel(geometry), grid, detector, measured, config=cfg, info=info
+            )
             return _with_truncation(slabs)
         case "sirt" | "mlem":
             from ._iterative_slabs import iterative_slabs
 
             return iterative_slabs(
-                _parallel(geometry), grid, detector, read, config=cfg, warm_start=warm_start
+                _parallel(geometry),
+                grid,
+                detector,
+                read,
+                config=cfg,
+                warm_start=warm_start,
+                diagnostics=info,
             )
         case _:
             raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
@@ -498,6 +545,7 @@ def _coupled_detector_volume[T](
     config: MethodConfig,
     *,
     warm_start: bool,
+    diagnostics: dict[str, object] | None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     """An oblique ramp uses the 2D spectrum; Joseph updates couple neighboring voxel planes."""
     import numpy as np
@@ -508,6 +556,8 @@ def _coupled_detector_volume[T](
 
     with checkpoint.slabs() as finished:
         if finished.prefix == grid.nz:
+            if diagnostics is not None:
+                diagnostics.update(finished.reports[0, grid.nz])
             return
         data, context = read(0, detector.nv)
         with checkpoint.scope("z0"):
@@ -517,7 +567,9 @@ def _coupled_detector_volume[T](
         yield ReconstructionSlab(
             0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
         )
-        finished.add(0, grid.nz)
+        finished.add(0, grid.nz, info=info)
+        if diagnostics is not None:
+            diagnostics.update(finished.reports[0, grid.nz])
 
 
 def reconstruct_arrays(

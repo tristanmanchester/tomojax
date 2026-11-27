@@ -267,6 +267,7 @@ def tomojax.reconstruct_slabs(
         warm_start: 'bool | None' = None,
         epsilon: 'float' = 1e-06,
         checkpoint: 'str | PathLike[str] | None' = None,
+        info: 'dict[str, object] | None' = None,
     ) -> 'AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]'
 def tomojax.save(
         path: 'str | PathLike[str]',

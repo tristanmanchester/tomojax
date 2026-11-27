@@ -227,7 +227,8 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
         grid=dict(nx=12, ny=11, nz=5, vx=1, vy=1, vz=1, vol_origin=[-5.0, -5.5, -2.0]),
         config=dict(type="FBPConfig", backend="jax", exterior="zero"),
     )
-    result = output(worker("run", operation=recipe))["value"]["paths"]
+    reply = output(worker("run", operation=recipe))
+    result = reply["value"]["paths"]
     saved = tj.load_reconstruction(result[0])
     assert saved.grid.vol_origin == (-5.0, -5.5, -2.0)
     assert saved.info["source"] == str(raw)
@@ -242,6 +243,9 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
         grid=tj.Grid(**recipe["grid"]),
         config=FBPConfig(backend="jax", exterior="zero"),
     )
+    assert reply["info"]["summary"]["truncation"] == saved.info["truncation"]
+    assert tj.inspect(result[0])["volume"]["reconstruction_info"] == saved.info
+    assert saved.info["truncation"] == pytest.approx(expected.info["truncation"])
     np.testing.assert_allclose(actual, expected.volume, rtol=2e-5, atol=3e-6)
     for command in ("validate", "run"):
         failed = worker(

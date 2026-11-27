@@ -31,8 +31,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import jax
+    import numpy.typing as npt
 
-    from tomojax.geometry import Detector, Geometry
+    from tomojax.geometry import Detector, Geometry, ScanGeometry
 
     from ._continuation import Host
 
@@ -46,6 +47,51 @@ def _axis_distance(geometry: Geometry, detector: Detector, pad: int) -> Host:
     if parts is None:
         return parallel_axis_distance(detector, detector.nu, pad)
     return cone_axis_distance(parts[0][1], parts[0][2], pad)
+
+
+def _record_indices(views: int, nv: int) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+    view = radius_views(views)[:: max(1, math.ceil(min(views, 256) / _RECORD_SAMPLES))]
+    row = np.linspace(0, nv - 1, min(nv, _RECORD_SAMPLES)).round().astype(np.int64)
+    return view, row
+
+
+class ScanSample:
+    """Collect each globally sampled detector row once, including overlapping slab footprints."""
+
+    def __init__(self, geometry: ScanGeometry, detector: Detector) -> None:
+        distance = _axis_distance(geometry, detector, continued_columns(detector.nu))
+        self.coordinates = distance.tobytes()
+        self.views, self.rows = _record_indices(len(geometry.angles), detector.nv)
+        self.statistics = np.empty((len(self.rows), 7), np.float64)
+        self.present = np.zeros(len(self.rows), bool)
+
+    def add(self, first: int, data: np.ndarray | jax.Array) -> None:
+        indices = np.flatnonzero(
+            ~self.present & (self.rows >= first) & (self.rows < first + data.shape[1])
+        )
+        if indices.size:
+            selected = self.rows[indices] - first
+            if isinstance(data, np.ndarray):
+                self.statistics[indices] = _measure(self.coordinates, host=True, by_row=True)(
+                    data[self.views[:, None], selected]
+                )
+            else:
+                import jax
+
+                with jax.enable_x64(True):
+                    self.statistics[indices] = np.asarray(
+                        _measure(self.coordinates, host=False, by_row=True)(
+                            data[self.views[:, None], selected]
+                        )
+                    )
+            self.present[indices] = True
+
+    def record(self, read: Callable[[int, int], np.ndarray | jax.Array]) -> dict[str, float]:
+        """Read missing rows for a restricted grid or resumed run and reduce the complete sample."""
+        for row in self.rows[~self.present]:
+            self.add(int(row), read(int(row), int(row + 1)))
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return record_values(_combine(self.statistics))
 
 
 def truncation_record(
@@ -110,11 +156,30 @@ def truncation_values(
         return values
 
 
+def _combine(rows: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
+    if isinstance(rows, np.ndarray):
+        xp = np
+    else:
+        import jax.numpy as xp
+
+    edge, mean, measured, continued, shift, radius, fov = (rows[:, i] for i in range(7))
+    total = measured.sum() + continued.sum()
+    return xp.stack(
+        (
+            xp.where(mean.sum() != 0, edge.sum() / mean.sum(), 0),
+            xp.where(total != 0, continued.sum() / total, 0),
+            shift.mean(),
+            xp.median(radius),
+            fov[0],
+        )
+    )
+
+
 @lru_cache(maxsize=16)
 def _measure(
-    coordinates: bytes, *, host: bool
+    coordinates: bytes, *, host: bool, by_row: bool = False
 ) -> Callable[[np.ndarray | jax.Array], np.ndarray | jax.Array]:
-    """Prepare a sampled row reduction for one detector's physical column coordinates."""
+    """Reduce sampled rows, returning either their individual terms or the scan record."""
     distance: Host = np.frombuffer(coordinates, np.float64)
     nu = len(distance) // 3
     pad = continued_columns(nu)
@@ -128,29 +193,33 @@ def _measure(
         import jax
         import jax.numpy as xp
 
-    def measure(projections: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
-        views, nv, _ = projections.shape
-        view = radius_views(views)[:: max(1, math.ceil(min(views, 256) / _RECORD_SAMPLES))]
-        row = np.unique(np.linspace(0, nv - 1, min(nv, _RECORD_SAMPLES)).round().astype(np.int64))
-        sample = projections[view[:, None], row[None, :]].astype(xp.float64).swapaxes(0, 1)
+    def measure(data: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
+        if not by_row:
+            view, row = _record_indices(*data.shape[:2])
+            data = data[view[:, None], row]
+        sample = data.astype(xp.float64).swapaxes(0, 1)
         low, high = sample[..., : fits.window], sample[..., nu - fits.window :]
         radius2 = fits.radius(xp.asarray, low, high)
         low, high = fits.amplitudes(xp.asarray, low, high, radius2)
         low, high = low.mean(axis=1, keepdims=True), high.mean(axis=1, keepdims=True)
         before, after = fits.tails(xp.asarray, low, high, radius2)
         tails = xp.concatenate((before, after), axis=-1)
-        measured = xp.sum(sample * xp.asarray(width[pad : pad + nu]))
-        continued = xp.sum(tails * xp.asarray(width[outside])) * view.size
-        on_axis = (tails * xp.asarray(width[outside] / distance[outside] ** 2)).sum(axis=-1)
-        total, mean = measured + continued, xp.mean(sample)
-        return xp.stack(
+        measured = xp.sum(sample * xp.asarray(width[pad : pad + nu]), axis=(1, 2))
+        continued = xp.sum(tails * xp.asarray(width[outside]), axis=(1, 2)) * data.shape[0]
+        on_axis = (tails * xp.asarray(width[outside] / distance[outside] ** 2)).sum(axis=(1, 2))
+        statistics = xp.stack(
             (
-                xp.where(mean != 0, (low.mean() + high.mean()) / (2 * mean), 0),
-                xp.where(total != 0, continued / total, 0),
-                -xp.mean(on_axis) / (2 * np.pi),
-                xp.median(radius2**0.5) * fits.scale,
-                xp.asarray(fov),
-            )
+                (low[:, 0, 0] + high[:, 0, 0]) / 2,
+                sample.mean(axis=(1, 2)),
+                measured,
+                continued,
+                -on_axis / (2 * np.pi),
+                radius2[:, 0, 0] ** 0.5 * fits.scale,
+                xp.ones(measured.shape) * fov,
+            ),
+            axis=1,
         )
+
+        return statistics if by_row else _combine(statistics)
 
     return measure if host else jax.jit(measure)

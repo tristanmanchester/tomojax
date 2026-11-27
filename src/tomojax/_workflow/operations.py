@@ -69,6 +69,7 @@ if TYPE_CHECKING:
     from tomojax._workflow import region as _region
     from tomojax._workflow.planning import ResolvedReconstruction
     from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
+    from tomojax.core.json_values import JsonValue
     from tomojax.corrections.api import CorrectedRows
     from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
@@ -368,9 +369,9 @@ def save(
         save_dataset(path, record)
 
 
-def saved_info(info: dict[str, object]) -> dict[str, object]:
+def saved_info(info: dict[str, object]) -> dict[str, JsonValue]:
     """Convert result metadata to JSON, recording dataclass settings by field."""
-    return cast("dict[str, object]", json.loads(json.dumps(info, default=_json_value)))
+    return cast("dict[str, JsonValue]", json.loads(json.dumps(info, default=_json_value)))
 
 
 def _json_value(value: object) -> object:
@@ -785,6 +786,7 @@ def reconstruct_slabs(
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
     checkpoint: str | PathLike[str] | None = None,
+    info: dict[str, object] | None = None,
 ) -> AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]:
     """Correct raw frames and reconstruct bounded z slabs.
 
@@ -857,6 +859,8 @@ def reconstruct_slabs(
         Positive finite lower bound for flat field and transmission.
     checkpoint : str or path-like or None, optional
         Directory recording the finished slabs, created if absent; None records nothing.
+    info : dict or None, optional
+        Whole-volume diagnostics, populated when the iterator finishes.
 
     Returns
     -------
@@ -891,6 +895,7 @@ def reconstruct_slabs(
         warm_start=warm_start,
         epsilon=epsilon,
         checkpoint=checkpoint,
+        info=info,
     )
 
 
@@ -938,6 +943,7 @@ def _reconstruct_slabs_context(
     warm_start: bool | None,
     epsilon: float,
     checkpoint: str | PathLike[str] | None,
+    info: dict[str, object] | None,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
     from tomojax.core.checkpoint import checkpointing, keep_checkpoint
     from tomojax.corrections.api import corrected_row_source
@@ -1002,6 +1008,7 @@ def _reconstruct_slabs_context(
                 read,
                 config=cfg,
                 warm_start=bool(warm_start),
+                info=info,
             )
             with (
                 closing(completed),

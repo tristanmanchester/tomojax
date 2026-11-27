@@ -549,7 +549,60 @@ class Admission:
         return lambda: posed
 
     @prepare.register
-    def correct(self, operation: op.Correct | op.ReconstructSlabs) -> Work:
+    def slabs(self, operation: op.ReconstructSlabs) -> Work:
+        from tomojax._scan.model import geometry_record
+        from tomojax._workflow.operations import slab_settings
+        from tomojax.io.api import dataset_output_format, slab_volume
+        from tomojax.recon.api import validate_slab_grid
+
+        item: tj.Frames = source(
+            operation.source,
+            self.context,
+            kinds=(tj.Frames,),
+            raw=True,
+            layout_only=self.validating,
+        )
+        settings = arguments(
+            operation,
+            self.context,
+            omit=("source", "path", "force", "checkpoint"),
+            layout_only=self.validating,
+        )
+        grid, cfg, _ = slab_settings(item, **settings)
+        validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
+        path = Path(operation.path)
+        if dataset_output_format(path) != "hdf5":
+            raise InvalidParameter("path", "slab reconstruction requires a NeXus/HDF5 destination")
+        sidecar = path.with_name(path.name + ".manifest.json")
+        inputs = set(ancestor_paths((self.manifest,)))
+        check_destinations(inputs, (path, sidecar), force=operation.force)
+
+        def fill() -> p.Files:
+            record = geometry_record(item.geometry, name=item.name, grid=grid, source=item.source)
+            record.geometry_metadata.pop("volume_role", None)
+            record.geometry_metadata["reconstruction_method"] = operation.method
+            metadata = record.to_nxtomo_metadata()
+            info: dict[str, object] = {"source": item.source.source_path if item.source else None}
+            stage = self.context.staging.output(path, force=operation.force)
+            manifest = self.context.staging.output(sidecar, force=operation.force)
+            with slab_volume(stage, metadata, grid.shape) as volume:
+                volume.attrs["long_name"] = "volume"
+                write_slabs(
+                    partial(tj.reconstruct_slabs, item, info=info, **settings),
+                    volume,
+                    None if operation.checkpoint is None else Path(operation.checkpoint),
+                    self.request(),
+                )
+                assert metadata.geometry_meta is not None
+                metadata.geometry_meta["reconstruction_info"] = saved_info(info)
+                self.details.update(info)
+            manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
+            return p.Files((str(path), str(sidecar)))
+
+        return fill
+
+    @prepare.register
+    def correct(self, operation: op.Correct) -> Work:
         from tomojax.corrections.api import (
             check_rows,
             check_scan_steps,
@@ -557,68 +610,13 @@ class Admission:
             validated_views_per_batch,
         )
 
-        raw = isinstance(operation, op.ReconstructSlabs)
         item = source(
             operation.source,
             self.context,
-            kinds=(tj.Frames,) if raw else (tj.Frames, tj.Scan),
-            raw=True if raw else None,
+            kinds=(tj.Frames, tj.Scan),
+            raw=None,
             layout_only=self.validating,
         )
-        if isinstance(operation, op.ReconstructSlabs):
-            from tomojax._scan.model import geometry_record
-            from tomojax._workflow.operations import slab_settings
-            from tomojax.io.api import dataset_output_format, slab_volume
-            from tomojax.recon.api import validate_slab_grid
-
-            settings = arguments(
-                operation,
-                self.context,
-                omit=("source", "path", "force", "checkpoint"),
-                layout_only=self.validating,
-            )
-            grid, cfg, _ = slab_settings(item, **settings)
-            validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
-            path = Path(operation.path)
-            if dataset_output_format(path) != "hdf5":
-                raise InvalidParameter(
-                    "path", "slab reconstruction requires a NeXus/HDF5 destination"
-                )
-            sidecar = path.with_name(path.name + ".manifest.json")
-            inputs = set(ancestor_paths((self.manifest,)))
-            check_destinations(inputs, (path, sidecar), force=operation.force)
-
-            def fill() -> p.Files:
-                record = geometry_record(
-                    item.geometry, name=item.name, grid=grid, source=item.source
-                )
-                record.geometry_metadata.pop("volume_role", None)
-                record.geometry_metadata.update(
-                    reconstruction_method=operation.method,
-                    reconstruction_info=saved_info(
-                        {
-                            "config": cfg,
-                            "host_slabs": True,
-                            "source": item.source.source_path if item.source else None,
-                        }
-                    ),
-                )
-                stage = self.context.staging.output(path, force=operation.force)
-                manifest = self.context.staging.output(sidecar, force=operation.force)
-                with slab_volume(stage, record.to_nxtomo_metadata(), grid.shape) as volume:
-                    volume.attrs["long_name"] = "volume"
-                    checkpoint = operation.checkpoint
-                    write_slabs(
-                        partial(tj.reconstruct_slabs, item, **settings),
-                        volume,
-                        None if checkpoint is None else Path(checkpoint),
-                        self.request(),
-                    )
-                manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-                return p.Files((str(path), str(sidecar)))
-
-            return fill
-
         settings = arguments(operation, self.context, omit=("source", "rows"))
         steps = settings.pop("corrections")
         validated_views_per_batch(operation.views_per_batch)

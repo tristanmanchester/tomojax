@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 
 class DetectorShapeReport(TypedDict):
@@ -76,6 +76,7 @@ class VolumeReport(TypedDict):
     shape: list[int] | None
     axes: str | None
     method: str | None
+    reconstruction_info: NotRequired[dict[str, object]]
 
 
 class AnglesReport(TypedDict):

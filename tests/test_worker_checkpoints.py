@@ -48,6 +48,7 @@ class Worker:
         """Run ``operation``; ``stop`` ("cancel" or "sigterm") ends it once its solve advances."""
         self.send(rid, {"type": "run", "operation": operation})
         solve = None
+        solved_slabs = 0
         while True:
             row = self.read()
             if row.get("request") != rid:
@@ -57,7 +58,20 @@ class Worker:
             record = row["record"]
             if record["event"] == "started" and record["unit"] in ("iterations", "slabs", "steps"):
                 solve = record["task"]
-            elif stop and record["event"] == "advanced" and record["task"] == solve:
+            if record["event"] == "advanced" and record["task"] == solve:
+                solved_slabs = record["done"]
+            if (
+                stop == "second_slab"
+                and solved_slabs == 1
+                and record.get("label") == "first update"
+            ):
+                self.send("c", {"type": "control", "action": "cancel", "target": rid})
+                stop = None
+            elif (
+                stop in {"cancel", "sigterm"}
+                and record["event"] == "advanced"
+                and record["task"] == solve
+            ):
                 if stop == "cancel":
                     self.send("c", {"type": "control", "action": "cancel", "target": rid})
                 else:
@@ -158,7 +172,7 @@ def test_slabs_from_raw_frames_resume_into_their_output(tmp_path: Path) -> None:
             return operation if checkpoint is None else {**operation, "checkpoint": str(checkpoint)}
 
         assert worker.run("w", slabs("whole.nxs"))["type"] == "result"
-        stopped = worker.run("s", slabs("part.nxs", run), stop="cancel")
+        stopped = worker.run("s", slabs("part.nxs", run), stop="second_slab")
         assert stopped["type"] == "error", stopped
         assert stopped["error"]["checkpoint"] == str(run)
         assert not (tmp_path / "part.nxs").exists()
@@ -170,6 +184,13 @@ def test_slabs_from_raw_frames_resume_into_their_output(tmp_path: Path) -> None:
         tj.load_reconstruction(tmp_path / "part.nxs").volume,
         tj.load_reconstruction(tmp_path / "whole.nxs").volume,
     )
+    whole = tj.load_reconstruction(tmp_path / "whole.nxs").info
+    resumed = tj.load_reconstruction(tmp_path / "part.nxs").info
+    assert resumed == whole
+    assert resumed["termination"] == "iteration_limit"
+    assert resumed["effective_iterations"] == 300
+    assert len(resumed["slab_stopping"]) == 2
+    assert "truncation" in resumed
     assert not run.exists()
 
 

@@ -237,6 +237,8 @@ The full Zeiss CuO_2 tomo-B scan (3201 views of 2028 × 2028 pixels, 52 GB corre
 uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 ```
 
+Pass an empty dictionary as `info=info` to `tj.reconstruct_slabs`. After the iterator finishes and the context exits, `info["truncation"]` describes the same sample of the full detector as an in-memory reconstruction. Each sampled detector row counts once, including where slabs overlap. The two fractions use the scan totals, the interior shift is a mean, and the fitted radius is a median. Iterative runs also record stopping diagnostics for each z range in `info["slab_stopping"]` when the solver uses independent planes. The worker and MCP save the record in the volume and return it in the summary.
+
 Only whole-row line-integral corrections (such as `Rings`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
 
 ## Bin detectors finer than the grid
