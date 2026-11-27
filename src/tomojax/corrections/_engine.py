@@ -29,6 +29,7 @@ from tomojax.core.registration import correction_images
 
 from ._batches import HostCopies, copy_projections, correction_group, view_batches
 from ._fields import CalibrationFrames, Fields, bracketing_sets, flat_fields
+from ._flat_weights import view_weights
 from ._records import Correction, Json
 from ._steps import DOMAINS, Step
 from ._validation import check_scan_steps, positive_finite, validated_views_per_batch
@@ -157,11 +158,12 @@ def correct_frames(
         band, steps = preview_window(steps, (rows, cols), lower, upper, binning)
         selected = slice(lower - band.start // binning, upper - band.start // binning)
     ordered = ordered_steps(steps)
+    counts_steps = tuple(s for d, s in ordered if d == "counts")
     fields, field_record, interpolation, view_scales = calibration(
         views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
         white_level=white_level, epsilon=epsilon, view_positions=view_positions,
         exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
-        dark_source=dark_source,
+        dark_source=dark_source, counts=counts, counts_steps=counts_steps,
     )  # fmt: skip
     acquisition_fields, acquisition_counts = fields, counts
     if band != slice(0, rows):
@@ -172,7 +174,6 @@ def correct_frames(
         rows = counts.shape[1]
     line = [s for d, s in ordered if d == "line integrals"]
     head, tail = _split_at_break(line)
-    counts_steps = tuple(s for d, s in ordered if d == "counts")
     transmission_steps = tuple(s for d, s in ordered if d == "transmission")
     transmission_head, transmission_tail = _split_at_break(list(transmission_steps))
     limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
@@ -267,10 +268,13 @@ def calibration(
     exposure_times: np.ndarray | float | None,
     flat_exposure_times: np.ndarray | float | None,
     dark_source: str | None,
+    counts: CalibrationFrames,
+    counts_steps: tuple[Step, ...] = (),
 ) -> Calibration:
-    """Flat and dark fields of a whole ``shape`` detector, and where each view lies among them.
+    """Flat and dark fields of a whole ``shape`` detector, and each view's weights of them.
 
-    Arguments mean what they do for :func:`correct_frames`.
+    Arguments mean what they do for :func:`correct_frames`. Between two flat sets
+    the ``counts`` themselves weight the sets (:mod:`._flat_weights`).
     """
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
@@ -288,6 +292,9 @@ def calibration(
             float(np.max(exposure_times)),
         ]
     interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
+    if len(fields.positions) > 1:
+        fields.weights, found = view_weights(counts, fields, interpolation, counts_steps)
+        records[0].found.update(found)
     return Calibration(fields, records, interpolation, view_scales)
 
 
@@ -415,10 +422,11 @@ def flat_weights(
     """For each view at ``q``, the flat sets either side of it and the weight of the later one.
 
     ``positions`` are the views recorded before each set; views before the
-    first set or after the last take that set alone.
+    first set or after the last lie at the near end of the nearest interval.
     """
-    hi = np.clip(np.searchsorted(positions, q, side="right"), 0, len(positions) - 1)
-    lo = np.clip(hi - 1, 0, len(positions) - 1)
+    last = len(positions) - 1
+    hi = np.clip(np.searchsorted(positions, q, side="right"), min(1, last), last)
+    lo = np.clip(hi - 1, 0, last)
     span = positions[hi] - positions[lo]
     t = np.where(span > 0, (q - positions[lo]) / np.where(span > 0, span, 1), 0.0)
     t = np.where(q >= positions[-1], 1.0, np.clip(t, 0.0, 1.0)) if len(positions) > 1 else t
@@ -449,6 +457,7 @@ def first_pass(
     usable: jax.Array,
     *,
     epsilon: float,
+    weights: jax.Array | np.ndarray | None = None,
     counts_steps: tuple[Step, ...] = (),
     transmission_steps: tuple[Step, ...] = (),
     line_steps: tuple[Step, ...] = (),
@@ -463,7 +472,13 @@ def first_pass(
     for step in counts_steps:
         x = step.apply(x)
     weight = t[:, None, None]
-    flat = (1 - weight) * flats[lo] + weight * flats[hi]
+    if weights is None:
+        flat = (1 - weight) * flats[lo] + weight * flats[hi]
+    else:  # what the views show of the later set, and of the level, at each end of the interval
+        ends = weights[None] if weights.ndim == 3 else weights[lo]
+        level = jnp.exp(ends[:, 2] + (ends[:, 3] - ends[:, 2]) * weight)
+        weight = ends[:, 0] + (ends[:, 1] - ends[:, 0]) * weight
+        flat = ((1 - weight) * flats[lo] + weight * flats[hi]) * level
     transmission = (x - dark) * exposure_scale[:, None, None] / jnp.maximum(flat, epsilon)
     # An unresolved calibration is not a measured transmission. Fill interior
     # gaps before any transmission step can spread the ratio of two noise values.
@@ -544,7 +559,8 @@ def correct_view_batches(
     """Run ``first_pass`` over batches of views into ``out``; the tally of what it found."""
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
     lo, hi, t, exposure_scale = interpolation
-    loaded: tuple[np.ndarray, jax.Array] | None = None  # flat sets on the device, and which
+    # Which flat sets are on the device, the sets and their weights from the views.
+    loaded: tuple[np.ndarray, jax.Array, jax.Array | None] | None = None
     tally = np.zeros(3, np.int64)  # non-positive transmission, non-finite, above linear limit
     fill_gaps = not bool(fields.usable.all())
 
@@ -580,11 +596,19 @@ def correct_view_batches(
                 sets, a, b = bracketing_sets(lo[start:stop], hi[start:stop])
                 # Consecutive batches mostly lie between the same sets: upload them once.
                 if loaded is None or not np.array_equal(loaded[0], sets):
-                    loaded = sets, jax.device_put(fields.flats[sets])
+                    between = fields.weights
+                    loaded = (
+                        sets,
+                        jax.device_put(fields.flats[sets]),
+                        # The batch's sets are consecutive: all but the last start an interval.
+                        None
+                        if between is None
+                        else jax.device_put(between.at(slice(None), sets[:-1])),
+                    )
                 done = first_pass(
                     jnp.asarray(raw), a, b, t[start:stop],
                     exposure_scale[start:stop], loaded[1], dark, usable,
-                    fill_gaps=fill_gaps,
+                    weights=loaded[2], fill_gaps=fill_gaps,
                     **settings,
                 )  # fmt: skip
             copies.start(done[0])
@@ -720,7 +744,7 @@ def _correct_row_slabs(
     views, rows, cols = counts.shape
     out = allocate((views, rows // factor, cols // factor))
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
-    flats = fields.flats
+    flats, between = fields.flats, fields.weights
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)
     tally = np.zeros(3, np.int64)
 
@@ -750,6 +774,7 @@ def _correct_row_slabs(
                 jnp.asarray(raw), lo, hi, t, exposure_scale,
                 flats[:, start:stop], dark[start:stop],
                 usable[start:stop], line_steps=steps,
+                weights=None if between is None else between.at(slice(start, stop)),
                 fill_gaps=not bool(fields.usable[start:stop].all()),
                 transmission_steps=transmission_steps, epsilon=epsilon, factor=factor, limit=limit,
             )  # fmt: skip

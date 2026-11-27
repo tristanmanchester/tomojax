@@ -340,7 +340,7 @@ def corrected_row_source(
             views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
             white_level=white_level, epsilon=epsilon, view_positions=view_positions,
             exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
-            dark_source=dark_source,
+            dark_source=dark_source, counts=counts,
         )  # fmt: skip
         limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
         edge = None
@@ -376,10 +376,12 @@ def corrected_row_source(
                 fields.dark[first:stop],
                 fields.usable[first:stop],
             )
+            between = fields.weights
             projections, nonpositive, nonfinite, above = first_pass(
                 upload_host(raw, current_device()),
                 *device_interpolation,
                 *(jax.device_put(np.ascontiguousarray(value)) for value in selected),
+                weights=None if between is None else between.at(slice(first, stop)),
                 epsilon=epsilon,
                 line_steps=line_steps,
                 transmission_steps=transmission_steps,
@@ -392,6 +394,7 @@ def corrected_row_source(
                 "flat_dark",
                 records[0].settings,
                 {
+                    **records[0].found,
                     "pixels_without_light": int(np.count_nonzero(~selected[2])),
                     **_above(above, raw.size, edge),
                 },
@@ -437,6 +440,7 @@ def _correct_host_rows(
         "flat_dark",
         flat_record.settings,
         {
+            **flat_record.found,
             "pixels_without_light": int(np.count_nonzero(~selected.usable)),
             **_above(above, int(np.prod(raw.shape)), edge),
         },

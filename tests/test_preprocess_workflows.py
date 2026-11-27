@@ -93,6 +93,26 @@ def test_tiff_frames_with_flats_darks_and_angles(tmp_path: Path) -> None:
     )
 
 
+def test_another_scans_file_supplies_its_flats_and_darks(tmp_path: Path) -> None:
+    write_raw_nxtomo(tmp_path / "scan.nxs")  # sample 5, flat 11, sample 9, dark 1
+    write_raw_nxtomo(tmp_path / "other.nxs")
+    with h5py.File(tmp_path / "other.nxs", "r+") as handle:
+        frames = handle["entry/instrument/detector/data"]
+        frames[1], frames[3] = 21.0, 3.0  # the other scan's flat and dark
+    expected = -np.log([(5 - 3) / (21 - 3), (9 - 3) / (21 - 3)])
+    borrowed = tj.load_frames(
+        tmp_path / "scan.nxs", flats=tmp_path / "other.nxs", darks=tmp_path / "other.nxs"
+    )
+    assert len(borrowed.flats) == len(borrowed.darks) == 1
+    np.testing.assert_allclose(
+        np.asarray(borrowed.corrected().projections)[:, 0, 0], expected, rtol=1e-6
+    )
+    out = tmp_path / "corrected.nxs"
+    other = tmp_path / "other.nxs"
+    assert _preprocess(tmp_path / "scan.nxs", "-o", out, "--flats", other, "--darks", other) == 0
+    np.testing.assert_allclose(load_dataset(out).projections[:, 0, 0], expected, rtol=1e-6)
+
+
 @pytest.mark.parametrize("omitted", ["--flats", "--angles"])
 def test_tiff_frames_need_flats_and_angles(
     tmp_path: Path, capsys: pytest.CaptureFixture[str], omitted: str

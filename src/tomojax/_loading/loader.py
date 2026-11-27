@@ -755,8 +755,8 @@ def load_frames(
     images, or one level for every pixel), ``angles``, ``detector``, ``grid`` and a
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
     replace what the file holds. HDF5 calibration paths use the same automatic
-    dataset discovery as the input and stay lazy; every frame in their stack
-    contributes to the calibration mean.
+    dataset discovery as the input and stay lazy: another scan's file supplies its
+    flat or dark frames, and a stack that labels none supplies every frame.
 
     Parameters
     ----------
@@ -951,7 +951,7 @@ def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str, count
         from tomojax.io.api import read_calibration_frames
 
         # A vendor's TIFF panel origin (Nikon, SkyScan) applies to its flats too.
-        return read_calibration_frames(Path(value), like=counts)
+        return read_calibration_frames(Path(value), like=counts, image_key=1 + (name == "darks"))
     frames = np.asarray(value)
     if frames.ndim == 2:
         frames = frames[None]

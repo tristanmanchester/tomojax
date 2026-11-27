@@ -23,6 +23,8 @@ if TYPE_CHECKING:
 
     from tomojax._data import FrameStack
 
+    from ._flat_weights import FlatWeights
+
 type CalibrationFrames = np.ndarray | jax.Array | FrameStack
 
 LOG = logging.getLogger(__name__)
@@ -33,16 +35,32 @@ class Fields:
 
     ``flats`` has shape ``(sets, rows, columns)`` in counts, or counts per second
     when exposures are supplied. ``usable`` marks pixels with measured illumination.
+    ``noise`` is each set's variance as a fraction of its squared mean, and
+    ``weights`` what the views show of each set between two (None: by position).
     """
 
     def __init__(
-        self, flats: np.ndarray, positions: np.ndarray, dark: np.ndarray, usable: np.ndarray
+        self,
+        flats: np.ndarray,
+        positions: np.ndarray,
+        dark: np.ndarray,
+        usable: np.ndarray,
+        noise: np.ndarray,
+        weights: FlatWeights | None = None,
     ) -> None:
         self.flats, self.positions, self.dark, self.usable = flats, positions, dark, usable
+        self.noise, self.weights = noise, weights
 
     def window(self, rows: slice) -> Fields:
         """Select detector rows after resolving illumination on the whole acquisition."""
-        return Fields(self.flats[:, rows], self.positions, self.dark[rows], self.usable[rows])
+        return Fields(
+            self.flats[:, rows],
+            self.positions,
+            self.dark[rows],
+            self.usable[rows],
+            self.noise[:, rows],
+            None if self.weights is None else self.weights.window(rows),
+        )
 
 
 def flat_fields(
@@ -98,14 +116,17 @@ def flat_fields(
             settings["flat_positions"] = [float(p) for p in sets]
     if dark_source is not None:
         settings["dark_removed_by"] = dark_source
-    light = host_array((len(sets), *shape))
+    light, noise = host_array((len(sets), *shape)), host_array((len(sets), *shape))
     usable = np.ones(shape, bool)
     for i, (mean, variance, scale) in enumerate(moments):
         signal = mean - dark if flat_scales is None else mean
         floor = np.maximum(epsilon, 3 * np.sqrt(variance + dark_variance * scale**2))
-        usable &= np.isfinite(signal) & (signal > floor)
+        lit = np.isfinite(signal) & (signal > floor)
+        usable &= lit
         light[i] = signal
+        noise[i] = np.divide(variance, signal * signal, out=np.zeros(shape), where=lit)
         release_planes(light, i, i + 1)
+        release_planes(noise, i, i + 1)
     if not np.any(usable):
         raise ValueError(
             "No detector pixels have resolved illumination above the dark field: "
@@ -113,7 +134,7 @@ def flat_fields(
             "or include an illuminated detector region in the crop"
         )
     found: dict[str, Json] = {"pixels_without_light": int(np.count_nonzero(~usable))}
-    fields = Fields(light, sets, dark.astype(np.float32), usable)
+    fields = Fields(light, sets, dark.astype(np.float32), usable, noise)
     return fields, (Correction("flat_dark", settings, found),)
 
 
