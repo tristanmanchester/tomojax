@@ -196,7 +196,10 @@ def test_structure_that_drifts_through_the_scan_is_followed_through_it() -> None
 def test_the_level_carries_across_an_edge_that_only_one_set_has() -> None:
     frames, truth, _ = _frames("edge")
     beyond = slice(int(0.75 * COLS), COLS)  # both sets are shadowed here, by 0.2 and 0.16
-    error = np.asarray(frames.corrected().projections, np.float64) - truth
+    scan, (warning,) = _warnings(frames)
+    assert "shadow covers both flat sets" in warning
+    assert "clean flats" in warning and "flats=" in warning
+    error = np.asarray(scan.projections, np.float64) - truth
     blended = _by_position(frames) - truth
     assert abs(blended[..., beyond].mean()) > 0.15
     assert abs(error[..., beyond].mean()) < 0.04

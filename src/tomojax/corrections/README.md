@@ -127,8 +127,9 @@ somewhere):
 | `flat_moved_by_views` | Fraction of measured pixels where the view-weighted flat differs from position interpolation by more than 1% in log magnitude at either end of an interval |
 
 When `flat_moved_by_views` exceeds 1% of the detector, TomoJAX emits a warning
-giving that fraction, the later set's weights at the start and end there, and
-both remedies because the views do not follow the flat sets' positions.
+giving that fraction and the later set's weights at the start and end there.
+It explains when a shadow in both flat sets leaves the incident intensity
+uncertain and how to supply clean flats from a matching scan.
 Python logs the warning on the `tomojax` logger, the CLI prints it, and the
 worker and MCP server return it in `notes`. Below 1%, no warning is emitted.
 The warning measures how far view weighting and position weighting disagree:
