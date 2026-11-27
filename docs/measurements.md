@@ -467,7 +467,7 @@ Three half-turn scans of a Diamond DIAD visit (8,000 views of 2160 × 2560, 10 f
 
 What remains is broad half rings outside the radius where one set is clear (320–480 px), where both sets are shadowed. On k11-52583, a featureless sample, the direct axial center fit on rows 1076–1084 returns −19.98 px with the sets interpolated by position, −13.67 px with the weights, and −13.75 px with the neighbor's flats.
 
-On the middle band of 40 rotation scans of the same visit, the 21 with clean flats give slices equal to the fourth decimal of the slice's spread and identical center fits with and without the weights (the views set at most 0.5% of them). Seven scans whose flat sets differ by a 0.02% structure move by 0.003–0.016 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
+On the middle band of all 51 rotation scans of the same visit, the 31 with clean flats give slices equal to the fourth decimal of the slice's spread and identical center fits with and without the weights (the views set at most 0.65% of them). Seven scans whose flat sets differ by a 0.02% structure move by 0.003–0.016 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
 
 ### Simulated flat-field faults
 
