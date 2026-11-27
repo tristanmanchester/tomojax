@@ -32,7 +32,7 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.registration import scaled_images
 from tomojax.core.validation import validate_physical_poses
-from tomojax.recon._tv_metric import resolve_tv_metric, voxel_noise_weight
+from tomojax.recon.fista_tv import resolve_tv_metric, voxel_noise_weight
 
 from ._columns import ColumnNoise, calibrate_columns
 from ._noise import MAX_SAMPLES, Windows, estimate_noise

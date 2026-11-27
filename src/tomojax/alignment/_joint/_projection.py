@@ -325,11 +325,17 @@ def column_filter(
     valid = w > 0
     mass = xp.sum(w, axis=-2, keepdims=True)
     totals = xp.sum(mass, axis=-1, keepdims=True)
-    values = xp.where(valid, images, 0) if transpose else w * images
+    values = xp.where(valid, images, 0)
+    if not transpose:
+        values = w * values
     summed = xp.sum(values, axis=-2, keepdims=True)
     column = summed / xp.where(mass > 0, mass, 1)
     common = xp.sum(summed, axis=-1, keepdims=True) / xp.where(totals > 0, totals, 1)
-    delta = np.float32(attenuation) * (column - common)
+    support = totals / xp.maximum(xp.sum(mass > 0, axis=-1, keepdims=True), 1)
+    independent = np.float32((1 - attenuation) ** 2)
+    total = independent + (1 - independent) * support / images.shape[-2]
+    fraction = 1 - xp.sqrt(independent / xp.where(total > 0, total, 1))
+    delta = fraction.astype(images.dtype) * (column - common)
     return xp.where(valid, images - (w * delta if transpose else delta), 0)
 
 

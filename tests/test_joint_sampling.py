@@ -159,6 +159,8 @@ def test_masked_column_covariance_has_matched_transpose_and_preserves_flux():
     w[1, :, 3] = 0
     w[2, 2:5, :4] = 0
     forward = column_filter(x, 0.85, w)
+    masked = np.where(w[:, None] > 0, x, np.nan)
+    np.testing.assert_array_equal(column_filter(masked, 0.85, w), forward)
     adjoint = column_filter(jnp.asarray(z), 0.85, jnp.asarray(w), transpose=True)
     np.testing.assert_allclose(np.vdot(forward, z), np.vdot(x, adjoint), rtol=2e-6)
     np.testing.assert_allclose(

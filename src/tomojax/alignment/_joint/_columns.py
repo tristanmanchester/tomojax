@@ -199,7 +199,7 @@ def _fixed(
     """Estimate recurrent column curvature across views and rows; its affine part is unobserved."""
     n, v, u = y.shape
     if not variance or u < 3:
-        return np.zeros(u)
+        return reference
     step = (slice(None, None, max(1, n // 64)), slice(None, None, max(1, v // 64)))
     samples = y[step].reshape(-1, u).astype(float)
     curvature = np.diff(samples, n=2)
@@ -279,6 +279,7 @@ def calibrate_columns(
         if power > 0
         else 0.0
     )
+    corrected_field = field + gain * dynamic
     for (data, _), b in zip(levels, bins, strict=True):
         ratio = b // fine
         left, left_seen = _blocked(*ends[0], ratio)
@@ -290,7 +291,7 @@ def calibrate_columns(
         # Conditioning on the full-height estimate gives posterior variance
         # tau² (1 - gain), as well as the shrunk correction gain * dynamic.
         variance = (1 - gain) * max(0.0, np.asanyarray(covariance, dtype=np.float64).item())
-        columns = (field + gain * dynamic).reshape(n, data.shape[2], ratio)
+        columns = corrected_field.reshape(n, data.shape[2], ratio)
         independent = (noise / b) ** 2
         total = independent + data.shape[1] * variance
         attenuation[b] = ColumnNoise(

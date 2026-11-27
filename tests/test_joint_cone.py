@@ -41,11 +41,22 @@ def _geometry():
 @pytest.mark.parametrize(
     ("cone", "interpolation"), [(False, "linear"), (False, "cubic"), (True, "linear")]
 )
-def test_adapter_transpose_includes_mask_and_accumulation(cone, interpolation, backend):
+@pytest.mark.parametrize("column_attenuation", [0.0, 0.85])
+def test_adapter_transpose_includes_mask_and_accumulation(
+    cone, interpolation, backend, column_attenuation
+):
     if backend == "cuda" and not cuda_backend():
         pytest.skip("requires CUDA")
     grid, detector, nominal, frames = _geometry()
-    model = Projection(grid, detector, cone=cone, backend=backend, interpolation=interpolation)
+    model = Projection(
+        grid,
+        detector,
+        cone=cone,
+        backend=backend,
+        interpolation=interpolation,
+        column_attenuation=column_attenuation,
+        masked=True,
+    )
     valid = jnp.asarray([True, False, True])
     q = jnp.asarray(np.random.default_rng(43).normal(size=(3, model.dofs)), jnp.float32)
     scales = jnp.asarray([0.013] * 3 + [0.07] * (model.dofs - 3))
@@ -54,8 +65,9 @@ def test_adapter_transpose_includes_mask_and_accumulation(cone, interpolation, b
     x = jnp.asarray(rng.normal(size=(grid.nz, grid.ny, grid.nx)), jnp.float32)
     y = jnp.asarray(rng.normal(size=(3, detector.nv, detector.nu)), jnp.float32)
     initial = jnp.asarray(rng.normal(size=x.shape), jnp.float32)
-    forward = jax.jit(model.project)(cf, x)
-    back = jax.jit(model.back)(initial, cf, y) - initial
+    w = jnp.asarray(rng.uniform(0, 1, y.shape), jnp.float32).at[:, 2:5, 3:6].set(0)
+    forward = jax.jit(model.project)(cf, x, precision=w)
+    back = jax.jit(model.back)(initial, cf, y, precision=w) - initial
     np.testing.assert_array_equal(forward[1], 0)
     left, right = jnp.vdot(forward, y), jnp.vdot(x, back)
     np.testing.assert_allclose(left, right, rtol=3e-6, atol=3e-5)

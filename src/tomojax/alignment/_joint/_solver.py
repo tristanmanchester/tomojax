@@ -335,8 +335,13 @@ class _Level:
         self.ops, self.prior, self.lam, self.delta = ops, prior, lam, delta
         self.image_tolerance, self.spatial = image_tolerance, spatial
         self._made = None
-        self.tv_value = jax.jit(lambda x, w: tv.energy(x, eps, scales, w))
-        self.conduct = _into(lambda _out, x, w: w * tv.conductance(x, eps, scales))
+        self.tv_value = jax.jit(partial(tv.energy, eps=eps, scales=scales))
+
+        @_into
+        def conduct(_out: jax.Array, x: jax.Array, w: jax.Array | float) -> jax.Array:
+            return w * tv.conductance(x, eps, scales)
+
+        self.conduct = conduct
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
         self.gradient = _into(
             lambda _out, gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales)
@@ -519,7 +524,7 @@ class _Level:
 
     def image_penalty(self, x: jax.Array) -> float:
         """Image-prior objective, with no TV call or temporary when its weight is zero."""
-        return float(self.lam * self.tv_value(x, self.spatial)) if self.lam else 0.0
+        return float(self.lam * self.tv_value(x, weight=self.spatial)) if self.lam else 0.0
 
     def initial_volume(
         self, q: jax.Array, lipschitz: float | jax.Array, iterations: int
