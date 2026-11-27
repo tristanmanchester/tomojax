@@ -129,6 +129,35 @@ def test_shared_automatic_tv_uses_the_full_scan_noise_probe(kind):
     assert _relative(shared.volume, one.volume) < 1e-4
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize(("kind", "regularizer"), [("parallel", "tv"), ("cone", "huber_tv")])
+def test_shared_tv_gradient_slabs_match_the_full_grid(monkeypatch, kind, regularizer):
+    from dataclasses import replace
+
+    from tomojax.recon import FISTAConfig
+
+    # Exercise the tiled CUDA path on an uneven extent, including a support
+    # boundary through the last slab and a mask broadcast over the split axis.
+    monkeypatch.setattr("tomojax.recon._tv_ops._MIN_CUDA_BYTES", 0)
+    grid = tj.Grid(15, 25, 11, 0.8, 1.2, 1.0)
+    scan = tj.simulate("shepp", grid=grid, size=19, n_views=37, geometry=kind).scan
+    shape = (25, 1) if kind == "parallel" else (11, 1, 15)
+    support = np.random.default_rng(7).random(shape) > 0.25
+    config = FISTAConfig(
+        iterations=4,
+        regularizer=regularizer,
+        tv_weight=1e-3,
+        tv_prox_iterations=3,
+        lower_bound=0.02,
+        upper_bound=0.8,
+        support=support,
+    )
+    reference = tj.reconstruct(scan, "fista", config=config).volume
+    result = tj.reconstruct(scan, "fista", config=replace(config, devices=jax.devices())).volume
+    assert _relative(result, reference) < 1e-4
+    assert (np.asarray(result)[~np.broadcast_to(support, grid.shape)] == 0).all()
+
+
 def test_cgls_from_a_start_shared_among_devices_matches_one_device():
     from tomojax.recon import CGLSConfig, cgls
 

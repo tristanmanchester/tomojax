@@ -107,7 +107,12 @@ def _on_devices[T](
     """
     per_view = tuple(pad_views(a, split.total, repeat=True) for a in ops.per_view())
 
-    def body(per_view: tuple[jax.Array, ...], counts: jax.Array, shared: tuple, views: tuple) -> T:
+    def body(
+        per_view: tuple[jax.Array, ...],
+        counts: jax.Array,
+        shared: tuple[jax.Array, ...],
+        views: tuple[jax.Array, ...],
+    ) -> T:
         return local(ops.share(per_view, counts), *shared, *views)
 
     cut, whole = PartitionSpec(VIEWS), PartitionSpec()
@@ -428,6 +433,7 @@ def least_squares_operators(
     data_term: DataTerm = "absolute",
     stream: bool = False,
     split: ViewSplit | None = None,
+    shared_update: Callable[[jax.Array, jax.Array], jax.Array] | None = None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]]:
     """Return the value and gradient of ``0.5 ||A x - y||^2``, ``(x, y) -> (value, A^T r)``.
@@ -438,6 +444,8 @@ def least_squares_operators(
     registered with :func:`host_source`, read one batch at a time. With a
     ``split``, the views are shared among its devices; ``y`` is best placed with
     :meth:`ViewSplit.place`. Streamed data cannot be split.
+    A shared solver can supply ``shared_update(x, local_gradient)`` to combine the
+    partial gradients and return a replicated update within the same device program.
     """
     assert not (stream and split is not None), "streamed data cannot be split"
     ops = ViewBatches(
@@ -462,7 +470,21 @@ def least_squares_operators(
         volume: jax.Array | None, data: jax.Array
     ) -> tuple[jax.Array, jax.Array]:
         shared = () if volume is None else (volume,)
-        return _summed(split, ops, at, shared=shared, views=(data,))
+        if shared_update is None:
+            return _summed(split, ops, at, shared=shared, views=(data,))
+
+        assert split is not None and volume is not None
+        update = shared_update
+
+        def on_device(
+            share: ViewBatches, x: jax.Array, y: jax.Array
+        ) -> tuple[jax.Array, jax.Array]:
+            value, gradient = at(share, x, y)
+            return jax.lax.psum(value, VIEWS), update(x, gradient)
+
+        return _on_devices(
+            split, ops, on_device, shared=(volume,), views=(data,), out_specs=PartitionSpec()
+        )
 
     return value_and_gradient
 

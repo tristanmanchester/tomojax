@@ -247,8 +247,8 @@ def tv_proximal(
     """
     return _tv_execution(
         x,
-        jnp.asarray(lam_over_L, dtype=x.dtype),
-        None if huber_delta is None else jnp.asarray(huber_delta, dtype=x.dtype),
+        jax.lax.convert_element_type(lam_over_L, x.dtype),
+        None if huber_delta is None else jax.lax.convert_element_type(huber_delta, x.dtype),
         None if support is None else jnp.asarray(support) != 0,
         int(iterations),
         nonnegative,
@@ -276,6 +276,32 @@ def cuda_tv_workspace_bytes(shape: tuple[int, ...], dtype: np.dtype, iterations:
     return workspace_bytes(shape, iterations)
 
 
+def cuda_tv_proximal(
+    shape: tuple[int, ...],
+    iterations: int,
+    *,
+    nonnegative: bool,
+    lower_bound: float | None,
+    upper_bound: float | None,
+    gradient_scale_xyz: tuple[float, float, float],
+) -> functools.partial[jax.Array]:
+    """The CUDA tile update with bounds and derivative step from the full domain."""
+    from ._cuda_tv import proximal
+
+    lower = max(
+        0.0 if nonnegative else -math.inf, lower_bound if lower_bound is not None else -math.inf
+    )
+    upper = upper_bound if upper_bound is not None else math.inf
+    return functools.partial(
+        proximal,
+        iterations=iterations,
+        tau=1.0 / (gradient_norm_squared(shape, gradient_scale_xyz=gradient_scale_xyz) or 1.0),
+        lower=lower,
+        upper=upper,
+        gradient_scale_xyz=gradient_scale_xyz,
+    )
+
+
 @functools.partial(jax.custom_jvp, nondiff_argnums=(4, 5, 6, 7, 8))
 def _tv_execution(
     x: jax.Array,
@@ -298,18 +324,12 @@ def _tv_execution(
     )
     if cuda_tv_workspace_bytes(x.shape, x.dtype, iterations) is None:
         return reference(x, lam, huber_delta, support)
-    from ._cuda_tv import proximal
-
-    lower = max(
-        0.0 if nonnegative else -math.inf, lower_bound if lower_bound is not None else -math.inf
-    )
-    upper = upper_bound if upper_bound is not None else math.inf
-    cuda = functools.partial(
-        proximal,
-        iterations=iterations,
-        tau=1.0 / (gradient_norm_squared(x.shape, gradient_scale_xyz=gradient_scale_xyz) or 1.0),
-        lower=lower,
-        upper=upper,
+    cuda = cuda_tv_proximal(
+        x.shape,
+        iterations,
+        nonnegative=nonnegative,
+        lower_bound=lower_bound,
+        upper_bound=upper_bound,
         gradient_scale_xyz=gradient_scale_xyz,
     )
     return jax.lax.platform_dependent(x, lam, huber_delta, support, cuda=cuda, default=reference)
@@ -352,7 +372,7 @@ def _tv_proximal_jax(
     gradient_scale_xyz: tuple[float, float, float] = (1.0, 1.0, 1.0),
 ) -> jnp.ndarray:
     """Reference finite-iteration TV algebra, also used for all derivatives."""
-    lam = jnp.asarray(lam_over_L, dtype=x.dtype)
+    lam = jax.lax.convert_element_type(lam_over_L, x.dtype)
     tau = jnp.asarray(
         1.0 / (gradient_norm_squared(x.shape, gradient_scale_xyz=gradient_scale_xyz) or 1.0),
         dtype=x.dtype,

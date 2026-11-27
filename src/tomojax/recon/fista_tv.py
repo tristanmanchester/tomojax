@@ -36,6 +36,7 @@ from ._projection import (
     projection_operators,
     resolve_geometry_projector,
 )
+from ._shared_tv import tv_slabs
 from ._solver_validation import validate_fista_config
 from ._tv_metric import TVMetric, resolve_tv_metric, voxel_noise_weight
 from ._tv_ops import (
@@ -420,22 +421,42 @@ def _batched_projector(
     return model, backend, fista_view_batch(cfg, n_views)
 
 
-def _data_term(
-    grid: Grid, detector: Detector, projections: jnp.ndarray, runtime: FistaRuntime
-) -> Callable[[jnp.ndarray], tuple[jnp.ndarray, jnp.ndarray]]:
-    """Return the data term's value-and-gradient function."""
+def _fista_update(
+    grid: Grid,
+    detector: Detector,
+    projections: jnp.ndarray,
+    runtime: FistaRuntime,
+    lipschitz: jax.Array,
+    proximal: Callable[[jax.Array], jax.Array],
+) -> Callable[[jax.Array], tuple[jax.Array, jax.Array]]:
+    """Return the data loss and the next proximal-gradient iterate."""
+    slabs = tv_slabs(runtime, grid.shape)
     mask = runtime.volume_mask
     model, backend, batch = runtime.projector
+    shared_update = (
+        None
+        if slabs is None
+        else functools.partial(slabs.update, runtime=runtime, lipschitz=lipschitz)
+    )
     least_squares = least_squares_operators(
         runtime.poses, grid, detector, backend, batch, model, stream=runtime.stream,
+        shared_update=shared_update,
         split=runtime.split, data_term=runtime.config.data_term, det_grid=runtime.detector_grid,
     )  # fmt: skip
 
-    def value_and_grad(z: jnp.ndarray) -> tuple[jnp.ndarray, jnp.ndarray]:
-        v, g = least_squares(z if mask is None else z * mask, projections)
-        return v, g if mask is None else g * mask
+    @jax.jit
+    def evaluate(z: jax.Array) -> tuple[jax.Array, jax.Array]:
+        value, result = least_squares(z if mask is None else z * mask, projections)
+        return value, result if mask is None or slabs is not None else result * mask
 
-    return value_and_grad
+    if slabs is not None:
+        return evaluate
+
+    def update(z: jax.Array) -> tuple[jax.Array, jax.Array]:
+        value, gradient = evaluate(z)
+        return value, proximal(z - (1.0 / lipschitz) * gradient)
+
+    return update
 
 
 def _feasible_volume(x: jax.Array, runtime: FistaRuntime) -> jax.Array:
@@ -494,8 +515,8 @@ def _fista_step(
     grid: Grid, detector: Detector, projections: jax.Array, runtime: FistaRuntime, L: jax.Array
 ) -> Callable[..., FistaScanState]:
     cfg = runtime.config
-    val_and_grad = jax.jit(_data_term(grid, detector, projections, runtime))
     proximal = _fista_proximal(runtime, L)
+    update = _fista_update(grid, detector, projections, runtime, L, proximal)
 
     tolerance = cfg.tolerance or 0.0
 
@@ -507,9 +528,11 @@ def _fista_step(
         # The objective is tracked at z, where the gradient's residual already
         # gives the data term: evaluating it at x would cost a projection.
         z = state.z
-        data_loss_val, g = val_and_grad(z) if initial_data is None else initial_data
-        y = z - (1.0 / L) * g
-        x_new = proximal(y)
+        if initial_data is None:
+            data_loss_val, x_new = update(z)
+        else:
+            data_loss_val, gradient = initial_data
+            x_new = proximal(z - (1.0 / L) * gradient)
         t_new = 0.5 * (1.0 + jnp.sqrt(1.0 + 4.0 * state.t * state.t))
         z_new = x_new + ((state.t - 1.0) / t_new) * (x_new - state.x)
         z_new = _feasible_volume(z_new, runtime)
