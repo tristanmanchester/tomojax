@@ -60,7 +60,7 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5418,
+    "reportAny": 5408,
     "reportMissingImports": 58,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 868,
@@ -154,7 +154,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 69,
+    "tiny": 68,
     "forwarders": 7,
     "chained": 4
   },
