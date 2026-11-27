@@ -221,7 +221,7 @@ def _sampled_sums(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Cell sums of views ``picks`` between sets ``earlier`` and the next, and the sets' log ratio.
 
-    The sums are ``(6, views, cells_v, cells_u)`` (:func:`_view_sums`); the ratio
+    The sums are ``(7, views, cells_v, cells_u)`` (:func:`_view_sums`); the ratio
     is the mean over each cell's rows, ``(cells_v, columns)``.
     """
     rows, cols = fields.dark.shape
@@ -265,7 +265,7 @@ def _fitted(
     share of the broad weights, the fine-structure energy that matches neither
     set, the pixels, and the broad weight at each end where the views set it.
     """
-    around = _windows(cell_sums, 1)
+    around = _windows(cell_sums[:6], 1)
     normal = _normal(around, t)
     broad, share = _solve(_windows(normal, _BROAD) / 9, _LINEAR)
     # How far a cell's weights really lie from its region's: their scatter there beyond
@@ -283,10 +283,10 @@ def _fitted(
     found += [(area * broad[0]).sum(), (area * broad[1]).sum()]
     # A nearby change in texture informs the regional blend but does not make
     # this cell's own flat ratio a poor reference for the common row gain.
-    noise = np.sqrt(np.maximum(cell_sums[5].mean(0, dtype=np.float64), np.finfo(float).tiny))
-    significance = cell_sums[1].mean(0, dtype=np.float64) / noise
-    local_quiet = 1 / (1 + np.maximum(significance - 3.0, 0.0) ** 2)
-    return ends.astype(np.float32), _levels(ends, broad, share, ratio, local_quiet), np.array(found)
+    local_quiet = 1 / (1 + _structure_precision(cell_sums[1], cell_sums[5]))
+    levels = _levels(ends, broad, share, ratio, local_quiet)
+    levels += _row_transmission(cell_sums, t, ratio, ends, levels, share)
+    return ends.astype(np.float32), levels, np.array(found)
 
 
 @partial(jax.jit, static_argnames=("counts_steps",))
@@ -307,9 +307,10 @@ def _view_sums(
     Pixels are weighted by the transmission around them (the inverse variance of
     a logged count), in the regression and in the running mean the high-pass
     removes, so opaque regions neither enter the fit nor leak into their neighbors.
-    Returns ``(6, views, cells_v, cells_u)``: the product less the earlier set's
+    Returns ``(7, views, cells_v, cells_u)``: the product less the earlier set's
     noise, the difference's energy less both sets' noise, that energy, the
-    view's own energy, the weights, and the variance of the noise energy removed.
+    view's own energy, the weights, the variance of the noise energy removed,
+    and the weighted log signal relative to the earlier flat.
     """
     x = raw.astype(jnp.float32)
     for step in counts_steps:
@@ -340,6 +341,7 @@ def _view_sums(
             _cells(weight * view * view),
             _cells(weight),
             _cells(2 * noise * noise),  # a squared Gaussian's variance is twice its mean squared
+            _cells(weight * y),
         ]
     )
 
@@ -371,6 +373,12 @@ def _windows(sums: np.ndarray, reach: int) -> np.ndarray:
     return total
 
 
+def _structure_precision(signal: np.ndarray, doubt: np.ndarray) -> np.ndarray:
+    """Precision supported by flat structure more than three standard errors above noise."""
+    error = np.sqrt(np.maximum(doubt.mean(0, dtype=np.float64), np.finfo(np.float64).tiny))
+    return np.maximum(signal.mean(0, dtype=np.float64) / error - 3.0, 0.0) ** 2
+
+
 def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
     """What the views say of the later set's weight at both ends of an interval.
 
@@ -393,8 +401,7 @@ def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
     tiny = np.finfo(np.float64).tiny
     design = np.maximum(signal, 0.0) * np.stack([1 - t, t])[:, :, None, None]
     variance = np.maximum(energy * residual / np.maximum(mass, tiny), tiny)
-    error = np.sqrt(np.maximum(doubt.mean(0), tiny))
-    known = np.maximum(signal.mean(0) / error - 3.0, 0.0) ** 2
+    known = _structure_precision(signal, doubt)
     huber = np.ones_like(product)
     inflation = bound = np.ones(product.shape[1:])
     normal = np.zeros((5, *product.shape[1:]))
@@ -512,3 +519,57 @@ def _levels(
     for u in range(cols - 2, -1, -1):
         right[..., u] -= over[..., u] * right[..., u + 1]
     return np.asarray(right + gain, dtype=np.float32)
+
+
+def _row_transmission(
+    sums: np.ndarray,
+    t: np.ndarray,
+    ratio: np.ndarray,
+    ends: np.ndarray,
+    levels: np.ndarray,
+    share: np.ndarray,
+) -> np.ndarray:
+    """The minimum common gain supported by excess transmission in a band of rows.
+
+    The unknown sample can attenuate the mean signal even in its brightest
+    view. Use it only as a one-sided measurement. Pool along the entire row
+    band so the shape of the sample cannot become a spatial flat correction.
+    Group neighboring views and subtract three standard errors, including their
+    angular scatter, before fitting the two endpoint log gains.
+    """
+    starts = np.arange(0, ratio.shape[1], _CELL)
+    valid = np.isfinite(ratio)
+    columns = np.maximum(1, np.add.reduceat(valid, starts, axis=-1, dtype=np.int64))
+    mean = np.add.reduceat(np.nan_to_num(ratio), starts, axis=-1) / columns
+    level = np.add.reduceat(levels * valid, starts, axis=-1) / columns
+    a = t[:, None, None]
+    weight = (1 - a) * ends[0] + a * ends[1]
+    blend = np.log1p(weight * np.expm1(mean)) + (1 - a) * level[0] + a * level[1]
+    mass = np.maximum(sums[4].sum(-1), 1.0)
+    excess = (sums[6] - sums[4] * blend).sum(-1) / mass
+    noise = np.sqrt(sums[3].sum(-1)) / mass
+    groups = np.array_split(np.arange(len(t)), int(np.sqrt(len(t))))
+    lower = np.stack(
+        [
+            excess[g].mean(0) - 3 * np.maximum(noise[g].mean(0), excess[g].std(0)) / np.sqrt(len(g))
+            for g in groups
+        ]
+    )
+    # At a given slope the smallest intercept consistent with the data is
+    # max(lower - time * slope). The squared length of the endpoint pair is
+    # convex in slope. Its derivative has the sign of end - time * (start + end)
+    # at the active bound. Include zero bounds at both acquisition endpoints.
+    pad = np.zeros_like(lower[:1])
+    lower = np.concatenate([pad, lower, pad])
+    time = np.r_[0.0, [t[g].mean() for g in groups], 1.0][:, None]
+    hi = 2 * lower.max(0)  # the constant maximum is already a feasible pair
+    lo = -hi
+    for _ in range(24):  # float32 precision in the two endpoint gains
+        slope = (lo + hi) / 2
+        intercepts = lower - time * slope
+        start = intercepts.max(0)
+        end = start + slope
+        falling = end < time[intercepts.argmax(0), 0] * (start + end)
+        lo, hi = np.where(falling, slope, lo), np.where(falling, hi, slope)
+    support = (share * sums[4].mean(0)).sum(-1) / mass.mean(0)
+    return (np.stack([start, end]) * support)[:, :, None]
