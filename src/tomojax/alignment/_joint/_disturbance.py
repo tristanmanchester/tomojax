@@ -95,12 +95,15 @@ def disturbed_report(
     ranges: list[list[int]] = np.column_stack((starts, ends + 1)).tolist()
     degrees: list[list[float]] = np.column_stack((angles[starts], angles[ends])).tolist()
     if ranges:
-        spans = ", ".join(f"{a:.2f}° to {b:.2f}°" for a, b in degrees[:12])
+        spans = ", ".join(
+            f"{a:.2f}°" if a == b else f"{a:.2f}° to {b:.2f}°" for a, b in degrees[:12]
+        )
         if len(degrees) > 12:
             spans += f", and {len(degrees) - 12} more ranges"
         count = int(selected.sum())
+        unit = "view" if count == 1 else "views"
         message = (
-            f"A possible object crosses the field of view in {count} views ({spans}). "
+            f"A possible object crosses the field of view in {count} {unit} ({spans}). "
             "Inspect those projections and pass confirmed ranges to AlignConfig(exclude_views=...)."
         )
     elif np.isfinite(scores).any():
