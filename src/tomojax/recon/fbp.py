@@ -234,7 +234,7 @@ def _filter_rows_bounded(
     return values.reshape(batches * size, rows.shape[1], detector.nu)[:n]
 
 
-def _parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
+def parallel_filter_batch_size(n_views: int, nv: int, n_fft: int) -> int:
     """Use a conservative 512 MiB FFT-workspace estimate, not a VRAM guarantee."""
     capacity = max(1, (512 * 1024**2) // (16 * nv * n_fft))
     return n_views if capacity >= n_views else 1 << (capacity.bit_length() - 1)
@@ -803,7 +803,7 @@ def _plan(
         grid=grid,
         detector=filter_detector,
         backend=backend,
-        batch=_parallel_filter_batch_size(
+        batch=parallel_filter_batch_size(
             n_views, filter_detector.nv * n_fft_v, 2 * (filter.spectrum.shape[0] - 1)
         ),
         z_mode=("integer" if supports_parallel_fbp_z_integer(grid, detector) else "fixed")

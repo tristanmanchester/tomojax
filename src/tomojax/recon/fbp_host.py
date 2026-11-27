@@ -37,6 +37,7 @@ from .fbp import (
     _parallel_filter_detector,  # pyright: ignore[reportPrivateUsage]
     _view_weights,  # pyright: ignore[reportPrivateUsage]
     finite_projections,
+    parallel_filter_batch_size,
     row_filter,
     supports_parallel_fbp_z_integer,
 )
@@ -568,21 +569,28 @@ def _run_slabs[T](
                 local_poses[:, 2, 3] = (v - source_start) * detector.dv
             finite = finite_projections(source)
             finite.copy_to_host_async()
+            ramp = row_filter(config.filter, local_detector, source, config.exterior)
+            cache = backend == "cuda" and integer
+            batch = (
+                parallel_filter_batch_size(len(poses), rows, 2 * (ramp.measured.size - 1))
+                if cache
+                else min(32, len(poses))
+            )
             volume = _fbp_from_host(
                 local_poses,
                 source,
                 scale,
                 params,
-                row_filter(config.filter, local_detector, source, config.exterior),
+                ramp,
                 0.0,
                 grid=local_grid,
                 detector=local_detector,
                 backend=backend,
-                batch_size=min(32, len(poses)),
+                batch_size=batch,
                 z_mode="integer" if integer else "fixed",
                 separable=True,
                 check_finite=False,
-                cache_filtered=backend == "cuda" and integer,
+                cache_filtered=cache,
             )
             packed = volume[: stop - at]
             packed.copy_to_host_async()

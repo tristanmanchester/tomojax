@@ -70,10 +70,14 @@ def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, ba
     if requested is not None:
         depth = operator.index(requested)
     elif backend == "cupy":
+        import cupy
+
         shape, _ = transform_grid(grid, detector)
         # Several transform buffers, workspaces and pending transfers coexist.
         # Bounding one padded FP32 plane stack avoids expensive retry cascades.
-        planes = max(1, (256 * 1024**2) // (4 * shape[0] * shape[1]))
+        free, _ = cupy.cuda.runtime.memGetInfo()
+        budget = min(512 * 1024**2, free // 32)
+        planes = max(1, budget // (4 * shape[0] * shape[1]))
         depth = min(16, 1 << (planes.bit_length() - 1))
     else:
         depth = 16

@@ -111,7 +111,10 @@ def measured_and_exterior(
     fits = Continuation(np.asarray(distance), nu, nu)
     rows = views * weights[:, None, :]
     low, high = fits.amplitudes(
-        jnp.asarray, rows[..., : fits.window], rows[..., -fits.window :], radius
+        partial(jnp.asarray, dtype=rows.dtype),
+        rows[..., : fits.window],
+        rows[..., -fits.window :],
+        radius,
     )
     correction = low * profiles[0] + high * profiles[1]
     return rows * cosine[:, nu : 2 * nu], jnp.swapaxes(correction, 1, 2)

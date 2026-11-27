@@ -51,7 +51,8 @@ class FourierConfig:
     kernel. It requires the optional ``fourier-cuda12`` extra. ``numpy`` uses
     double-precision FFTs and a vectorized interpolation reference. Both return
     float32 host arrays. ``slices_per_batch=None`` chooses up to 16 slices,
-    targeting a 256 MiB padded CUDA FP32 plane stack (at least one slice).
+    bounding its padded CUDA FP32 plane stack to 1/32 of free memory and
+    512 MiB (at least one slice).
     NumPy defaults to 16; an explicit integer fixes the requested depth.
     CUDA allocation exhaustion still halves it down to one slice. FFT plans and
     allocator caches consume additional memory. Large CUDA calls overlap host

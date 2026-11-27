@@ -40,7 +40,7 @@ def filtered_profiles(
     nu = len(distance) // 3
     fits = Continuation(np.asarray(distance), nu, nu)
     unit = jnp.ones_like(radius)
-    low, high = fits.tails(jnp.asarray, unit, unit, radius)
+    low, high = fits.tails(partial(jnp.asarray, dtype=radius.dtype), unit, unit, radius)
     zeros = jnp.zeros_like(low)
     pair = jnp.stack(
         (
