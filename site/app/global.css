@@ -2,32 +2,87 @@
 @import 'fumadocs-ui/css/neutral.css';
 @import 'fumadocs-ui/css/preset.css';
 
-/* One accent color, a deep teal; everything else is the Fumadocs default. */
+/* Terrarium palette shared with TomoJAX Studio (studio/DESIGN.md). */
 @theme {
-  --color-fd-primary: hsl(190, 82%, 28%);
-  --color-fd-ring: hsl(190, 82%, 38%);
+  --color-fd-background: #fcfdf9;
+  --color-fd-foreground: #24382d;
+  --color-fd-muted: #f0f3ec;
+  --color-fd-muted-foreground: #596a5d;
+  --color-fd-popover: #fcfdf9;
+  --color-fd-popover-foreground: #24382d;
+  --color-fd-card: #f5f6f0;
+  --color-fd-card-foreground: #24382d;
+  --color-fd-border: #dce3d8;
+  --color-fd-primary: #315d46;
+  --color-fd-primary-foreground: #fcfdf9;
+  --color-fd-secondary: #f0f3ec;
+  --color-fd-secondary-foreground: #24382d;
+  --color-fd-accent: #e2eadf;
+  --color-fd-accent-foreground: #24382d;
+  --color-fd-ring: #315d46;
+  --color-fd-overlay: rgba(36, 56, 45, 0.22);
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-jetbrains), ui-monospace, SFMono-Regular, monospace;
 }
 
-:root {
-  --tj-inline-code-bg: hsl(200, 18%, 90%);
-  --tj-inline-code-border: hsl(200, 18%, 81%);
-  --tj-inline-code-fg: hsl(195, 76%, 22%);
-  --tj-inline-code-link-bg: hsl(192, 32%, 90%);
-  --tj-inline-code-link-border: hsl(192, 30%, 76%);
-  --tj-inline-code-link-fg: hsl(190, 82%, 26%);
+/* Callout semantic colors are read via runtime var() references, so keep them static. */
+@theme static {
+  --color-fd-info: #315d46;
+  --color-fd-success: #315d46;
+  --color-fd-warning: #8b5e27;
+  --color-fd-error: #a3493b;
 }
 
+:root {
+  --tj-inline-code-bg: #e2eadf;
+  --tj-inline-code-border: #cbd8c6;
+  --tj-inline-code-fg: #204433;
+  --tj-inline-code-link-bg: #d9e6d6;
+  --tj-inline-code-link-border: #b2c9b6;
+  --tj-inline-code-link-fg: #265b49;
+  --tj-figure-shadow:
+    0 1px 2px rgba(36, 56, 45, 0.06),
+    0 10px 26px -10px rgba(36, 56, 45, 0.16);
+}
+
+/* Dark counterpart anchored on Studio's scientific canvas (#111A17) and dark brand mark. */
 .dark {
-  --color-fd-primary: hsl(188, 70%, 62%);
-  --color-fd-ring: hsl(188, 70%, 52%);
-  --tj-inline-code-bg: hsl(200, 18%, 16%);
-  --tj-inline-code-border: hsl(200, 20%, 27%);
-  --tj-inline-code-fg: hsl(188, 70%, 77%);
-  --tj-inline-code-link-bg: hsl(192, 30%, 17%);
-  --tj-inline-code-link-border: hsl(190, 34%, 30%);
-  --tj-inline-code-link-fg: hsl(188, 74%, 66%);
+  --color-fd-background: #111a17;
+  --color-fd-foreground: #edf2ea;
+  --color-fd-muted: #1c2a24;
+  --color-fd-muted-foreground: #b1beb4;
+  --color-fd-popover: #192621;
+  --color-fd-popover-foreground: #edf2ea;
+  --color-fd-card: #16211d;
+  --color-fd-card-foreground: #edf2ea;
+  --color-fd-border: #283a32;
+  --color-fd-primary: #8cc2a1;
+  --color-fd-primary-foreground: #111a17;
+  --color-fd-secondary: #1e2e27;
+  --color-fd-secondary-foreground: #edf2ea;
+  --color-fd-accent: #253830;
+  --color-fd-accent-foreground: #edf2ea;
+  --color-fd-ring: #8cc2a1;
+  --color-fd-overlay: rgba(7, 12, 10, 0.55);
+  --color-fd-info: #8cc2a1;
+  --color-fd-success: #94be9a;
+  --color-fd-warning: #d6b991;
+  --color-fd-error: #e08b7c;
+  --tj-inline-code-bg: #1d2c26;
+  --tj-inline-code-border: #2e443b;
+  --tj-inline-code-fg: #cce3d3;
+  --tj-inline-code-link-bg: #1e322a;
+  --tj-inline-code-link-border: #365547;
+  --tj-inline-code-link-fg: #8cc2a1;
+  --tj-figure-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.28),
+    0 12px 28px -10px rgba(0, 0, 0, 0.55);
+}
+
+.dark #nd-sidebar {
+  --color-fd-muted: #1e2d27;
+  --color-fd-secondary: #22332c;
+  --color-fd-muted-foreground: #b1beb4;
 }
 
 html {
@@ -74,4 +129,11 @@ html > body[data-scroll-locked] {
 .prose td code,
 .prose th code {
   overflow-wrap: anywhere;
+}
+
+/* Figures and Studio screenshots share the Terrarium surface, so frame them cleanly. */
+.prose :where(img):not(:where(.not-prose, .not-prose *)) {
+  border: 1px solid var(--color-fd-border);
+  border-radius: 10px;
+  box-shadow: var(--tj-figure-shadow);
 }
