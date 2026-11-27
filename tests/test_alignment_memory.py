@@ -130,11 +130,10 @@ def _order(small, large, ratio):
 
 @pytest.mark.gpu
 def test_no_level_function_grows_faster_than_the_views(monkeypatch):
-    # A reserve counted in volumes and a plan's prior term are only right if what each compiled
-    # function holds grows no faster than the views. At 100, 300 and 900 views on one grid and
-    # detector, each function's temporaries, outputs and captured constants are measured; the
-    # growth order from 300 to 900 must be at most 1.3 (linear, with fixed parts).
-    counts = (100, 300, 900)
+    # Check captures on a small fit, then measure growth within the large-scan spline
+    # representation. Crossing from the explicit basis to the interval tree changes XLA's
+    # fixed workspace and cannot give the scaling order of either representation.
+    counts = (100, 900, 2700)
     profiles = [level_memory(views, monkeypatch) for views in counts]
     ratio = counts[2] / counts[1]
     superlinear = {}
@@ -144,7 +143,9 @@ def test_no_level_function_grows_faster_than_the_views(monkeypatch):
             order = _order(small, memory[kind], ratio)
             if order > 1.3:
                 superlinear[name] = max(order, superlinear.get(name, 0.0))
-    assert not superlinear, f"growing faster than the views (order from 300 to 900): {superlinear}"
+    assert not superlinear, (
+        f"growing faster than the views from {counts[1]} to {counts[2]}: {superlinear}"
+    )
     # No function captures a volume or a stack as a compiled constant: held by the program for
     # its life, beside the level's own arrays (the start's FISTA once held the shared images).
     captured = {
