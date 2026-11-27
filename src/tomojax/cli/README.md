@@ -65,7 +65,8 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   another scan's HDF5/NeXus file (taking only its flat or dark frames). Bracketing
   multi-frame flat sets are weighted from a sample of the views by default while
   interpolating common row gain by position; when views move the flat by more than
-  1% over more than 1% of the detector, `correct` prints a warning naming both
+  1% over more than 1% of the detector, `correct` prints a warning explaining when a
+  shadow in both flat sets leaves the incident intensity uncertain and naming both
   remedies (`--flats` from another scan, or the expert `--flat-weights position`
   flag, also `flat_weights = "position"` in `--config`; see
   [flat fields](../corrections/README.md#flat-fields)). `--detector-center U V`
@@ -84,12 +85,19 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--region cyl` zeros the volume outside the cylinder every view sees. By
   default (`exterior = "cylinder"`), `fbp` (including cone-beam FDK) and
   `fourier` continue each detector row past both edges with a cylinder model
-  for truncated scans. Iterative methods use a coarse fit to those rows to model the contribution from outside the grid. Pass `exterior = "zero"` in `--config` with an explicit
-  `--method` to assume zero beyond the detector. `reconstruct` records
-  `truncation` (`edge_ratio`, `outside_fraction`, `interior_shift`, `radius`,
-  `field_of_view_radius`) in the output file and `--manifest`, and appends
-  `, N% of attenuation beyond the detector` to its closing line whenever
-  `outside_fraction` rounds to at least 1% (0.5% or above). Omitting
+  for truncated scans, while iterative methods fit a coarse model outside the
+  reconstruction grid from those continued rows and account for its projections
+  during the solve (subtracting it from the fit data for `cgls`, `sirt`, `fista`,
+  and `spdhg`, or adding it to the Poisson mean for `mlem`). Pass `exterior = "zero"`
+  in `--config` with an explicit `--method` to assume zero beyond the detector.
+  `reconstruct` records `truncation` (`edge_ratio`, `outside_fraction`,
+  `interior_shift`, `radius`, `field_of_view_radius`, plus `outside_grid`,
+  `data_model`, and `background_treatment` for iterative methods) in the output
+  file and `--manifest`, and appends `, N% of attenuation beyond the detector`
+  to its closing line whenever `outside_fraction` rounds to at least 1% (0.5% or
+  above), followed for iterative methods with exterior modeling active by
+  `, modeled exterior subtracted from fit data` (or
+  `, modeled exterior added to the Poisson mean` for `mlem`). Omitting
   `--iterations` enables automatic stopping for `cgls` and full-data `sirt`
   (estimated projection discrepancy, capped at 50 updates, with FISTA momentum
   enabled on full-data `sirt` when `relaxation <= 1`) and for `fista` (estimated
@@ -226,7 +234,7 @@ completed work in the unit named by `started`. An unknown total is `null`,
 and a later advance can revise the total. Times are seconds since the watch began.
 The [v2 JSON schema](../../../docs/protocol/progress.schema.json) defines the records.
 
-A successful command exits 0. Operational failures emit an `error` with a
+A successful command exits 0 and ends the JSON stream with a `result` record whose `outputs` list each written file and whose `info.summary.corrections` carries the scan's ordered correction history for scan-producing commands (`correct`, `reconstruct`, `align`, and `simulate`). Operational failures emit an `error` with a
 machine-readable kind and exit 1. Cancellation closes active tasks, emits a
 `canceled` error and exits 130. An internal exception emits an `internal` error,
 prints its traceback on stderr with where to report the bug, and exits 1.

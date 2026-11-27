@@ -162,7 +162,7 @@ uv run python examples/gallery/sirt_momentum.py Walnut1 sirt-momentum.png
 ```
 
 SIRT uses the exact matched projector pair with row and column normalization;
-`SIRTConfig()` defaults to `iterations=None, subsets=1, relaxation=1.0, acceleration=None, lower_bound=None, upper_bound=None, support=None`.
+`SIRTConfig()` defaults to `exterior="cylinder", iterations=None, subsets=1, relaxation=1.0, acceleration=None, lower_bound=None, upper_bound=None, support=None`.
 Pass `lower_bound=0` for nonnegativity.
 More subsets select interleaved OS-SART, with one full sweep per iteration;
 one view per subset gives SART. Bounds apply after every subset update, and
@@ -216,14 +216,18 @@ The numerical primitives fit the data they receive, and `tj.reconstruct` and
 `tj.reconstruct_slabs` handle a scan extending beyond the detector.
 
 For iterative reconstruction a coarse fit to the completed rows estimates the
-exterior contribution to each measured ray. Its amplitude comes from continued
-rays that miss the entire output grid. CGLS, SIRT, FISTA and SPDHG subtract this
-background from private measurements. MLEM includes the nonnegative background
-in its Poisson mean. Its subset update uses the share of that mean produced
-inside the grid to minimize a separable likelihood bound. Both treatments keep
-the measured scan and the matched projector pair. `outside_grid` gives the
-signed sum of the modeled background divided by the sum of the measurements. `background_treatment` records `subtracted`,
-`additive_poisson` or `none`.
+exterior contribution to each measured ray (skipped when the detector edges are
+zero or every extended ray intersects the grid). Its amplitude comes from
+continued rays that miss the entire output grid. CGLS, SIRT, FISTA, and SPDHG
+subtract this background from private measurements. MLEM includes the
+nonnegative background in its Poisson mean; its subset update uses the share of
+that mean produced inside the grid to minimize a separable likelihood bound.
+Both treatments keep the measured scan and the matched projector pair, and an
+FBP or FDK warm start uses the same `exterior` setting. In `info["truncation"]`,
+`outside_grid` gives the signed sum of the modeled background divided by the sum
+of the measurements, `data_model` records `"continued_exterior"` or
+`"measured"`, and `background_treatment` records `"subtracted"`,
+`"additive_poisson"`, or `"none"`.
 
 Direct FBP pads, filters and backprojects one view batch at a time. On a rolled
 detector, FBP and FDK filter along physical horizontal detector lines (quarter

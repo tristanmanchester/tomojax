@@ -11,7 +11,8 @@
 - FDK, parallel FBP, and Fourier inversion filter rolled measurements along physical horizontal detector lines. Quarter turns exchange rows and columns without interpolation.
 - FDK computes angular weights, repeated-view grouping, and short-scan coverage from the effective source orbit, including pose-carried angles. Fourier inversion accepts per-view axial rotations about `z`.
 - NXtomo files written by GDA with a SmarAct ψ or z-rotation command load their projection angles when the NXtomo entry omits them, warning and reading degrees if the command carries a millimeter unit label.
-- Parallel half-acquisition scans use their full-turn overlap for the rotation-center fit, detector-derived volume size and direct reconstruction. A corrected scan saved before the fit retains automatic grid sizing when reopened. Older files that record only the grid dimensions and pitches keep their saved extent. Inspection reports the complete field and overlap when the axis is known.
+- Parallel half-acquisition scans use their full-turn overlap for the rotation-center fit, detector-derived volume size, and direct reconstruction. A saved scan records whether its grid was derived from the detector or stated by the file or caller, so a corrected scan saved before the center fit (or binned and reopened) retains automatic grid sizing when reopened while a stated grid keeps its extent. Older files that record only grid dimensions and pitches keep their saved extent. Inspection reports the complete field and overlap when the axis is known.
+- Worker, MCP, and CLI `--progress json` replies include the scan's ordered correction history in `corrections` (`info.summary.corrections` in the worker and CLI; `structuredContent.corrections` in MCP, with bulk arrays externalized under `/corrections/...` in `info.arrays`). Worker and MCP `save` replies return the written dataset and manifest paths in `paths`.
 - File writers protect the files behind live scans, including linked HDF5 detector data,
   vendor frame files and separate calibration. The worker, MCP, CLI and Python reject
   output names and checkpoint directories that would replace an input, including aliases.
@@ -104,7 +105,9 @@
   `flat_weights`, `flat_weights_from_views`, `later_flat_weight`,
   `flat_structure_unmatched`, and `flat_moved_by_views` (the detector fraction where
   views move the flat by more than 1%); above 1% of the detector, a warning reports the
-  shift and names both remedies ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
+  shift, explains that a shadow covering both flat sets with no open-beam views leaves
+  the incident intensity uncertain, and names both remedies (`flats=` from a matching
+  scan or `flat_weights="position"`; [flat fields](src/tomojax/corrections/README.md#flat-fields)).
 - `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI;
   `flats` and `darks` on worker and MCP `open`) use that file's flat or dark frames.
   Previously every frame in the file was averaged.
@@ -149,12 +152,19 @@
   of `tj.reconstruct_slabs` carries the record of its own rows, and `tomojax reconstruct`
   and MCP `reconstruct` append the share of attenuation beyond the detector when it
   rounds to at least 1%.
-- By default CGLS, SIRT, FISTA and SPDHG fit the measured rays after subtracting the
-  contribution from outside the reconstruction grid. A coarse fit to the cylinder-continued
-  rows estimates that contribution. MLEM adds the estimated exterior to the predicted counts.
-  Set `exterior="zero"` in the method configuration to fit the original data. An FBP or
-  FDK warm start uses the same setting. The iterative truncation record gives the fitted
-  share in `outside_grid` and the operation in `background_treatment`.
+- Iterative reconstruction (`cgls`, `sirt`, `fista`, `spdhg`, and `mlem`) models material
+  beyond the detector by default (`exterior="cylinder"`) through Python, CLI `--config`
+  files, the worker, and MCP, including `reconstruct_slabs` (`sirt` and `mlem`) and
+  checkpoints. A coarse fit to the cylinder-continued rows estimates the contribution from
+  outside the reconstruction grid (skipped when detector edges are zero or every extended
+  ray hits the grid); CGLS, SIRT, FISTA, and SPDHG subtract it once before the fine solve,
+  and MLEM adds its nonnegative estimate to predicted counts at every update. Set
+  `exterior="zero"` in the method configuration to fit the original data directly; an FBP
+  or FDK warm start uses the same setting, and the choice is saved in `info["config"]`.
+  The iterative truncation record adds `outside_grid`, `data_model`
+  (`"continued_exterior"` or `"measured"`), and `background_treatment` (`"subtracted"`,
+  `"additive_poisson"`, or `"none"`), and `tomojax reconstruct` and MCP summaries append
+  the background treatment when an exterior fit ran.
 - Multi-GPU iterative reconstruction scales faster on CUDA (`devices=` on `cgls` and `fista`).
   The axial parallel-beam CUDA backprojector now schedules neighboring threads along the middle
   view's dominant plane axis, evening backprojection time across contiguous angular ranges on
