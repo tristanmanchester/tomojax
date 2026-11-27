@@ -4,7 +4,7 @@ Speed, accuracy, scaling, and memory of TomoJAX on parallel-beam, laminography, 
 
 ## Full-volume speed on a synchrotron scan
 
-Diamond K11 (DIAD) scan `k11-52544` (8,000 views of 2,160 × 2,560 pixels, 0.54 µm pitch) was reconstructed to a 56.6 GB `float32` volume on exclusive 40-core nodes with Tesla V100S 32 GB or RTX PRO 6000 Blackwell 96 GB GPUs. Each time is the median of three fresh launches from startup through final `fsync` with pre-warmed files and fresh caches; TomoJAX and httomo read the original HDF5 layout, while the other libraries read a row-chunked copy whose 96.0 s conversion is excluded.
+Diamond K11 (DIAD) scan `k11-52544` (8,000 views of 2,160 × 2,560 pixels, 0.54 µm pitch) was reconstructed to a 56.6 GB single-precision volume on exclusive 40-core nodes with Tesla V100S 32 GB or RTX PRO 6000 Blackwell 96 GB GPUs. Each time is the median of three fresh launches from startup until the volume is flushed to disk, with pre-warmed files and fresh caches; TomoJAX and httomo read the original HDF5 layout, while the other libraries read a row-chunked copy whose 96.0 s conversion is excluded.
 
 ![Four-panel log-scale chart of full-volume times (medians and repeat ranges) for nine libraries on 1 and 4 V100S and 1 and 8 Blackwell GPUs, Fourier methods above the line and FBP below.](images/speed-comparison.png)
 
@@ -56,7 +56,7 @@ Convergence uses three-orbit FIPS Walnut 1 (2×2 binned, 501³ grid) and a noise
 
 All three CGLS solvers reach the same best held-out residual within 0.5% and semi-converge past it. Because ASTRA's backprojector is approximate, its fitted residual rises after 226 updates and its phantom error quadruples by 1,280. TIGRE stops early after detecting divergence.
 
-Warm FDK on one walnut orbit takes 1.02 s in TomoJAX versus 1.71 s in ASTRA at matched error (0.091). On a 1024³ scan, `fdk_host` takes 8.0 s warm versus 20.3 s in ASTRA and 30.7 s in TIGRE. Twelve iterations of accelerated nonnegative SIRT beat 24 iterations in ASTRA and TIGRE at equal or lower residual across four real scans.
+Warm FDK on one walnut orbit takes 1.02 s in TomoJAX versus 1.71 s in ASTRA at matched error (0.091). On a 1024³ scan, FDK from host memory back to host memory takes 8.0 s warm versus 20.3 s in ASTRA and 30.7 s in TIGRE. Twelve iterations of accelerated nonnegative SIRT beat 24 iterations in ASTRA and TIGRE at equal or lower residual across four real scans.
 
 ![Warm SIRT times of TomoJAX, ASTRA and TIGRE on the walnut with one and three orbits, the Nikon seeds and the Zeiss HDtomo scan, each with its common-projector residual.](images/sirt-times.png)
 
@@ -90,24 +90,24 @@ Warm scaling with `devices=` on Diamond `k11-52567` (64 × 2,560 × 2,560, 50 it
 
 ### Large volumes, memory, and checkpointing
 
-Volumes larger than VRAM stream in slabs automatically or through `tj.reconstruct_slabs`.
+Volumes larger than GPU memory are reconstructed in slabs and streamed to host memory or disk ([large scans](large-scans.md)).
 
 | Scan and workflow | Hardware | Time | Peak GPU / host RAM |
 | --- | --- | ---: | ---: |
 | DIAD `k11-52544` streaming Fourier (56.6 GB) | 1 Blackwell / 1 V100S | 27.87 s / 74.51 s | 5.2 / 17.3 GiB (Blackwell) |
-| Diamond I12 `reconstruct_slabs` SIRT (56.6 GB) | RTX 4070 Laptop (8 GB) | 1436 s | 1.41 GB / 3.7 GB |
-| Zeiss CuO2 `reconstruct_slabs` FDK (31 GiB) | RTX 4070 Laptop (8 GB) | 1054 s | 4.39 GiB / 14.2 GB |
-| 1024³ laminography `fbp_host` (4.3 GB) | RTX 4070 Laptop (8 GB) | 37 s | two x-slabs |
+| Diamond I12, SIRT in slabs written to disk (56.6 GB) | RTX 4070 Laptop (8 GB) | 1436 s | 1.41 GB / 3.7 GB |
+| Zeiss CuO2, FDK in slabs written to disk (31 GiB) | RTX 4070 Laptop (8 GB) | 1054 s | 4.39 GiB / 14.2 GB |
+| 1024³ laminography, FBP in two slabs (4.3 GB) | RTX 4070 Laptop (8 GB) | 37 s | — |
 
 Resident iterative solves on Diamond K11-54013 on an 8 GB GPU use 2.4–4.6 GiB VRAM across SPDHG-TV, SIRT, FISTA-TV, CGLS, and MLEM. SPDHG-TV holds five volumes in VRAM and cannot stream to host slabs.
 
-Checkpointing (`checkpoint=DIR`) a 64-row CGLS run on one V100S adds 1.6% wall time and no extra VRAM. Each periodic save writes 9.6 GiB in 9.4 s (1.7 GiB extra host RSS), and resumed outputs match uninterrupted runs bit for bit across kills.
+Checkpointing (`checkpoint=DIR`) a 64-row CGLS run on one V100S adds 1.6% wall time and no extra VRAM. Each periodic save writes 9.6 GiB in 9.4 s (1.7 GiB extra host memory), and resumed outputs match uninterrupted runs bit for bit across kills.
 
 ## Alignment
 
 ### Known-pose twins and real scans
 
-Default `tj.align` (`resolution=320`, one GPU; time starts after decoding). Native-pitch twins add drift, slips, 0.1° angular jitter, column offsets, and 20,000-photon noise; landmark RMS is in native pixels after removing one rigid gauge.
+`tj.align` with its default settings on one GPU; times start once the scan is decoded. Native-pitch twins add drift, slips, 0.1° angular jitter, column offsets, and 20,000-photon noise; landmark RMS is in native pixels after removing one rigid gauge.
 
 | Scan and fit | GPU | Time (s) | Accuracy |
 | --- | --- | ---: | --- |
@@ -123,13 +123,13 @@ On Walnut 1, alignment lowers FDK support error from 0.26 to 0.11, matching the 
 
 ![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
 
-- **Single GPU and host RAM:** joint alignment uses one GPU even when several are visible. The full `float32` stack drives host RSS, reaching 173 GiB on 8,000-view `k11-52544` (1073 s on V100S).
+- **Single GPU and host RAM:** joint alignment uses one GPU even when several are visible. The full single-precision projection stack sets host memory, which reaches 173 GiB on 8,000-view `k11-52544` (1073 s on V100S).
 - **Crossing shadows:** attenuation crossing the detector is fitted as motion, pulling horizontal translation on `k11-52544` to 22.4 px versus 2.89 px without the shadow.
 - **Axial rotations:** per-view rotations are weakly determined on axial parallel scans, worsening 5 of 13 synthetic scans and raising held-out error by 2% on `k11-52544`.
 
 ### Axial rotation center
 
-Direct `tj.align(scan, fit="center")` on unposed axial parallel half-turns (CPU) recovers the axis under severe detector defects. Across 80 low-contrast 512-column scans with rings, streaks, and flat drift, its median error was 0.32 px (worst 2.4 px). Seeded joint fitting had 3.0 px median error, and opposite-views registration had 104 px. On 22 real DIAD specimen bands (4.7 s median), direct centering agreed with `method="opposite-views"` to 0.020 px median.
+Direct `tj.align(scan, fit="center")` on unposed axial parallel half-turns (CPU) recovers the axis under severe detector defects. Across 80 low-contrast 512-column scans with rings, streaks, and flat drift, its median error was 0.32 px (worst 2.4 px). Seeded joint fitting had 3.0 px median error, and opposite-views registration had 104 px. On 22 real DIAD specimen bands (4.7 s median), direct centering agreed with opposite-views registration to 0.020 px median.
 
 - **Limits:** smooth, nearly stationary objects with defects reached 3.3 px error, spoiled-flat setup scans missed ±120 px crops by up to 11 px, and dark bands return arbitrary offsets.
 
