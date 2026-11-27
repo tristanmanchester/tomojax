@@ -194,9 +194,11 @@ continuations take their amplitudes from that view's own edge values. The
 continuation ends within one detector width, and a row that reaches its edges
 at zero continues as zero, so a contained object reconstructs as before.
 `fourier` averages the amplitudes over a sixteenth of the half turn, because
-its Cartesian resampling takes only two views at each low frequency. FDK
-continues rows after applying angular weights (so an offset-detector edge
-covered by opposing views continues as zero). Filtered rows are kept as far as
+its Cartesian resampling takes only two views at each low frequency. On an
+offset-detector full turn (parallel or cone FDK), an inner edge covered by
+opposing views continues as zero, so only the outer edge is continued. On a
+rolled detector, the fit and truncation record use the endpoints of measured
+horizontal chords. Filtered rows are kept as far as
 the output grid projects, in FDK as in parallel `fbp`, so voxels outside the
 detector's inscribed field of view hold the reconstruction of the continued
 scan (`region="cyl"` masks them). On CUDA, `fourier` transforms measured
@@ -206,12 +208,23 @@ shared-cosine FDK precompute the filtered exterior profiles across views. The
 absolute interior level is only as accurate as the cylinder model, and
 non-cylindrical exteriors (such as a square bar) retain partial cupping and rim
 error. `info["truncation"]` records `edge_ratio`, `outside_fraction`,
-`interior_shift`, `radius` and `field_of_view_radius` for every method (each
+`interior_shift`, `radius` and `field_of_view_radius` (the nearer edge, or the
+far edge on an offset axial parallel full turn, and the median over sampled
+horizontal chords on a rolled detector) for every method (each
 slab of `reconstruct_slabs` carries the record of its own rows, and passing
 `info={}` collects the whole-scan record and iterative stopping diagnostics
 once the iterator finishes).
 
-Direct FBP pads, filters and backprojects one view batch at a time. An internal
+Direct FBP pads, filters and backprojects one view batch at a time. On a rolled
+detector, FBP and FDK filter along physical horizontal detector lines (quarter
+turns permute rows and columns with no interpolation; other roll angles use
+cubic resampling onto horizontal lines before weighting, continuation, and
+filtering). On a stationary axial parallel full turn with an offset detector,
+FBP and Fourier weight conjugate rays smoothly across the overlap before
+filtering (per horizontal line when rolled). FDK computes angular weights,
+repeated-view grouping, and short-scan coverage from the effective source
+position in the object frame, so per-view axial rotations supplied through
+`Scan.with_poses` act identically to corrected encoder angles. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;
 small stacks stay in one batch. This estimate is not a hard process-memory cap:
 input projections, output/accumulator volumes, compiler workspaces and runtime
@@ -250,17 +263,19 @@ output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
 `fourier` (`tj.reconstruct(scan, "fourier")`, and the automatic choice for
-well-sampled axial half-turn scans with angles recorded directly or as axial pose rotations) is a
-Fourier-slice inverse for axial parallel half-turn scans, including
-nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
+well-sampled axial half-turn and full-turn scans with angles recorded directly
+or as axial pose rotations) is a
+Fourier-slice inverse for axial parallel half-turn and full-turn scans, including
+nonuniform encoder angles, rejected views, offset-detector full turns (weighting
+conjugate rays across the overlap), and an inclusive 0 to 180 or 0 to 360 degree
 range; views of one direction share an angular cell and are averaged. It accepts
 reordered, reversed and opposing views, offset detectors, anisotropic spacing
 and cropped output grids. Axial pose rotations determine the view directions and per-view translations shift the detector samples. Out-of-plane rotations mix axial slices and require a different inverse. Projection FFTs use six-point Kaiser–Bessel radial
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
-into it. With the default `exterior="cylinder"`, each row is continued past both
-detector edges before transforming; set `FourierConfig(exterior="zero")` to
+into it. With the default `exterior="cylinder"`, each row is continued past its
+outer edges before transforming; set `FourierConfig(exterior="zero")` to
 assume zero attenuation beyond the detector.
 
 ```python

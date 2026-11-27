@@ -34,14 +34,15 @@ The options match the Python API's keywords: `tomojax reconstruct --method cgls
 `tomojax align --fit translations roll` is
 `tj.align(scan, fit=("translations", "roll"))`.
 
-With no `--fit`, alignment estimates per-view translations jointly with a volume. `--fit` takes one or more of `center`, `translations`, `tilt`, `roll` and `rotations`. On an unposed, unrolled axial parallel scan with a well-sampled half-turn, `--fit center` alone measures the rotation axis directly from the projections with no working image unless `--method joint`, `--grid`, `--region`, `--config` or a joint solver option is given. Reconstruction without `--method` selects its method from the geometry.
+With no `--fit`, alignment estimates per-view translations jointly with a volume. `--fit` takes one or more of `center`, `translations`, `tilt`, `roll`, and `rotations`. On an unposed, unrolled axial parallel scan with a well-sampled half turn or full turn, `--fit center` alone measures the rotation axis directly from the projections with no working image unless `--method joint`, `--grid`, `--region`, `--config`, or a joint solver option is given. Reconstruction without `--method` selects its method from the geometry.
 
 ## Commands
 
 - `inspect`: `tj.inspect`, describing a dataset and checking that it can be reconstructed;
   `--json` prints the report as JSON. Its Loading section says what loading reads from the
-  file alone: pixel units when no pixel size is recorded, a rotation center or geometry
-  the file does not record, or the frames a stopped scan was cut to. Given a checkpoint
+  file alone: full-turn parallel orbit dimensions (field diameter, overlap, or central gap
+  when the axis is known), pixel units when no pixel size is recorded, a rotation center
+  or geometry the file does not record, or the frames a stopped scan was cut to. Given a checkpoint
   directory, it reports the stopped run instead. `--preview-dir DIR` writes PNGs: the central
   projection when the file holds projections, and slices named
   `slice_<axis>_<index>.png`. A saved reconstruction's slices are read from the file
@@ -56,8 +57,11 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--darks`, `--angles`, `--pixel-size`, `--detector-center`, `--geometry`, `--tilt`
   and cone parameters), and apply optional corrections (`--zingers`, `--paganin`,
   `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`.
-  On raw frames every step runs; on a dataset of line integrals only the steps that
-  act on them do. `--flats` and `--darks` accept frame stacks, scalar levels, or
+  `--data-path`, `--image-key-path`, and `--angles-path` select datasets in saved HDF5
+  scans as well as raw acquisitions (rejected on fixed-layout formats). Supplying
+  `--flats` or `--darks` on an unlabeled stack calibrates detector counts in any storage
+  dtype. On raw frames every step runs; on a dataset of line integrals only the steps that
+  act on them do, and raw-only calibration flags (`--epsilon`, `--flat-weights`) are rejected. `--flats` and `--darks` accept frame stacks, scalar levels, or
   another scan's HDF5/NeXus file (taking only its flat or dark frames). Bracketing
   multi-frame flat sets are weighted from a sample of the views by default while
   interpolating common row gain by position; when views move the flat by more than
@@ -110,7 +114,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
 - `align`: estimate the named geometry corrections with `tj.align`, on top of the poses saved in
   the input unless `--no-apply-poses`. On an unposed, unrolled, well-sampled axial parallel scan,
   `--fit center` measures the rotation center directly across the detector width from the half-turn
-  sinogram and opposing rays without writing a working image; pass `--method joint` (or `--grid`,
+  sinogram or the strip shared by opposing views of a full turn without writing a working image; pass `--method joint` (or `--grid`,
   `--region`, `--config`, or a joint solver option) for a joint image-and-center fit, which starts
   from the measured center. For cone data, `--fit center` fits detector-u and detector-v jointly;
   `--fit translations tilt roll` adds shared setup angles to per-view shifts, and

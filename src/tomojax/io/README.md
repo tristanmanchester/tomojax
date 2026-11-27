@@ -30,7 +30,10 @@ batches; the caller retains ownership of the open dataset.
 
 NXtomo angles are read from `/entry/sample/rotation_angle`, or from TomoJAX's
 `/entry/sample/transformations/rotation_angle`; these take priority over
-similarly named datasets of other detectors. Inspection and validation use the
+similarly named datasets of other detectors. When a GDA NXtomo entry omits its
+angles, TomoJAX reads the SmarAct `zrot` or `psi` rotation command for the same
+frame dataset, records the angle source, and warns if that recognized command
+carries the positioner's `"mm"` unit label (reading it in degrees). Inspection and validation use the
 same angle paths and units as loading, and an inspected angle range covers
 only sample frames. `inspect_dataset`, previews and `validate_dataset` also use
 raw-frame discovery for APS Data Exchange, Diamond/GDA and uniquely named HDF5
@@ -39,8 +42,10 @@ strict NXtomo schema check.
 
 Validation of recognized raw acquisitions reports missing detector/axis metadata
 and flat/dark references, using the same requirements as frame loading.
-`tj.inspect(path)` includes a `loading` section (`LoadingReport`: `length_unit`,
-`center`, `geometry`, `frame_records`, or `message` naming a missing argument)
+`tj.inspect(path)` includes a `loading` section (`LoadingReport`: `full_turn`,
+`axis_to_edge_px`, `field_of_view_px`, `overlap_px`, `central_gap_px`,
+`length_unit`, `center`, `geometry`, `frame_records`, or `message` naming a
+missing argument)
 describing what loading reads from the file alone; given a checkpoint directory,
 `tj.inspect(DIR)` reports the stopped run under `checkpoint` instead. A
 parallel-beam file without a recorded pixel size loads in pixel units (pitch 1,
@@ -54,6 +59,17 @@ and is refused by reconstruction and alignment until geometry is declared
 `geometry: {"kind": "parallel"}` on worker or MCP `open`). CLI errors name
 `--flats`, `--darks`, `--angles`, or `--pixel-size` where those flags supply the
 missing input.
+
+`data_path`, `image_key_path`, and `angles_path` apply to saved HDF5 scans as
+well as raw acquisitions across eager and lazy loads, CLI, worker, and MCP.
+Bliss accepts `data_path` to select its sequence; fixed-layout formats (TIFF,
+NPZ, MATLAB phase, Nikon, SkyScan, Zeiss, and EDF) reject these paths. Supplying
+`flats` or `darks` on an unlabeled projection stack identifies its values as
+detector counts in any storage dtype (including floating-point counts); files
+with a recorded log correction or PSI phase measurement reject flat/dark
+calibration, and exposure normalization requires flat frames rather than a
+scalar white level. Geometry overrides on load preserve recorded
+`view_positions` (acquisition gaps and restarts).
 
 Both raw-frame and processed NXtomo loading convert rotation angles labeled
 `rad`, `radian`, or `radians` to degrees. `deg`, `degree`, `degrees`, and
