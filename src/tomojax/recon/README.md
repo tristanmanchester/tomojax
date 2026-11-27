@@ -128,11 +128,14 @@ same discrepancy stop. Passing an explicit `iterations` (or any explicit
 `tolerance`, `absolute_tolerance`, `damping`, or `gradient_damping` in CGLS)
 disables discrepancy stopping: CGLS uses its numerical tests up to that budget,
 and SIRT runs that many plain sweeps unless `acceleration=True` is also set.
-Ordered-subset SIRT (`subsets > 1`), MLEM/OSEM, and SPDHG keep fixed budgets and
-report `termination="iteration_limit"` and `early_stop=False`: each subset or
+Ordered-subset SIRT (`subsets > 1`), MLEM/OSEM, and SPDHG run without early stopping
+and report `termination="iteration_limit"` and `early_stop=False`: each subset or
 block updates a different iterate, MLEM accepts nonnegative measurements in
 arbitrary units without count calibration, and SPDHG's sampled block loss does
-not evaluate full-data optimality. To replay an automatic run, pass
+not evaluate full-data optimality. SPDHG scales its default budget to
+`ceil(600 × √B)` updates for `B` measured-data blocks (an explicit `iterations`
+fixes the budget), and scales its automatic step sizes with block selection
+probability. To replay an automatic run, pass
 `iterations=info["effective_iterations"]` for CGLS, both `iterations` and
 `acceleration` from `info` for SIRT, and `resolved_tv_weight` and
 `effective_iterations` from `info` for FISTA.

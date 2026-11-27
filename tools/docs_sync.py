@@ -71,6 +71,12 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 None,
                 "Scans larger than the GPU, and several GPUs.",
             ),
+            (
+                "docs/export.md",
+                "export",
+                None,
+                "Export calibrated volumes for ImageJ, Fiji, ITK, VTK, or Amira.",
+            ),
         ],
     ),
     (

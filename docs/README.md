@@ -36,6 +36,7 @@ Median seconds of three fresh worker launches reconstructing a full Diamond K11 
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](lab-ct.md) |
 | Correct per-view motion, setup angles, or the center of rotation | [Align a scan](align-a-scan.md) |
 | Reconstruct volumes larger than GPU memory, use several GPUs, or resume killed cluster jobs | [Large scans and several GPUs](large-scans.md) |
+| Export calibrated volumes for ImageJ, Fiji, ITK, VTK, or Amira | [Export a reconstruction](export.md) |
 | Differentiate through projection in PyTorch | [PyTorch bridge](pytorch.md) |
 | Let an AI agent such as Claude Code drive TomoJAX through MCP | [Use TomoJAX from an AI agent](mcp.md) |
 | Split observations for held-out validation | [Held-out evaluation](held-out-evaluation.md) |

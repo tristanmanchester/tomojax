@@ -116,7 +116,10 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--fit translations tilt roll` adds shared setup angles to per-view shifts, and
   `--fit translations rotations` adds per-view sample rotations. `--motion`, `--iterations`,
   `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution` are `tj.align`'s
-  keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
+  keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields
+  (including `exclude_views`, `detector_columns`, and `image_tv_weight = "coverage"`).
+  Joint fits print the `disturbed_views` screening summary when an object may cross the
+  field of view.
   `--method opposite-views` runs the pair-only center check from near-opposite views without an
   image. `--grid` sets image sampling. `--checkpoint DIR` saves finished resolution levels,
   within-level solver state, and refinement poses in `DIR` so a killed fit resumes when the
@@ -125,8 +128,12 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--dry-run` prints the plan: sampled views and pairs for
   direct axial center measurement, angular pairs for `opposite-views`, or each level's grid and
   budget for a joint fit, along with estimated memory.
-- `export`: `tj.export`, writing one registered member in the format selected by OUTPUT.
-  Use `--dry-run` to inspect its dimensions and value mapping. See [export](../../../docs/export.md).
+- `export`: `tj.export`, writing one registered member as ImageJ TIFF (`.tif`, `.tiff`),
+  OME-TIFF (`.ome.tif`, `.ome.tiff`), a TIFF slice directory, raw binary (`.raw`),
+  MetaImage (`.mhd`), or AmiraMesh (`.am`) according to OUTPUT, with optional `--crop`,
+  `--binning`, `--axis`, `--dtype`, `--range`, `--compress`, and `--member`. Use
+  `--dry-run` to inspect the files, axes, value mapping, and space estimates before
+  writing. See [export](../../../docs/export.md).
 - `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.
   Use `--translation-sigma DIST` to simulate independent object shifts with standard
   deviation `DIST` voxel pitches along each detector axis.

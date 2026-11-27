@@ -1,8 +1,11 @@
 # tomojax.io
 
-`tomojax.io` reads and writes TomoJAX datasets, reads Nikon, SkyScan, Zeiss and
-ESRF acquisitions, TIFF stacks and PSI cSAXS ptychographic tomography `.mat` files, and validates and inspects datasets. Detector frames are read
-with `tomojax.load_frames` and corrected with
+`tomojax.io` reads and writes TomoJAX datasets, exports registered volumes to
+interchange formats (ImageJ TIFF, OME-TIFF, TIFF slices, raw binary, MetaImage,
+and AmiraMesh via `tj.export`; see [export](../../../docs/export.md)), reads
+Nikon, SkyScan, Zeiss and ESRF acquisitions, TIFF stacks and PSI cSAXS
+ptychographic tomography `.mat` files, and validates and inspects datasets.
+Detector frames are read with `tomojax.load_frames` and corrected with
 [`tomojax.corrections`](../corrections/README.md).
 
 Zeiss Xradia acquisitions are recognized by OLE content, with lazy raw counts,

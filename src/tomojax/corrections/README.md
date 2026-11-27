@@ -128,12 +128,12 @@ somewhere):
 
 When `flat_moved_by_views` exceeds 1% of the detector, TomoJAX emits a warning
 giving that fraction, the later set's weights at the start and end there, and
-both remedies: one of the flat sets does not match the beam the views saw.
+both remedies because the views do not follow the flat sets' positions.
 Python logs the warning on the `tomojax` logger, the CLI prints it, and the
 worker and MCP server return it in `notes`. Below 1%, no warning is emitted.
-The warning measures how far the two corrections disagree: true illumination
-can depart from both flat sets without moving the inferred weights, and a large
-correction can increase slice error.
+The warning measures how far view weighting and position weighting disagree:
+true illumination can depart from both flat sets without moving the inferred
+weights, and a large shift can increase slice error.
 When the warning appears (or `flat_structure_unmatched` is large), inspect the
 reconstruction and either borrow clean flats from another scan of the same beam
 with `flats="other_scan.nxs"` (`tomojax correct --flats other_scan.nxs`, or
