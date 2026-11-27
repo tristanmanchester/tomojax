@@ -17,7 +17,7 @@ parallel := "-n " + `echo $(( ($(nproc) + 1) / 2 ))` + " --maxschedchunk 1"
 
 # Each GPU worker needs a CPU and about 1.3 GiB on the first card.
 # tests/conftest.py pins each worker and caps its JAX pool.
-gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk -v cpus="$(nproc)" 'NR == 1 { by_mem = int($1 / 1300); print (by_mem < cpus ? by_mem : cpus) }'` + " --maxschedchunk 1"
+gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk -v cpus="$(env -u OMP_NUM_THREADS -u OMP_THREAD_LIMIT nproc)" 'NR == 1 { by_mem = int($1 / 1300); print (by_mem < cpus ? by_mem : cpus) }'` + " --maxschedchunk 1"
 
 setup *flags:
     ./tools/worktree_setup.sh {{flags}}
