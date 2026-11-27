@@ -10,7 +10,7 @@ Unpenalized CGLS and SIRT have no image-space regularizer: running them for hund
 | `cgls` | Projection-discrepancy stop (when unpenalized and `tolerance=None`) | Up to 50 updates | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
 | `sirt` (`subsets=1`) | Projection-discrepancy stop; FISTA momentum on when `relaxation <= 1` | Up to 50 sweeps | Pass `iterations=N` (plain sweeps; add `acceleration=True` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
 | `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
-| `spdhg` | Block budget scales with view count | ceil(200 × √B) updates for B blocks | Pass `iterations=N` |
+| `spdhg` | Block budget scales with view count | ceil(600 × √B) updates for B blocks | Pass `iterations=N` |
 | `cgls_multires` | Explicit per-level budgets (`(32, 16)`), numerical stopping per level | Per-level budgets | Pass `iterations_per_level=(...)` |
 
 Inspect `info` after an automatic iterative run (MCP results put every scalar field at the top level and include the stopping summary in the text):

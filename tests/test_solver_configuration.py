@@ -23,6 +23,14 @@ def _problem(tilted=False):
     return grid, detector, geometry, data
 
 
+def test_spdhg_default_budget_includes_a_partial_view_block():
+    grid, detector, _, _ = _problem()
+    geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 33, endpoint=False))
+    data = np.zeros((33, detector.nv, detector.nu), dtype=np.float32)
+    _, info = spdhg(geometry, grid, detector, data)
+    assert info["effective_iterations"] == 1040
+
+
 @pytest.mark.parametrize(
     ("solver", "field"),
     [

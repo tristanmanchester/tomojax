@@ -90,7 +90,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   (estimated projection discrepancy, capped at 50 updates, with FISTA momentum
   enabled on full-data `sirt` when `relaxation <= 1`) and for `fista` (estimated
   proximal-gradient noise score, capped at 200 updates). Ordered-subset `sirt`
-  and `mlem` run 50 sweeps, and `spdhg` runs ceil(200 × √B) updates for B sampled data blocks. Passing
+  and `mlem` run 50 sweeps, and `spdhg` runs ceil(600 × √B) updates for B sampled data blocks. Passing
   `--iterations N` fixes the budget (and runs plain sweeps for `sirt` unless
   `acceleration = true` is also set in `--config`). For iterative solvers,
   `reconstruct` prints a closing line stating how many updates ran, why the

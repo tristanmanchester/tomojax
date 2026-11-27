@@ -104,7 +104,9 @@ detector has no spatial noise statistic and falls back to the 50-update cap).
 The calculation uses bounded detector patches (up to 65,536 pixels) and
 magnification at isocenter. Motion, scatter, calibration bias, and correlated
 detector errors can leave the true projection residual above this local estimate,
-so on real scans the 50-update cap often ends the run.
+so on real scans the 50-update cap often ends the run. The stopping test uses
+the RMS over measured rays. At that point a weak fine feature can still gain
+contrast with more iterations, while noise in the same frequency band also grows.
 
 Read `info["termination"]`, `effective_iterations`, `early_stop`,
 `projection_error_rms`, and `measurement_noise_rms` together. CGLS reports
@@ -144,7 +146,7 @@ not evaluate full-data optimality. To replay an automatic run, pass
 | `sirt` (`subsets=1`) | Projection-discrepancy stop, cap 50 sweeps; momentum on when `relaxation <= 1` | Pass `iterations=N` (plain sweeps; add `acceleration=True` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
 | `sirt` (`subsets > 1`) | Fixed budget of 50 sweeps (no momentum) | Pass `iterations=N` |
 | `mlem` | Fixed budget of 50 sweeps | Pass `iterations=N` |
-| `spdhg` | One block per update, with ceil(200 × √B) updates for B blocks | Pass `iterations=N` |
+| `spdhg` | One block per update, with ceil(600 × √B) updates for B blocks | Pass `iterations=N` |
 | `cgls_multires` | Explicit per-level budgets (`iterations_per_level=(32, 16)`), numerical stopping per level | Pass `iterations_per_level=(...)` and `config=CGLSConfig(tolerance=...)` |
 
 ![The central slice of FIPS walnut 1 and an enlarged region, reconstructed by FDK, CGLS, plain SIRT and the default SIRT with momentum, each after 50 updates. Plain SIRT is still blurred; SIRT with momentum is as sharp as CGLS and FDK.](../../../docs/images/sirt-momentum.png)

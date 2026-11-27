@@ -58,6 +58,8 @@ from ._tv_ops import (
 from ._volume_storage import Model, pack_volume, resident_model, restore_volume, volume_shape
 from .types import DataTerm, Regularizer
 
+_SINGLE_BLOCK_UPDATES = 600
+
 # --------- config ----------
 
 
@@ -85,14 +87,14 @@ class SPDHGConfig:
     sizes' stability.
 
     Each update samples one data block. For a full-data solve the default budget
-    is 200. For B equal-probability blocks it grows as the square root of B.
+    is 600. For B equal-probability blocks it grows as the square root of B.
     The effective count and step sizes are recorded with the reconstruction.
 
     Parameters
     ----------
     iterations : int or None, optional
         Number of sampled data-block updates, each with a TV update. None uses
-        ceil(200 * sqrt(number of blocks)). An explicit count fixes the budget.
+        ceil(600 * sqrt(number of blocks)). An explicit count fixes the budget.
     tv_weight : float | None, optional
         Dimensionless physical-TV strength. None estimates the score of detector
         noise from the measured pixels and calibrates the penalty per isolated
@@ -329,7 +331,7 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     count = (
         config.iterations
         if config.iterations is not None
-        else math.ceil(200 * math.sqrt(num_blocks))
+        else math.ceil(_SINGLE_BLOCK_UPDATES * math.sqrt(num_blocks))
     )
     block_ids = rng.integers(0, num_blocks, size=count, dtype=np.int32)
 
@@ -800,7 +802,7 @@ def _spdhg_program(
 _run_spdhg_scan = Chunked(_spdhg_program, static_argnames=("grid", "detector"))
 
 
-@progress.reports_iterations(200)
+@progress.reports_iterations(_SINGLE_BLOCK_UPDATES)
 def spdhg(
     geometry: Geometry,
     grid: Grid,

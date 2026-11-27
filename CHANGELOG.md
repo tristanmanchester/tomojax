@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- SPDHG now takes about 200 × √B updates for B measured-data blocks. Its TV
+- SPDHG now takes about 600 × √B updates for B measured-data blocks. Its TV
   penalty uses the same noise calibration as FISTA, and its stochastic step
   sizes scale with the probability of selecting a block. An explicit iteration
   count still fixes the work budget.

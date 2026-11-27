@@ -261,7 +261,7 @@ Unregularized iterative solvers (CGLS and SIRT) fit noise and discretization err
 | `cgls` | Projection residual RMS falls below estimated detector noise plus sampling error (when unpenalized and `tolerance=None`) | Up to 50 updates | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
 | `sirt` (full data, `subsets=1`) | Same projection-discrepancy stop, with FISTA momentum enabled when `relaxation <= 1` | Up to 50 sweeps | Pass `iterations=N` (plain sweeps; add `SIRTConfig(acceleration=True)` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
 | `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
-| `spdhg` | Block budget scales with view count | ceil(200 × √B) updates for B blocks | Pass `iterations=N` |
+| `spdhg` | Block budget scales with view count | ceil(600 × √B) updates for B blocks | Pass `iterations=N` |
 
 Check `recon.info`, the JSON `--manifest`, or the closing line of `tomojax reconstruct` after an iterative run:
 

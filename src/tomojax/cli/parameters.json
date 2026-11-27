@@ -1816,7 +1816,7 @@
             }
           ],
           "default": null,
-          "description": "Number of sampled data-block updates, each with a TV update. None uses ceil(200 * sqrt(number of blocks)). An explicit count fixes the budget."
+          "description": "Number of sampled data-block updates, each with a TV update. None uses ceil(600 * sqrt(number of blocks)). An explicit count fixes the budget."
         },
         "tv_weight": {
           "anyOf": [

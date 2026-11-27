@@ -555,7 +555,7 @@ def reconstruct(
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
         one block of views per update, in an order drawn with ``seed``.
-        The default runs ``ceil(200 * sqrt(B))`` updates for B blocks
+        The default runs ``ceil(600 * sqrt(B))`` updates for B blocks
         (``termination="iteration_limit"``, ``early_stop=False``).
 
     ``mlem`` is linear Poisson MLEM/OSEM (fixed sweep budget, default 50,
