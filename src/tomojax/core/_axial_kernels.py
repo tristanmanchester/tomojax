@@ -214,7 +214,14 @@ extern "C" __global__ void joseph_axial(
     int rz=(nz+R-1)/R;
     bool live=run<(long)nx*ny*rz;
     int ix=0,iy=0,z=0;
-    if(live) FIRST_VOXEL(run,R,ix,iy,z);
+    // Adjacent columns along the ray share detector samples. Assign neighboring
+    // runs along the middle view's plane axis without changing any voxel's sum.
+    if(live) {
+        long column=run/rz;
+        z=R*(int)(run%rz);
+        if(coeff[(nviews/2)*14]==0.f) { ix=(int)(column%nx); iy=(int)(column/nx); }
+        else { iy=(int)(column%ny); ix=(int)(column/ny); }
+    }
     float total[R]={};
     __shared__ float cf[VB*14];
     for(int first=0;first<nviews;first+=VB) {
