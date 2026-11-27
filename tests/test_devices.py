@@ -113,6 +113,22 @@ def test_iterative_reconstruction_shared_among_devices_matches_one_device(method
     assert _relative(shared, one) < 1e-4
 
 
+@pytest.mark.parametrize("kind", ["parallel", "orbits"])
+def test_shared_automatic_tv_uses_the_full_scan_noise_probe(kind):
+    geometry = _geometry(kind)
+    data = np.asarray(tj.project(geometry, _phantom()))
+    noise = np.random.default_rng(431).normal(0, 0.1, data.shape).astype(np.float32)
+    scan = tj.Scan(data + noise, geometry)
+    one = tj.reconstruct(scan, "fista", iterations=2)
+    shared = tj.reconstruct(scan, "fista", iterations=2, devices=jax.devices())
+
+    assert one.info["noise_score_rms"] > 0
+    np.testing.assert_allclose(
+        shared.info["noise_score_rms"], one.info["noise_score_rms"], rtol=1e-5
+    )
+    assert _relative(shared.volume, one.volume) < 1e-4
+
+
 def test_cgls_from_a_start_shared_among_devices_matches_one_device():
     from tomojax.recon import CGLSConfig, cgls
 
