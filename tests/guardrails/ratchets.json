@@ -44,12 +44,11 @@
     "skill": 3
   },
   "long_files": {
-    "src/tomojax/alignment/_joint/_solver.py": 1014,
+    "src/tomojax/alignment/_joint/_solver.py": 982,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
-    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 119,
     "src/tomojax/cli/align.py::build_parser": 101,
     "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
@@ -60,12 +59,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5627,
+    "reportAny": 5614,
     "reportMissingImports": 66,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 945,
-    "reportUnknownMemberType": 1753,
-    "reportUnknownVariableType": 1043,
+    "reportUnknownArgumentType": 928,
+    "reportUnknownMemberType": 1748,
+    "reportUnknownVariableType": 1040,
     "reportUnusedCallResult": 154
   },
   "explicit_any": 429,
