@@ -23,8 +23,13 @@ def _camera(ops: Operators, ids: np.ndarray) -> tuple[_Array, _Array, _Array]:
         roll = math.radians(ops.detector_roll)
         u = np.array([math.cos(roll), 0.0, math.sin(roll)], np.float32)
         v = np.array([-math.sin(roll), 0.0, math.cos(roll)], np.float32)
-        poses[:, :, 3] -= np.array([d.center[0], 0, d.center[1]], np.float32)
+        # Cropping changes the working center in the detector's own axes.
+        # Roll still turns about the original detector pivot.
+        pu, pv = ops.detector_pivot
+        poses[:, :, 3] -= np.array([pu, 0, pv], np.float32)
         horizontal, vertical = u @ poses, v @ poses
+        horizontal[:, 3] += pu - d.center[0]
+        vertical[:, 3] += pv - d.center[1]
         divisor = np.zeros_like(horizontal)
         divisor[:, 3] = 1
     else:

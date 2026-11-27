@@ -257,7 +257,7 @@ def calibrate_columns(
     fine = min(bins)
     y, w = levels[bins.index(fine)]
     n, v, u = y.shape
-    attenuation = dict.fromkeys(bins, ColumnNoise())
+    attenuation = {b: ColumnNoise(0.0, noise / b) for b in bins}
     if min(n, v, u) < 2:
         return attenuation
     dynamic, observed, floor, sd = _transient(y, w, noise / fine)

@@ -11,7 +11,7 @@ import pytest
 import tomojax as tj
 
 # check-public-imports: allow-private
-from tomojax.alignment._joint import _fit, _noise
+from tomojax.alignment._joint import _fit, _noise, _visibility
 from tomojax.geometry import stack_view_poses
 
 pytestmark = pytest.mark.numerical
@@ -192,3 +192,20 @@ def test_column_calibration_requires_evidence_in_distant_rows():
         residual.append(np.vdot(difference, signal[24]) / np.vdot(signal[24], signal[24]))
     assert residual[0] == pytest.approx(1.0, abs=0.05)
     assert residual[1] < 0.1
+
+
+def test_image_prior_uses_the_rolled_and_cropped_detector_footprint():
+    g = tj.Grid(5, 5, 5, 1, 1, 1)
+    d = tj.Detector(3, 5, 1, 1, center=(-1, 0))
+    ops = _fit.Operators(
+        g,
+        d,
+        np.stack([np.eye(4), np.eye(4)]),
+        native=(1, 1),
+        lever=2,
+        detector_roll=90,
+        detector_pivot=(0, 0),
+    )
+    missing = _visibility.unobserved_weight(ops)
+    # The high-column crop removes lab-z = 1 and 2 after a quarter turn.
+    np.testing.assert_allclose(missing[:, 2, 2], [0, 0, 0, 1, 1], atol=1e-6)
