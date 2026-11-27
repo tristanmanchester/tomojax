@@ -7,7 +7,15 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.recon import FBPConfig, FDKConfig, FDKHostConfig, FourierConfig, fdk, fdk_host
+from tomojax.recon import (
+    CGLSConfig,
+    FBPConfig,
+    FDKConfig,
+    FDKHostConfig,
+    FourierConfig,
+    fdk,
+    fdk_host,
+)
 
 
 def gaussian(grid, detector, angles, roll):
@@ -185,7 +193,6 @@ def test_raw_oblique_cone_slabs_follow_reindexed_rays_and_share_the_whole_scan_r
 @pytest.mark.parametrize("on_device", [False, True])
 def test_quarter_turn_preserves_the_fitted_rays_of_independent_planes(on_device):
     # check-public-imports: allow-private
-    from tomojax.recon import CGLSConfig
     from tomojax.recon._exterior import outside_data
 
     width, rows = 80, 3
