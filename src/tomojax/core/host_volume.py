@@ -8,7 +8,7 @@ so a volume larger than memory never stays resident.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 import math
 import mmap
@@ -60,6 +60,23 @@ def _cgroup_room_bytes() -> int | None:
     except (OSError, ValueError):
         return None
     rooms = []
+    for group, root, used_file, limits in _memory_hierarchies(groups, mounts):
+        for level in (group, *group.parents[: len(group.relative_to(root).parts)]):
+            try:
+                used = int((level / used_file).read_text())
+            except (OSError, ValueError):
+                continue
+            for limit in limits:
+                # Absent limits and cgroup v2's "max" leave this group unbounded.
+                with suppress(OSError, ValueError):
+                    rooms.append(max(0, int((level / limit).read_text()) - used))
+    return min(rooms, default=None)
+
+
+def _memory_hierarchies(
+    groups: dict[str, Path], mounts: list[str]
+) -> Iterator[tuple[Path, Path, str, tuple[str, ...]]]:
+    """Visible memory-controller directories from procfs, with their usage and limit files."""
     for entry in mounts:
         header, separator, filesystem = entry.partition(" - ")
         fields = header.split()
@@ -76,26 +93,17 @@ def _cgroup_room_bytes() -> int | None:
             )
         else:
             continue
-        if own is None or not own.is_absolute() or ".." in own.parts:
-            continue
         root, mount = [
             Path(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), text)) for text in fields[3:5]
         ]
-        if not own.is_relative_to(root) or not mount.is_absolute():
+        if (
+            own is None
+            or ".." in own.parts
+            or not own.is_relative_to(root)
+            or not mount.is_absolute()
+        ):
             continue
-        # Every level from the process's group up to the mount has its own limits.
-        relative = own.relative_to(root)
-        group = mount / relative
-        for level in (group, *group.parents[: len(relative.parts)]):
-            for limit in limits:
-                try:
-                    text = (level / limit).read_text().strip()
-                    if text != "max":
-                        used = int((level / used_file).read_text())
-                        rooms.append(max(0, int(text) - used))
-                except (OSError, ValueError):
-                    pass
-    return min(rooms, default=None)
+        yield mount / own.relative_to(root), mount, used_file, limits
 
 
 def _system_available_bytes() -> int | None:

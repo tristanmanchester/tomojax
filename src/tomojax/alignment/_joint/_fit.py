@@ -158,7 +158,11 @@ def _padded(grid: Grid, bins: Sequence[int], margin: float) -> tuple[Grid, int]:
 
 
 def _read(
-    measured: ProjectionSource, bins: Sequence[int], views_per_batch: int = 16
+    measured: ProjectionSource,
+    bins: Sequence[int],
+    views_per_batch: int = 16,
+    *,
+    window: tuple[int, int] | None = None,
 ) -> tuple[list[_Binned], _DataScale, float]:
     """What the levels take from the frames, in one front-to-back pass over them.
 
@@ -172,15 +176,17 @@ def _read(
     it for its lifetime, and a sweep after them reads a page per fault.
     """
     n, nv, nu = measured.shape
+    if window is not None:
+        nv, nu = window
     means = [np.empty((n, nv // b, nu // b), np.float32) for b in bins]
     weights: list[np.ndarray | None] = [None] * len(bins)
     step = max(1, n // 16)
     peak = np.float32(0)
-    noise = Windows(measured.shape)
+    noise = Windows((n, nv, nu))
     for s in range(0, n, views_per_batch):
         progress.check_canceled()
         block = measured[s : s + views_per_batch]
-        src = np.asarray(block, np.float32)
+        src = np.asarray(block[:, :nv, :nu], np.float32)
         finite = np.isfinite(src)
         complete = finite.all()
         filled = src if complete else np.where(finite, src, 0)
@@ -203,12 +209,13 @@ def _read(
         sample = src[-s % step :: step]
         peak = max(peak, np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0))
         noise.gather(src, start=s)
-        release_planes(block, 0, len(src))
+        if isinstance(block, np.ndarray):
+            release_planes(block, 0, len(src))
         del src, finite, filled, sample, block
     scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
     sd = noise.sd()
     if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
-        sd = estimate_noise(measured, dtype=np.float32)
+        sd = estimate_noise(measured, dtype=np.float32, window=window)
     binned = list(zip(means, weights, strict=True))
     return binned, scale, sd
 
@@ -261,14 +268,15 @@ def _level(
     (``_read``).
     """
     y, precision = binned
-    y *= np.float32(scale)
     # The objective compares K A x with K y (residual_filter); the filtered data are known
     # only where every tap was measured. K acts within each view: filter on the host, a
     # slab of views at a time, as the binning above does.
-    precision = filtered_precision(precision)
     for s in range(0, len(y), 16):
         slab = slice(s, s + 16)
+        y[slab] *= np.float32(scale)
         w = None if precision is None else precision[slab]
+        if w is not None:
+            w[:] = filtered_precision(w)
         y[slab] = column_filter(residual_filter(y[slab]), column_noise.attenuation, w)
     d = Detector(
         y.shape[2],
@@ -414,10 +422,14 @@ def fit_schedule(
 
 
 def _calibrated_levels(
-    measured: np.ndarray, bins: Sequence[int], config: AlignConfig, positions: ArrayLike | None
+    measured: np.ndarray | jax.Array,
+    bins: Sequence[int],
+    config: AlignConfig,
+    positions: ArrayLike | None,
+    window: tuple[int, int],
 ) -> tuple[list[_Binned], _DataScale, float, np.ndarray, dict[int, ColumnNoise]]:
     """Read native pixels once. Measure disturbances before modifying any observations."""
-    binned, scale, noise = _read(measured, bins)
+    binned, scale, noise = _read(measured, bins, window=window)
     coarse = bins.index(max(bins))
     order = ViewOrder(len(measured), positions)
     scores = disturbance_score(*binned[coarse], noise / bins[coarse], order)
@@ -440,7 +452,7 @@ def preview_disturbance(
     h = detector.nv // multiple * multiple
     w = detector.nu // multiple * multiple
     coarse = dbin * max(bins)
-    levels, _, noise = _read(projections[:, :h, :w], [coarse])
+    levels, _, noise = _read(projections, [coarse], window=(h, w))
     return disturbance_score(*levels[0], noise / coarse, order)
 
 
@@ -463,9 +475,9 @@ def _physical_frame(
 
 def _fit_inputs(
     projections: ArrayLike | jax.Array, nominal_poses: ArrayLike | jax.Array, detector: Detector
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray | jax.Array, np.ndarray]:
     """Read the projection stack without copying it and validate the matching pose table."""
-    y0 = np.asanyarray(projections)
+    y0 = projections if isinstance(projections, jax.Array) else np.asanyarray(projections)
     poses = np.asarray(nominal_poses, np.float32)
     if y0.ndim != 3 or y0.shape[1:] != (detector.nv, detector.nu):
         raise ValueError("projection shape does not match the detector")
@@ -566,10 +578,10 @@ def fit_poses(
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []
-        measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
+        window = detector.nv - drop_v, detector.nu - drop_u
         screen_at = view_positions if disturbance_positions is None else disturbance_positions
         binned, scale, noise, disturbance, column_noise = _calibrated_levels(
-            measured, bins, config, screen_at
+            y0, bins, config, screen_at, window
         )
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.

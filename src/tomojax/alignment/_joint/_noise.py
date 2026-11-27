@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Protocol
 
+    import jax
     from numpy.typing import DTypeLike
 
     class ProjectionSource(Protocol):
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 
         def __getitem__(
             self, key: slice | tuple[np.ndarray, np.ndarray, np.ndarray], /
-        ) -> np.ndarray: ...
+        ) -> np.ndarray | jax.Array: ...
 
 
 # Most residuals any robust statistic here samples.
@@ -42,6 +43,7 @@ def estimate_noise(
     *,
     precision: np.ndarray | None = None,
     dtype: DTypeLike | None = None,
+    window: tuple[int, int] | None = None,
 ) -> float:
     """Estimate a measurement SD from bounded fourth-difference contrasts.
 
@@ -59,8 +61,9 @@ def estimate_noise(
     unresolved object texture can still affect this measurement-only scale.
     """
     mask = None if precision is None else np.broadcast_to(precision, projections.shape)
-    for orders in _orders(projections.shape):
-        windows = Windows(projections.shape, orders)
+    shape = projections.shape if window is None else (projections.shape[0], *window)
+    for orders in _orders(shape):
+        windows = Windows(shape, orders)
         windows.gather(projections, dtype)
         sd = windows.sd(mask)
         if sd is not None:
