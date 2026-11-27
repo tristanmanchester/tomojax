@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from tomojax._data import FrameStack
 
     from ._datasets import ProjectionDataset
+    from ._view_offsets import ViewOffsets
 
 
 @dataclass(frozen=True)
@@ -26,7 +27,7 @@ class RawAcquisition:
     to view index plus one half. No corrections have been applied yet.
     """
 
-    record: ProjectionDataset
+    nominal_record: ProjectionDataset
     counts: FrameStack
     flats: FrameStack | None = None
     darks: FrameStack | np.ndarray | float | None = None
@@ -37,6 +38,15 @@ class RawAcquisition:
     flat_exposure_times: np.ndarray | None = None
     dark_source: str | None = None  # the file's statement that the instrument removed the dark
     linear_limit: tuple[float, str] | None = None  # the camera's stated linear range, and where
+
+    offsets: ViewOffsets | None = None
+
+    @property
+    def record(self) -> ProjectionDataset:
+        """Acquisition geometry using the detector and corrections recorded by the scanner."""
+        if self.offsets is None:
+            return self.nominal_record
+        return self.offsets.resolve(self.nominal_record)
 
 
 def metadata_candidates(path: Path) -> list[Path]:

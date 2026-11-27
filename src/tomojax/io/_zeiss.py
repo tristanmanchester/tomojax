@@ -17,7 +17,7 @@ from tomojax._data import FrameStack
 from tomojax.geometry import Detector
 
 from ._datasets import ProjectionDataset
-from ._view_offsets import DISTANCES_KEY, OFFSETS_KEY, with_view_offsets
+from ._view_offsets import ViewOffsets
 
 if TYPE_CHECKING:
     from typing import BinaryIO
@@ -354,7 +354,19 @@ def _offsets(container: _OleFile, count: int) -> tuple[np.ndarray | None, float 
     return shifts, _scalar(container, center, "<f4") if container.exists(center) else None
 
 
-def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> ProjectionDataset:
+def _cone_distances(container: _OleFile, count: int) -> np.ndarray | None:
+    """Source-to-axis and source-to-panel distances in mm for every stored view."""
+    source_key, detector_key = "ImageInfo/StoRADistance", "ImageInfo/DtoRADistance"
+    if not (container.exists(source_key) and container.exists(detector_key)):
+        return None
+    source = np.abs(_values(container, source_key, "<f4")).astype(np.float64)
+    panel = np.abs(_values(container, detector_key, "<f4")).astype(np.float64)
+    return np.column_stack((np.broadcast_to(source, count), np.broadcast_to(source + panel, count)))
+
+
+def _record(
+    container: _OleFile, path: Path, shape: tuple[int, int, int]
+) -> tuple[ProjectionDataset, ViewOffsets | None]:
     """Keep incomplete calibration separate from the image storage contract.
 
     The orientation is the vendor's: with the columns reversed and a view's angle
@@ -382,22 +394,14 @@ def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> Pro
     )
     metadata: dict[str, object] = {}
     pitch = pixel
+    distances = _cone_distances(container, count) if cone else None
     if cone:
-        if all(
-            container.exists(name)
-            for name in ("ImageInfo/StoRADistance", "ImageInfo/DtoRADistance")
-        ):
-            source = np.abs(_values(container, "ImageInfo/StoRADistance", "<f4")).astype(np.float64)
-            distance = np.abs(_values(container, "ImageInfo/DtoRADistance", "<f4")).astype(
-                np.float64
-            )
-            pitch = None if pixel is None else pixel * (source[0] + distance[0]) / source[0]
-            arrangement = np.column_stack((source, source + distance))
-            metadata[DISTANCES_KEY] = np.broadcast_to(arrangement, (count, 2)).tolist()
-        else:
-            pitch = None
-    if shifts is not None:
-        metadata[OFFSETS_KEY] = shifts.tolist()
+        pitch = (
+            None
+            if pixel is None or distances is None
+            else pixel * distances[0, 1] / distances[0, 0]
+        )
+    offsets = None if shifts is None else ViewOffsets(shifts, distances, center_shift or 0.0)
     fields = [
         name
         for name, value in (
@@ -407,19 +411,22 @@ def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> Pro
         )
         if value is not None
     ]
-    if (
-        fields
-    ):  # the vendor's own corrections, applied with the poses (tj.load apply_poses=False omits)
+    if offsets is not None:
         metadata["vendor_corrections"] = {"source": "zeiss", "fields": fields, "applied": True}
     if pixel is not None:  # stated by the file; the grid's shape comes from the detector
         metadata["grid_status"] = "derived"
         metadata["voxel_size"] = [pixel, pixel, pixel]
-    metadata["zeiss"] = {
+    original: dict[str, object] = {
         "path": str(path),
         "declared_view_count": int(_scalar(container, "ImageInfo/NoOfImages")),
         "stored_view_count": count,
         "center_shift_pixels": center_shift,
     }
+    if shifts is not None:
+        original["detector_view_offsets_pixels"] = shifts.tolist()
+    if distances is not None:
+        original["cone_view_distances"] = distances.tolist()
+    metadata["zeiss"] = original
     hardening = _beam_hardening(container, path)
     if hardening is not None:
         metadata["beam_hardening"] = hardening
@@ -436,8 +443,7 @@ def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> Pro
     if pitch is not None and shifts is not None and cone is not None:
         # The shifts are measured from the recorded center; a raw scan with no
         # reconstruction setup records none, and its shifts are measured from the middle.
-        center = (-pitch * (center_shift or 0.0), 0.0)
-        record = with_view_offsets(record, Detector(cols, rows, pitch, pitch, center=center))
+        record.detector = Detector(cols, rows, pitch, pitch)
     known = record.detector is not None and center_shift is not None
     record.geometry_metadata["detector_center_status"] = "recorded" if known else "not_recorded"
     if (
@@ -448,7 +454,7 @@ def _record(container: _OleFile, path: Path, shape: tuple[int, int, int]) -> Pro
         # Without the shifts or the beam type a detector alone cannot fix the views;
         # with them, detector= supplies the center the shifts are measured from.
         record.geometry_metadata["axis_status"] = "not_recorded"
-    return record
+    return record, offsets
 
 
 def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
@@ -471,7 +477,7 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         if mode != 0:
             raise ValueError(f"{path} is a Zeiss image/scout (mode {mode}), not detector frames")
         counts = _images(container, path)
-        record = _record(container, path, counts.shape)
+        record, offsets = _record(container, path, counts.shape)
         flats, flat_positions, view_positions = _references(container, path, counts)
         # The camera subtracted its static background (the dark) before writing the counts.
         removed = container.exists(_DARK) and _scalar(container, _DARK, "<i4") == 1
@@ -481,6 +487,7 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     return RawAcquisition(
         record,
         counts,
+        offsets=offsets,
         flats=flats,
         flat_positions=flat_positions,
         view_positions=view_positions,

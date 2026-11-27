@@ -5886,7 +5886,7 @@
         "apply_poses": {
           "type": "boolean",
           "default": true,
-          "description": "Apply saved per-view pose corrections, and a scanner's own recorded per-view shifts and center shift (Zeiss); default is True. False gives the nominal geometry while keeping vendor shift provenance in metadata."
+          "description": "Apply per-view poses. On a raw Zeiss acquisition, False also omits the scanner's shifts and center correction. A saved scan that incorporated those corrections requires the original acquisition for nominal geometry. Use scan.with_poses(None) to clear its rigid poses."
         }
       },
       "required": [

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_args
 import numpy as np
 
 from tomojax._parameters import GeometryName, TiltAbout
-from tomojax._scan.model import frame_output_grid, geometry_of
+from tomojax._scan.model import frame_output_grid, geometry_of, require_nominal_geometry
 from tomojax._typed_arrays import object_mapping
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import (
@@ -26,12 +26,7 @@ from tomojax.geometry import (
     LaminographyGeometry,
     ParallelGeometry,
 )
-from tomojax.io.api import (
-    dropped_offsets_message,
-    replace_dataset,
-    with_view_offsets,
-    without_view_offsets,
-)
+from tomojax.io.api import replace_dataset
 from tomojax.progress import warn
 
 if TYPE_CHECKING:
@@ -39,6 +34,7 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import ScanGeometry
     from tomojax.io import ProjectionDataset
+    from tomojax.io.api import ViewOffsets
 
 LOG = logging.getLogger(__name__)
 
@@ -94,19 +90,6 @@ class DeclaredGeometry:
                     field, "cone geometry needs source_to_axis and source_to_detector"
                 )
             ConeBeam(self.source_to_axis, self.source_to_detector)
-
-
-def _vendor_corrections(record: ProjectionDataset, *, applied: bool) -> ProjectionDataset:
-    """A scanner's own per-view shifts and center shift, applied or left out, said either way."""
-    vendor = record.geometry_metadata.get("vendor_corrections")
-    if vendor is None:
-        return record
-    if not applied:
-        record = without_view_offsets(record)
-    meta = {**record.geometry_metadata, "vendor_corrections": {**vendor, "applied": applied}}
-    if not applied and meta.get("detector_center_status") == "recorded":
-        meta["detector_center_status"] = "nominal"
-    return replace_dataset(record, geometry_metadata=meta)
 
 
 def _declared_grid(
@@ -197,7 +180,6 @@ def _updated_geometry_metadata(
     *,
     geometry: ScanGeometry | None,
     declares_geom: bool,
-    has_center: bool,
     detector: Detector | None,
     pixel_size: float | tuple[float, float] | None,
 ) -> tuple[Detector | None, dict[str, Any]]:
@@ -211,10 +193,7 @@ def _updated_geometry_metadata(
         meta["detector_pixel_size_status"] = "provided"
         meta.pop("length_unit", None)
     explicit_center = (
-        geometry is not None
-        or declares_geom
-        or has_center
-        or (detector is not None and pixel_size is None)
+        geometry is not None or declares_geom or (detector is not None and pixel_size is None)
     )
     if explicit_center:
         meta["detector_center_status"] = "provided"
@@ -238,6 +217,7 @@ def _updated_geometry_metadata(
 def frame_geometry(
     record: ProjectionDataset,
     *,
+    offsets: ViewOffsets | None = None,
     angles: Sequence[float] | np.ndarray | None = None,
     detector: Detector | None = None,
     grid: Grid | None = None,
@@ -259,43 +239,41 @@ def frame_geometry(
             "pixel_size",
             "pixel_size= and detector= (or geometry=) both describe the detector: pass one",
         )
+    if offsets is None and not apply_poses:
+        require_nominal_geometry(record)
     declares_geom = declared is not None and declared.kind is not None
-    if (geometry is not None or declares_geom) and (message := dropped_offsets_message(record)):
+    use_offsets = apply_poses and geometry is None and not declares_geom
+    if (
+        offsets is not None
+        and (geometry is not None or declares_geom)
+        and (message := offsets.dropped_message())
+    ):
         warn(message, stacklevel=4)
-    record = _vendor_corrections(
-        record, applied=apply_poses and geometry is None and not declares_geom
-    )
-    has_center = declared is not None and declared.detector_center is not None
     detector, meta = _updated_geometry_metadata(
         record,
         geometry=geometry,
         declares_geom=declares_geom,
-        has_center=has_center,
         detector=detector,
         pixel_size=pixel_size,
     )
     record = replace_dataset(
         record,
         angles=record.angles if angles is None else np.asarray(angles, np.float32),
-        detector=detector or record.detector,
         grid=geometry.grid if geometry is not None else grid or record.grid,
         geometry_metadata=meta,
     )
+    if detector is not None:
+        record = record.with_detector(detector)
+    if geometry is None and not declares_geom:
+        record = record.with_parallel_detector()
+    if offsets is not None:
+        # A pitch override retains the scanner's center in its original pixel units.
+        explicit = detector if pixel_size is None else None
+        record = offsets.resolve(record, detector=explicit, applied=use_offsets)
     if declares_geom and geometry is None:
         assert declared is not None
         record, resolved = _declared_geometry(record, declared, grid=grid)
         return record, frame_output_grid(resolved, record)
-    if has_center and geometry is None:
-        assert declared is not None
-        assert declared.detector_center is not None
-        if record.detector is None:
-            record = record.with_parallel_detector()
-        assert record.detector is not None
-        detector = replace(record.detector, center=declared.detector_center)
-        record = replace_dataset(record, detector=detector)
-    if geometry is None and detector is not None:
-        record = with_view_offsets(record, detector)
-    record = record.with_parallel_detector() if geometry is None else record
     resolved = geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses)
     return record, frame_output_grid(resolved, record)
 

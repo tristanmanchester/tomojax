@@ -148,9 +148,10 @@ def load(
     data_path, image_key_path, angles_path : str or None, optional
         As :func:`load_frames`.
     apply_poses : bool, optional
-        Apply the saved per-view pose corrections, and a scanner's own recorded
-        per-view shifts and center shift (Zeiss); default is True. False gives the
-        nominal geometry; the record names the scanner's corrections either way.
+        Apply per-view poses. On a raw Zeiss acquisition, False also omits the
+        scanner's shifts and center correction. A saved scan that incorporated
+        those corrections requires the original acquisition for nominal geometry.
+        Use ``scan.with_poses(None)`` to clear its rigid poses.
 
     Returns
     -------
@@ -816,9 +817,10 @@ def load_frames(
     angles_path : str or None, optional
         Explicit HDF5 rotation-angle path; None discovers it.
     apply_poses : bool, optional
-        Apply saved per-view pose corrections, and a scanner's own recorded
-        per-view shifts and center shift (Zeiss); default is True. False gives
-        the nominal geometry while keeping vendor shift provenance in metadata.
+        Apply per-view poses. On a raw Zeiss acquisition, False also omits the
+        scanner's shifts and center correction. A saved scan that incorporated
+        those corrections requires the original acquisition for nominal geometry.
+        Use ``scan.with_poses(None)`` to clear its rigid poses.
 
     Returns
     -------

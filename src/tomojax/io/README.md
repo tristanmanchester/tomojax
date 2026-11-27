@@ -97,7 +97,12 @@ weighted from a sample of the views by default (`flat_weights="views"`, or
 [flat fields](../corrections/README.md#flat-fields)). Saving a scan retains every pose update, including an
 update around a cone-segmented acquisition whose segments have their own;
 `Scan.poses` is their complete composition in the detector translation frame,
-and loading with `apply_poses=False` removes all of them.
+and `scan.with_poses(None)` removes those updates. Raw Zeiss shifts are converted
+once, on import. The `zeiss` metadata describes the original file, including its
+per-view shifts in original detector pixels. Combined scans keep their input
+metadata under `original_acquisitions`. A saved scan reloads from its effective
+detectors, beam arrangements and pose table. Load the original Zeiss acquisition
+with `apply_poses=False` to omit its shifts and center correction.
 
 ## TIFF angle sidecars
 

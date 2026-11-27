@@ -53,6 +53,13 @@ Load the **projection acquisition** (`.txrm`), not a reconstructed `.txm` volume
 - **References and darks:** pass a separate flat with `--flats reference_Front.xrm` (or `flats=` + `flat_exposure_times=` in seconds for raw arrays). Single-frame timestamped references interpolate linearly by position. Files with `AcquisitionSettings/CameraStaticBackground = 1` need no darks; otherwise supply `--darks` / `darks=`.
 - **Detector saturation:** Zeiss records the camera's linear ceiling in `MaxLinearRange` (45 000 counts on typical scans). Long exposures can push air pixels past that ceiling; `tj.load` warns when counts exceed it and records the affected fraction and `linear_limit_line_integral` in the `flat_dark` record. Saturated air reads as artificial absorption (e.g. ~0.33 instead of 0 on CuO_2) and appears as a bright background around the sample.
 
+Saving a scan stores its effective detector, cone arrangements and fitted poses.
+On reload, `detector=` sets the first panel and preserves the physical offset to
+each other panel. Original Zeiss shifts describe the raw acquisition in its
+original view order and pixel units. For nominal geometry, load the `.txrm`
+with `apply_poses=False`. To remove rigid poses from a saved scan while keeping
+its calibrated detector centers, use `scan.with_poses(None)`.
+
 For a fast 64³ CPU preview (every 8th view, 16 × 16 binning):
 
 ```bash

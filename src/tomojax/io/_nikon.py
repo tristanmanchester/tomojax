@@ -181,7 +181,7 @@ def _raw_nikon(file: Path) -> RawAcquisition:
 
         meta = {**record.geometry_metadata, "closing_frames_excluded": closing}
         record = replace_dataset(record, geometry_metadata=meta)
-    return RawAcquisition(record=record, counts=counts, white_level=white)
+    return RawAcquisition(record, counts, white_level=white)
 
 
 def _geometry(

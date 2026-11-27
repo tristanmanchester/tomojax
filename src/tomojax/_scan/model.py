@@ -16,6 +16,7 @@ import numpy as np
 
 from tomojax._data import views_of
 from tomojax._parameters import AnnotationModule
+from tomojax._typed_arrays import object_mapping
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import selected_stack
 from tomojax.core.registration import recorded_length_unit, registration
@@ -406,11 +407,22 @@ class Scan:
         projections = np.concatenate([np.asarray(s.projections) for s in scans])
         # Each scan keeps its own acquisition times; a restart marks the break.
         positions = np.concatenate([_positions(s) for s in scans])
+        origins = [
+            origin
+            for scan in scans
+            if scan.source is not None
+            for origin in _acquisition_origins(scan.source)
+        ]
+        source = None
+        if origins:
+            source = geometry_record(geometry, name=name or scans[0].name)
+            source.geometry_metadata["original_acquisitions"] = origins
         return cls(
             projections,
             geometry,
             name=name or scans[0].name,
             corrections=_combined(scans),
+            source=source,
             view_positions=positions,
         )
 
@@ -687,15 +699,7 @@ def geometry_record(
     from tomojax.io.api import replace_dataset
 
     geometry_type, meta, poses, _ = describe(geometry)
-    kept = (
-        {}
-        if source is None
-        else {
-            k: v
-            for k, v in source.geometry_metadata.items()
-            if k not in GEOMETRY_KEYS and k not in ("corrections", "view_positions")
-        }
-    )
+    kept = {} if source is None else _source_provenance(source.geometry_metadata)
     fields: dict[str, Any] = {
         "projections": None,
         "angles": np.asarray(geometry.angles, np.float32),  # pyright: ignore[reportAttributeAccessIssue]
@@ -716,6 +720,8 @@ def geometry_record(
 def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
     from tomojax.corrections import Correction
 
+    if not apply_poses:
+        require_nominal_geometry(record)
     saved = record.geometry_metadata.get("corrections") or ()
     positions = record.geometry_metadata.get("view_positions")
     assert record.projections is not None  # tj.load refuses a file without them
@@ -727,6 +733,37 @@ def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
         source=record,
         view_positions=None if positions is None else np.asarray(positions, np.float64),
     )
+
+
+def _source_provenance(metadata: Mapping[str, object]) -> dict[str, object]:
+    """Metadata carried over when the scan supplies new geometry and view records."""
+    return {
+        k: v
+        for k, v in metadata.items()
+        if k not in GEOMETRY_KEYS and k not in ("corrections", "view_positions")
+    }
+
+
+def _acquisition_origins(record: ProjectionDataset) -> list[dict[str, object]]:
+    """Original acquisition metadata, in input order for a combined scan."""
+    meta = record.geometry_metadata
+    if "original_acquisitions" in meta:
+        return meta["original_acquisitions"]
+    original = _source_provenance(meta)
+    return [original] if original else []
+
+
+def require_nominal_geometry(record: ProjectionDataset) -> None:
+    """Reject a request to undo scanner calibration baked into a saved scan."""
+    if any(
+        object_mapping(origin.get("vendor_corrections")).get("applied")
+        for origin in _acquisition_origins(record)
+    ):
+        raise ValueError(
+            "The saved geometry incorporates scanner corrections. Load the original acquisition "
+            "with apply_poses=False for nominal geometry, or use scan.with_poses(None) to "
+            "clear only the saved rigid poses."
+        )
 
 
 def geometry_of(record: ProjectionDataset, *, apply_poses: bool) -> ScanGeometry:

@@ -935,6 +935,7 @@ class tomojax.io.ProjectionDataset(
     .geometry_inputs(self) -> 'dict[str, Any]'
     .image_key
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
+    .with_detector(self, detector: 'Detector') -> 'ProjectionDataset'
     .with_parallel_detector(self) -> 'ProjectionDataset'
 class tomojax.io.ValidationReport
 def tomojax.io.build_geometry_from_dataset_metadata(

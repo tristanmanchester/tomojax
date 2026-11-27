@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reloading a saved scan with its stored detector preserves its fitted poses and rays,
+  including after selecting views or binning. A detector override on a segmented cone
+  scan changes the common sampling and moves each panel by the same physical offset.
+  Load the raw Zeiss acquisition with `apply_poses=False` for nominal geometry.
 - Joint alignment reports possible objects crossing the field of view with per-view scores,
   exposure ranges and angles. Review the projections, then set `AlignConfig.exclude_views`
   to exclude confirmed ranges. The result retains all projections and interpolates their

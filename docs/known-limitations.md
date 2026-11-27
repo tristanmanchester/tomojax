@@ -64,6 +64,7 @@ See [align a scan](align-a-scan.md#check-the-result) for choosing `fit=` paramet
 ## File formats and external data
 
 - **No helical scans or scatter modeling:** TomoJAX models circular cone orbits and flat detectors, uses single-material beam-hardening curves, and does not model X-ray scatter.
+- A saved scan with Zeiss corrections stores the calibrated detector centers. Reload the original acquisition with `apply_poses=False` to recover its nominal geometry.
 - **Unapplied vendor metadata:** Nikon `OffsetX/Y/Z` reconstruction regions and vendor beam-hardening parameters (Nikon, Zeiss, Bruker) are stored in metadata without being applied automatically.
 - **PyHST `.par`:** supports raw single-image axial parallel EDFs only (rejects multi-frame, cone, helical, binning, and distortion modes). Large file-owned grids (such as 2048² × 1200, 20.1 GB in `float32`) survive detector cropping; pass a smaller `grid=` or use `tj.reconstruct_slabs` if memory is tight.
 - **External HDF5 links and Zeiss streams:** missing backing files for HDF5 virtual datasets and missing interior Zeiss image streams raise errors rather than zero-filling. Interrupted Zeiss scans load only while stored frames match per-view metadata.

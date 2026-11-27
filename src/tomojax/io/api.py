@@ -32,11 +32,7 @@ from tomojax.io._inspection_format import format_inspection_report
 from tomojax.io._inspection_types import Inspection
 from tomojax.io._quicklook import save_projection_quicklook
 from tomojax.io._tiff import read_tiff_frames
-from tomojax.io._view_offsets import (
-    dropped_offsets_message,
-    with_view_offsets,
-    without_view_offsets,
-)
+from tomojax.io._view_offsets import ViewOffsets
 
 __all__ = [
     "ExportCrop",
@@ -48,9 +44,9 @@ __all__ = [
     "LoadedNXTomo",
     "LocatedFrames",
     "NXTomoMetadata",
+    "ViewOffsets",
     "convert_dataset",
     "dataset_output_format",
-    "dropped_offsets_message",
     "format_descriptions",
     "format_inspection_report",
     "inspect_dataset",
@@ -77,6 +73,4 @@ __all__ = [
     "slab_volume",
     "validate_nxtomo",
     "volume_entry",
-    "with_view_offsets",
-    "without_view_offsets",
 ]

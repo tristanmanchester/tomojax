@@ -52,7 +52,7 @@ def acquisition_frames(
     )
     if found is None:
         return None
-    record, resolved = frame_geometry(found.record, **overrides)
+    record, resolved = frame_geometry(found.nominal_record, offsets=found.offsets, **overrides)
     return Frames(
         counts=found.counts,
         geometry=resolved,

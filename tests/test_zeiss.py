@@ -654,3 +654,128 @@ def test_binning_a_scan_follows_a_derived_grid_and_keeps_a_stated_one(tmp_path):
     assert kept == stated.grid
     plain = tj.Scan(np.ones((3, 8, 12), np.float32), stated)  # built by the caller: stated
     assert plain.binned(4).grid == stated.grid
+
+
+@pytest.fixture
+def shifted_zeiss(tmp_path):
+    def read(cone):
+        counts = (500 + np.arange(288)).astype("<u2").reshape(3, 8, 12)
+        streams = _streams(counts, np.full((8, 12), 2500, "<f4"))
+        streams["ImageInfo/XrayGeometry"] = np.array([cone], "<u4").tobytes()
+        streams["alignment/x-shifts"] = np.array([0.25, 0.5, -0.25], "<f4").tobytes()
+        path = tmp_path / "shifted.txrm"
+        write_ole(path, streams)
+        return tj.load(path, darks=0)
+
+    return read
+
+
+@pytest.mark.parametrize("cone", [False, True])
+@pytest.mark.parametrize("extension", ["npz", "nxs"])
+def test_detector_override_preserves_saved_rays_and_poses(tmp_path, shifted_zeiss, extension, cone):
+    from dataclasses import replace
+
+    scan = shifted_zeiss(cone)
+    poses = np.array([[0.3, 0, 0, 0.01, 0, 0], [-0.5, 0, 0, 0.02, 0, 0], [0.8, 0, 0, -0.01, 0, 0]])
+    before = scan.with_poses(poses).selected([0, 2]).cropped(slice(1, 7), slice(1, 11)).binned(2)
+    if cone:
+        # Concatenating selections can put views in a different order from either source file.
+        before = tj.Scan.combine([before.selected([1]), before])
+    path = tmp_path / f"edited.{extension}"
+    tj.save(path, before)
+    after = tj.load(path, detector=before.detector)
+    np.testing.assert_array_equal(after.projections, before.projections)
+    np.testing.assert_allclose(after.poses, before.poses, atol=1e-7)
+    assert after.grid == before.grid
+    for i in range(len(before.angles)):
+        np.testing.assert_allclose(after.geometry.pose_matrix(i), before.geometry.pose_matrix(i))
+        for expected, actual in zip(
+            before.geometry.rays_for_view(i), after.geometry.rays_for_view(i), strict=True
+        ):
+            for row, col in np.ndindex(before.projections.shape[1:]):
+                np.testing.assert_array_equal(actual(col, row), expected(col, row))
+
+    edited = replace(before.detector, du=0.04, dv=0.03, center=(0.03, -0.02))
+    moved = tj.load(path, detector=edited)
+    assert moved.detector == edited
+    np.testing.assert_allclose(moved.poses, before.poses, atol=1e-7)
+    if cone:
+        for original, new in zip(before.geometry.segments, moved.geometry.segments, strict=True):
+            expected = np.subtract(original.detector.center, before.detector.center) + edited.center
+            np.testing.assert_allclose(new.detector.center, expected)
+            assert (new.detector.du, new.detector.dv) == (edited.du, edited.dv)
+    with pytest.raises(ValueError, match="original acquisition"):
+        tj.load(path, apply_poses=False)
+
+
+def test_fitted_zeiss_scan_reconstructs_after_reloading(tmp_path, shifted_zeiss):
+    scan = shifted_zeiss(False)
+    result = tj.align(scan, fit="translations", iterations=2, image_iterations=3)
+    fitted = result.scan
+    assert not np.allclose(fitted.poses, scan.poses)
+    expected = np.asarray(tj.reconstruct(fitted, "cgls", iterations=3).volume)
+    path = tmp_path / "fit.nxs"
+    tj.save(path, result)
+    for overrides in ({}, {"detector": fitted.detector}):
+        loaded = tj.load(path, **overrides)
+        np.testing.assert_allclose(loaded.poses, fitted.poses, atol=1e-7)
+        actual = tj.reconstruct(loaded, "cgls", iterations=3).volume
+        np.testing.assert_allclose(actual, expected, rtol=2e-5, atol=2e-5)
+
+
+@pytest.mark.parametrize("cone", [False, True])
+def test_saved_vendor_shifts_describe_the_original_acquisition(tmp_path, shifted_zeiss, cone):
+    scan = shifted_zeiss(cone)
+    before = scan.binned(2)
+    path = tmp_path / "binned.nxs"
+    tj.save(path, before)
+    restored = tj.load(path, detector=before.detector)
+    assert restored.detector == before.detector
+    if cone:
+        assert [s.detector for s in restored.geometry.segments] == [
+            s.detector for s in before.geometry.segments
+        ]
+    else:
+        np.testing.assert_array_equal(restored.poses, before.poses)
+    for overrides in ({}, {"detector": before.detector}, {"geometry": before.geometry}):
+        with pytest.raises(ValueError, match="original acquisition"):
+            tj.load(path, apply_poses=False, **overrides)
+    nominal = tj.load(tmp_path / "shifted.txrm", darks=0, apply_poses=False)
+    tj.save(path, nominal.selected([1, 2]))
+    again = tj.load(path, detector=nominal.detector)
+    assert again.poses is None and again.detector.center == (0.0, 0.0)
+    # Positions still index the original three views, in unbinned detector pixels.
+    np.testing.assert_array_equal(
+        again.source.geometry_metadata["zeiss"]["detector_view_offsets_pixels"],
+        [[-0.25, -0.5], [-0.5, -0.5], [0.25, -0.5]],
+    )
+
+
+@pytest.mark.parametrize("applied", [False, True])
+def test_legacy_vendor_tables_remain_acquisition_history(tmp_path, shifted_zeiss, applied):
+    from tomojax.io import load_dataset, save_dataset
+
+    scan = shifted_zeiss(False)
+    if not applied:
+        scan = tj.load(tmp_path / "shifted.txrm", darks=0, apply_poses=False)
+    before = scan.selected([0, 2])
+    path = tmp_path / "legacy.nxs"
+    tj.save(path, before)
+    record = load_dataset(path)
+    # Older files placed the three original rows beside two effective poses.
+    # Importing with corrections disabled had already zeroed every offset.
+    original = record.geometry_metadata["zeiss"].pop("detector_view_offsets_pixels")
+    record.geometry_metadata["detector_view_offsets_pixels"] = (
+        original if applied else np.zeros((3, 2)).tolist()
+    )
+    save_dataset(path, record)
+    loaded = tj.load(path, detector=before.detector)
+    for i in range(2):
+        np.testing.assert_array_equal(
+            loaded.geometry.pose_matrix(i), before.geometry.pose_matrix(i)
+        )
+    zeiss = loaded.source.geometry_metadata["zeiss"]
+    if applied:
+        np.testing.assert_array_equal(zeiss["detector_view_offsets_pixels"], original)
+    else:
+        assert "detector_view_offsets_pixels" not in zeiss

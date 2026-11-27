@@ -219,6 +219,22 @@ class ProjectionDataset:
             # NPZ can carry an incomplete record too. Preserve its absence so
             # load_frames can apply an explicit detector before materialization.
             detector = None
+        meta = dict(metadata.geometry_meta or {})
+        # Older saves stored raw Zeiss tables alongside the effective geometry.
+        # Keep them with the acquisition they describe, including after a re-save.
+        if "detector_view_offsets_pixels" in meta or "cone_view_distances" in meta:
+            original = {
+                key: meta.pop(key)
+                for key in ("detector_view_offsets_pixels", "cone_view_distances")
+                if key in meta
+            }
+            vendor = meta.get("vendor_corrections")
+            if isinstance(vendor, dict) and vendor.get("applied") is False:
+                # The old importer zeroed this table when it omitted the shifts.
+                original.pop("detector_view_offsets_pixels", None)
+            zeiss = meta.get("zeiss", {})
+            if isinstance(zeiss, dict):
+                meta["zeiss"] = {**zeiss, **original}
         grid = metadata.grid
         dataset = cls(
             projections=None if payload.projections is None else np.asarray(payload.projections),
@@ -234,7 +250,7 @@ class ProjectionDataset:
             if isinstance(grid, Grid)
             else (Grid.from_dict(grid) if grid is not None else None),
             geometry_type=str(metadata.geometry_type),
-            geometry_metadata=dict(metadata.geometry_meta or {}),
+            geometry_metadata=meta,
             angle_offset=(
                 None
                 if metadata.angle_offset is None
@@ -359,6 +375,35 @@ class ProjectionDataset:
         if isinstance(partial, dict) and {"du", "dv"} <= partial.keys():
             return float(partial["du"]), float(partial["dv"])
         return None, None
+
+    def with_detector(self, detector: Detector) -> ProjectionDataset:
+        """Replace the first panel, preserving relative centers across cone segments.
+
+        Parameters
+        ----------
+        detector : Detector
+            First panel center in geometry length units and sampling shared by all views.
+
+        Returns
+        -------
+        ProjectionDataset
+            Dataset with the new detector sampling and each panel displaced equally.
+        """
+        meta = dict(self.geometry_metadata)
+        if entries := meta.get("cone_segments"):
+            first = Detector.from_dict(entries[0]["detector"])
+            du, dv = detector.center[0] - first.center[0], detector.center[1] - first.center[1]
+            segments = []
+            for entry in entries:
+                old = Detector.from_dict(entry["detector"])
+                center = (
+                    detector.center
+                    if old.center == first.center
+                    else (old.center[0] + du, old.center[1] + dv)
+                )
+                segments.append({**entry, "detector": replace(detector, center=center).to_dict()})
+            meta["cone_segments"] = segments
+        return replace_dataset(self, detector=detector, geometry_metadata=meta)
 
     def with_parallel_detector(self) -> ProjectionDataset:
         """A parallel record's detector, from its recorded pitches or in pixel units.
