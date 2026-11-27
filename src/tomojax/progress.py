@@ -305,7 +305,11 @@ class Control:
             self._condition.notify_all()
 
     def cancel(self) -> None:
-        """Request cancellation and wake a paused operation."""
+        """Request cancellation and wake a paused operation.
+
+        Inside a checkpointed loop, the loop saves at its next work boundary
+        before raising :class:`Canceled`.
+        """
         with self._condition:
             self._canceled = True
             self._condition.notify_all()

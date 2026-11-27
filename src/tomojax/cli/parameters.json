@@ -5266,7 +5266,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "HDF5/NXtomo dataset, saved reconstruction, or recognized raw acquisition."
+          "description": "HDF5/NXtomo dataset, saved reconstruction, recognized raw acquisition, or checkpoint directory."
         }
       },
       "required": [

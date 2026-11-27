@@ -590,8 +590,10 @@ def reconstruct(
     duration have passed (capping periodic save overhead at 5% of the run);
     host-slab runs save each slab as it finishes (flushing and fingerprinting
     named ``out`` memmaps instead of copying their planes). On SIGTERM inside a
-    checkpointed loop on the main thread, the run finishes its current
-    iteration or slab, saves, and raises :class:`tomojax.errors.Canceled`. Hard
+    checkpointed loop on the main thread, or when canceled through
+    :meth:`tomojax.progress.Control.cancel`, the run finishes its current
+    iteration or slab, saves, and raises :class:`tomojax.errors.Canceled` whose
+    ``checkpoint`` attribute names the directory. Hard
     kills resume from the last completed save. The directory is deleted when
     the call returns. Another run's checkpoint, a directory of unrelated files,
     an incompatible format, or a directory locked by another process is refused
@@ -650,7 +652,9 @@ def reconstruct(
         ``checkpoint`` holds another run's state, unrelated files, an
         incompatible format, or an active lock (``InvalidParameter``).
     tomojax.errors.Canceled
-        If SIGTERM stops a checkpointed run on the main thread after saving.
+        If canceled through a :class:`tomojax.progress.Control`, or if SIGTERM
+        stops a checkpointed run on the main thread; when ``checkpoint`` is set,
+        ``Canceled.checkpoint`` names the directory after saving.
 
     Examples
     --------
@@ -788,8 +792,10 @@ def reconstruct_slabs(
     opened with ``mode="r+"`` when it exists). SIRT and MLEM also save the
     in-progress slab state once both 10 minutes and 20 times the previous save
     duration have passed (at most 5% overhead). On SIGTERM in the main thread,
-    the run stops after the current slab (or SIRT/MLEM iteration), saves, and
-    raises :class:`tomojax.errors.Canceled`. Leaving the ``with`` block early
+    or when canceled through :meth:`tomojax.progress.Control.cancel`, the run
+    stops after the current slab (or SIRT/MLEM iteration), saves, and raises
+    :class:`tomojax.errors.Canceled` whose ``checkpoint`` attribute names the
+    directory. Leaving the ``with`` block early
     keeps the directory for a later run; finishing the last slab deletes it.
     Another run's checkpoint, unrelated files, an incompatible format, or a
     locked directory is refused with :class:`tomojax.errors.InvalidParameter`.
@@ -825,7 +831,9 @@ def reconstruct_slabs(
         or if ``checkpoint`` holds another run's state, unrelated files, an
         incompatible format, or an active lock (``InvalidParameter``).
     tomojax.errors.Canceled
-        If SIGTERM stops a checkpointed run on the main thread after saving.
+        If canceled through a :class:`tomojax.progress.Control`, or if SIGTERM
+        stops a checkpointed run on the main thread; when ``checkpoint`` is set,
+        ``Canceled.checkpoint`` names the directory after saving.
 
     Examples
     --------
@@ -1121,8 +1129,10 @@ def align(
     volume, poses, damping, and step history are saved at step boundaries once
     both 10 minutes and 20 times the previous save duration have passed (at
     most 5% overhead). On SIGTERM inside a checkpointed loop on the main
-    thread, the fit saves after the current step and raises
-    :class:`tomojax.errors.Canceled`. Hard kills resume from the last completed
+    thread, or when canceled through :meth:`tomojax.progress.Control.cancel`,
+    the fit saves after the current step and raises
+    :class:`tomojax.errors.Canceled` whose ``checkpoint`` attribute names the
+    directory. Hard kills resume from the last completed
     save. The directory is deleted when the call returns. Another run's
     checkpoint, unrelated files, an incompatible format, or a locked directory
     is refused with :class:`tomojax.errors.InvalidParameter`. Cone-beam pose
@@ -1188,7 +1198,9 @@ def align(
         another run's state, unrelated files, an incompatible format, or an
         active lock (``InvalidParameter``).
     tomojax.errors.Canceled
-        If SIGTERM stops a checkpointed run on the main thread after saving.
+        If canceled through a :class:`tomojax.progress.Control`, or if SIGTERM
+        stops a checkpointed run on the main thread; when ``checkpoint`` is set,
+        ``Canceled.checkpoint`` names the directory after saving.
 
     Examples
     --------

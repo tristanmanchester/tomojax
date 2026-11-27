@@ -25,23 +25,29 @@ if TYPE_CHECKING:
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:
-    """Describe a dataset or acquisition and run structural and calibration checks.
+    """Describe a dataset, acquisition, or checkpoint directory and run checks.
 
-    Reads metadata and a bounded sample of the frames, never the whole stack: the
-    projections' shape, type and statistics, the angles, geometry, detector,
-    flats and darks, the corrections recorded, saved poses, memory estimates and a
-    saved volume, and what loading the file as a scan reads (``loading``: its
-    length unit, where its rotation center comes from, frames a stopped scan
-    leaves out, or the argument it needs). ``valid`` is True when the checks
-    performed for that format find no issues in ``issues`` (frame layout, angles,
-    sample frames, and raw calibration for recognized acquisitions). A file that
-    records no rotation axis (``loading["geometry"] == "not_recorded"``) is valid
-    but needs ``geometry`` declared before reconstruction or alignment.
+    For a dataset or acquisition, reads metadata and a bounded sample of the
+    frames, never the whole stack: the projections' shape, type and statistics,
+    the angles, geometry, detector, flats and darks, the corrections recorded,
+    saved poses, memory estimates and a saved volume, and what loading the file
+    as a scan reads (``loading``: its length unit, where its rotation center
+    comes from, frames a stopped scan leaves out, or the argument it needs).
+    ``valid`` is True when the checks performed for that format find no issues
+    in ``issues`` (frame layout, angles, sample frames, and raw calibration for
+    recognized acquisitions). A file that records no rotation axis
+    (``loading["geometry"] == "not_recorded"``) is valid but needs ``geometry``
+    declared before reconstruction or alignment.
+
+    For a checkpoint directory (``checkpoint=`` of a stopped run),
+    ``checkpoint`` reports the saved run, how it was requested, save
+    timestamps, entries, size, and whether a live process holds it.
 
     Parameters
     ----------
     path : str or path-like
-        HDF5/NXtomo dataset, saved reconstruction, or recognized raw acquisition.
+        HDF5/NXtomo dataset, saved reconstruction, recognized raw acquisition,
+        or checkpoint directory.
 
     Returns
     -------

@@ -745,7 +745,9 @@ def load_frames(
     ``pixel_size`` sets physical units; a cone-beam file requires a physical
     pixel size because its distances fix the unit. When the rotation center is
     not recorded, it defaults to the middle of the detector with
-    ``detector_center_status`` "not_recorded".
+    ``detector_center_status`` "not_recorded". A file that records no rotation
+    axis or pixel scale logs a warning (``geometry_status`` "not_recorded") and
+    is refused by reconstruction and alignment until ``geometry`` is declared.
     Missing dark fields require ``darks=``; use ``darks=0`` only for already
     dark-corrected counts.
 
