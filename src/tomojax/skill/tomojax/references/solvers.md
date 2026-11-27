@@ -20,6 +20,12 @@ Inspect `info` after an automatic iterative run (MCP results put every scalar fi
 
 On real scans, motion, scatter, calibration bias, and correlated detector errors often leave the projection residual above `projection_error_rms` at 50 updates, so `termination="iteration_limit"` is expected. Check the slices before raising `iterations`, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run, pass `iterations=info["effective_iterations"]` for CGLS, both `iterations` and `acceleration` from `info` for SIRT, and `tv_weight=info["resolved_tv_weight"]` with `iterations=info["effective_iterations"]` for FISTA.
 
+## Truncated and region-of-interest scans
+
+When the object extends past the detector edges, `fourier`, `fbp`, and cone-beam FDK continue each detector row past both edges before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's edge values (`exterior="cylinder"`, the default). Rows ending at zero continue as zero, so contained objects reconstruct unchanged. Set `exterior="zero"` in `FBPConfig`, `FDKConfig`, or `FourierConfig` (or `config: {"exterior": "zero"}` with an explicit `method` in MCP) to assume zero beyond the detector.
+
+Every reconstruction carries `info["truncation"]` (`edge_ratio`, `outside_fraction`, `interior_shift`, `radius`, `field_of_view_radius`), and `tj.reconstruct_slabs` attaches it to each yielded slab. Edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation; the absolute attenuation level depends on the cylinder model (compare `interior_shift` with the contrast of interest), and non-cylindrical exteriors such as a square bar retain partial cupping and rim error. Iterative solvers (`cgls`, `sirt`, `fista`, `spdhg`, `mlem`) fit the grid to the measured rays without an exterior model: when material lies outside the grid they keep the bright rim and bowl, and unpenalized CGLS runs to its 50-update cap. For a truncated scan, use `fourier` or `fbp` (FDK for cone beams) for the interior level, or give an iterative solver a grid that holds the whole object.
+
 ## Direct solver calls
 
 With a parallel scan in `scan`, supply its projections in (view, v, u) order.

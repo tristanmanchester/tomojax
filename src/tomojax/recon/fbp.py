@@ -52,6 +52,11 @@ class FBPConfig:
     filters and backprojects its own, weighted for the whole scan, and the
     volumes are summed on the first.
 
+    ``exterior="cylinder"`` (default) continues each detector row past both
+    edges before filtering as a uniform cylinder about the rotation axis, for
+    parallel FBP, laminography FBP, and cone-beam FDK; ``exterior="zero"``
+    assumes zero attenuation beyond the detector.
+
     Parameters
     ----------
     filter : str, optional
@@ -65,8 +70,9 @@ class FBPConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
+        Model beyond the detector: "cylinder" fits each row at its edges before
+        filtering; "zero" assumes zero attenuation beyond the detector. Default
+        is 'cylinder'.
     """
 
     method: ClassVar[Literal["fbp"]] = "fbp"
@@ -836,13 +842,16 @@ def fbp(
     share their angular weight equally. Frequencies no view
     measures, such as laminography's missing cone, reconstruct as zero.
 
-    With the default cylinder exterior, FBP extends each side of a measured row
-    before filtering. The extension projects a uniform cylinder about the rotation axis,
-    with one radius for the detector row, fitted to its views' fall towards
-    both edges, and each view's amplitudes from its own edge values. A row that
-    ends at zero continues as zero. For an object wider than the detector this
-    removes the bright rim and bowl of a zero continuation and leaves the
-    interior's absolute level as good as the cylinder model.
+    With the default ``exterior="cylinder"``, FBP extends each side of a
+    measured row before filtering. The extension projects a uniform cylinder
+    about the rotation axis, with one radius for the detector row fitted to its
+    views' fall toward both edges, and each view's amplitudes taken from its own
+    edge values. A row that ends at zero continues as zero. For an object wider
+    than the detector this removes the bright rim and bowl of a zero exterior
+    and leaves the interior's absolute level as accurate as the cylinder model
+    (non-cylindrical exteriors such as a square bar retain partial cupping and
+    rim error). Set ``FBPConfig(exterior="zero")`` to assume zero beyond the
+    detector.
 
     Backprojection is voxel-driven with bilinear detector interpolation and
     retains filtered tails through the full output volume: outside the

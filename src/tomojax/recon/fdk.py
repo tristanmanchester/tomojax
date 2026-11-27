@@ -82,6 +82,10 @@ class FDKConfig:
     filters and backprojects its own, weighted for the whole scan, and the
     volumes are summed on the first. :func:`fdk_host` gives each its own slabs.
 
+    ``exterior="cylinder"`` (default) continues each detector row past both
+    edges after angular weighting as a uniform cylinder about the rotation axis;
+    ``exterior="zero"`` assumes zero attenuation beyond the detector.
+
     Parameters
     ----------
     filter : str, optional
@@ -96,8 +100,9 @@ class FDKConfig:
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
     exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
+        Model beyond the detector: "cylinder" fits each row at its edges before
+        filtering; "zero" assumes zero attenuation beyond the detector. Default
+        is 'cylinder'.
     """
 
     filter: Filter = "ramp"
@@ -506,11 +511,12 @@ def fdk(
     quadrature covers the whole scan, independently of segment boundaries.
     Noncircular trajectories retain FDK's approximate character.
 
-    With the default cylinder exterior, FDK continues rows past the detector edges
-    after applying angular weights and before filtering. An opposing view that measures
-    an edge's rays takes their weight, so the edge continues as zero. FDK keeps filtered
-    columns as far as the grid projects. Voxels outside the field of view hold the
-    reconstruction of the continued scan.
+    With the default ``exterior="cylinder"``, FDK continues rows past both
+    detector edges after applying angular weights and before filtering. An
+    opposing view that measures an edge's rays takes their weight, so the edge
+    continues as zero. Set ``FDKConfig(exterior="zero")`` to assume zero beyond
+    the detector. FDK keeps filtered columns as far as the grid projects. Voxels
+    outside the field of view hold the reconstruction of the continued scan.
 
     Parameters
     ----------
@@ -636,15 +642,15 @@ class FDKHostConfig:
     """Slab options for :func:`fdk_host`.
 
     ``slices_per_batch`` z slices are reconstructed per slab; ``None`` sizes slabs
-    to about a third of the free device memory. ``fdk`` holds the filter and backend
-    options.
+    to about a third of the free device memory. ``fdk`` holds the filter, backend,
+    and exterior options.
 
     Parameters
     ----------
     slices_per_batch : int | None, optional
         Positive slab depth, or None to choose automatically as described above.
     fdk : FDKConfig, optional
-        FDK filter, batching and backend configuration.
+        FDK filter, batching, backend, and exterior configuration.
     """
 
     slices_per_batch: int | None = None

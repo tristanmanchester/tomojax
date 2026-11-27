@@ -81,7 +81,7 @@ def truncation_record(
     Computed from at most 64 evenly spaced views and rows. What lies beyond
     the detector is a model: interior values carry an unknown smooth
     background of the order of a fraction of ``interior_shift``, while edges,
-    contrast between neighbouring regions and fine detail do not depend on it.
+    contrast between neighboring regions and fine detail do not depend on it.
     """
     return record_values(truncation_values(geometry, detector, projections))
 

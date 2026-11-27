@@ -588,20 +588,30 @@ def reconstruct(
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
 
-    An object wider than the detector leaves every row short. ``fbp`` and
-    ``fourier`` continue each detector row past its edges as the projection of
-    a cylinder about the rotation axis fitted to the row's edges, which removes
-    the bright rim and bowl of a zero continuation; edges, contrast and detail
-    inside the field of view do not depend on it, and the absolute level is as
-    good as the model. The iterative methods fit the grid to the measured rays:
-    exact when the grid holds the object, with rim and bowl when it does not.
-    ``info["truncation"]`` says what the rows' edges show: ``edge_ratio`` (mean
-    edge value over the rows' mean, zero for a contained object),
-    ``outside_fraction`` (the share of the continued scan's attenuation beyond
-    the detector), ``interior_shift`` (the change the continuation makes on
-    the rotation axis, in the volume's units: compare it with the contrast you
-    measure), ``radius`` (median fitted cylinder radius) and
-    ``field_of_view_radius``, in the scan's length unit.
+    An object wider than the detector leaves every row short. By default
+    (``exterior="cylinder"``), ``fbp`` (including cone-beam FDK) and ``fourier``
+    continue each detector row past both edges as the projection of a uniform
+    cylinder about the rotation axis fitted to the row's edge values, removing
+    the bright rim and bowl of a zero exterior; pass
+    ``config=FBPConfig(exterior="zero")`` or
+    ``config=FourierConfig(exterior="zero")`` to assume zero beyond the
+    detector. Edges, contrast between neighboring regions, and fine detail
+    inside the field of view do not depend on the continuation, while the
+    absolute level is only as accurate as the cylinder model and
+    non-cylindrical exteriors (such as a square bar) retain partial cupping and
+    rim error. Outside the field of view the volume holds the reconstruction of
+    the continued scan (``region="cyl"`` masks it). Iterative solvers fit the
+    grid to the measured rays without an exterior model: they are accurate when
+    the grid holds the whole object, and keep the rim and bowl when material
+    extends outside it (unpenalized ``cgls`` also runs to its 50-update cap).
+    Every reconstruction records ``info["truncation"]`` regardless of
+    ``exterior`` or method: ``edge_ratio`` (mean edge value over the rows' mean,
+    zero for a contained object), ``outside_fraction`` (the share of the
+    continued scan's attenuation beyond the detector), ``interior_shift`` (the
+    estimated change on the rotation axis from using the cylinder exterior, in
+    the volume's units: compare it with the contrast you measure), ``radius``
+    (median fitted cylinder radius), and ``field_of_view_radius``, in the scan's
+    length unit.
 
     ``checkpoint`` names a directory where the run saves its state, so a run
     killed by a scheduler time limit, preemption, or a node failure resumes
@@ -791,6 +801,12 @@ def reconstruct_slabs(
     Method configurations retain the same meaning as in ``reconstruct``.
     Pass ``FourierConfig(filter="ramp")`` (or ``"hann"`` or ``"shepp-logan"``)
     to match FBP's detector response in streamed Fourier reconstruction.
+    ``fbp`` (parallel and cone FDK) and ``fourier`` continue detector rows with
+    ``exterior="cylinder"`` by default; pass ``FBPConfig(exterior="zero")`` or
+    ``FourierConfig(exterior="zero")`` to assume zero beyond the detector. Each
+    yielded slab carries ``info["truncation"]`` (``edge_ratio``,
+    ``outside_fraction``, ``interior_shift``, ``radius``, and
+    ``field_of_view_radius``) computed from that slab's detector rows.
     CUDA consumes corrected rows without a corrected-projection host round trip.
     Unfiltered HDF5 stacks use parallel positional reads with cached chunk
     offsets. Raw row blocks target 1 MiB per view (at least 1 GiB per block,

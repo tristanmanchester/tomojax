@@ -80,8 +80,9 @@ class FourierConfig:
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
     exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
+        Model beyond the detector: "cylinder" fits each row at its edges before
+        transforming; "zero" assumes zero attenuation beyond the detector.
+        Default is 'cylinder'.
     """
 
     method: ClassVar[Literal["fourier"]] = "fourier"
@@ -136,11 +137,13 @@ def fourier(
     noise than FBP. Setting ``filter`` to ``"ramp"``, ``"hann"`` or
     ``"shepp-logan"`` applies FBP's linear detector-interpolation response,
     any chosen window and radial replicas inside the Cartesian frequency grid.
-    DC uses periodic angular trapezoid weights. The default cylinder exterior
-    continues each row as in :func:`tomojax.recon.fbp`, with each edge's
-    amplitudes averaged over a sixteenth of the half turn; the Cartesian
-    transform keeps the measured detector's field, where nothing within three
-    field radii wraps into it. Angular undersampling can cause artifacts.
+    DC uses periodic angular trapezoid weights. The default
+    ``exterior="cylinder"`` continues each row as in :func:`tomojax.recon.fbp`,
+    with each edge's amplitudes averaged over a sixteenth of the half turn; the
+    Cartesian transform keeps the measured detector's field, where nothing
+    within three field radii wraps into it. Set ``FourierConfig(exterior="zero")``
+    to assume zero attenuation beyond the detector. Angular undersampling can
+    cause artifacts.
 
     Input and output stay in NumPy arrays or memmaps, with float32 output in
     ``(nz, ny, nx)`` order. New outputs are C-contiguous for downstream volume

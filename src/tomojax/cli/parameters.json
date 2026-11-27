@@ -1365,7 +1365,7 @@
             "zero"
           ],
           "default": "cylinder",
-          "description": "Model beyond the detector. A cylinder fits each row at its edges. Zero assumes the scan contains the object.",
+          "description": "Model beyond the detector: \"cylinder\" fits each row at its edges before filtering; \"zero\" assumes zero attenuation beyond the detector. Default is 'cylinder'.",
           "x-choices": [
             "cylinder",
             "zero"
@@ -1436,7 +1436,7 @@
             "zero"
           ],
           "default": "cylinder",
-          "description": "Model beyond the detector. A cylinder fits each row at its edges. Zero assumes the scan contains the object.",
+          "description": "Model beyond the detector: \"cylinder\" fits each row at its edges before transforming; \"zero\" assumes zero attenuation beyond the detector. Default is 'cylinder'.",
           "x-choices": [
             "cylinder",
             "zero"

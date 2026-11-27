@@ -65,8 +65,8 @@ class FBPHostConfig:
     rows are read and transferred with at most two input batches on the device.
     Runtime/compiler caches add memory beyond these arrays. General slabs shrink
     their depth, then their view batch, after device allocation exhaustion.
-    Filter, scale and backend live on ``fbp`` (:class:`FBPConfig`), matching
-    :class:`FDKHostConfig`.
+    Filter, scale, backend, and exterior model live on ``fbp``
+    (:class:`FBPConfig`), matching :class:`FDKHostConfig`.
 
     Parameters
     ----------
@@ -76,7 +76,8 @@ class FBPHostConfig:
         Number of views processed together to bound temporary storage. Default is
         32.
     fbp : FBPConfig, optional
-        Filter, angular scale and backend settings. Default is ``FBPConfig()``.
+        Filter, angular scale, backend, and exterior settings. Default is
+        ``FBPConfig()``.
     """
 
     slices_per_batch: int | None = None
@@ -258,8 +259,8 @@ def fbp_host(
     geometries use :func:`fdk_host`. Built-in axial parallel scans read only the
     detector rows each slab needs; laminography and posed scans stream views per
     slab. Anisotropic spacing, detector offsets and shifted volume origins are
-    supported. Filter tails use the same zero-extended measurement model as
-    ``fbp``.
+    supported. Row continuation and filtered tails follow ``config.fbp.exterior``,
+    matching :func:`fbp`.
 
     Parameters
     ----------
