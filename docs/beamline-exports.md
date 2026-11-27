@@ -107,6 +107,26 @@ print(restored.volume.shape, restored.grid, restored.geometry.detector)
 
 Pass `include_scan=True` to `tj.save` if you also want the corrected projections stored in `preview.nxs`. For ring removal, phase retrieval, larger row windows, and explicit solvers, continue with the [quickstart](quickstart.md).
 
+## Half-acquisition with an offset parallel detector
+
+An axial parallel scan can cover a specimen wider than the detector by rotating through 360° with the axis near one detector edge. Keep all views and the original detector coordinates. For example, a 2,560-column detector with the axis 64 pixels from its nearer edge measures 128 columns twice and covers a diameter of 4,992 pixels. Pixel distances here start at the detector edge, half a pixel outside its first pixel center.
+
+```python
+import tomojax as tj
+from tomojax.corrections import Rings
+
+scan = tj.load("full-turn.nxs")
+aligned = tj.align(scan, fit="center").scan
+print(aligned.grid.shape)             # (z, y, x)
+volume = tj.reconstruct(aligned.corrected(Rings()))
+```
+
+The fit matches changes in attenuation across the turn in the strip shared by opposite views. A detector-derived grid expands to the far edge and stays centered on the rotation axis. An explicit reconstruction grid keeps its requested extent. Fourier inversion and FBP weight conjugate rays across the overlap before filtering. Iterative methods use the original measured rays. If the specimen reaches the far edge, the default cylinder continuation estimates the direct methods' missing exterior from that edge.
+
+Use `tomojax inspect full-turn.nxs` or the MCP `inspect` tool to check the orbit. When the file records the axis, inspection also reports the axis-to-edge distance, overlap and complete field diameter in detector pixels. With an unknown axis, inspect the saved aligned scan for those dimensions.
+
+At 0.54 µm pitch, a 4,992 × 4,992 × 2,160 float32 volume occupies 215.3 GB. Fit the center on a representative band before correcting the whole acquisition. Pass the fitted `detector_center` when opening the full frames in the CLI or worker. In Python pass a full-height `detector` with the fitted horizontal center to `load_frames`, then consume `tj.reconstruct_slabs` one slab at a time. The [gallery](gallery.md#parallel-half-acquisition) shows the overlap and reconstructed field.
+
 ## Diamond I13 NXtomo acquisition
 
 Diamond I13 scan 159815 (`diamond-i13-mg31912-1/raw/159815.nxs`) links externally to `pco1-159815.hdf`; keep both files in the same directory. TomoJAX discovers its 3001 sample views, 200 flats (before and after), 100 darks, and angles automatically. Bracketing multi-frame flat sets are weighted from a sample of the views by default (`flat_weights="views"`), separating common row gain from local texture; pass `flat_weights="position"` to `.corrected(...)` to blend by position alone, or pass a clean neighboring scan's file as `flats="other_scan.nxs"` when a scan's own flats are shadowed ([flat fields](../src/tomojax/corrections/README.md#flat-fields)). Because pixel pitch is unrecorded, the scan loads in pixel units unless you pass `pixel_size=` or `detector=`.

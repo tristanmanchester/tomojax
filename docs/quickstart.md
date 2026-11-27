@@ -16,6 +16,8 @@ Reconstruction expects line integrals (log attenuation), not raw counts or norma
 
 For single-row first-slice recipes covering ESRF NXtomo, PSI TOMCAT, Elettra SYRMEP, PSI cSAXS, and Diamond I13, see [beamline exports](beamline-exports.md).
 
+For a full-turn scan with the rotation axis near a detector edge, see [half-acquisition](beamline-exports.md#half-acquisition-with-an-offset-parallel-detector).
+
 ### Raw ESRF acquisitions
 
 - **SPEC EDF folders:** `tj.load("scan_folder", angles=...)` reads uncompressed single-image EDF projections with `.info` or XML metadata. `PixelSize` gives the effective pitch in micrometers; supply `angles=` because the scan range alone does not fix the starting angle.
@@ -195,7 +197,7 @@ uv run python examples/gallery/fourier_response.py full_rows1048-1111.nxs fourie
 
 When an object extends past the detector edges, assuming zero attenuation outside the detector creates a step at each end of every row. Ramp filtering turns that step into a bright rim and a raised bowl across the interior.
 
-By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row past both edges before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
+By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row beyond the measured field before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
 
 To turn continuation off and assume zero beyond the detector, set `exterior="zero"` in the method configuration:
 

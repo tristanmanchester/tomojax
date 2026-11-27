@@ -73,6 +73,16 @@ A 1 mm sandstone plug (quartz and feldspar grains, clay seams, pyrite, cracks) i
 uv run python examples/gallery/rock_few_views.py rock-few-views.png
 ```
 
+## Parallel half-acquisition
+
+![Parallel-beam diagrams and coverage maps for a centered half turn and an offset full turn, above the porous phantom and its two reconstructions.](../images/gallery/parallel-offset-detector.png)
+
+A 256-column detector with 32 overlapping columns covers a 480-pixel diameter. The centered reference uses 512 columns and 480 views. The offset scan uses 960 views over a full turn. Both Fourier inversions use analytic line integrals and the same display range.
+
+```bash
+uv run python examples/gallery/parallel_offset_detector.py parallel-offset-detector.png
+```
+
 ## A cell wider than the detector
 
 ![Two drawings of the scan from above, with the full detector and with one 60% as wide and offset, each beside the cell colored by the share of the turn in which the detector sees each point; below, cross-sections and vertical slices of the phantom and of both reconstructions.](../images/gallery/battery-offset-detector.png)
