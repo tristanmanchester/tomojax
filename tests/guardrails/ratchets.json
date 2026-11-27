@@ -1,6 +1,6 @@
 {
   "config_fields": {
-    "AlignConfig": 23,
+    "AlignConfig": 25,
     "CGLSConfig": 11,
     "FBPConfig": 5,
     "FBPHostConfig": 3,
@@ -28,8 +28,8 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 40,
-    "tomojax.alignment.api": 4
+    "tomojax.io.api": 38,
+    "tomojax.alignment.api": 5
   },
   "cli_flags": {
     "inspect": 7,
@@ -49,8 +49,8 @@
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 169,
-    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
+    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 119,
     "src/tomojax/cli/align.py::build_parser": 101,
     "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
@@ -60,12 +60,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5588,
+    "reportAny": 5590,
     "reportMissingImports": 61,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 891,
+    "reportUnknownArgumentType": 889,
     "reportUnknownMemberType": 1715,
-    "reportUnknownVariableType": 1001,
+    "reportUnknownVariableType": 1000,
     "reportUnusedCallResult": 161
   },
   "explicit_any": 455,
