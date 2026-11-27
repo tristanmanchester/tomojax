@@ -64,8 +64,8 @@
     "reportMissingImports": 66,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 948,
-    "reportUnknownMemberType": 1756,
-    "reportUnknownVariableType": 1053,
+    "reportUnknownMemberType": 1755,
+    "reportUnknownVariableType": 1047,
     "reportUnusedCallResult": 154
   },
   "explicit_any": 429,
