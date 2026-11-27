@@ -90,6 +90,9 @@ def test_corrected_grid_still_follows_the_axis_after_saving(tmp_path, offset_acq
     fixed = tj.load(corrected, grid=scan.grid)
     copy = tmp_path / f"fixed.{suffix}"
     tj.save(copy, fixed)
+    if suffix == "nxs":
+        assert tj.inspect(corrected)["record"]["geometry"]["meta"]["grid_follows_detector"] is True
+        assert "grid_follows_detector" not in tj.inspect(copy)["record"]["geometry"]["meta"]
     assert tj.align(tj.load(copy), fit="center").scan.grid == scan.grid
 
 
