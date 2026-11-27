@@ -35,7 +35,7 @@ tomojax correct raw.nxs -o corrected.nxs
 tomojax inspect corrected.nxs
 ```
 
-`correct` computes `-log((I - D) / (F - D))`, blending bracketing flat sets with weights measured from a sample of the views while interpolating common row gain by position (`flat_weights="views"`, the default; see [flat fields](../src/tomojax/corrections/README.md#flat-fields)), and records the processing history in `corrected.nxs`. When the views move the flat by more than 1% over more than 1% of the detector, `correct` warns that the views do not follow the flat sets' positions; inspect the reconstruction and either pass another scan's file with `--flats other_scan.nxs` to use its flat frames, or pass `--flat-weights position` (`flat_weights = "position"` in `--config`) to blend the scan's own sets by position alone. Dataset paths are discovered automatically for NXtomo (including GDA files that record commanded SmarAct rotation angles outside the `NXtomo` group; see [acquisition formats](support-matrix.md#acquisition-formats)), Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate). If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
+`correct` computes `-log((I - D) / (F - D))`, blending bracketing flat sets with weights measured from a sample of the views while interpolating common row gain by position (`flat_weights="views"`, the default; see [flat fields](../src/tomojax/corrections/README.md#flat-fields)), and records the processing history in `corrected.nxs`. When the views move the flat by more than 1% over more than 1% of the detector, `correct` warns that the views do not follow the flat sets' positions, notes that a shadow covering both flat sets with no open-beam views leaves the incident intensity uncertain, and names both remedies: inspect the reconstruction and either pass a matching scan's file with `--flats other_scan.nxs` to use its clean flat frames, or pass `--flat-weights position` (`flat_weights = "position"` in `--config`) to blend the scan's own sets by position alone. Dataset paths are discovered automatically for NXtomo (including GDA files that record commanded SmarAct rotation angles outside the `NXtomo` group; see [acquisition formats](support-matrix.md#acquisition-formats)), Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate). If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
 Use `data_path`, `image_key_path`, and `angles_path` on `tj.load` or `tj.load_frames` (`--data-path`, `--image-key-path`, and `--angles-path` on the CLI, or the matching fields on worker and MCP `open`) to select datasets in a saved HDF5 scan as well as in a raw acquisition, for both eager and lazy loads. A Bliss acquisition accepts `data_path` to select its sequence. TIFF, NPZ, MATLAB phase, Nikon, SkyScan, Zeiss, and EDF inputs have fixed storage and reject these paths.
 
@@ -124,7 +124,7 @@ uv run python examples/gallery/first_slice.py full_rows1048-1111.nxs i12-first-s
 
 Pass `binning=N` to `frames.corrected(...)` (or `--binning N` to `tomojax correct`) to average `N × N` blocks of line integrals on the device; when only row-local steps follow `-log`, uncompressed files are binned slab-by-slab without holding the unbinned stack in host RAM.
 
-Binning reduces detector resolution without changing a recorded reconstruction grid. Pair it with a matching coarse grid for fast axial parallel previews:
+A detector-derived grid follows the binned detector automatically, including after saving and reopening a corrected scan. A grid recorded by the file or supplied by the caller keeps its sampling, so pass a matching coarse `grid=` when you want a fast axial parallel preview on a file-owned grid:
 
 ```python
 import tomojax as tj
@@ -195,41 +195,67 @@ uv run python examples/gallery/fourier_response.py full_rows1048-1111.nxs fourie
 
 ### Truncated and region-of-interest scans
 
-When an object extends past the detector edges, assuming zero attenuation outside the detector creates a step at each end of every row. Ramp filtering turns that step into a bright rim and a raised bowl across the interior.
+When an object extends past the detector edges, detector rows end on nonzero line integrals. Treating unmeasured rays beyond the detector as zero creates a step at both ends of every row, which produces a bright rim and a raised bowl across the reconstructed interior.
 
-By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row beyond the measured field before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
+All seven reconstruction methods model material beyond the detector by default (`exterior="cylinder"`):
 
-Iterative solvers use one coarse fit to the completed rows to estimate how much of each measured ray comes from outside the reconstruction grid. CGLS, SIRT, FISTA and SPDHG subtract that estimate once before the fine solve. MLEM adds its nonnegative estimate to the predicted counts at every update. The stored scan keeps its original measurements. An FBP or FDK warm start uses the same exterior setting.
+- **Analytic methods (`fourier`, `fbp`, and cone-beam FDK):** continue each detector row past its outer edges before filtering as the projection of a uniform cylinder about the rotation axis fitted to the row's edge values. Rows ending at zero continue as zero, so contained objects reconstruct unchanged.
+- **Iterative methods (`cgls`, `sirt`, `fista`, `spdhg`, and `mlem`):** run one coarse 50-iteration fit on the cylinder-continued rows to estimate how much of each measured ray comes from outside the reconstruction grid. CGLS, SIRT, FISTA, and SPDHG subtract that estimate once before the fine solve. MLEM adds its nonnegative estimate to the predicted counts at every update. The scan keeps its original measurements, and an FBP or FDK warm start uses the same `exterior` setting. When the detector edges are zero (a contained scan) or every extended ray intersects the grid, iterative solvers skip the coarse fit and fit the measured rays directly.
 
-To assume zero beyond the detector, set `exterior="zero"` in the method configuration:
+Direct solver functions in `tomojax.recon` (`cgls`, `sirt`, `fista`, `spdhg`, `mlem`) fit the arrays they receive without running the exterior estimate; use `tj.reconstruct` or `tj.reconstruct_slabs` for automatic exterior handling.
 
-- In Python, pass the method configuration to `tj.reconstruct`, for example `config=CGLSConfig(exterior="zero")`. For iterative reconstruction with `tj.reconstruct_slabs`, use `SIRTConfig` or `MLEMConfig` on axial parallel scans. Cone-beam FDK through the workflow takes `FBPConfig`. Direct `tomojax.recon.fdk` calls take `FDKConfig`.
-- **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit method, such as `--method cgls`.
-- **Worker and MCP:** pass the chosen method’s config, such as `{"type": "CGLSConfig", "exterior": "zero"}`, in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP.
+To compare the default against assuming zero beyond the detector on a small truncated scan:
 
-The selected setting is recorded in `recon.info["config"]` (`info["config"].exterior` in memory and `info["config"]["exterior"]` after reloading).
+```python
+import tomojax as tj
+from tomojax.recon import CGLSConfig
 
-Every reconstruction carries `recon.info["truncation"]`, computed from the projections for both analytic and iterative methods (per slab on yielded blocks of `tj.reconstruct_slabs`, and whole-scan in `info=` once the iterator finishes), regardless of whether `exterior` is `"cylinder"` or `"zero"`:
+sim = tj.simulate("sphere", size=48, n_views=64)
+truncated = sim.scan.cropped(slice(20, 28), slice(16, 32))
 
-| Key | Meaning |
-| --- | --- |
-| `edge_ratio` | Mean line integral at the detector edges divided by the mean across the rows (zero when the sampled edges are air) |
-| `outside_fraction` | Share of the continued scan's attenuation that lies beyond the detector |
-| `interior_shift` | Estimated change on the rotation axis from using the cylinder exterior, in the volume's units |
-| `radius` | Median radius of the rows' fitted cylinders, in the scan's length unit |
-| `field_of_view_radius` | Distance from the rotation axis to the nearer detector edge, or to the far edge on an offset axial parallel full turn (median over sampled horizontal chords on a rolled detector), in the scan's length unit |
+with_exterior = tj.reconstruct(truncated, "cgls", region="cyl")
+zero_exterior = tj.reconstruct(
+    truncated, "cgls", region="cyl", config=CGLSConfig(exterior="zero")
+)
+print(with_exterior.info["truncation"])
+```
 
-When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` appends `, N% of attenuation beyond the detector` to its closing line, and MCP `reconstruct` and `reconstruct_slabs` include the same phrase in their summary text.
+The selected setting is saved in `recon.info["config"]` (`info["config"].exterior` in memory and `info["config"]["exterior"]` after reloading).
 
-For iterative methods, `outside_grid` is the modeled contribution divided by the total measured line integral. `background_treatment` records `subtracted`, `additive_poisson`, or `none`.
+To turn exterior modeling off, set `exterior="zero"` in the method configuration:
 
-How to read the reconstruction:
+- **Python:** pass the method's config class to `tj.reconstruct` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `SIRTConfig`, `FISTAConfig`, `SPDHGConfig`, or `MLEMConfig`) or `tj.reconstruct_slabs` (`FBPConfig`, `FourierConfig`, `SIRTConfig`, or `MLEMConfig`). Cone-beam FDK takes `FBPConfig` through the workflow and `FDKConfig` in direct `tomojax.recon.fdk` calls.
+- **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit `--method`:
 
-- **Analytic reconstructions:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis. Compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) still retain partial cupping and rim error.
-- **Outside the field of view:** analytic methods reconstruct the continued rows in voxels outside the inscribed detector field. Those values depend on the exterior model. Pass `region="cyl"` (`--region cyl`) to zero them.
-- **Iterative reconstructions:** the exterior fit can remove the bright rim and bowl when the object extends past the grid. Different exteriors can produce identical measured rays. The absolute level depends on the assumed exterior, and the stopping point affects fine detail.
+  ```bash
+  printf 'exterior = "zero"\n' > zero-exterior.toml
+  tomojax reconstruct corrected.nxs -o recon.nxs --method cgls --config zero-exterior.toml
+  ```
 
-On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), analytic cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
+- **Worker and MCP:** pass `{"type": "CGLSConfig", "exterior": "zero"}` (using the chosen method's config tag) in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP `reconstruct` or `reconstruct_slabs`.
+
+Turn `exterior="zero"` on when you know the specimen fits inside the detector and nonzero edge readings come from background or scatter you do not want modeled as an outer cylinder, when you want to compare against a zero-padded solver, or when a strongly non-cylindrical exterior makes you prefer the uncorrected fit or a wider grid.
+
+Every reconstruction carries `recon.info["truncation"]`, computed from the measured projections regardless of `exterior` or method (per slab on yielded blocks of `tj.reconstruct_slabs`, and whole-scan in `info=` once the iterator finishes):
+
+| Key | Applies to | Meaning |
+| --- | --- | --- |
+| `edge_ratio` | All methods | Mean line integral at the detector edges divided by the mean across the rows (zero when sampled edges are air) |
+| `outside_fraction` | All methods | Share of the continued scan's attenuation that lies beyond the detector |
+| `interior_shift` | All methods | Estimated change on the rotation axis from using the cylinder exterior, in the volume's units |
+| `radius` | All methods | Median radius of the rows' fitted cylinders, in the scan's length unit |
+| `field_of_view_radius` | All methods | Distance from the rotation axis to the nearer detector edge, or to the far edge on an offset axial parallel full turn (median over sampled horizontal chords on a rolled detector), in the scan's length unit |
+| `outside_grid` | Iterative methods | Signed sum of the modeled exterior projection divided by the sum of the measured line integrals (zero when no exterior fit ran) |
+| `data_model` | Iterative methods | `"continued_exterior"` when the coarse exterior fit ran, or `"measured"` when the solver fitted the original data |
+| `background_treatment` | Iterative methods | `"subtracted"` (CGLS, SIRT, FISTA, SPDHG), `"additive_poisson"` (MLEM), or `"none"` |
+
+When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` and MCP `reconstruct` / `reconstruct_slabs` append `N% of attenuation beyond the detector` to their summary line. When an iterative exterior fit ran, they also append `modeled exterior subtracted from fit data` (CGLS, SIRT, FISTA, SPDHG) or `modeled exterior added to the Poisson mean` (MLEM).
+
+How to read the reconstruction and its cost:
+
+- **Analytic reconstructions:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis; compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) retain partial cupping and rim error. Voxels outside the inscribed detector field hold the reconstruction of the continued rows; pass `region="cyl"` (`--region cyl`) to zero them.
+- **Iterative reconstructions:** the exterior fit removes the bright rim and bowl when the object extends past the detector, while different exteriors can still produce identical measured rays. The absolute level depends on the assumed exterior, and a shorter discrepancy-stopped fit can recover less weak fine detail.
+- **Runtime and memory cost:** on full synchrotron volumes (DIAD `k11-52567`, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), analytic cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s), and 0.17 to 0.76 s on smaller volumes in a fresh process. For iterative methods, the coarse exterior fit runs on a downsampled lattice capped at 128 detector columns and rows (binned further if needed to fit free GPU memory) and allocates one private copy of the projections; auxiliary CuPy scratch is freed before the fine solve begins. After preparation, each CGLS, SIRT, FISTA, or SPDHG iteration runs at the same speed as `exterior="zero"`, while MLEM includes the additive estimate in each Poisson update. See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
 
 ### Expert settings
 
