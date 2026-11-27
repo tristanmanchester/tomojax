@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from functools import cache
+from types import ModuleType
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,3 +37,13 @@ def background_multiplier(
     denominator = curvature - gradient
     decrease = curvature / where(denominator > 0, denominator, 1)
     return where(gradient >= 0, increase, decrease)
+
+
+@cache
+def slab_multiplier(xp: ModuleType) -> Callable[[jax.Array, jax.Array, jax.Array], None]:
+    """Write the multiplier over the slab's score, fusing device arithmetic into one kernel."""
+
+    def update(score: jax.Array, sensitivity: jax.Array, curvature: jax.Array) -> None:
+        score[...] = background_multiplier(score, sensitivity, curvature, xp.where)
+
+    return update if xp is np else xp.fuse(kernel_name="tomojax_poisson_background")(update)

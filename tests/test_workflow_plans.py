@@ -244,7 +244,7 @@ def test_fista_preflight_respects_host_solver_capabilities(monkeypatch, field):
     ("method", "rooms"),
     [
         ("sirt", [14000, 17279, 17280, 17281]),
-        ("mlem", [8000, 14399, 14400, 14401]),
+        ("mlem", [8000, 18719, 18720, 18721]),
         ("fbp", [1799, 1800, 1801]),
         ("fdk", [1799, 1800, 1801]),
         ("fourier", [8000, 14000, 100000]),
@@ -290,7 +290,7 @@ def test_plan_matches_execution_across_storage_threshold(monkeypatch, method, ro
         actual = tj.reconstruct(scan, name, **settings).info["placement"]["strategy"]
         if method in ("sirt", "mlem"):
             assert actual == (
-                "slabbed" if room < (17280 if method == "sirt" else 14400) else "resident"
+                "slabbed" if room < (17280 if method == "sirt" else 18720) else "resident"
             )
         assert plan.placement.strategy == actual, (method, room, actual)
 
@@ -301,7 +301,7 @@ def test_plan_matches_execution_across_storage_threshold(monkeypatch, method, ro
     [
         ("cgls", [10_079, 10_080]),
         ("sirt", [15_000, 40_000]),
-        ("mlem", [15_000, 40_000]),
+        ("mlem", [15_120, 40_000]),
     ],
 )
 def test_plan_matches_execution_across_cupy_pool_threshold(monkeypatch, method, rooms):

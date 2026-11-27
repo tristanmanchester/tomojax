@@ -21,7 +21,7 @@ from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import algebraic_sweep, cone_problem, host_projections
 from ._host_arrays import validate_host_arrays
-from ._poisson import background_multiplier
+from ._poisson import slab_multiplier
 
 if TYPE_CHECKING:
     import jax
@@ -178,11 +178,12 @@ class _HostEM:
         if self.updating:
             updated = accumulated[0][: z1 - z0, :, :]
             if self.background is None:
-                norm[norm <= 0] = xp.inf
+                unseen = norm <= 0
+                norm[unseen] = 1
+                updated[unseen] = 1
                 updated /= norm
-                updated[xp.isinf(norm)] = 1
             else:
                 curvature = accumulated[1][: z1 - z0, :, :]
-                updated[...] = background_multiplier(updated, norm, curvature, xp.where)
+                slab_multiplier(xp)(updated, norm, curvature)
             updated *= (sources or (self.volume.view(z0, z1),))[0][: z1 - z0, :, :]
             self.volume.put(z0, z1, updated)
