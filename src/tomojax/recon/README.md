@@ -241,7 +241,7 @@ corrections and tilted axes are not supported. Projection FFTs use six-point Kai
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
-into it. Rows are continued past the detector's edges first, as for `fbp`.
+into it. With the default cylinder exterior, FDK continues rows past the detector edges before filtering, as for `fbp`.
 
 ```python
 from tomojax.recon import FourierConfig, fourier

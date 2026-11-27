@@ -833,8 +833,8 @@ def fbp(
     share their angular weight equally. Frequencies no view
     measures, such as laminography's missing cone, reconstruct as zero.
 
-    Rows are continued past the detector's edges before they are filtered:
-    each side as the projection of a uniform cylinder about the rotation axis,
+    With the default cylinder exterior, FBP extends each side of a measured row
+    before filtering. The extension projects a uniform cylinder about the rotation axis,
     with one radius for the detector row, fitted to its views' fall towards
     both edges, and each view's amplitudes from its own edge values. A row that
     ends at zero continues as zero. For an object wider than the detector this

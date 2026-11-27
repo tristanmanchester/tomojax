@@ -506,10 +506,9 @@ def fdk(
     quadrature covers the whole scan, independently of segment boundaries.
     Noncircular trajectories retain FDK's approximate character.
 
-    Rows are continued past the detector's edges before they are filtered, as
-    in :func:`tomojax.recon.fbp`, after the angular weights: an edge whose rays
-    an opposing view measures has its weight fall to zero and continues as
-    zero. Filtered rows are kept as far as the grid projects, so voxels outside
+    With the default cylinder exterior, FDK continues rows past the detector edges
+    after applying angular weights and before filtering. An opposing view that measures
+    an edge's rays takes their weight, so the edge continues as zero. Filtered rows are kept as far as the grid projects, so voxels outside
     the field of view hold the reconstruction of the continued scan.
 
     Parameters

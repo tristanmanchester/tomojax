@@ -455,8 +455,8 @@ def fbp_slabs[T](
     ``read`` supplies all views of a measured detector-row interval and an opaque
     context retained until that output completes. The output and source arrays
     remain valid after advancing or closing the iterator. Inputs must not change.
-    Slabs use at most eight output rows and reduce depth on OOM. Aligned CUDA slabs retain filtered rows for one all-view gather;
-    filtering itself still uses bounded view batches.
+    Slabs use at most eight output rows and reduce depth on OOM. Aligned CUDA slabs
+    retain filtered rows for one all-view gather. Filtering uses bounded view batches.
     The first configured device does the work, as for host-returning FBP.
     Closing the generator drains all pending downloads before releasing inputs.
 

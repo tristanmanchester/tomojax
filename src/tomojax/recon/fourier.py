@@ -136,8 +136,8 @@ def fourier(
     noise than FBP. Setting ``filter`` to ``"ramp"``, ``"hann"`` or
     ``"shepp-logan"`` applies FBP's linear detector-interpolation response,
     any chosen window and radial replicas inside the Cartesian frequency grid.
-    DC uses periodic angular trapezoid weights. Rows are continued past the
-    detector's edges as in :func:`tomojax.recon.fbp`, with each edge's
+    DC uses periodic angular trapezoid weights. The default cylinder exterior
+    continues each row as in :func:`tomojax.recon.fbp`, with each edge's
     amplitudes averaged over a sixteenth of the half turn; the Cartesian
     transform keeps the measured detector's field, where nothing within three
     field radii wraps into it. Angular undersampling can cause artifacts.
