@@ -687,8 +687,8 @@ def fista(
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
-    This solver fits the supplied data as given, and the workflows ``tj.reconstruct``
-    and ``tj.reconstruct_slabs`` handle scans extending beyond the detector.
+    This solver fits the supplied data. For a truncated scan, ``tj.reconstruct``
+    estimates the exterior projection before calling the solver.
 
     CUDA Joseph solves (resident and host-slab) use the separable axial
     projector pair on axial parallel scans and the matched 3-D pair on tilted
