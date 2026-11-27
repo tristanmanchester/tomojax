@@ -11,7 +11,7 @@ import numpy as np
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
-from tomojax.core.geometry.coverage import REPEAT_TOLERANCE, group_repeats
+from tomojax.geometry.coverage import REPEAT_TOLERANCE, group_repeats
 
 if TYPE_CHECKING:
     import jax

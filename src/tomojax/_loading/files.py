@@ -79,6 +79,7 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     from tomojax.core.checkpoint import describe
     from tomojax.io import validate_dataset
     from tomojax.io.api import inspect_dataset
+    from tomojax.io.inspection_memory import memory_estimates
 
     with progress.task("inspect", Path(path).name, None, ""):
         report: Mapping[str, object]
@@ -94,7 +95,11 @@ def inspect(path: str | PathLike[str]) -> Inspection:
         else:
             issues = validate_dataset(Path(path))["issues"]
             dataset = inspect_dataset(Path(path))
-            loading = _loading(Path(path)) if dataset["projection"]["found"] else None
+            loading, grid = _loading(Path(path)) if dataset["projection"]["found"] else (None, None)
+            if grid is not None:
+                dataset["memory_estimates"] = memory_estimates(
+                    [grid.nx, grid.ny, grid.nz], dataset["projection"]
+                )
             checked: dict[str, object] = {
                 "loading": loading,
                 "checkpoint": None,
@@ -126,13 +131,13 @@ def _no_dataset(path: str | PathLike[str]) -> dict[str, object]:
     }
 
 
-def _loading(path: Path) -> dict[str, object]:
+def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     """What :func:`tomojax.load` reads from ``path`` alone, or why it needs more.
 
     Calibration (flats and darks) is the dataset check's to report, in ``issues``.
     """
     from tomojax._loading.loader import Frames, resolve_input
-    from tomojax.core.geometry.coverage import parallel_field
+    from tomojax.geometry.coverage import parallel_field
 
     try:
         item = resolve_input(path, layout_only=True)
@@ -146,7 +151,7 @@ def _loading(path: Path) -> dict[str, object]:
             "center": None,
             "geometry": None,
             "frame_records": None,
-        }
+        }, None
     metadata = object_mapping(record.geometry_metadata if record is not None else None)
     acquisition = object_mapping(metadata.get("acquisition"))
     coverage = {}
@@ -165,7 +170,7 @@ def _loading(path: Path) -> dict[str, object]:
         "center": metadata.get("detector_center_status"),
         "geometry": acquisition.get("geometry_status"),
         "frame_records": acquisition.get("frame_records"),
-    }
+    }, frames.geometry.grid
 
 
 def saved_volume_grid(

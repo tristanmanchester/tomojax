@@ -13,6 +13,7 @@ from tomojax import progress
 from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
+from tomojax.geometry.coverage import parallel_field
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import (
@@ -125,6 +126,7 @@ def fourier_slabs[T](
                     backend,
                     filter=config.filter,
                     exterior=config.exterior if layout is None or layout.quarter_turn else "zero",
+                    full_turn=parallel_field(geometry) is not None,
                     async_transfers=backend == "cupy",
                     order=order,
                 )

@@ -799,7 +799,10 @@ def _plan(
         projections,
         cfg.exterior,
         separable=separable,
-        full_turn=parallel and arc_length == 2 * np.pi and cfg.scale is None,
+        full_turn=parallel
+        and not getattr(geometry, "detector_roll", 0)
+        and arc_length == 2 * np.pi
+        and cfg.scale is None,
     )
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(

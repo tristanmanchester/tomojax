@@ -19,7 +19,6 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.core.devices import announce, as_devices
 from tomojax.core.geometry.cone import require_parallel_beam
-from tomojax.core.geometry.coverage import full_rotation
 from tomojax.core.geometry.views import stack_view_poses
 from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import (
@@ -27,6 +26,7 @@ from tomojax.core.validation import (
     validate_projection_stack,
 )
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
+from tomojax.geometry.coverage import parallel_field
 
 from ._backend import reconstruction_backend
 from ._detector_rows import DetectorRows
@@ -333,7 +333,7 @@ def fbp_host(
         local_detector,
         projections,
         fbp_cfg.exterior,
-        full_turn=fbp_cfg.scale is None and full_rotation(np.asarray(geometry.angles)),
+        full_turn=fbp_cfg.scale is None and parallel_field(geometry) is not None,
     )
     output = validate_host_arrays(projections, out, shape, device_input=True)
     host_poses = np.asarray(poses, np.float32)
@@ -540,7 +540,7 @@ def fbp_slabs[T](
                             backend,
                             depth,
                             start,
-                            config.scale is None and full_rotation(np.asarray(geometry.angles)),
+                            full_turn=config.scale is None and parallel_field(geometry) is not None,
                         )
                     ) as completed:
                         for slab in completed:
@@ -574,6 +574,7 @@ def _run_slabs[T](
     backend: str,
     depth: int,
     start: int,
+    *,
     full_turn: bool,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     local_grid, local_detector, first, step, integer = slab_layout(grid, detector, depth)

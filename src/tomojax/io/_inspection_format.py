@@ -87,10 +87,12 @@ def _loading_rows(loading: LoadingReport) -> list[tuple[str, str]]:
     rows = [("as a scan", "loads with no further arguments")]
     if loading.get("full_turn"):
         text = "full turn"
-        if "axis_to_edge_px" in loading:
+        near, far = loading.get("axis_to_edge_px"), loading.get("field_of_view_px")
+        overlap = loading.get("overlap_px")
+        if near is not None and far is not None and overlap is not None:
             text += (
-                f", axis {loading['axis_to_edge_px']:.2f} px from the nearer edge, "
-                f"field {loading['field_of_view_px']:.2f} px, overlap {loading['overlap_px']:.2f} px"
+                f", axis {near:.2f} px from the nearer edge, "
+                f"field {far:.2f} px, overlap {overlap:.2f} px"
             )
         rows.append(("parallel acquisition", text))
     if loading["geometry"] == "not_recorded":

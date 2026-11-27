@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.core.geometry.coverage import reliability
+from tomojax.geometry.coverage import reliability
 
 if TYPE_CHECKING:
     from numpy.typing import NDArray

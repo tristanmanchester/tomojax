@@ -50,6 +50,7 @@ from tomojax.io._inspection_types import (
     VolumeReport,
     WorkingSetEstimate,
 )
+from tomojax.io.inspection_memory import memory_estimates
 from tomojax.io.projection_layout import saved_npz_layout, saved_projection_layout
 
 type PathLike = str | Path
@@ -482,50 +483,6 @@ def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> 
     return None
 
 
-def _memory_estimates(
-    grid_shape: list[int] | None, projection: ProjectionReport
-) -> MemoryEstimatesReport:
-    if not projection.get("found"):
-        return {
-            "feasible": False,
-            "reconstruction_grid_shape": None,
-            "input_projection_bytes": None,
-            "modes": {},
-            "notes": "Projection data not found; memory estimates are unavailable.",
-        }
-
-    projection_bytes = int(projection["storage_bytes"] or 0)
-    if grid_shape is None:
-        return {
-            "feasible": False,
-            "reconstruction_grid_shape": None,
-            "input_projection_bytes": projection_bytes,
-            "modes": {},
-            "notes": "Could not infer reconstruction grid shape.",
-        }
-
-    voxels = int(grid_shape[0]) * int(grid_shape[1]) * int(grid_shape[2])
-    volume_bytes = voxels * np.dtype(np.float32).itemsize
-    modes: dict[str, WorkingSetEstimate] = {
-        "fbp_fp32": {
-            "estimated_working_set_bytes": int(projection_bytes + 2 * volume_bytes),
-        },
-        "fista_tv_fp32": {
-            "estimated_working_set_bytes": int(projection_bytes + 5 * volume_bytes),
-        },
-        "spdhg_tv_fp32": {
-            "estimated_working_set_bytes": int(projection_bytes + 5 * volume_bytes),
-        },
-    }
-    return {
-        "feasible": True,
-        "reconstruction_grid_shape": grid_shape,
-        "input_projection_bytes": projection_bytes,
-        "modes": modes,
-        "notes": "Heuristic fp32 working-set estimates; actual JAX/XLA peak memory may differ.",
-    }
-
-
 def inspect_nxtomo(path: PathLike) -> InspectionReport:
     """Inspect an HDF5/NXtomo file without materializing TomoJAX/JAX objects.
 
@@ -548,7 +505,7 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "flats_darks": _flats_darks_report(located),
             "corrections": _corrections_report(file),
             "alignment": _alignment_report(file),
-            "memory_estimates": _memory_estimates(
+            "memory_estimates": memory_estimates(
                 _grid_shape_from_metadata(file, projection), projection
             ),
             "volume": _volume_report(file),
@@ -628,7 +585,7 @@ def _record_report(
             "method": record.geometry_metadata.get("reconstruction_method"),
             "reconstruction_info": record.geometry_metadata.get("reconstruction_info", {}),
         },
-        "memory_estimates": _memory_estimates(grid_shape, projection),
+        "memory_estimates": memory_estimates(grid_shape, projection),
     }
 
 

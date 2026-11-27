@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax.core.geometry.cone import cone_parts
+from tomojax.geometry.coverage import conjugate_weights, parallel_field
 
 from ._continuation import (
     Continuation,
@@ -194,6 +195,7 @@ class ScanSample:
     def __init__(self, geometry: ScanGeometry, detector: Detector) -> None:
         distance = _axis_distance(geometry, detector, continued_columns(detector.nu))
         self.coordinates = distance.tobytes()
+        self.outer_only = bool(detector.center[0]) and parallel_field(geometry) is not None
         self.views, self.rows = _record_indices(len(geometry.angles), detector.nv)
         self.statistics = np.empty((len(self.rows), 7), np.float64)
         self.present = np.zeros(len(self.rows), bool)
@@ -205,17 +207,17 @@ class ScanSample:
         if indices.size:
             selected = self.rows[indices] - first
             if isinstance(data, np.ndarray):
-                self.statistics[indices] = _measure(self.coordinates, host=True, by_row=True)(
-                    data[self.views[:, None], selected]
-                )
+                self.statistics[indices] = _measure(
+                    self.coordinates, outer_only=self.outer_only, host=True, by_row=True
+                )(data[self.views[:, None], selected])
             else:
                 import jax
 
                 with jax.enable_x64(True):
                     self.statistics[indices] = np.asarray(
-                        _measure(self.coordinates, host=False, by_row=True)(
-                            data[self.views[:, None], selected]
-                        )
+                        _measure(
+                            self.coordinates, outer_only=self.outer_only, host=False, by_row=True
+                        )(data[self.views[:, None], selected])
                     )
             self.present[indices] = True
 
@@ -253,7 +255,8 @@ def truncation_record(
         negative, as zero beyond the detector counts outside material inside.
         ``radius``: the median radius of the rows' fitted cylinders, and
         ``field_of_view_radius``: the distance from the axis to the nearer
-        detector edge, both in the scan's length unit.
+        detector edge (farther edge for an axial parallel full turn), both in
+        the scan's length unit.
 
     Notes
     -----
@@ -281,7 +284,11 @@ def truncation_values(
         return sample.values()
     distance = _axis_distance(geometry, detector, continued_columns(projections.shape[-1]))
     host = isinstance(projections, np.ndarray)
-    measure = _measure(distance.tobytes(), host=host)
+    measure = _measure(
+        distance.tobytes(),
+        host=host,
+        outer_only=bool(detector.center[0]) and parallel_field(geometry) is not None,
+    )
     if host:
         with np.errstate(invalid="ignore", divide="ignore"):
             return measure(projections)
@@ -314,16 +321,30 @@ def _combine(rows: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
 
 @lru_cache(maxsize=16)
 def _measure(
-    coordinates: bytes, *, host: bool, by_row: bool = False
+    coordinates: bytes, *, host: bool, outer_only: bool, by_row: bool = False
 ) -> Callable[[np.ndarray | jax.Array], np.ndarray | jax.Array]:
     """Reduce sampled rows, returning either their individual terms or the scan record."""
     distance: Host = np.frombuffer(coordinates, np.float64)
     nu = len(distance) // 3
     pad = continued_columns(nu)
-    fits = Continuation(distance, nu, pad)
+    fits = Continuation(distance, nu, pad, outer_only=outer_only)
     width = abs(np.gradient(distance))
     outside = np.r_[0:pad, pad + nu : pad + nu + pad]
-    fov = min(abs(distance.item(pad)), abs(distance.item(pad + nu - 1)))
+    edges = abs(distance[[pad, pad + nu - 1]])
+    fov = max(edges) if outer_only else min(edges)
+    measured_width = width[pad : pad + nu]
+    if outer_only:
+        offset = (distance[pad] + distance[pad + nu - 1]) / (2 * measured_width[0])
+        measured_width = measured_width * conjugate_weights(nu, offset)
+    # An axis outside a panel can coincide with a padded pixel. Only rays
+    # outside the complete field contribute to its continuation on a full turn.
+    tail_width = width[outside]
+    shift_weight = np.divide(
+        tail_width,
+        distance[outside] ** 2,
+        out=np.zeros_like(tail_width),
+        where=distance[outside] != 0,
+    )
     if host:
         xp = np
     else:
@@ -341,9 +362,9 @@ def _measure(
         low, high = low.mean(axis=1, keepdims=True), high.mean(axis=1, keepdims=True)
         before, after = fits.tails(xp.asarray, low, high, radius2)
         tails = xp.concatenate((before, after), axis=-1)
-        measured = xp.sum(sample * xp.asarray(width[pad : pad + nu]), axis=(1, 2))
+        measured = xp.sum(sample * xp.asarray(measured_width), axis=(1, 2))
         continued = xp.sum(tails * xp.asarray(width[outside]), axis=(1, 2)) * data.shape[0]
-        on_axis = (tails * xp.asarray(width[outside] / distance[outside] ** 2)).sum(axis=(1, 2))
+        on_axis = (tails * xp.asarray(shift_weight)).sum(axis=(1, 2))
         statistics = xp.stack(
             (
                 (low[:, 0, 0] + high[:, 0, 0]) / 2,

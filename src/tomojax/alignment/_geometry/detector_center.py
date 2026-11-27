@@ -384,7 +384,7 @@ class CenterSelection:
         from .center_registration import paired_center
 
         assert self.focus is not None
-        from tomojax.core.geometry.coverage import full_rotation
+        from tomojax.geometry.coverage import full_rotation
 
         from .center_turn import turn_center
 

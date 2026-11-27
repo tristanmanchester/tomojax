@@ -20,7 +20,7 @@ from tomojax.core.host_transfer import upload_host
 
 from ._continuation import Continuation, cone_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
-from tomojax.core.geometry.coverage import ordered_arc, reliability
+from tomojax.geometry.coverage import ordered_arc, reliability
 
 from ._fdk_angles import fan_angles, grouped_angles, parker_weights
 from ._fdk_coverage import pair_reliability

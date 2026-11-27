@@ -13,9 +13,9 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
-from tomojax.core.geometry.coverage import conjugate_weights, full_rotation
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
+from tomojax.geometry.coverage import conjugate_weights
 
 from ._continuation import continued_width
 from ._fourier_exterior import FourierExterior
@@ -398,6 +398,7 @@ class FourierPlan:
         *,
         filter: Filter | None = None,
         exterior: Exterior = DEFAULT_EXTERIOR,
+        full_turn: bool = False,
         async_transfers: bool = False,
         shifts: np.ndarray | None = None,
         order: np.ndarray | None = None,
@@ -416,7 +417,7 @@ class FourierPlan:
         self.xp = xp
         self.filter = filter
         self.grid, self.detector = grid, detector
-        self.source_views, self.depth = nviews, depth
+        self.depth = depth
         self.upload = self.compute = self.download = None
         self._pinned = None
         self._upload_slot = None
@@ -432,15 +433,19 @@ class FourierPlan:
             progress.preparing("plan fourier transform"),
             self.compute if self.compute is not None else nullcontext(),
         ):
-            self.opposites = None
+            self.opposites = (
+                OpposedDirections(angles, flipped, xp.asarray)
+                if full_turn and detector.center[0]
+                else None
+            )
             self.redundancy = None
-            directed = np.asarray(angles) + np.asarray(flipped) * np.pi
-            if detector.center[0] and shifts is None and full_rotation(np.rad2deg(directed)):
-                self.opposites = OpposedDirections(xp, directed, angles)
-                nviews = self.source_views = len(self.opposites.angles)
-                angles = self.opposites.angles
-                flipped = np.tile([0, 1], nviews // 2)
-                order = np.argsort(np.argsort(np.asarray(angles) + flipped * np.pi))
+            if self.opposites is not None:
+                angles, flipped, order = (
+                    self.opposites.angles,
+                    self.opposites.flipped,
+                    self.opposites.order,
+                )
+                nviews = len(angles)
                 self.redundancy = xp.asarray(
                     conjugate_weights(detector.nu, detector.center[0] / detector.du)
                 )
@@ -448,9 +453,7 @@ class FourierPlan:
                 grid, detector, nviews, flipped, angles, backend, filter, exterior
             )
             self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
-            self.nviews = geometry.nviews
-            self.groups, self.device_groups = geometry.groups, geometry.device_groups
-            self.nfft = geometry.nfft
+            self.source_views, self.geometry = nviews, geometry
             self.exterior = (
                 FourierExterior(
                     xp,
@@ -458,18 +461,12 @@ class FourierPlan:
                     nviews,
                     order,
                     geometry.flipped,
-                    self.nfft,
-                    outer_only=self.opposites is not None,
+                    self.geometry.nfft,
+                    outer_only=bool(full_turn and detector.center[0]),
                 )
                 if exterior == "cylinder"
                 else None
             )
-            self.shape, self.crop = geometry.shape, geometry.crop
-            self.flipped, self.period_phase = geometry.flipped, geometry.period_phase
-            self.view_weights = geometry.view_weights
-            self.projection_phase = geometry.projection_phase
-            self.deapod, self.table = geometry.deapod, geometry.table
-            self.coordinates = geometry.coordinates
             if self.cuda:
                 self.kernel = geometry.kernel
                 if self.shifts is not None:
@@ -477,23 +474,22 @@ class FourierPlan:
 
                     self.kernel = interpolation_kernel(
                         y_boundary=geometry.y_boundary is not None,
-                        repeats=self.groups is not None,
+                        repeats=self.geometry.groups is not None,
                         translated=True,
                         exterior=self.exterior is not None,
                     )
-                self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
-            py, px = self.shape
-            qx = px // 2 + 1
+            py, px = self.geometry.shape
             dtype = xp.complex64 if self.cuda else xp.complex128
-            self.frequencies = xp.empty((depth, py, qx), dtype=dtype)
-            self.y_boundary = geometry.y_boundary
+            self.frequencies = xp.empty((depth, py, px // 2 + 1), dtype=dtype)
             if self.cuda:
-                self.inverse_direction, self.inverse_plan = _inverse_fft_plan(self.shape, depth)
+                self.inverse_direction, self.inverse_plan = _inverse_fft_plan(
+                    self.geometry.shape, depth
+                )
 
     def _interpolate_cuda(self, spectrum: CuPyValue, tails: tuple[CuPyValue, ...]) -> None:
         output = self.frequencies
-        angle, radial, phase, detector_phase = self.coordinates
+        angle, radial, phase, detector_phase = self.geometry.coordinates
         layers = min(self.depth, 65535)
         args = (
             spectrum,
@@ -503,18 +499,18 @@ class FourierPlan:
             output,
             np.int64(output.shape[1] * output.shape[2]),
             np.int32(self.depth),
-            np.int32(self.nviews),
+            np.int32(self.geometry.nviews),
             np.int32(self.source_views),
-            self.device_groups,
+            self.geometry.device_groups,
             np.int32(spectrum.shape[-1]),
-            np.int32(self.nfft),
-            np.float32(self.period_phase.real),
-            np.float32(self.period_phase.imag),
-            self.table,
+            np.int32(self.geometry.nfft),
+            np.float32(self.geometry.period_phase.real),
+            np.float32(self.geometry.period_phase.imag),
+            self.geometry.table,
             detector_phase,
-            self.flipped,
+            self.geometry.flipped,
             self.row_mass,
-            self.view_weights,
+            self.geometry.view_weights,
             np.float64(self.detector.du),
             np.int32(1),
             np.int32(self.filter is not None),
@@ -522,11 +518,11 @@ class FourierPlan:
         args += tails
         if self.shifts is not None:
             args += (self.shifts,)
-        if self.y_boundary is not None:
-            coordinates, stop = self.y_boundary
+        if self.geometry.y_boundary is not None:
+            coordinates, stop = self.geometry.y_boundary
             args += (
                 *coordinates,
-                np.int64(self.shape[0] // 2 * output.shape[2]),
+                np.int64(self.geometry.shape[0] // 2 * output.shape[2]),
                 np.int32(stop),
             )
         self.kernel(
@@ -551,27 +547,29 @@ class FourierPlan:
             raw = raw * self.redundancy
         if self.cuda:
             rows = self.depth * self.source_views
-            fft_rows = xp.empty((*raw.shape[:-1], self.nfft), dtype=xp.float32)
-            self.mass_kernel(
+            fft_rows = xp.empty((*raw.shape[:-1], self.geometry.nfft), dtype=xp.float32)
+            self.geometry.mass_kernel(
                 ((rows + 7) // 8,),
                 (256,),
                 (
                     raw,
-                    self.deapod,
+                    self.geometry.deapod,
                     self.row_mass,
                     fft_rows,
                     np.int32(raw.shape[-1]),
-                    np.int32(self.nfft),
+                    np.int32(self.geometry.nfft),
                     np.int64(rows),
                 ),
             )
         else:
-            mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du
-            raw *= self.deapod
+            mass = (
+                xp.sum(raw, axis=-1, dtype=xp.float64) @ self.geometry.view_weights
+            ) * self.detector.du
+            raw *= self.geometry.deapod
             fft_rows = raw
-        spectrum = xp.fft.rfft(fft_rows, n=self.nfft, axis=-1)
+        spectrum = xp.fft.rfft(fft_rows, n=self.geometry.nfft, axis=-1)
         del fft_rows  # cuFFT can reuse this stream's row storage for the Cartesian inverse.
-        _ = xp.multiply(spectrum, self.projection_phase, out=spectrum)
+        _ = xp.multiply(spectrum, self.geometry.projection_phase, out=spectrum)
         if self.cuda:
             if exterior_mass is not None:
                 self.row_mass += exterior_mass
@@ -579,44 +577,44 @@ class FourierPlan:
         else:
             self.frequencies = interpolate_numpy(
                 spectrum,
-                *self.coordinates,
-                self.flipped,
-                self.table,
-                self.nfft,
-                self.period_phase,
-                self.groups,
+                *self.geometry.coordinates,
+                self.geometry.flipped,
+                self.geometry.table,
+                self.geometry.nfft,
+                self.geometry.period_phase,
+                self.geometry.groups,
                 self.shifts,
                 replicas=self.filter is not None,
             )
             self.frequencies[:, 0, 0] = mass
-            if self.y_boundary is not None:
-                coordinates, stop = self.y_boundary
+            if self.geometry.y_boundary is not None:
+                coordinates, stop = self.geometry.y_boundary
                 mirror = interpolate_numpy(
                     spectrum,
                     *coordinates,
-                    self.flipped,
-                    self.table,
-                    self.nfft,
-                    self.period_phase,
-                    self.groups,
+                    self.geometry.flipped,
+                    self.geometry.table,
+                    self.geometry.nfft,
+                    self.geometry.period_phase,
+                    self.geometry.groups,
                     self.shifts,
                     replicas=self.filter is not None,
                 )
-                row = self.frequencies[:, self.shape[0] // 2, 1:stop]
+                row = self.frequencies[:, self.geometry.shape[0] // 2, 1:stop]
                 row[:] = 0.5 * (row + mirror[:, 0, :].conj())
         # Interpolation has consumed the projection FFT. Its storage can now
         # serve the Cartesian FFT on this same compute stream.
         del spectrum
-        cy, cx = self.crop
+        cy, cx = self.geometry.crop
         normalization = 1
         if self.cuda:
             # cuFFT may destroy the input; the next slab overwrites every
             # frequency. Its inverse is unnormalized: normalize only the crop.
-            volume = xp.empty((self.depth, *self.shape), dtype=xp.float32)
+            volume = xp.empty((self.depth, *self.geometry.shape), dtype=xp.float32)
             self.inverse_plan.fft(self.frequencies, volume, self.inverse_direction)
-            normalization = self.shape[0] * self.shape[1]
+            normalization = self.geometry.shape[0] * self.geometry.shape[1]
         else:
-            volume = xp.fft.irfft2(self.frequencies, s=self.shape, axes=(-2, -1))
+            volume = xp.fft.irfft2(self.frequencies, s=self.geometry.shape, axes=(-2, -1))
         # Keep fixed FFT batches, but do not materialize or transfer padded output.
         # Dense scalar arithmetic needs no sparse-operand dispatch or its imports.
         scale = 1.0 / (self.grid.vx * self.grid.vy * normalization)
@@ -630,9 +628,9 @@ class FourierPlan:
             if isinstance(host, ProjectionRows):
                 source = xp.asarray(host.samples)
                 raw, _owners = interpolate_projection_rows(host, source, self.depth, xp)
-                raw = raw.astype(self.deapod.dtype, copy=False)
+                raw = raw.astype(self.geometry.deapod.dtype, copy=False)
             else:
-                raw = xp.array(host, dtype=self.deapod.dtype, copy=True)
+                raw = xp.array(host, dtype=self.geometry.deapod.dtype, copy=True)
             volume = self._compute_volume(raw, count)
             if self.cuda:
                 device: CuPyValue = volume

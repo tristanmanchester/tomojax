@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import numpy as np
 
-from tomojax.core.cuda_types import CuPyValue
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from tomojax._typed_arrays import Float64Array
+    from tomojax.core.cuda_types import CuPyValue
 
 
 class OpposedDirections:
@@ -16,19 +22,27 @@ class OpposedDirections:
     sum their transforms with the measured detector's two physical phases.
     """
 
-    def __init__(self, xp: CuPyValue, directed: np.ndarray, folded: tuple[float, ...]) -> None:
+    def __init__(
+        self,
+        folded: tuple[float, ...],
+        flipped: np.ndarray | tuple[int, ...],
+        place: Callable[[np.ndarray], CuPyValue],
+    ) -> None:
+        directed: Float64Array = np.asarray(folded) + np.asarray(flipped, dtype=np.float64) * np.pi
         nodes, first, counts = np.unique(directed, return_index=True, return_counts=True)
-        self.groups = None
-        if np.any(counts > 1):
-            self.groups = (
-                xp.asarray(np.argsort(directed, kind="stable")),
-                xp.asarray(np.r_[0, np.cumsum(counts)[:-1]]),
-                xp.asarray(counts[:, None]),
-            )
-            first = np.arange(len(nodes))
+        # Only average repeated exposures. Unique profiles stay in their input
+        # slots, including the thousands of ordinary views of an inclusive scan.
+        order = np.argsort(directed, kind="stable")
+        starts = np.cumsum(counts) - counts
+        self.repeats = [
+            (first[counts == n], order[starts[counts == n, None] + np.arange(n)])
+            for n in np.unique(counts[counts > 1])
+        ]
         knots = np.unique(folded)
         self.angles = tuple(np.repeat(knots, 2))
+        self.flipped = np.tile(np.array([0, 1], dtype=np.int8), len(knots))
         wanted = np.ravel(np.column_stack((knots, knots + np.pi)))
+        self.order = np.argsort(np.argsort(wanted))
         right = np.searchsorted(nodes, wanted) % len(nodes)
         left = (right - 1) % len(nodes)
         span = np.remainder(nodes[right] - nodes[left], 2 * np.pi)
@@ -38,20 +52,18 @@ class OpposedDirections:
         self.identity = (
             self.exact
             and np.array_equal(first[right], np.arange(len(directed)))
-            and self.groups is None
+            and not self.repeats
         )
-        self.left, self.right = xp.asarray(first[left]), xp.asarray(first[right])
-        self.fraction = xp.asarray(fraction[:, None].astype(np.float32))
-        self.xp = xp
+        self.left, self.right = first[left], first[right]
+        self.fraction = place(fraction[:, None].astype(np.float32))
 
-    def sample(self, raw: CuPyValue) -> CuPyValue:
-        """Return the positive and negative profiles interleaved in half-turn order."""
+    def sample(self, raw: np.ndarray | CuPyValue) -> np.ndarray | CuPyValue:
+        """Interleave both directions on an owned NumPy or CuPy slab."""
         if self.identity:
             return raw
-        if self.groups is not None:
-            order, starts, counts = self.groups
-            raw = self.xp.add.reduceat(raw[:, order], starts, axis=1) / counts.astype(raw.dtype)
-        right = raw[:, self.right]
+        for target, members in self.repeats:
+            raw[:, target] = raw.take(members, axis=1).mean(axis=2)
+        right = raw.take(self.right, axis=1)
         if self.exact:
             return right
-        return right + (raw[:, self.left] - right) * self.fraction
+        return right + (raw.take(self.left, axis=1) - right) * self.fraction

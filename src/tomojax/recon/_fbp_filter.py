@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
-from tomojax.core.geometry.coverage import conjugate_weights
+from tomojax.geometry.coverage import conjugate_weights
 
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
 from ._row_filter import filter_rows, filtered_profiles

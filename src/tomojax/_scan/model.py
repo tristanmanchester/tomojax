@@ -881,7 +881,7 @@ def frame_output_grid(
     if source is None or source.grid is not None:
         return geometry
     if isinstance(geometry, ParallelGeometry):
-        from tomojax.core.geometry.coverage import parallel_field
+        from tomojax.geometry.coverage import parallel_field
 
         d = geometry.detector
         field = parallel_field(geometry)

@@ -265,9 +265,9 @@ class Continuation:
             import jax
 
             with jax.enable_x64(True):
-                return _device_radius(self.distance.tobytes(), nu, self.pad, self.outer_only)(
-                    projections
-                )
+                return _device_radius(
+                    self.distance.tobytes(), nu, self.pad, outer_only=self.outer_only
+                )(projections)
         low, high = np.zeros((nv, window)), np.zeros((nv, window))
         for view in map(int, views):
             frame = np.asarray(projections[view : view + 1])
@@ -279,7 +279,7 @@ class Continuation:
 
 @lru_cache(maxsize=16)
 def _device_radius(
-    distance: bytes, nu: int, pad: int, outer_only: bool
+    distance: bytes, nu: int, pad: int, *, outer_only: bool
 ) -> Callable[[jax.Array], jax.Array]:
     """Compile the radius reduction on the device that owns the projections."""
     import jax

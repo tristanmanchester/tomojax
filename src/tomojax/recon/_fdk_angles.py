@@ -10,7 +10,7 @@ import numpy as np
 from tomojax.core.geometry.cone import ConeGeometry, cone_parts
 
 from ._detector_rows import DetectorRows
-from tomojax.core.geometry.coverage import group_repeats, ordered_arc, reliability
+from tomojax.geometry.coverage import group_repeats, ordered_arc, reliability
 from ._fdk_coverage import full_turn_weights, pair_reliability
 
 if TYPE_CHECKING:

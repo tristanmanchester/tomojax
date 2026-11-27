@@ -16,6 +16,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
+from tomojax.geometry.coverage import parallel_field
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import FourierPlan, fourier_slab_depth, resolve_fourier_backend
@@ -238,6 +239,7 @@ def fourier(
                     sampling.angles,
                     depth,
                     backend,
+                    full_turn=parallel_field(geometry) is not None,
                     async_transfers=overlap,
                     shifts=sampling.shifts,
                     filter=cfg.filter,
