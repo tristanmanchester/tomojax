@@ -3,28 +3,36 @@
 ## Unreleased
 
 - Scans of an object larger than the field of view reconstruct without the bright rim and
-  bowl: `fourier`, `fbp`, and cone-beam FDK continue each detector row past the detector's
+  bowl: `fourier`, `fbp`, and cone-beam FDK continue each detector row past both detector
   edges before filtering, as the projection of a uniform cylinder about the rotation axis.
-  A detector row has one cylinder radius, fitted to its views' fall towards both edges, and
-  each view's continuations take their amplitudes from its own edge values; a row that ends
-  at zero continues as zero, so contained objects reconstruct as before. On simulated scans
-  (a tube around a contained sample, a wide plate, bodies 1.15 and 3 times the field of
-  view) the error of the interior level fell from 4–99% of the body's attenuation to
-  0.1–6%, and the bowl across the field from 18–210% to 0.3–4%. Edges, contrast and fine
-  detail do not depend on the continuation; the absolute level is as good as the cylinder
-  model. Voxels outside the field of view hold the reconstruction of the continued scan,
-  and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
-  Set `exterior="zero"` in the analytic method config to use zero beyond the detector.
-  On an 8,000-view DIAD scan, full-volume Fourier took 31.6 s on a V100S and 12.6 s on
-  Blackwell, compared with 33.1 s and 12.0 s before continuation. FBP took 324.4 s and
-  55.8 s, compared with 338.4 s and 56.0 s. On a contained 1,024² × 512 cylinder, the
-  extra time was 0.76 s and 0.39 s for Fourier and 0.72 s and 0.48 s for FBP.
-  Continuing a truncated sphere on a 384³ cone grid added 0.67 s and 0.33 s to FDK.
-  Every reconstruction's `info["truncation"]` records `edge_ratio`, `outside_fraction`,
-  `interior_shift`, `radius`, and `field_of_view_radius`; each slab of
-  `tj.reconstruct_slabs` has the record of its own rows, and `tomojax reconstruct` and the
-  MCP summary say what share of the attenuation lies beyond the detector. The iterative solvers are
-  unchanged: they fit the grid to the measured rays and do not model material outside it.
+  Each detector row gets one cylinder radius, fitted to its views' fall toward both edges,
+  and each view's two continuations take their amplitudes from its own edge values; a row
+  that ends at zero continues as zero, so contained objects reconstruct as before. On four
+  simulated truncated scans (a tube around a contained sample, a wide plate, and bodies
+  1.15 and 3 times the field of view), the interior level error fell from 4 to 99% of the
+  body's attenuation to 0.1 to 6%, the bowl across the field fell from 18 to 210% to 0.3
+  to 4%, and the rim fell from 60 to 770% to 0.3 to 6%. Edges, contrast between
+  neighboring regions, and fine detail do not depend on the continuation; the absolute
+  level is only as accurate as the cylinder model, and non-cylindrical shapes such as a
+  square bar retain partial cupping and rim error. Voxels outside the field of view hold
+  the reconstruction of the continued scan (`region="cyl"` masks them), and FDK keeps its
+  filtered rows as far as the grid projects, as parallel FBP does. Set `exterior="zero"`
+  in `FBPConfig`, `FourierConfig`, or `FDKConfig` (or `exterior = "zero"` in a CLI
+  `--config` TOML file with an explicit `--method`, or `"exterior": "zero"` in worker and
+  MCP method configs) to assume zero attenuation beyond the detector. Across medians of
+  three runs per build and card on Tesla V100S 32 GB and RTX PRO 6000 Blackwell 96 GB
+  GPUs, full-volume DIAD k11-52567 (8,000 views, `2,160 × 2,560²`) Fourier took 31.60 s
+  on V100S and 12.60 s on Blackwell (versus 33.10 s and 12.00 s before continuation) and
+  FBP took 324.40 s and 55.80 s (versus 338.40 s and 56.00 s). On a contained parallel
+  cylinder (1,600 views, `1,024² × 512`) in a fresh process, continuation added 0.76 s on
+  V100S and 0.39 s on Blackwell for Fourier, and 0.72 s and 0.48 s for FBP; on a
+  truncated sphere cone scan (1,200 views, `384³`), it added 0.67 s on V100S and 0.33 s
+  on Blackwell to FDK. Every reconstruction's `info["truncation"]` records `edge_ratio`,
+  `outside_fraction`, `interior_shift`, `radius`, and `field_of_view_radius`; each slab
+  of `tj.reconstruct_slabs` carries the record of its own rows, and `tomojax reconstruct`
+  and MCP `reconstruct` append the share of attenuation beyond the detector when it
+  rounds to at least 1%. Iterative solvers are unchanged: they fit the grid to the
+  measured rays and do not model material outside it.
 - Multi-GPU iterative reconstruction scales faster on CUDA (`devices=` on `cgls` and `fista`).
   The axial parallel-beam CUDA backprojector now schedules neighboring threads along the middle
   view's dominant plane axis, evening backprojection time across contiguous angular ranges on

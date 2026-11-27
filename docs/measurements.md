@@ -536,6 +536,8 @@ Measured on commit `1db61b18` on K11-52544 (reconstructing a 2160 × 2560 × 256
 | `tj.reconstruct_slabs(frames, "fbp")` (file to volume) | 356.7 s | 26 GiB | — |
 | `Frames.corrected()` (8,000 views to host stack) | 141.3 s | 168 GiB | — |
 
+See [detector exterior continuation](#detector-exterior-continuation) for later full-volume timings on K11-52544 and K11-52567 with cylinder continuation enabled.
+
 ### Fourier FBP-matched detector response
 
 Measured 2026-11-26 on commit `a56b53d1` comparing native Fourier (`filter=None`), Fourier with `filter="ramp"`, and TomoJAX FBP (`filter="ramp"`).
@@ -626,6 +628,112 @@ Kill-and-resume checks on K11-52567 (every checkpoint directory was removed auto
 | `tj.align`, 256 rows binned 2, `resolution=640` | 2 × `SIGTERM` in level 1, 3 segments across two nodes | 0.04–0.08 GiB saved in 0.1–0.3 s | 8,000 × 6 poses and working image bit-identical |
 
 Without a checkpoint, `tools/check_numerical_equivalence.py` against `ed4fdaef` (parallel, cone, and laminography; `fbp`, `cgls`, `sirt`, `fista`, and `align`) passes at 0 ULP on CPU and on the RTX 4070 Laptop GPU (3 repeats, 0 spread).
+
+## Detector exterior continuation
+
+Measured 2026-11-27 (`75d772c3` for accuracy; `80007b78` against pre-continuation parent `be1ff44d` for speed and equivalence). With the default `exterior="cylinder"`, `fourier`, `fbp`, and cone-beam FDK continue each detector row past both detector edges as the projection of a uniform cylinder about the rotation axis fitted to the row's edge values. On full synchrotron volumes (DIAD k11-52567), continuation adds no measurable time on a Tesla V100S 32 GB GPU and up to 5.0% on an RTX PRO 6000 Blackwell 96 GB GPU; on small volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.76 s).
+
+### Accuracy on simulated and real scans
+
+Simulated scans use exact analytic line integrals (independent of TomoJAX's projector) with detector spanning `[-1, 1]` in field-of-view radii and body attenuation 1. Parallel beam uses 512 columns, 800 views over 180°, and 0.02 Gaussian noise per line integral. Cone beam uses 256 columns, 400 views over 360°, source 12 radii from the axis, and 1.5× magnification. Errors are measured inside the field of view in units of the body's attenuation: **offset** is mean error over `r < 0.5`, **cup** is mean error over `0.85 < r < 0.95` minus `r < 0.3`, and **rim** is mean error over `0.97 < r < 0.995` minus `r < 0.3`.
+
+Parallel beam (`exterior="zero"` vs `exterior="cylinder"`):
+
+| Case | Method | Offset (zero → cylinder) | Cup (zero → cylinder) | Rim (zero → cylinder) |
+| --- | --- | ---: | ---: | ---: |
+| Tube around contained sample | `fourier` | +0.066 → −0.019 | +0.177 → +0.023 | +0.596 → +0.055 |
+| Tube around contained sample | `fbp` | +0.064 → −0.011 | +0.180 → +0.024 | +0.624 → +0.056 |
+| Wide plate (5 radii wide) | `fourier` | +0.051 → −0.001 | +0.211 → +0.037 | +0.718 → +0.043 |
+| Wide plate (5 radii wide) | `fbp` | +0.075 → +0.024 | +0.189 → +0.014 | +0.724 → +0.018 |
+| Body 3× the field of view | `fourier` | +0.987 → +0.054 | +2.103 → +0.023 | +7.374 → +0.043 |
+| Body 3× the field of view | `fbp` | +0.986 → +0.056 | +2.107 → +0.026 | +7.702 → +0.046 |
+| Body 1.15× the field of view | `fourier` | +0.040 → +0.001 | +0.231 → +0.003 | +1.173 → +0.003 |
+| Body 1.15× the field of view | `fbp` | +0.040 → +0.002 | +0.233 → +0.003 | +1.243 → +0.003 |
+| Square bar filling the grid | `fourier` | +0.026 → +0.020 | +0.153 → +0.095 | +0.706 → +0.273 |
+| Square bar filling the grid | `fbp` | +0.028 → +0.021 | +0.145 → +0.088 | +0.747 → +0.275 |
+| Contained control | `fourier` | +0.000 → −0.000 | −0.000 → −0.000 | −0.000 → −0.000 |
+| Contained control | `fbp` | +0.000 → +0.000 | +0.000 → +0.000 | +0.000 → +0.000 |
+
+Cone beam (offset / cup / rim):
+
+| Case | FDK (`exterior="zero"`) | FDK (`exterior="cylinder"`) | CGLS | FISTA-TV |
+| --- | --- | --- | --- | --- |
+| Tube around contained sample | +0.064 / +0.186 / +0.813 | −0.010 / +0.026 / +0.065 | +0.065 / +0.182 / +0.661 | +0.064 / +0.175 / +0.576 |
+| Wide plate (5 radii wide) | +0.075 / +0.197 / +0.977 | +0.022 / +0.014 / +0.016 | +0.079 / +0.101 / −0.046 | +0.079 / +0.129 / +0.005 |
+| Body 3× the field of view | +0.993 / +2.184 / +10.238 | +0.058 / +0.026 / +0.049 | +0.990 / +2.065 / +7.731 | +0.987 / +2.051 / +7.185 |
+| Body 1.15× the field of view | +0.041 / +0.250 / +1.795 | +0.001 / +0.004 / +0.005 | +0.036 / +0.204 / +1.040 | +0.038 / +0.207 / +0.987 |
+| Square bar filling the grid | +0.029 / +0.157 / +1.104 | +0.021 / +0.089 / +0.300 | −0.000 / +0.011 / +0.016 | −0.000 / +0.000 / +0.004 |
+| Contained control | −0.000 / +0.001 / +0.002 | −0.000 / +0.001 / +0.001 | +0.004 / +0.004 / −0.015 | −0.001 / +0.001 / +0.001 |
+
+When material leaves the grid, iterative solvers (CGLS, SIRT, FISTA-TV) show offsets within 0.03 of uncontinued FBP and bowls and rims of the same order; unpenalized CGLS also reaches its 50-update cap and fits noise (high-pass residual RMS 0.43 on the tube and 1.44 on the plate, versus 0.05 on the contained body). When the grid holds the whole object, as for the square bar whose corners leave the circular field of view but stay inside the square grid, iterative solvers are exact (parallel CGLS offset 0.000, cup +0.004, rim +0.027).
+
+Real synchrotron scans (Diamond K11 visit `mg40414-1`, 16-row bands, 8,000 views × 2,560 columns, FBP in µm⁻¹):
+
+| Scan | Edge / mean | `outside_fraction` | `interior_shift` (µm⁻¹) | Center (zero → cyl) | 0.85–0.95 R (zero → cyl) | Rim 0.97–0.995 R (zero → cyl) |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| `k11-52567` | 0.42 | 0.38 | −1.0e-4 | 1.09e-3 → 0.98e-3 | 0.42e-3 → 0.09e-3 | 0.95e-3 → 0.09e-3 |
+| `k11-52579` | 0.77 | 0.53 | −1.0e-4 | 0.37e-3 → 0.27e-3 | 0.41e-3 → 0.09e-3 | 0.97e-3 → 0.09e-3 |
+| `k11-52537` | 0.99 | 0.60 | −3.3e-3 | 5.92e-3 → 2.50e-3 | 11.4e-3 → 2.76e-3 | 22.8e-3 → 3.18e-3 |
+| `k11-52565` | 0.36 | 0.007 | −7e-6 | 3.32e-3 → 3.31e-3 | 1.63e-3 → 1.54e-3 | 2.57e-3 → 1.93e-3 |
+
+On `k11-52567`, the air ring around the sample drops from 0.42e-3 µm⁻¹ (rising to 0.95e-3 µm⁻¹ at the rim) to a flat 0.09e-3 µm⁻¹, and `fourier` and `fbp` agree to 0.02e-3 µm⁻¹. Iterative solvers (CGLS, SIRT, FISTA-TV on every eighth view) read that air at 0.36e-3 to 0.37e-3 µm⁻¹.
+
+Real cone-beam truncation on FIPS Walnut 1 (orbit 2, 1,200 views binned 2 × 2, detector cropped to its middle half of 192 columns, scored on the middle 101 slices against full-detector FDK whose mean inside the cropped field is 0.0235 mm⁻¹):
+
+| Method | Offset (mm⁻¹) | Cup (mm⁻¹) | Rim (mm⁻¹) | Smooth error RMS (mm⁻¹) |
+| --- | ---: | ---: | ---: | ---: |
+| FDK (`exterior="zero"`) | +0.0067 | +0.0213 | +0.1287 | 0.0198 |
+| FDK (`exterior="cylinder"`) | +0.0028 | +0.0032 | +0.0055 | 0.0045 |
+| CGLS (grid holds walnut) | −0.0019 | −0.0010 | −0.0024 | 0.0025 |
+| SIRT (grid holds walnut) | −0.0056 | −0.0053 | −0.0155 | 0.0081 |
+| FISTA-TV (grid holds walnut) | −0.0019 | −0.0010 | −0.0022 | 0.0024 |
+
+Cylinder continuation cuts cropped-walnut FDK rim error from 548% to 23% of the mean attenuation, cup from 91% to 14%, and offset from 29% to 12%. Iterative solvers hold the whole walnut inside the 501³ grid, so they need no exterior model on that scan.
+
+### Speed and continuation cost (V100S and Blackwell)
+
+Wall-clock medians (min–max) over three fresh processes per build, card, and case on exclusive single-GPU allocations (10 CPUs per job, Tesla V100S PCIe 32 GB and RTX PRO 6000 Blackwell Server Edition 96 GB), comparing commit `80007b78` (`exterior="cylinder"`) against pre-continuation parent `be1ff44d`:
+
+- **DIAD `k11-52567`:** 8,000 views of 2,160 × 2,560 pixels into `2,160 × 2,560²` via `tj.reconstruct_slabs`, timed from raw frames already in RAM through collecting every slab (~38% exterior attenuation in the middle slab).
+- **Contained cylinder:** parallel beam, radius 0.7 in unit field, 1,600 views, `1,024² × 512` grid, zero edge attenuation, timed over correction and reconstruction.
+- **Contained / truncated sphere:** cone beam, radii 0.7 and 1.3, 1,200 views, `384³` grid, synchronous FDK.
+- **Full / cropped walnut:** Walnut 1 orbit 2, 1,200 views binned 2 × 2, `501³` grid, 384 (full) and 192 (cropped) detector columns, synchronous FDK (full solve precedes cropped solve in each process).
+
+| Card | Scan | Method | Main (s) | Cylinder (s) | Median difference |
+| --- | --- | --- | ---: | ---: | ---: |
+| V100S | `k11-52567` | `fourier` | 33.10 (31.60–34.20) | 31.60 (31.40–31.80) | −1.50 s (−4.5%) |
+| V100S | `k11-52567` | `fbp` | 338.40 (338.40–338.50) | 324.40 (324.20–324.50) | −14.00 s (−4.1%) |
+| V100S | Contained cylinder | `fourier` | 2.58 (2.51–2.72) | 3.34 (3.24–3.46) | +0.76 s (+29.3%) |
+| V100S | Contained cylinder | `fbp` | 3.00 (3.00–3.03) | 3.72 (3.62–3.73) | +0.72 s (+24.0%) |
+| V100S | Contained sphere | FDK | 2.05 (2.04–2.88) | 2.60 (2.60–3.29) | +0.55 s (+26.7%) |
+| V100S | Truncated sphere | FDK | 2.05 (2.02–2.07) | 2.72 (2.65–2.73) | +0.67 s (+32.5%) |
+| V100S | Full walnut | FDK | 2.48 (2.38–2.61) | 2.84 (2.81–2.86) | +0.36 s (+14.6%) |
+| V100S | Cropped walnut | FDK | 2.17 (2.17–2.22) | 1.75 (1.72–1.79) | −0.42 s (−19.2%) |
+| Blackwell | `k11-52567` | `fourier` | 12.00 (11.90–12.30) | 12.60 (12.60–13.50) | +0.60 s (+5.0%) |
+| Blackwell | `k11-52567` | `fbp` | 56.00 (55.80–56.30) | 55.80 (55.50–56.70) | −0.20 s (−0.4%) |
+| Blackwell | Contained cylinder | `fourier` | 1.26 (1.25–1.40) | 1.65 (1.61–2.01) | +0.39 s (+30.8%) |
+| Blackwell | Contained cylinder | `fbp` | 1.09 (1.08–1.24) | 1.57 (1.54–1.77) | +0.48 s (+43.6%) |
+| Blackwell | Contained sphere | FDK | 1.03 (1.00–3.26) | 1.37 (1.36–1.95) | +0.34 s (+32.6%) |
+| Blackwell | Truncated sphere | FDK | 1.04 (1.01–1.04) | 1.37 (1.31–1.42) | +0.33 s (+31.9%) |
+| Blackwell | Full walnut | FDK | 1.09 (1.06–1.32) | 1.39 (1.34–1.51) | +0.31 s (+28.1%) |
+| Blackwell | Cropped walnut | FDK | 0.46 (0.46–0.50) | 0.63 (0.62–0.73) | +0.17 s (+36.5%) |
+
+On warm repeats in the same process (second and third calls on the contained `1,024² × 512` cylinder), V100S Fourier moved from 0.873 to 1.072 s and FBP from 2.215 to 2.116 s; Blackwell Fourier moved from 0.222 to 0.360 s and FBP from 0.679 to 0.674 s. Most of the small-volume increase in fresh processes is first-call setup and compilation of the factored exterior filters.
+
+End-to-end file-to-file pipeline comparison on DIAD `k11-52544` (same `8,000 × 2,160 × 2,560` frame shape, from process startup through final `fsync` of 56.62 GB for the full volume or 6.71 GB for a 256-row band; medians and ranges of three fresh workers; published baseline ran with 40 CPUs and the `80007b78` rerun with 10 CPUs, so node and storage conditions also contribute):
+
+| Card | Region | Method | Pre-continuation (s) | Cylinder (s) | Median difference |
+| --- | --- | --- | ---: | ---: | ---: |
+| V100S | Full volume | `fourier` | 74.51 (67.52–77.81) | 65.57 (64.06–72.38) | −8.94 s (−12.0%) |
+| V100S | Full volume | `fbp` | 367.44 (365.13–368.74) | 329.84 (329.14–331.00) | −37.60 s (−10.2%) |
+| V100S | 256-row band | `fourier` | 22.55 (22.10–28.06) | 22.94 (22.02–23.84) | +0.39 s (+1.7%) |
+| V100S | 256-row band | `fbp` | 48.20 (47.79–48.78) | 47.82 (44.59–50.14) | −0.38 s (−0.8%) |
+| Blackwell | Full volume | `fourier` | 27.87 (26.23–39.40) | 28.63 (28.58–31.80) | +0.76 s (+2.7%) |
+| Blackwell | Full volume | `fbp` | 59.61 (59.27–59.70) | 60.63 (60.62–66.59) | +1.02 s (+1.7%) |
+| Blackwell | 256-row band | `fourier` | 19.04 (12.78–20.19) | 12.28 (12.21–12.71) | −6.76 s (−35.5%) |
+| Blackwell | 256-row band | `fbp` | 12.00 (11.74–12.21) | 13.25 (12.42–13.68) | +1.25 s (+10.4%) |
+
+Equivalence checks: with `exterior="zero"`, all three Fourier filters reproduce pre-continuation `main` bit for bit on a noisy offset scan, and parallel FBP and FDK differ by at most `2.42e-8` and `4.47e-8`. Across the four DIAD scans and six simulated cases, the factored CUDA implementation (`80007b78`) agrees with the direct long-transform continuation (`1f310ea7`) to within `1.44e-4` relative RMS on DIAD planes and `1.7e-5` on simulated offset, cup, and rim metrics. On untruncated scans in `tools/check_numerical_equivalence.py`, CGLS and alignment match bit for bit and FBP/FDK errors agree to seven digits.
 
 ## Iterative stopping and long-run CGLS
 

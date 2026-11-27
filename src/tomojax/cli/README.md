@@ -69,7 +69,15 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   configuration class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`,
   `FISTAConfig`, `SPDHGConfig`, `SIRTConfig` or `MLEMConfig`), each replacing that
   field of the class's defaults, as `tj.reconstruct(config=...)` takes them;
-  `--region cyl` zeros the volume outside the cylinder every view sees. Omitting
+  `--region cyl` zeros the volume outside the cylinder every view sees. By
+  default (`exterior = "cylinder"`), `fbp` (including cone-beam FDK) and
+  `fourier` continue each detector row past both edges with a cylinder model
+  for truncated scans; pass `exterior = "zero"` in `--config` with an explicit
+  `--method` to assume zero beyond the detector. `reconstruct` records
+  `truncation` (`edge_ratio`, `outside_fraction`, `interior_shift`, `radius`,
+  `field_of_view_radius`) in the output file and `--manifest`, and appends
+  `, N% of attenuation beyond the detector` to its closing line whenever
+  `outside_fraction` rounds to at least 1% (0.5% or above). Omitting
   `--iterations` enables automatic stopping for `cgls` and full-data `sirt`
   (estimated projection discrepancy, capped at 50 updates, with FISTA momentum
   enabled on full-data `sirt` when `relaxation <= 1`) and for `fista` (estimated

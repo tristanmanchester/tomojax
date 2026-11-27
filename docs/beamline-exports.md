@@ -63,7 +63,7 @@ frames = tj.load_frames(
 )
 ```
 
-Because the sample extends past the detector edges, the reconstructed slice shows local-tomography truncation.
+Because the sample extends past the detector edges, the default Fourier inverse continues each detector row past both edges with a cylinder model (`exterior="cylinder"`) to suppress the truncation rim and bowl. Check `result.info["truncation"]` for `outside_fraction` and `interior_shift`, or pass `FourierConfig(exterior="zero")` to disable continuation ([truncated scans](quickstart.md#truncated-and-region-of-interest-scans)).
 
 ## PSI cSAXS ptychographic tomography
 

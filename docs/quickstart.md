@@ -184,7 +184,41 @@ Detector row 1080 of the Diamond I12 scan of Vo et al. (Zenodo 3339629; 1801 vie
 uv run python examples/gallery/fourier_response.py full_rows1048-1111.nxs fourier-response.png
 ```
 
-### Expert settings and truncated scans
+### Truncated and region-of-interest scans
+
+When an object extends past the detector edges, assuming zero attenuation outside the detector creates a step at each end of every row. Ramp filtering turns that step into a bright rim and a raised bowl across the interior.
+
+By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row past both edges before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
+
+To turn continuation off and assume zero beyond the detector, set `exterior="zero"` in the method configuration:
+
+- **Python:** pass `config=FBPConfig(exterior="zero")` or `config=FourierConfig(exterior="zero")` to `tj.reconstruct` or `tj.reconstruct_slabs` (`FBPConfig` applies to cone-beam FDK as well; direct `tomojax.recon.fdk` calls take `FDKConfig(exterior="zero")`).
+- **CLI:** put `exterior = "zero"` in a `--config` TOML file alongside an explicit `--method fbp` or `--method fourier`.
+- **Worker and MCP:** pass `{"type": "FBPConfig", "exterior": "zero"}` (or `"FourierConfig"`) in the worker, or `{"exterior": "zero"}` alongside an explicit `method` in MCP.
+
+The selected setting is recorded in `recon.info["config"]` (`info["config"].exterior` in memory and `info["config"]["exterior"]` after reloading).
+
+Every reconstruction carries `recon.info["truncation"]`, computed from the projections for both analytic and iterative methods (and per slab for `tj.reconstruct_slabs`), regardless of whether `exterior` is `"cylinder"` or `"zero"`:
+
+| Key | Meaning |
+| --- | --- |
+| `edge_ratio` | Mean line integral at the detector edges divided by the mean across the rows (zero for a contained object) |
+| `outside_fraction` | Share of the continued scan's attenuation that lies beyond the detector |
+| `interior_shift` | Estimated change on the rotation axis from using the cylinder exterior, in the volume's units |
+| `radius` | Median radius of the rows' fitted cylinders, in the scan's length unit |
+| `field_of_view_radius` | Distance from the rotation axis to the nearer detector edge, in the scan's length unit |
+
+When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` appends `, N% of attenuation beyond the detector` to its closing line, and MCP `reconstruct` includes the same phrase in its summary text.
+
+What the continuation does and does not recover:
+
+- **Interior structure and absolute level:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis. Compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) still retain partial cupping and rim error.
+- **Outside the field of view:** voxels outside the inscribed detector field hold the reconstruction of the continued scan (a model, not measured attenuation). Pass `region="cyl"` (`--region cyl`) to zero them.
+- **Iterative solvers:** `cgls`, `sirt`, `fista`, `spdhg`, and `mlem` fit the grid to the measured rays and do not model material outside it. They are accurate when the grid holds the whole object, and keep the bright rim and raised bowl when material extends past the grid (unpenalized CGLS also runs to its 50-update cap). For a truncated scan, use `fourier` or `fbp` (FDK for cone beams) for a flatter interior level, or give an iterative solver a grid large enough to hold the object.
+
+On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [detector exterior continuation measurements](measurements.md#detector-exterior-continuation) and [known limitations](known-limitations.md#reconstruction-and-regularization).
+
+### Expert settings
 
 Pass solver-specific settings via config classes from `tomojax.recon` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `FISTAConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`) or a `--config` TOML file alongside an explicit `--method` (`tomojax reconstruct --method fista --config-keys` lists one method's keys):
 
@@ -203,9 +237,7 @@ recon = tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv",
 
 Direct keywords (such as `iterations=100`) override fields of the same name in `config`.
 
-Use `exterior="cylinder"` (default) or `exterior="zero"` in `FBPConfig` or `FourierConfig`. FBP also applies this setting to cone-beam FDK. The CLI accepts `exterior = "zero"` in the method TOML file. The worker and MCP accept `"exterior": "zero"` in the tagged method config. The reconstruction records the choice in `info["config"]`.
-
-- **Objects larger than the field of view:** `fourier` and `fbp` (FDK for cone beams) continue each detector row past the detector's edges before they filter it, as the projection of a cylinder about the rotation axis fitted to the row's own edges. A region-of-interest scan then reconstructs without the bright rim and bowl that zero beyond the detector gives. Edges, contrast between neighbouring regions and fine detail inside the field of view do not depend on the continuation; the absolute level does. `recon.info["truncation"]` reports `outside_fraction` (the share of the continued scan's attenuation that lies beyond the detector, zero for a contained object) and `interior_shift` (the estimated change on the rotation axis from using the cylinder exterior, in the volume's units): compare `interior_shift` with the contrast you measure. `tomojax reconstruct` ends its closing line with the share (`26% of attenuation beyond the detector`), and the MCP tools put the same words in the result's summary. Outside the field of view the volume holds the reconstruction of the continued scan, a model. CGLS, SIRT, FISTA, SPDHG and MLEM fit the grid to the measured rays: they are exact when the grid holds the whole object, and carry the same record when the rows do not end inside the detector. In a CGLS, FISTA or SPDHG config, `data_term="per_view_contrast"` profiles out one constant offset per view (the absolute background level is then undetermined).
+- **Per-view contrast in iterative solvers:** in `CGLSConfig`, `FISTAConfig`, or `SPDHGConfig`, `data_term="per_view_contrast"` profiles out one constant offset per detector view (leaving the absolute background level undetermined).
 - **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` (or `--manifest`, or the closing line of `tomojax reconstruct`) for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, `early_stop`, and `termination` (`"noise_score"`, `"objective_tolerance"`, or `"iteration_limit"`). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
 
 ![One region of a cathode slice from Diamond K11, reconstructed by FBP and by FISTA with its automatic TV weight, each above an enlarged part. The FBP slice is grainy; the FISTA slice keeps the particles and their edges without the grain.](images/fista-tv-weight.png)

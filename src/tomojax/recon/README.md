@@ -31,7 +31,9 @@ functions in `tomojax.recon` directly (`cgls`, `cgls_multires`, `fista`, `fbp_ho
 [Resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill).
 
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
-line integrals to the grid; they do not model material outside it.
+line integrals to the grid; they do not model material outside it (for scans
+whose object extends past the detector, `fbp`, FDK and `fourier` continue rows
+with a cylinder model by default, described below).
 `data_term="per_view_contrast"` profiles one constant per complete detector view in the
 residual, not just in the input data; the projector and its exact transpose are
 unchanged. Absolute background density is then not recoverable. This option is
@@ -175,23 +177,32 @@ forward/transpose pair. This also applies to CGLS with streamed projections
 and a resident volume. Host-slab solvers and CPU execution use public storage;
 the private layout is not a user option or a different reconstruction model.
 
-The analytic configs accept `exterior="cylinder"` (default) or `exterior="zero"` to select the model beyond the detector. With the cylinder,
-`fbp`, FDK and `fourier` continue each measured detector row past the detector's
-edges before filtering it (`_continuation.py`): each side as the projection of a
-uniform cylinder about the rotation axis, `c sqrt(R² - s²)` at distance `s` from
-the axis. A detector row has one radius `R`, a least-squares fit of `p²` against
-`s²` over the outermost sixteenth of the row at both edges and up to 256 evenly
-spaced views; each view's two continuations take their amplitudes from that
-view's own edge values. The continuation ends within one detector width, and a
-row that reaches its edges at zero continues as zero, so a contained object
-reconstructs as before. `fourier` averages the amplitudes over a sixteenth of
-the half turn, because its Cartesian resampling takes only two views at each
-low frequency. Filtered rows are kept as far as the output grid projects, in
-FDK as in parallel `fbp`, so voxels outside the detector's inscribed field of
-view hold the reconstruction of the continued scan. `info["truncation"]` records
-what the rows' edges say (`edge_ratio`, `outside_fraction`, `interior_shift`,
-`radius`, `field_of_view_radius`); each slab of `reconstruct_slabs` has the
-record of its own rows.
+The analytic configs (`FBPConfig`, `FDKConfig` and `FourierConfig`) accept
+`exterior="cylinder"` (default) or `exterior="zero"` to select the model beyond
+the detector. With the cylinder, `fbp`, FDK and `fourier` continue each measured
+detector row past both detector edges before filtering (`_continuation.py`):
+each side as the projection of a uniform cylinder about the rotation axis,
+`c sqrt(R² - s²)` at distance `s` from the axis. A detector row has one radius
+`R`, a least-squares fit of `p²` against `s²` over the outermost sixteenth of
+the row at both edges and up to 256 evenly spaced views; each view's two
+continuations take their amplitudes from that view's own edge values. The
+continuation ends within one detector width, and a row that reaches its edges
+at zero continues as zero, so a contained object reconstructs as before.
+`fourier` averages the amplitudes over a sixteenth of the half turn, because
+its Cartesian resampling takes only two views at each low frequency. FDK
+continues rows after applying angular weights (so an offset-detector edge
+covered by opposing views continues as zero). Filtered rows are kept as far as
+the output grid projects, in FDK as in parallel `fbp`, so voxels outside the
+detector's inscribed field of view hold the reconstruction of the continued
+scan (`region="cyl"` masks them). On CUDA, `fourier` transforms measured
+columns at ordinary length and two unit exterior profiles per slice at three
+times that length, combining them during polar interpolation; separable FBP and
+shared-cosine FDK precompute the filtered exterior profiles across views. The
+absolute interior level is only as accurate as the cylinder model, and
+non-cylindrical exteriors (such as a square bar) retain partial cupping and rim
+error. `info["truncation"]` records `edge_ratio`, `outside_fraction`,
+`interior_shift`, `radius` and `field_of_view_radius` for every method (and
+each slab of `reconstruct_slabs` carries the record of its own rows).
 
 Direct FBP pads, filters and backprojects one view batch at a time. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;
@@ -231,7 +242,8 @@ Completed slabs are written immediately, so a later exception can leave partial
 output. Callers own memmap flushing. Device workspace and runtime caches remain
 additional costs; batch dimensions are not a hard process-memory cap.
 
-`fourier` (`tj.reconstruct(scan, "fourier")`) is an opt-in
+`fourier` (`tj.reconstruct(scan, "fourier")`, and the automatic choice for
+unposed axial half-turn scans) is a
 Fourier-slice inverse for axial parallel half-turn scans, including
 nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
 range; views of one direction share an angular cell and are averaged. It accepts
@@ -241,7 +253,9 @@ corrections and tilted axes are not supported. Projection FFTs use six-point Kai
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back
-into it. With the default cylinder exterior, FDK continues rows past the detector edges before filtering, as for `fbp`.
+into it. With the default `exterior="cylinder"`, each row is continued past both
+detector edges before transforming; set `FourierConfig(exterior="zero")` to
+assume zero attenuation beyond the detector.
 
 ```python
 from tomojax.recon import FourierConfig, fourier
