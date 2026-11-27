@@ -299,10 +299,10 @@ def test_zero_exterior_fits_measured_rays_from_the_zero_padded_warm_start(method
 
 @pytest.mark.gpu
 def test_device_detector_means_preserve_host_rounding_for_every_leaf_width():
-    from tomojax.recon._cgls_cuda import array_module
+    # check-public-imports: allow-private
     from tomojax.recon._exterior_cuda import host_detector_block
 
-    cp = array_module()
+    cp = pytest.importorskip("cupy")
     rng = np.random.default_rng(28)
     columns = 9
     for length in [*range(columns, 130 * columns, columns), 31]:
