@@ -126,7 +126,7 @@ def test_canceling_is_announced_once(capsys, displays):
     token = progress.Control()
     display = displays.Display(token, live=False)
     token.cancel()
-    assert "canceling at the next checkpoint" in _drawn(capsys, display)
+    assert "canceling at the next work boundary" in _drawn(capsys, display)
     assert _drawn(capsys, display) == ""
 
 

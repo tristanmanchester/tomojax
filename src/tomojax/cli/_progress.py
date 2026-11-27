@@ -231,7 +231,7 @@ def run_command(
 ) -> int:
     """Run the command under one watch, restoring the caller's SIGINT policy.
 
-    With ``watch``, preview checkpoints go to its images and not to the display or
+    With ``watch``, previews go to its images and not to the display or
     the JSON stream.
     """
     token = progress.Control()

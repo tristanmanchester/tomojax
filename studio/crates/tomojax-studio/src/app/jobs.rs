@@ -945,14 +945,13 @@ impl AppState {
                 && matches!(job.operation.as_str(), "reconstruct" | "align")
                 && matches!(self.pending.get(request), Some(Pending::Execute(_)))
             {
-                let position =
-                    job.telemetry
-                        .task(request, task)
-                        .map(|task| crate::live::CheckpointPosition {
-                            done: task.done,
-                            total: task.total,
-                            unit: task.unit.clone(),
-                        });
+                let position = job.telemetry.task(request, task).map(|task| {
+                    crate::live::SolverPreviewPosition {
+                        done: task.done,
+                        total: task.total,
+                        unit: task.unit.clone(),
+                    }
+                });
                 self.live.accept(&id, request, task, time, position, arrays);
             } else {
                 self.live.discard(arrays);
@@ -1027,7 +1026,7 @@ impl AppState {
     }
 
     fn release_handle(&mut self, handle: &str) {
-        // A result handle owns its request's checkpoint artifacts too. The
+        // A result handle owns its request's preview artifacts too. The
         // native reader must surrender those leases before the final close.
         if !self.live.retire_handle(handle) {
             self.previews

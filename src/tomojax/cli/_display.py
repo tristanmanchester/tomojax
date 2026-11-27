@@ -193,7 +193,7 @@ class Display:
             if self._token.canceled and not self._canceling:
                 self._canceling = True
                 lines.append(
-                    Text("canceling at the next checkpoint (Ctrl-C again to stop now)", "yellow")
+                    Text("canceling at the next work boundary (Ctrl-C again to stop now)", "yellow")
                 )
             return lines, rows[-_DEPTH_SHOWN:]
 

@@ -149,21 +149,21 @@ class Control:
         self.stop = stop
         self.checks = 0
 
-    def checkpoint(self):
+    def boundary(self):
         self.checks += 1
         if self.checks == self.stop:
             raise progress.Canceled
 
 
 def stub(operation, context):
-    context.control.checkpoint()
+    context.control.boundary()
     context.event(wire.Note(2, 1, 0.0, "info", "stub"))
     context.snapshot(products.Snapshot(0.0, "cpu:0", "host", None, None, None))
     stage = context.staging.array()
     plane = np.array([[12, 13, 14, 15], [24, 25, 26, 27]], dtype=np.float32)
     with stage.path.open("wb") as stream:
         np.save(stream, plane)
-    context.control.checkpoint()
+    context.control.boundary()
     metadata = arrays.Array(
         stage.reference,
         (2, 4),

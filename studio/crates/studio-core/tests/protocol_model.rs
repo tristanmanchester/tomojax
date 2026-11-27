@@ -519,7 +519,7 @@ mod job {
         WorkerReceive,
         WorkerStart,
         TaskStarted,
-        Checkpoint,
+        Boundary,
         Wake,
         Finish,
     }
@@ -552,7 +552,7 @@ mod job {
         // Worker: the job's control, the queue and the single device.
         state: Reported,
         canceled: bool,
-        /// Blocked in `Control.checkpoint` waiting for resume or cancel.
+        /// Blocked in `Control.boundary` waiting for resume or cancel.
         blocked: bool,
         /// A numerical task exists, so pause and resume emit progress events.
         task: bool,
@@ -769,7 +769,7 @@ mod job {
                         actions.push(Action::TaskStarted);
                     }
                     if !s.blocked && (s.canceled || s.state == Reported::PauseRequested) {
-                        actions.push(Action::Checkpoint);
+                        actions.push(Action::Boundary);
                     }
                     if s.blocked && (s.canceled || s.state != Reported::Paused) {
                         actions.push(Action::Wake);
@@ -867,8 +867,8 @@ mod job {
                     s.device = Some(request);
                 }
                 Action::TaskStarted => s.task = true,
-                // Control.checkpoint
-                Action::Checkpoint => {
+                // Control.boundary
+                Action::Boundary => {
                     if s.canceled {
                         s.device = None;
                         s.finish_job(Outcome::Canceled);
@@ -961,15 +961,15 @@ mod job {
     }
 }
 
-/// Live checkpoints: `live.rs` read leases (the `Arc` strong count), token
+/// Live previews: `live.rs` read leases (the `Arc` strong count), token
 /// references, result-handle retirement and `disconnected`, drained each frame
 /// in `AppState::poll` order (releases, then handle closes).
 mod live {
     use super::*;
     use stateright::Property;
 
-    /// Checkpoints each job emits before its result, and worker restarts.
-    const CHECKPOINTS: u8 = 3;
+    /// Previews each job emits before its result, and worker restarts.
+    const PREVIEWS: u8 = 3;
     const RESTARTS: u8 = 1;
 
     #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -978,11 +978,11 @@ mod live {
         None,
         /// drain_releases ignores the `Arc` read lease.
         IgnoreReadLease,
-        /// drain_handles closes a retiring handle while its checkpoints are owned.
+        /// drain_handles closes a retiring handle while its previews are owned.
         CloseIgnoresOwners,
         /// disconnected keeps the old session's owners, references and handles.
         KeepLedgerOnDisconnect,
-        /// disconnected restarts checkpoint generations at zero.
+        /// disconnected restarts preview generations at zero.
         ResetGeneration,
     }
 
@@ -993,16 +993,16 @@ mod live {
         Coordinates,
     }
 
-    /// One `Arc<Checkpoint>`; equality is identity because generations do not
+    /// One `Arc<SolverPreview>`; equality is identity because generations do not
     /// repeat within a session.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-    pub struct Checkpoint {
+    pub struct SolverPreview {
         session: u8,
         generation: u8,
         index: u8,
     }
 
-    impl Checkpoint {
+    impl SolverPreview {
         fn tokens(self) -> [Token; 2] {
             [Token::Scalar(self.index), Token::Coordinates]
         }
@@ -1039,20 +1039,20 @@ mod live {
 
     #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
     pub struct State {
-        // LiveCheckpoints
+        // LivePreviews
         generation: u8,
         desired: Option<u8>,
         displayed: Option<u8>,
-        owners: BTreeMap<u8, Checkpoint>,
+        owners: BTreeMap<u8, SolverPreview>,
         references: BTreeMap<Token, u8>,
         /// The session job's result handle: Some(retiring) once bound.
         handle: Option<bool>,
         /// Session of the displayed frame.
         frame: Option<u8>,
         // Reader thread: the inbox slot, the active read and completions.
-        inbox: Option<Checkpoint>,
-        active: Option<Checkpoint>,
-        completions: VecDeque<(Checkpoint, bool)>,
+        inbox: Option<SolverPreview>,
+        active: Option<SolverPreview>,
+        completions: VecDeque<(SolverPreview, bool)>,
         // Worker session: issued tokens and the open result handle.
         session: u8,
         emitted: u8,
@@ -1067,16 +1067,16 @@ mod live {
 
     impl State {
         /// Arc::strong_count of an owner: the ledger plus every reader-side copy.
-        fn strong(&self, checkpoint: Checkpoint) -> usize {
-            1 + usize::from(self.inbox == Some(checkpoint))
-                + usize::from(self.active == Some(checkpoint))
+        fn strong(&self, preview: SolverPreview) -> usize {
+            1 + usize::from(self.inbox == Some(preview))
+                + usize::from(self.active == Some(preview))
                 + self
                     .completions
                     .iter()
-                    .filter(|(c, _)| *c == checkpoint)
+                    .filter(|(c, _)| *c == preview)
                     .count()
         }
-        /// A checkpoint of the live session the reader may still open.
+        /// A preview of the live session the reader may still open.
         fn leased(&self, token: Option<Token>) -> bool {
             [self.inbox, self.active]
                 .into_iter()
@@ -1170,7 +1170,7 @@ mod live {
         }
 
         fn actions(&self, s: &State, actions: &mut Vec<Action>) {
-            if !s.result && s.emitted < CHECKPOINTS {
+            if !s.result && s.emitted < PREVIEWS {
                 actions.push(Action::Accept);
             }
             if !s.result {
@@ -1198,25 +1198,25 @@ mod live {
         fn next_state(&self, last: &State, action: Action) -> Option<State> {
             let mut s = last.clone();
             match action {
-                // AppState::progress -> LiveCheckpoints::accept
+                // AppState::progress -> LivePreviews::accept
                 Action::Accept => {
                     s.emitted += 1;
                     s.generation += 1;
-                    let checkpoint = Checkpoint {
+                    let preview = SolverPreview {
                         session: s.session,
                         generation: s.generation,
                         index: s.emitted,
                     };
-                    for token in checkpoint.tokens() {
+                    for token in preview.tokens() {
                         s.issued.insert(token);
                         *s.references.entry(token).or_default() += 1;
                     }
-                    s.owners.insert(s.generation, checkpoint);
+                    s.owners.insert(s.generation, preview);
                     s.desired = Some(s.generation);
-                    s.inbox = Some(checkpoint);
+                    s.inbox = Some(preview);
                 }
                 // The job's terminal publishes a handle that owns its
-                // checkpoint artifacts; bind_result tracks it if any is owned.
+                // preview artifacts; bind_result tracks it if any is owned.
                 Action::Result => {
                     s.result = true;
                     s.handle_open = true;
@@ -1260,19 +1260,19 @@ mod live {
                     s.result = false;
                     s.retired = false;
                 }
-                // LiveCheckpoints::poll drops each completion's Arc.
+                // LivePreviews::poll drops each completion's Arc.
                 Action::Poll => {
-                    while let Some((checkpoint, ok)) = s.completions.pop_front() {
-                        if checkpoint.session != s.session {
+                    while let Some((preview, ok)) = s.completions.pop_front() {
+                        if preview.session != s.session {
                             s.seen.insert(Seen::OldReadFinishedAfterRestart);
                         }
-                        if Some(checkpoint.generation) != s.desired {
+                        if Some(preview.generation) != s.desired {
                             continue;
                         }
                         if ok {
                             s.displayed = s.desired;
-                            s.frame = Some(checkpoint.session);
-                            if checkpoint.session != s.session {
+                            s.frame = Some(preview.session);
+                            if preview.session != s.session {
                                 s.breaches.insert(Breach::FrameFromOldSession);
                             }
                         } else {
@@ -1282,8 +1282,8 @@ mod live {
                 }
                 Action::ReaderTake => s.active = s.inbox.take(),
                 Action::ReaderFinish { ok } => {
-                    let checkpoint = s.active.take()?;
-                    s.completions.push_back((checkpoint, ok));
+                    let preview = s.active.take()?;
+                    s.completions.push_back((preview, ok));
                 }
             }
             if !matches!(action, Action::ReaderTake | Action::ReaderFinish { .. }) {
@@ -1676,7 +1676,7 @@ fn control_watch_outliving_its_terminal_is_caught() {
 }
 
 #[test]
-fn checkpoint_read_leases_and_deferred_handle_close() {
+fn preview_read_leases_and_deferred_handle_close() {
     verify(live::Live::default());
 }
 
@@ -1711,7 +1711,7 @@ fn keeping_the_token_ledger_across_restarts_is_caught() {
 }
 
 #[test]
-fn restarting_checkpoint_generations_is_caught() {
+fn restarting_preview_generations_is_caught() {
     counterexample(
         live::Live {
             mutation: live::Mutation::ResetGeneration,

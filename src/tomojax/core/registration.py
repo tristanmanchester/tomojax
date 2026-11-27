@@ -28,7 +28,7 @@ image_scale = ContextVar("tomojax_preview_scale", default=1.0)
 
 @contextmanager
 def registration(source: Any, *, cylinder_radius: float | None = None) -> Iterator[None]:
-    """Inherit the acquisition's units and coordinates for numerical checkpoints.
+    """Inherit the acquisition's units and coordinates for previews at numerical work boundaries.
 
     With ``cylinder_radius``, every plane is zeroed outside that cylinder about the
     rotation axis, on its own grid: an alignment's working levels included.

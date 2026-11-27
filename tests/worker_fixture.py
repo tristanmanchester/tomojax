@@ -1,4 +1,4 @@
-"""Subprocess executor fixture. Its separate socket gates adapter checkpoints and returns."""
+"""Subprocess executor fixture. Its separate socket gates adapter work boundaries and returns."""
 
 import json
 import os
@@ -89,7 +89,7 @@ class Stub:
                 progress.note("info", message)
             with progress.task(name, label, total, unit):
                 self.gate()
-                context.control.checkpoint()
+                context.control.boundary()
                 self.port.sendall(b"R")
 
     def execute(self, command, context):

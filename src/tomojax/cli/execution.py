@@ -43,7 +43,7 @@ class Control(Protocol):
     def cancel(self) -> None:
         """Cancel and wake the job."""
 
-    def checkpoint(self) -> None:
+    def boundary(self) -> None:
         """Raise Canceled or block while paused, otherwise return."""
 
 
@@ -261,7 +261,7 @@ def plane_source(operation: Plane, context: ExecutionContext) -> tuple[Registere
 
 def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
     """Stage a single plane using the pinned array and its original registration."""
-    context.control.checkpoint()
+    context.control.boundary()
     registered, dimension, fixed = plane_source(operation, context)
     array = registered.metadata
     key = tuple(operation.index if i == dimension else slice(None) for i in range(3))
@@ -269,7 +269,7 @@ def browse_plane(operation: Plane, context: ExecutionContext) -> Success:
     stage = context.staging.array()
     with stage.path.open("wb") as stream:
         np.save(stream, pixels, allow_pickle=False)
-    context.control.checkpoint()
+    context.control.boundary()
     plane = Array(
         stage.reference,
         pixels.shape,

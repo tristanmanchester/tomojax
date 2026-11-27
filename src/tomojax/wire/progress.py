@@ -59,7 +59,7 @@ class Placed(Timed, tag="placed"):
 
 
 class Advanced(Timed, tag="advanced"):
-    """One coherent checkpoint, ETA in active seconds."""
+    """Work completed at one coherent work boundary, ETA in active seconds."""
 
     done: Count
     total: Count | None
@@ -86,15 +86,15 @@ class Note(Progress, tag="note"):
 
 
 class Paused(Timed, tag="paused"):
-    """The operation has reached a checkpoint and is blocked."""
+    """The operation has reached a work boundary and is blocked."""
 
 
 class Resumed(Timed, tag="resumed"):
-    """The operation has left its paused checkpoint."""
+    """The operation has left its paused work boundary."""
 
 
 class Preview(Timed, tag="preview"):
-    """Coherent named arrays for this checkpoint."""
+    """Coherent named arrays at this work boundary."""
 
     arrays: dict[str, Array]
 

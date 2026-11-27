@@ -11,11 +11,11 @@ use studio_core::progress::JobProgress;
 use studio_core::protocol::{
     ArrayDescriptor, Coordinates, Output, Progress, Response, ResultValue, Storage,
 };
-use tomojax_studio::live::LiveCheckpoints;
+use tomojax_studio::live::LivePreviews;
 
 struct Client {
     engine: Engine,
-    live: LiveCheckpoints,
+    live: LivePreviews,
     terminals: BTreeMap<String, Response>,
     progress: BTreeMap<String, JobProgress>,
     arrays: BTreeMap<String, BTreeMap<String, ArrayDescriptor>>,
@@ -38,7 +38,7 @@ impl Client {
         let python = std::env::var_os("TOMOJAX_TEST_PYTHON").expect("set TOMOJAX_TEST_PYTHON");
         let mut client = Self {
             engine: Engine::spawn(Path::new(&python), Arc::new(|| {})).unwrap(),
-            live: LiveCheckpoints::new(),
+            live: LivePreviews::new(),
             terminals: BTreeMap::new(),
             progress: BTreeMap::new(),
             arrays: BTreeMap::new(),
@@ -130,7 +130,7 @@ impl Client {
                                     {
                                         assert!(
                                             Path::new(path).is_file(),
-                                            "checkpoint published a missing artifact"
+                                            "preview published a missing artifact"
                                         );
                                         self.paths.insert(token.clone(), path.into());
                                     }
@@ -143,7 +143,7 @@ impl Client {
                                 *task,
                                 *time,
                                 telemetry.task(request, *task).map(|task| {
-                                    tomojax_studio::live::CheckpointPosition {
+                                    tomojax_studio::live::SolverPreviewPosition {
                                         done: task.done,
                                         total: task.total,
                                         unit: task.unit.clone(),
@@ -232,7 +232,7 @@ impl Client {
                 assert!(!self.released.contains(token));
                 assert!(
                     self.paths[token].is_file(),
-                    "displayed checkpoint must remain owned"
+                    "displayed preview must remain owned"
                 );
             }
         }
@@ -247,7 +247,7 @@ impl Client {
         for (key, array) in &mut arrays {
             let copy = |storage: &mut Storage, suffix: &str| {
                 let Storage::Npy { path, .. } = storage else {
-                    panic!("checkpoint was not NPY")
+                    panic!("preview was not NPY")
                 };
                 let destination = directory.join(format!("{key}{suffix}.npy"));
                 std::fs::copy(&*path, &destination).unwrap();
@@ -264,10 +264,10 @@ impl Client {
             }
         }
         let info = &self.live.frame().unwrap().info;
-        std::fs::write(directory.join("checkpoint.json"),serde_json::to_vec_pretty(&json!({
+        std::fs::write(directory.join("preview.json"),serde_json::to_vec_pretty(&json!({
             "operation":operation,"request":request,"job":"job","task":info.task,"time":info.time,"step":info.position.as_ref().map(|p| p.done),
             "arrays":arrays,"telemetry":self.progress[request],"recorded":true,
-            "snapshot_note":"Recorded checkpoint from the real TomoJAX worker regression; local array references are copied for replay."
+            "snapshot_note":"Recorded preview from the real TomoJAX worker regression; local array references are copied for replay."
         })).unwrap()).unwrap();
         let mut transcript =
             serde_json::to_string(&json!({"id":request,"command":self.commands[request]})).unwrap();
@@ -281,8 +281,8 @@ impl Client {
 }
 
 #[test]
-#[ignore = "real worker checkpoints and artifact ownership; run with the locked TomoJAX environment"]
-fn real_iterative_and_alignment_checkpoints_are_registered_and_released_after_display() {
+#[ignore = "real worker previews and artifact ownership; run with the locked TomoJAX environment"]
+fn real_iterative_and_alignment_previews_are_registered_and_released_after_display() {
     let mut client = Client::new();
     let (_, simulation) = client.output(json!({"type":"run","operation":{
         "type":"simulate","phantom":"shepp","size":12,"n_views":24,"seed":3
@@ -342,7 +342,7 @@ fn real_iterative_and_alignment_checkpoints_are_registered_and_released_after_di
         .unwrap()
         .poses
         .as_ref()
-        .expect("alignment's final checkpoint must include poses");
+        .expect("alignment's final preview must include poses");
     assert_eq!(poses.shape, [24, 6]);
     assert_eq!(
         poses
@@ -392,7 +392,7 @@ fn real_iterative_and_alignment_checkpoints_are_registered_and_released_after_di
         }
         assert!(
             Instant::now() < until,
-            "released checkpoint artifacts remained on disk"
+            "released preview artifacts remained on disk"
         );
         std::thread::sleep(Duration::from_millis(2));
     }

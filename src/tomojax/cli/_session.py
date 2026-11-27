@@ -305,7 +305,7 @@ class Session:
         success = None
         failure = None
         try:
-            job.control.checkpoint()
+            job.control.boundary()
             success = self.execute(job.command, context)
         except Exception as err:
             failure = err

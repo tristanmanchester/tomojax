@@ -72,7 +72,7 @@ EXECUTABLE = (
 
 def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Success:
     """Forward watch events and attach provenance from this command's admission."""
-    context.control.checkpoint()
+    context.control.boundary()
     if not isinstance(command, EXECUTABLE):
         raise ValueError(f"operation unavailable: {command.__struct_config__.tag}")
     operation = (
@@ -115,7 +115,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
             )
             work = admission.prepare(operation)
             item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
-        context.control.checkpoint()
+        context.control.boundary()
         for snapshot in sample():
             context.snapshot(snapshot)
         info = result_info(item)
@@ -589,7 +589,7 @@ class Admission:
                     for interval, slab in slabs:
                         volume[interval] = slab.volume
                         del slab
-                        self.context.control.checkpoint()
+                        self.context.control.boundary()
                 manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
                 return p.Files((str(path), str(sidecar)))
 

@@ -29,7 +29,7 @@ class InvalidParameter(ValueError):
 
 
 class Canceled(Exception):
-    """The operation stopped at a cooperative checkpoint."""
+    """The operation stopped at a work boundary."""
 
 
 @contextmanager

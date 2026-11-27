@@ -3,7 +3,7 @@
 ## Ownership
 
 The Python worker owns tomography operations, numerical arrays, progress,
-validation, cancellation checkpoints and committed scientific exports. The Rust
+validation, cancellation at work boundaries and committed scientific exports. The Rust
 application owns projects, durable asset identities, parameter drafts, the local
 job queue and display preferences. The renderer owns GPU resources derived from
 registered scalar data. A display operation never mutates a numerical input.
@@ -33,7 +33,7 @@ cargo test --manifest-path studio/Cargo.toml -p studio-core
 | `forms.rs`, `app/validation.rs` | Schema-derived drafts, exact field paths, debounced worker validation and plans |
 | `app/projection.rs` | Which selected inputs a forward or back projection reads (geometry, volume or projections), chosen once for preflight, the worker command and the result's parent |
 | `app/previewing.rs` | Edit intents to preview requests, and explicit Keep |
-| `live.rs` | Coherent registered solver checkpoints, pose tables and artifact read leases |
+| `live.rs` | Coherent registered solver previews, pose tables and artifact read leases |
 | `metadata.rs` | Native stored-array registration and official inspection/product interpretation |
 | `imaging/` | Numeric NPY/HDF5 readers, bounded scalar cache, coalescing requests and prefetch |
 | `volume/` | Scalar image shaders, transfer textures and volume ray casting within Rune |
@@ -43,10 +43,10 @@ cargo test --manifest-path studio/Cargo.toml -p studio-core
 The library target holds `imaging`, `live`, `metadata` and `volume`; the binary
 holds `app`, `forms`, `preferences` and `ui`. `forms.rs` keeps its drafts in
 Rune `TextEdit`s inside `UiState`, shortcuts are Rune chords, and `live.rs` reads
-checkpoints through `imaging`, so these stay out of `studio-core`.
+previews through `imaging`, so these stay out of `studio-core`.
 
 [STATECHART.md](STATECHART.md) charts the preview channel, job control,
-checkpoint lease and save state machines. Under `cargo test`,
+preview lease and save state machines. Under `cargo test`,
 `crates/studio-core/tests/protocol_model.rs` checks every interleaving of each
 one with the worker, within small bounds. Property tests run random action
 sequences through the real code and check invariants after every step:
@@ -119,16 +119,16 @@ JSON editor; an indexed correction path targets the appropriate guided control
 when one exists, otherwise the ordered JSON editor. Correction drafts preserve
 explicit JSON null separately from omission.
 
-### Solver checkpoints and progress
+### Solver previews and progress
 
-Reconstruction and alignment request live checkpoint artifacts when enabled.
-The live reader loads each checkpoint's registered z/y/x planes and full-precision
+Reconstruction and alignment request live preview artifacts when enabled.
+The live reader loads each preview's registered z/y/x planes and full-precision
 pose table together. The previous coherent frame remains visible while its
 replacement loads. Reference-counted read leases prevent supersession, clearing
 or prefetch cancellation from releasing a file beneath a native reader. Releases
 are deduplicated; disconnect clears the old session's token ledger before reuse.
 Successful result handles also own their request's preview artifacts. Studio
-defers closing these handles until native reads finish, queues checkpoint releases
+defers closing these handles until native reads finish, queues preview releases
 before the close, and retains the decoded frame for display. Cleanup admission
 uses the same ordered retry queue as temporary previews.
 

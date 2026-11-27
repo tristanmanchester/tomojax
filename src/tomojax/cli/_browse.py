@@ -121,7 +121,7 @@ def project_volume(path: Path, context: ex.ExecutionContext, *, shape_only: bool
         volume = host_array(meta.shape, dtype=meta.dtype)
         ranges = tuple(range(n) for n in meta.shape)
         for tile in ordered_tiles(ranges, READ_BYTES // volume.itemsize):
-            context.control.checkpoint()
+            context.control.boundary()
             key = tuple(slice(r.start, r.stop) for r in tile)
             volume[key] = data[key]
             release(volume)
@@ -254,11 +254,11 @@ def exact_percentiles(
     """Find bracketing order statistics by counting in independently sorted runs."""
     step = READ_BYTES // samples.itemsize
     if samples.size <= step:
-        control.checkpoint()
+        control.boundary()
         return np.percentile(samples, percentiles, overwrite_input=True)
     starts = range(0, samples.size, step)
     for start in starts:
-        control.checkpoint()
+        control.boundary()
         samples[start : start + step].sort()
 
     positions = (np.asarray(percentiles) / 100) * (samples.size - 1)
@@ -272,7 +272,7 @@ def exact_percentiles(
         below = np.full_like(lower, -np.inf)
         above = np.full_like(upper, np.inf)
         for start in starts:
-            control.checkpoint()
+            control.boundary()
             run = samples[start : start + step]
             split = np.searchsorted(run, pivots, side="right")
             counts += split
@@ -305,7 +305,7 @@ def statistics(
     low, high = math.inf, -math.inf
     with tempfile.TemporaryFile() as stream:
         for tile in ordered_tiles(ranges, READ_BYTES // 8):
-            context.control.checkpoint()
+            context.control.boundary()
             chunk = pixels(data, tile)
             finite = chunk[np.isfinite(chunk)].astype(np.float64)
             n = len(finite)
@@ -329,7 +329,7 @@ def statistics(
             edges = tuple(map(float, np.histogram_bin_edges([low, high], bins=request.bins)))
             bins = np.zeros(request.bins, np.int64)
             for i in range(0, count, READ_BYTES // 8):
-                context.control.checkpoint()
+                context.control.boundary()
                 bins += np.histogram(samples[i : i + READ_BYTES // 8], bins=edges)[0]
             histogram = tuple(map(int, bins))
     return p.StatisticsResult(

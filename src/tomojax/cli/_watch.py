@@ -1,4 +1,4 @@
-"""``--watch-dir``: images of a running solve, rewritten at each preview checkpoint.
+"""``--watch-dir``: images of a running solve, rewritten at each preview.
 
 A run rewrites the central planes and, for an alignment, the pose table. Each
 image is moved into place whole, so a viewer open on the directory never reads
@@ -23,7 +23,7 @@ IMAGES = {"z": "slice_z.png", "y": "slice_y.png", "x": "slice_x.png", "poses": "
 
 
 class WatchDirectory:
-    """The images of one run's preview checkpoints, written by one thread.
+    """The images of one run's previews, written by one thread.
 
     Parameters
     ----------
@@ -39,7 +39,7 @@ class WatchDirectory:
         self._condition = Condition()
         self._pending: tuple[progress.Preview, str] | None = None
         self._labels: dict[int, tuple[int | None, str]] = {}
-        self._checkpoints = 0
+        self._previews = 0
         self._stopped = False
         self._error: Exception | None = None
         self._thread = Thread(target=self._write_until_stopped, name="tomojax-watch", daemon=True)
@@ -55,8 +55,8 @@ class WatchDirectory:
                 path.append(label)
                 task = parent
             with self._condition:
-                self._checkpoints += 1
-                label = f"{' > '.join(reversed(path))} · checkpoint {self._checkpoints}"
+                self._previews += 1
+                label = f"{' > '.join(reversed(path))} · preview {self._previews}"
                 self._pending = (event, label)
                 self._condition.notify()
 

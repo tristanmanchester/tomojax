@@ -25,7 +25,7 @@ fn plane(path: &Path) -> ArrayDescriptor {
 }
 
 #[test]
-fn durable_commands_request_checkpoints_only_for_a_connected_consumer() {
+fn durable_commands_request_previews_only_for_a_connected_consumer() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     let input = source(&mut state, directory.path());
@@ -50,7 +50,7 @@ fn durable_commands_request_checkpoints_only_for_a_connected_consumer() {
         assert_eq!(
             state.job_command(&job).unwrap()["previews"],
             false,
-            "{operation} has no live checkpoint consumer"
+            "{operation} has no live preview consumer"
         );
     }
 }
@@ -314,13 +314,13 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
 }
 
 #[test]
-#[ignore = "real alignment checkpoint through AppState and the native Jobs UI"]
+#[ignore = "real alignment preview through AppState and the native Jobs UI"]
 fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     let python = std::env::var_os("TOMOJAX_TEST_PYTHON").expect("set TOMOJAX_TEST_PYTHON");
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.project = Some(Project::open(directory.path(), true).unwrap());
-    state.project.as_mut().unwrap().document.name = "Alignment checkpoint verification".into();
+    state.project.as_mut().unwrap().document.name = "Alignment preview verification".into();
     state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
@@ -538,7 +538,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             .clone();
         runtime.state.ui.selected_job = None;
         let until = Instant::now() + Duration::from_secs(90);
-        let mut checkpoints = std::collections::BTreeSet::new();
+        let mut previews = std::collections::BTreeSet::new();
         let mut pause_requested = false;
         loop {
             runtime.state.poll();
@@ -557,9 +557,9 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
                 && frame.info.job == capture_id
                 && frame.poses.is_some()
             {
-                checkpoints.insert(frame.info.time.to_bits());
+                previews.insert(frame.info.time.to_bits());
             }
-            if checkpoints.len() >= 2 && status == JobStatus::Running {
+            if previews.len() >= 2 && status == JobStatus::Running {
                 runtime.state.control_job(&capture_id, "pause").unwrap();
                 pause_requested = true;
                 break;
@@ -569,7 +569,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             }
             assert!(
                 Instant::now() < until,
-                "warm live capture did not reach two pose checkpoints"
+                "warm live capture did not reach two pose previews"
             );
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -638,13 +638,13 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             }
         }
         eprintln!(
-            "Native live capture observed {:?}, {} registered pose checkpoints, pause requested: {}",
+            "Native live capture observed {:?}, {} registered pose previews, pause requested: {}",
             job.status,
-            checkpoints.len(),
+            previews.len(),
             pause_requested
         );
         std::fs::write(evidence.join("live-capture-state.json"),serde_json::to_vec_pretty(&json!({
-            "observed_status":job.status,"pose_checkpoints":checkpoints.len(),"pause_requested":pause_requested,
+            "observed_status":job.status,"pose_previews":previews.len(),"pause_requested":pause_requested,
             "job":capture_id,"note":"Observed application state from a real worker; no replay or fabricated progress."
         })).unwrap()).unwrap();
         std::fs::write(

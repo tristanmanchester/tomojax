@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- "Checkpoint" now means saved state only. The points where a running job can pause or
+  cancel are work boundaries everywhere: `progress.Control.checkpoint()` is now
+  `Control.boundary()`, the CLI prints "canceling at the next work boundary", the
+  protocol schema describes `advanced`, `paused`, `resumed` and `preview` records at work
+  boundaries, and Studio's live solver frames are previews (`live::LivePreviews`).
+
 - Unpenalized CGLS and full-data SIRT now stop when the projection residual RMS reaches
   an estimate of detector noise plus sampling error, capped at 50 updates
   (`CGLSConfig.iterations`, `CGLSConfig.tolerance`, `SIRTConfig.iterations`, and

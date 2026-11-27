@@ -313,7 +313,7 @@ def feature_work(operation: op.Feature, context: ex.ExecutionContext) -> Callabl
     def make() -> ex.NewHandle:
         resolved = msgspec.to_builtins(recipe)
         with source_array(operation.source, context) as (data, _):
-            context.control.checkpoint()
+            context.control.boundary()
             if isinstance(recipe, op.Seeded):
                 mask, window, found = seeded(recipe, data)
                 resolved.update(found)
@@ -323,7 +323,7 @@ def feature_work(operation: op.Feature, context: ex.ExecutionContext) -> Callabl
                 resolved["feature"] = base.name
             else:
                 mask, window = shape_mask(recipe, shape, axes)
-            context.control.checkpoint()
+            context.control.boundary()
             inside, box = tight(mask, window)
             del mask
             grid = owned(registration, coordinate, context)

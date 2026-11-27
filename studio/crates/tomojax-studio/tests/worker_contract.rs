@@ -236,7 +236,7 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
     assert!(
         matches!(opened.value,Product::Reconstruction {ref method,scan:Some(_),..} if method=="fourier")
     );
-    // Iterative methods publish numerical checkpoints. The direct Fourier path
+    // Iterative methods publish numerical previews. The direct Fourier path
     // publishes its final reconstruction without promising a progress preview.
     let previewed = client.output(json!({"type":"run","operation":{"type":"reconstruct",
         "source":source_ref,"method":"cgls","iterations":2},"previews":true}));
@@ -268,7 +268,7 @@ fn paused_real_work_holds_queue_and_cancellation_has_a_terminal() {
     ));
     let until = Instant::now() + Duration::from_secs(60);
     while !client.paused.contains(&holding) {
-        // The initial checkpoint precedes a progress task, so an early pause
+        // The initial work boundary precedes a progress task, so an early pause
         // can be authoritative in status without emitting a Paused record.
         let status = client.send(json!({"type":"status"}));
         let Response::Result {
@@ -286,11 +286,11 @@ fn paused_real_work_holds_queue_and_cancellation_has_a_terminal() {
         }
         assert!(
             !client.terminals.contains_key(&holding),
-            "the held request finished before reaching its paused checkpoint"
+            "the held request finished before reaching its paused work boundary"
         );
         assert!(
             Instant::now() < until,
-            "worker did not reach a cooperative checkpoint"
+            "worker did not reach a work boundary"
         );
         thread::sleep(Duration::from_millis(5));
     }

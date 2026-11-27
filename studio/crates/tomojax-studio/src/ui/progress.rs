@@ -1,4 +1,4 @@
-//! Registered checkpoints, task hierarchy and measured solver histories.
+//! Registered previews, task hierarchy and measured solver histories.
 use super::{controls::*, model::*, tokens::*};
 use crate::AppState;
 use crate::progress::{MetricHistory, MetricSample, TaskProgress, TaskState};
@@ -7,9 +7,9 @@ use rune::{El, GrowthSpec, ScrollSpec, Shape, canvas, col, el, row};
 pub fn live(state: &AppState, compact: bool) -> El {
     let Some(frame) = state.live.frame() else {
         return if state.live.loading() {
-            help("Reading the current solver checkpoint…")
+            help("Reading the current solver preview…")
         } else if let Some(message) = state.live.error() {
-            label(format!("Checkpoint unavailable: {message}"), 11., error()).wrap()
+            label(format!("Preview unavailable: {message}"), 11., error()).wrap()
         } else {
             el()
         };
@@ -18,15 +18,15 @@ pub fn live(state: &AppState, compact: bool) -> El {
     let running =
         job.is_some_and(|job| matches!(job.status, JobStatus::Running | JobStatus::Paused));
     let title = if running {
-        "Live solver checkpoint"
+        "Live solver preview"
     } else {
-        "Last solver checkpoint"
+        "Last solver preview"
     };
     let mut section = col()
         .key(if compact {
-            "live-checkpoint-compact"
+            "live-preview-compact"
         } else {
-            "live-checkpoint"
+            "live-preview"
         })
         .gap(10.)
         .w_full()
@@ -42,7 +42,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
                         .info
                         .position
                         .as_ref()
-                        .map(crate::live::CheckpointPosition::label)
+                        .map(crate::live::SolverPreviewPosition::label)
                         .unwrap_or_default(),
                     11.,
                     muted(),
@@ -50,7 +50,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
         );
     if !compact {
         section = section.child(help(format!(
-            "{} · completed checkpoint at {:.2} s",
+            "{} · preview at {:.2} s",
             job.map_or("Processing result", |job| job.name.as_str()),
             frame.info.time
         )));
@@ -123,7 +123,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
             );
         }
     }
-    let mut panel = row().key("live-checkpoint-panels").gap(18.).w_full();
+    let mut panel = row().key("live-preview-panels").gap(18.).w_full();
     if !frame.planes.is_empty() {
         if compact {
             section = section.child(slices);

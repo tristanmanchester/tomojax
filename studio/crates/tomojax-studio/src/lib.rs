@@ -1,4 +1,4 @@
-//! Studio's native services: array reading, live checkpoints, metadata and rendering.
+//! Studio's native services: array reading, live previews, metadata and rendering.
 #![deny(
     clippy::dbg_macro,
     clippy::expect_used,

@@ -466,9 +466,9 @@ class tomojax.progress.Advanced(
     ) -> None
 class tomojax.progress.Canceled
 class tomojax.progress.Control() -> 'None'
+    .boundary(self) -> 'None'
     .cancel(self) -> 'None'
     .canceled
-    .checkpoint(self) -> 'None'
     .pause(self) -> 'None'
     .resume(self) -> 'None'
     .state

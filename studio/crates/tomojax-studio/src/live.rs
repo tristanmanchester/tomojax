@@ -1,36 +1,36 @@
-//! Coherent, registered solver checkpoints with explicit session-artifact ownership.
+//! Coherent, registered solver previews with explicit session-artifact ownership.
 //!
-//! One bounded I/O worker copies small checkpoint arrays into owned native buffers.
-//! A checkpoint's Arc is a read lease: superseding it cannot release its scalar
+//! One bounded I/O worker copies small preview arrays into owned native buffers.
+//! A preview's Arc is a read lease: superseding it cannot release its scalar
 //! or coordinate artifacts until queue, reader and completion all relinquish it.
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 
-use crate::imaging::{PlaneData, read_checkpoint_plane, read_pose_table};
+use crate::imaging::{PlaneData, read_pose_table, read_preview_plane};
 use studio_core::protocol::ArrayDescriptor;
 use studio_core::sync::Locked;
 
 pub use crate::imaging::TableData as PoseTable;
 
 #[derive(Clone, Debug)]
-pub struct CheckpointInfo {
+pub struct SolverPreviewInfo {
     pub job: String,
     pub request: String,
     pub task: u64,
     pub time: f64,
-    /// How far the task that emitted the checkpoint had come, in its own unit.
-    pub position: Option<CheckpointPosition>,
+    /// How far the task that emitted the preview had come, in its own unit.
+    pub position: Option<SolverPreviewPosition>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct CheckpointPosition {
+pub struct SolverPreviewPosition {
     pub done: u64,
     pub total: Option<u64>,
     pub unit: String,
 }
 
-impl CheckpointPosition {
+impl SolverPreviewPosition {
     /// "8 / 8 steps", or "3 steps" when the total is open.
     pub fn label(&self) -> String {
         match self.total {
@@ -42,23 +42,23 @@ impl CheckpointPosition {
 
 #[derive(Clone, Debug)]
 pub struct LiveFrame {
-    pub info: CheckpointInfo,
-    /// Official checkpoint keys: z (axial), y (coronal), x (sagittal).
+    pub info: SolverPreviewInfo,
+    /// Official preview keys: z (axial), y (coronal), x (sagittal).
     pub planes: BTreeMap<String, Arc<PlaneData>>,
     /// Full f64 values with the original column names, units and view registration.
     pub poses: Option<PoseTable>,
 }
 
-struct Checkpoint {
+struct SolverPreview {
     generation: u64,
-    info: CheckpointInfo,
+    info: SolverPreviewInfo,
     arrays: BTreeMap<String, ArrayDescriptor>,
     artifacts: BTreeSet<String>,
 }
 
 #[derive(Default)]
 struct Inbox {
-    pending: Option<Arc<Checkpoint>>,
+    pending: Option<Arc<SolverPreview>>,
     stopping: bool,
 }
 struct Shared {
@@ -67,21 +67,21 @@ struct Shared {
     wake: Mutex<rune::Waker>,
 }
 struct Completion {
-    checkpoint: Arc<Checkpoint>,
+    preview: Arc<SolverPreview>,
     result: Result<LiveFrame, String>,
 }
 struct ResultHandle {
     request: String,
     retiring: bool,
 }
-type Reader = Arc<dyn Fn(&Checkpoint) -> Result<LiveFrame, String> + Send + Sync>;
+type Reader = Arc<dyn Fn(&SolverPreview) -> Result<LiveFrame, String> + Send + Sync>;
 
-pub struct LiveCheckpoints {
+pub struct LivePreviews {
     enabled: bool,
     generation: u64,
     desired: Option<u64>,
     displayed: Option<u64>,
-    owners: BTreeMap<u64, Arc<Checkpoint>>,
+    owners: BTreeMap<u64, Arc<SolverPreview>>,
     references: BTreeMap<String, usize>,
     handles: BTreeMap<String, ResultHandle>,
     frame: Option<LiveFrame>,
@@ -91,12 +91,12 @@ pub struct LiveCheckpoints {
     thread: Option<JoinHandle<()>>,
 }
 
-impl Default for LiveCheckpoints {
+impl Default for LivePreviews {
     fn default() -> Self {
         Self::new()
     }
 }
-impl LiveCheckpoints {
+impl LivePreviews {
     pub fn new() -> Self {
         Self::with_reader(Arc::new(read))
     }
@@ -111,7 +111,7 @@ impl LiveCheckpoints {
         let thread_shared = shared.clone();
         let thread = std::thread::spawn(move || {
             loop {
-                let checkpoint = {
+                let preview = {
                     let inbox = thread_shared.inbox.locked();
                     let mut inbox = thread_shared
                         .changed
@@ -120,15 +120,15 @@ impl LiveCheckpoints {
                     if inbox.stopping {
                         break;
                     }
-                    let Some(checkpoint) = inbox.pending.take() else {
+                    let Some(preview) = inbox.pending.take() else {
                         continue;
                     };
-                    checkpoint
+                    preview
                 };
                 // Taking the Arc from pending transfers its read lease atomically.
                 // The result never contains file-backed or borrowed scalar storage.
-                let result = read(&checkpoint);
-                if send.send(Completion { checkpoint, result }).is_err() {
+                let result = read(&preview);
+                if send.send(Completion { preview, result }).is_err() {
                     break;
                 }
                 let wake = thread_shared.wake.locked().clone();
@@ -172,7 +172,7 @@ impl LiveCheckpoints {
     pub fn loading(&self) -> bool {
         self.desired.is_some() && self.desired != self.displayed
     }
-    pub fn pending_info(&self) -> Option<&CheckpointInfo> {
+    pub fn pending_info(&self) -> Option<&SolverPreviewInfo> {
         self.desired
             .and_then(|id| self.owners.get(&id))
             .map(|owner| &owner.info)
@@ -196,7 +196,7 @@ impl LiveCheckpoints {
         }
     }
 
-    /// Transfer a result handle's final close to the checkpoint owner. Decoded
+    /// Transfer a result handle's final close to the preview owner. Decoded
     /// display buffers survive independently; active/pending file reads must
     /// finish before the worker is allowed to remove their files.
     pub fn retire_handle(&mut self, handle: &str) -> bool {
@@ -213,7 +213,7 @@ impl LiveCheckpoints {
         request: &str,
         task: u64,
         time: f64,
-        position: Option<CheckpointPosition>,
+        position: Option<SolverPreviewPosition>,
         arrays: BTreeMap<String, ArrayDescriptor>,
     ) {
         self.generation += 1;
@@ -225,9 +225,9 @@ impl LiveCheckpoints {
         for artifact in &artifacts {
             *self.references.entry(artifact.clone()).or_default() += 1;
         }
-        let checkpoint = Arc::new(Checkpoint {
+        let preview = Arc::new(SolverPreview {
             generation,
-            info: CheckpointInfo {
+            info: SolverPreviewInfo {
                 job: job.into(),
                 request: request.into(),
                 task,
@@ -237,14 +237,14 @@ impl LiveCheckpoints {
             arrays,
             artifacts,
         });
-        self.owners.insert(generation, checkpoint.clone());
+        self.owners.insert(generation, preview.clone());
         if !self.enabled || self.thread.is_none() {
             return;
         }
         self.desired = Some(generation);
         self.error = None;
         let mut inbox = self.shared.inbox.locked();
-        inbox.pending = Some(checkpoint);
+        inbox.pending = Some(preview);
         drop(inbox);
         self.shared.changed.notify_one();
     }
@@ -262,9 +262,9 @@ impl LiveCheckpoints {
         }
         self.owners.insert(
             self.generation,
-            Arc::new(Checkpoint {
+            Arc::new(SolverPreview {
                 generation: self.generation,
-                info: CheckpointInfo {
+                info: SolverPreviewInfo {
                     job: String::new(),
                     request: String::new(),
                     task: 0,
@@ -284,7 +284,7 @@ impl LiveCheckpoints {
             .as_ref()
             .and_then(|events| events.try_recv().ok())
         {
-            if Some(completion.checkpoint.generation) != self.desired {
+            if Some(completion.preview.generation) != self.desired {
                 continue;
             }
             match completion.result {
@@ -324,8 +324,8 @@ impl LiveCheckpoints {
         self.handles.clear();
     }
 
-    /// Each issued token appears once, after its last owning checkpoint retires.
-    /// Shared coordinate tokens are reference-counted across checkpoint sets.
+    /// Each issued token appears once, after its last owning preview retires.
+    /// Shared coordinate tokens are reference-counted across preview sets.
     pub fn drain_releases(&mut self) -> Vec<String> {
         let retiring: BTreeSet<_> = self
             .handles
@@ -389,39 +389,34 @@ impl LiveCheckpoints {
         self.drain_releases()
     }
 }
-impl Drop for LiveCheckpoints {
+impl Drop for LivePreviews {
     fn drop(&mut self) {
         self.shutdown();
     }
 }
 
-fn read(checkpoint: &Checkpoint) -> Result<LiveFrame, String> {
+fn read(preview: &SolverPreview) -> Result<LiveFrame, String> {
     let mut planes = BTreeMap::new();
     for key in ["z", "y", "x"] {
-        if let Some(array) = checkpoint.arrays.get(key) {
+        if let Some(array) = preview.arrays.get(key) {
             if array.shape.len() != 2 {
-                return Err(format!(
-                    "The live {key} checkpoint is not a registered plane."
-                ));
+                return Err(format!("The live {key} preview is not a registered plane."));
             }
-            planes.insert(
-                key.into(),
-                Arc::new(read_checkpoint_plane(array, 0, 0, 1024)?),
-            );
+            planes.insert(key.into(), Arc::new(read_preview_plane(array, 0, 0, 1024)?));
         }
     }
-    let poses = checkpoint
+    let poses = preview
         .arrays
         .get("poses")
         .map(read_pose_table)
         .transpose()?;
     if planes.is_empty() && poses.is_none() {
         return Err(
-            "The worker checkpoint contains no supported registered slices or pose table.".into(),
+            "The worker preview contains no supported registered slices or pose table.".into(),
         );
     }
     Ok(LiveFrame {
-        info: checkpoint.info.clone(),
+        info: preview.info.clone(),
         planes,
         poses,
     })
@@ -431,8 +426,8 @@ fn read(checkpoint: &Checkpoint) -> Result<LiveFrame, String> {
 mod tests {
     use super::*;
 
-    fn step(done: u64) -> Option<CheckpointPosition> {
-        Some(CheckpointPosition {
+    fn step(done: u64) -> Option<SolverPreviewPosition> {
+        Some(SolverPreviewPosition {
             done,
             total: None,
             unit: "steps".into(),
@@ -491,14 +486,14 @@ mod tests {
             columns: vec![],
         }
     }
-    fn wait_for(live: &mut LiveCheckpoints, step: u64) {
+    fn wait_for(live: &mut LivePreviews, step: u64) {
         let deadline = Instant::now() + Duration::from_secs(3);
         while live
             .frame()
             .is_none_or(|frame| frame.info.position.as_ref().map(|p| p.done) != Some(step))
         {
             live.poll();
-            assert!(Instant::now() < deadline, "checkpoint failed to finish");
+            assert!(Instant::now() < deadline, "preview failed to finish");
             std::thread::yield_now();
         }
     }
@@ -508,13 +503,13 @@ mod tests {
         let (entered, started) = mpsc::sync_channel(1);
         let (resume, blocked) = mpsc::sync_channel(1);
         let blocked = Mutex::new(Some(blocked));
-        let mut live = LiveCheckpoints::with_reader(Arc::new(move |checkpoint| {
-            if checkpoint.info.position.as_ref().map(|p| p.done) == Some(1) {
+        let mut live = LivePreviews::with_reader(Arc::new(move |preview| {
+            if preview.info.position.as_ref().map(|p| p.done) == Some(1) {
                 entered.send(()).unwrap();
                 blocked.lock().unwrap().take().unwrap().recv().unwrap();
             }
             Ok(LiveFrame {
-                info: checkpoint.info.clone(),
+                info: preview.info.clone(),
                 planes: BTreeMap::new(),
                 poses: None,
             })
@@ -561,11 +556,11 @@ mod tests {
         let (entered, started) = mpsc::sync_channel(1);
         let (resume, blocked) = mpsc::sync_channel(1);
         let blocked = Mutex::new(Some(blocked));
-        let mut live = LiveCheckpoints::with_reader(Arc::new(move |checkpoint| {
+        let mut live = LivePreviews::with_reader(Arc::new(move |preview| {
             entered.send(()).unwrap();
             blocked.lock().unwrap().take().unwrap().recv().unwrap();
             Ok(LiveFrame {
-                info: checkpoint.info.clone(),
+                info: preview.info.clone(),
                 planes: BTreeMap::new(),
                 poses: None,
             })
@@ -580,7 +575,7 @@ mod tests {
         );
         started.recv_timeout(Duration::from_secs(3)).unwrap();
         // Official handles are opaque. Their final close removes this request's
-        // published checkpoint files, even after its numerical run is complete.
+        // published preview files, even after its numerical run is complete.
         live.bind_result("run-request", "opaque-result-handle");
         assert!(live.retire_handle("opaque-result-handle"));
         assert!(!live.retire_handle("unrelated-input"));
@@ -604,7 +599,7 @@ mod tests {
         assert_eq!(
             live.frame().unwrap().info.position.as_ref().map(|p| p.done),
             Some(1),
-            "owned displayed checkpoint was cleared"
+            "owned displayed preview was cleared"
         );
         assert!(!live.loading());
         live.clear();
@@ -619,9 +614,9 @@ mod tests {
     }
 
     #[test]
-    fn disabling_the_consumer_releases_undisplayed_checkpoints_without_loading() {
+    fn disabling_the_consumer_releases_undisplayed_previews_without_loading() {
         let mut live =
-            LiveCheckpoints::with_reader(Arc::new(|_| panic!("disabled consumer performed I/O")));
+            LivePreviews::with_reader(Arc::new(|_| panic!("disabled consumer performed I/O")));
         live.set_enabled(false);
         live.accept(
             "job",
@@ -640,13 +635,13 @@ mod tests {
         let (entered, started) = mpsc::sync_channel(1);
         let (resume, blocked) = mpsc::sync_channel(1);
         let blocked = Mutex::new(Some(blocked));
-        let mut live = LiveCheckpoints::with_reader(Arc::new(move |checkpoint| {
-            if checkpoint.info.position.as_ref().map(|p| p.done) == Some(1) {
+        let mut live = LivePreviews::with_reader(Arc::new(move |preview| {
+            if preview.info.position.as_ref().map(|p| p.done) == Some(1) {
                 entered.send(()).unwrap();
                 blocked.lock().unwrap().take().unwrap().recv().unwrap();
             }
             Ok(LiveFrame {
-                info: checkpoint.info.clone(),
+                info: preview.info.clone(),
                 planes: BTreeMap::new(),
                 poses: None,
             })
@@ -752,7 +747,7 @@ mod tests {
                 unit: if i < 3 { "degree" } else { "mm" }.into(),
             })
             .collect();
-        let mut live = LiveCheckpoints::new();
+        let mut live = LivePreviews::new();
         live.accept(
             "alignment",
             "run",

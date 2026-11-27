@@ -102,7 +102,7 @@ def _sample():
     return progress.Sample(np.ones((8, 8), np.float32), plane, "1/mm", "attenuation")
 
 
-def test_canceling_after_a_checkpoint_keeps_its_image(tmp_path, watching):
+def test_canceling_after_a_preview_keeps_its_image(tmp_path, watching):
     from tomojax.cli._progress import run_command  # check-public-imports: allow-private
 
     watch = watching.WatchDirectory(tmp_path / "watch", working=False)

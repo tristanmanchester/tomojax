@@ -73,7 +73,7 @@
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/jobs.rs": 1056,
+    "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
     "studio/crates/tomojax-studio/src/app/mod.rs": 986,
     "studio/crates/tomojax-studio/src/app/viewing.rs": 1448,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 1105,

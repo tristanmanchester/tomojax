@@ -124,7 +124,7 @@ def sum_batches(
     batch_size: int,
     partials: Callable[[Device | None, range, BatchRanges], Generator[jax.Array]],
 ) -> jax.Array:
-    """Drive independent device accumulators to the same checkpoint, then report on the owner.
+    """Drive independent device accumulators to the same work boundary, then report on the owner.
 
     A share keeps its original view range, numerical batch and summation order.
     If a share retries with smaller batches, it replays to the current view

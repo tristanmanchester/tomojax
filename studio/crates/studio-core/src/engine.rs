@@ -434,7 +434,7 @@ impl Engine {
                     ));
                     return events;
                 }
-                self.lifecycle = Lifecycle::Failed("The worker did not reach a shutdown checkpoint before the closing deadline; unfinished work was interrupted".into());
+                self.lifecycle = Lifecycle::Failed("The worker did not reach a work boundary before the closing deadline; unfinished work was interrupted".into());
                 let _ = self.terminate.send(());
                 forced = true;
                 deadline = Instant::now() + Duration::from_secs(1);

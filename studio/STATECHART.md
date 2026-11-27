@@ -75,13 +75,13 @@ stateDiagram-v2
     Queued --> Canceled: cancel, removed from the queue
     Running --> PauseRequested: pause
     PauseRequested --> Running: resume
-    PauseRequested --> Canceled: cancel, at the next checkpoint or on return
-    PauseRequested --> Paused: checkpoint (Paused event if a task exists)
+    PauseRequested --> Canceled: cancel, at the next work boundary or on return
+    PauseRequested --> Paused: work boundary (Paused event if a task exists)
     Paused --> Running: resume, then wake (Resumed event if a task exists)
     Paused --> Canceled: cancel
     Running --> Completed: operation returns
-    PauseRequested --> Completed: returns before reaching a checkpoint
-    Running --> Canceled: cancel, at the next checkpoint or on return
+    PauseRequested --> Completed: returns before reaching a work boundary
+    Running --> Canceled: cancel, at the next work boundary or on return
     note right of Paused
         Holds the device; queued work waits
     end note
@@ -122,15 +122,15 @@ event.
 | no status poll after the terminal | The terminal retires the control watch |
 | at rest a finished job has no control watch | Polling stops |
 
-## Checkpoint read leases
+## Preview read leases
 
-Sources: `live.rs`, with the per-frame order of `AppState::poll` (checkpoint
+Sources: `live.rs`, with the per-frame order of `AppState::poll` (preview
 releases first, then handle closes).
 
-A checkpoint's `Arc` is its read lease. The reader inbox, an active read and an
+A preview's `Arc` is its read lease. The reader inbox, an active read and an
 unconsumed completion each hold a copy. A token is released when the last
-checkpoint referencing it retires. A result handle closes only after its
-request owns no checkpoints, because closing it deletes every artifact the
+preview referencing it retires. A result handle closes only after its
+request owns no previews, because closing it deletes every artifact the
 request published.
 
 ```mermaid
@@ -150,10 +150,10 @@ stateDiagram-v2
 ```mermaid
 stateDiagram-v2
     direction LR
-    [*] --> Bound: result arrives while its request owns checkpoints
-    [*] --> Closed: result arrives with no owned checkpoints, then retires
+    [*] --> Bound: result arrives while its request owns previews
+    [*] --> Closed: result arrives with no owned previews, then retires
     Bound --> Retiring: durable save done
-    Retiring --> Closed: request owns no checkpoints (releases sent first)
+    Retiring --> Closed: request owns no previews (releases sent first)
     Bound --> [*]: worker disconnects
     Retiring --> [*]: worker disconnects
 ```
@@ -163,7 +163,7 @@ replacement worker starts, because it reuses token names. A read still running
 for the old session keeps its private `Arc`. Generations are never reused, so
 that read's completion is stale when it arrives.
 
-Bounds: three checkpoints per job (each with a scalar token and a shared
+Bounds: three previews per job (each with a scalar token and a shared
 coordinate token), one result handle and one worker restart.
 
 | Property | Guarantee |

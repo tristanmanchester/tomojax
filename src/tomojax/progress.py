@@ -178,7 +178,7 @@ class Placed:
 
 @dataclass(frozen=True, slots=True)
 class Paused:
-    """A task reached a pause checkpoint.
+    """A task reached a work boundary while paused.
 
     Parameters
     ----------
@@ -232,7 +232,7 @@ class Note:
 
 @dataclass(frozen=True, slots=True)
 class Sample:
-    """A small host image and its registration at a completed checkpoint."""
+    """A small host image and its registration at a completed work boundary."""
 
     data: np.ndarray
     axes: tuple[Axis, ...]
@@ -262,7 +262,7 @@ class Sample:
 
 @dataclass(frozen=True, slots=True)
 class Preview:
-    """Coherent small arrays copied at one completed checkpoint.
+    """Coherent small arrays copied at one completed work boundary.
 
     Parameters
     ----------
@@ -292,7 +292,7 @@ class Control:
         self._canceled = False
 
     def pause(self) -> None:
-        """Request a pause at the next checkpoint."""
+        """Request a pause at the next work boundary."""
         with self._condition:
             if self._state == "running" and not self._canceled:
                 self._state = "pause-requested"
@@ -333,8 +333,8 @@ class Control:
         with self._condition:
             return self._canceled
 
-    def checkpoint(self) -> None:
-        """Block while paused or raise when canceled.
+    def boundary(self) -> None:
+        """Mark a work boundary: block while paused, or raise when canceled.
 
         Raises
         ------
@@ -496,7 +496,7 @@ def previews() -> Iterator[None]:
 
 
 def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> None:
-    """Copy a coherent checkpoint only when a preview will be delivered."""
+    """Copy coherent arrays at a work boundary only when a preview will be delivered."""
     active = current_task.get()
     if active is None or not active.watcher.previews or active.previewed == active.done:
         return
@@ -551,7 +551,7 @@ def preparing(label: str, first: int = 0) -> AbstractContextManager[None]:
 
 
 def chunks(total: int) -> Iterator[tuple[int, int]]:
-    """Group existing work units at owner checkpoints, using completed chunk time."""
+    """Group existing work units between owner work boundaries, using completed chunk time."""
     if not watching():
         if total:
             yield 0, total
@@ -589,7 +589,7 @@ current_runtime: ContextVar[Runtime | None] = ContextVar("tomojax_runtime", defa
 
 @contextmanager
 def runtime() -> Iterator[Runtime]:
-    """Collect actual placement without installing a progress handler or changing checkpoints."""
+    """Collect actual placement without installing a progress handler or moving work boundaries."""
     value = Runtime()
     token = current_runtime.set(value)
     try:
@@ -716,7 +716,7 @@ def watch(
     control : Control or None, optional
         Token which another thread or the handler may set to stop the operation.
     previews : bool, optional
-        Deliver registered preview arrays from completed numerical checkpoints.
+        Deliver registered preview arrays from completed numerical work boundaries.
 
     Yields
     ------
@@ -742,7 +742,7 @@ def handler_failed(exc: BaseException) -> bool:
 def check_canceled() -> None:
     watcher = _watch.get()
     if watcher is not None and watcher.control is not None:
-        watcher.control.checkpoint()
+        watcher.control.boundary()
 
 
 @contextmanager
