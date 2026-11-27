@@ -1,7 +1,6 @@
 """Large host arrays follow one rule: in memory, or a temporary file with room checked first."""
 
 from collections import namedtuple
-import json
 import logging
 import tempfile
 
@@ -22,7 +21,6 @@ def _raw_nxtomo(path, views=7, rows=6, cols=9):
     frames = np.concatenate([dark, flats, samples]).astype(np.float32)
     key = np.r_[2, 1, 1, np.zeros(views)].astype(np.int32)
     angles = np.r_[0, 0, 0, np.linspace(0, 180, views, endpoint=False)].astype(np.float32)
-    detector = tj.Detector(cols, rows, 1.0, 1.0)
     with h5py.File(path, "w") as handle:
         entry = handle.create_group("entry")
         entry.attrs["definition"] = "NXtomo"
@@ -30,7 +28,8 @@ def _raw_nxtomo(path, views=7, rows=6, cols=9):
         group = entry.create_group("instrument").create_group("detector")
         group.create_dataset("data", data=frames)
         group.create_dataset("image_key", data=key)
-        group.attrs["detector_meta_json"] = json.dumps(detector.to_dict())
+        for pitch in ("x_pixel_size", "y_pixel_size"):
+            group.create_dataset(pitch, data=1.0).attrs["units"] = "mm"
         sample = entry.create_group("sample").create_group("transformations")
         sample.create_dataset("rotation_angle", data=angles).attrs["units"] = "degree"
 

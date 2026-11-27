@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 import h5py
@@ -31,22 +30,16 @@ def _preprocess(*args: object) -> int:
     return main(["correct", *(str(a) for a in args)])
 
 
-def _set_detector(
-    raw: Path, *, record: dict[str, object] | None, sizes: tuple[float, float] | None
-) -> None:
+def _set_pitches(raw: Path, sizes: tuple[float, float] | None) -> None:
     with h5py.File(raw, "a") as handle:
         detector = handle["entry/instrument/detector"]
-        if "detector_meta_json" in detector.attrs:
-            del detector.attrs["detector_meta_json"]
-        if record is not None:
-            detector.attrs["detector_meta_json"] = json.dumps(record)
         for name, value in zip(
             ("x_pixel_size", "y_pixel_size"), sizes or (None, None), strict=False
         ):
             if name in detector:
                 del detector[name]
             if value is not None:
-                detector.create_dataset(name, data=np.float32(value))
+                detector.create_dataset(name, data=np.float32(value)).attrs["units"] = "mm"
 
 
 @pytest.mark.parametrize("binning", [1, 2])
@@ -138,7 +131,7 @@ def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) 
     # units; --pixel-size and --detector-center replace either.
     write_raw_nxtomo(tmp_path / "raw.nxs")
     for i, sizes in enumerate(((0.5, 0.75), None)):
-        _set_detector(tmp_path / "raw.nxs", record=None, sizes=sizes)
+        _set_pitches(tmp_path / "raw.nxs", sizes)
         out = tmp_path / f"scan{i}.nxs"
         assert _preprocess(tmp_path / "raw.nxs", "-o", out) == 0
         du, dv = sizes or (1.0, 1.0)
@@ -152,9 +145,18 @@ def test_detector_comes_from_the_record_or_an_explicit_override(tmp_path: Path) 
 
 
 def test_views_and_a_detector_block(tmp_path: Path) -> None:
-    write_raw_nxtomo(tmp_path / "raw.nxs")
-    record = {"nu": 2, "nv": 2, "du": 2.0, "dv": 3.0, "det_center": [10.0, 20.0]}
-    _set_detector(tmp_path / "raw.nxs", record=record, sizes=(2.0, 3.0))
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
+
+    counts = np.broadcast_to(np.array([5, 11, 9, 1], np.uint16)[:, None, None], (4, 2, 2))
+    save_nxtomo(
+        str(tmp_path / "raw.nxs"),
+        counts,
+        metadata=NXTomoMetadata(
+            angles=np.array([0, 0, 90, 0]),
+            image_key=np.array([0, 1, 0, 2]),
+            detector=tj.Detector(2, 2, 2, 3, (10, 20)),
+        ),
+    )
     out = tmp_path / "part.nxs"
     assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--views", "1", "--crop", "0:1,0:1") == 0
     scan = tj.load(out)

@@ -1148,7 +1148,9 @@ def test_validate_open_skips_saved_detector_and_volume(tmp_path, monkeypatch, ki
     else:
         tj.save(path, sim)
     frames = trace_detector_reads(monkeypatch, "/entry/instrument/detector/data")
-    volume = trace_detector_reads(monkeypatch, "/entry/processing/tomojax/volume")
+    volume = trace_detector_reads(
+        monkeypatch, "/entry/volume/data" if kind == "reconstruction" else "/entry/phantom/data"
+    )
     result = admitted(
         operations.Validate(operation=operations.Open(path=str(path), kind=kind)),
         None,
@@ -1163,7 +1165,7 @@ def test_inspect_saved_volume_reads_no_volume_pixels(tmp_path, monkeypatch):
     sim = tj.simulate(size=8, n_views=12)
     path = tmp_path / "volume.nxs"
     tj.save(path, tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan))
-    reads = trace_detector_reads(monkeypatch, "/entry/processing/tomojax/volume")
+    reads = trace_detector_reads(monkeypatch, "/entry/volume/data")
     report = tj.inspect(path)
     assert report["valid"] and report["volume"]["shape"] == [8, 8, 8]
     assert not report["projection"]["found"]

@@ -53,15 +53,15 @@ def main() -> None:
                 "--size", size, "--n-views", "60", cwd=work)  # fmt: skip
         weight = [] if args.tv_weight == "auto" else ["--tv-weight", args.tv_weight]
         tomojax("reconstruct", "tilted.nxs", "-o", "tilted-recon.nxs", "--method", "fista",
-                "--iterations", "50", *weight, "--nonnegative", "--region", "off",
+                "--iterations", "50", *weight, "--nonnegative",
                 cwd=work)  # fmt: skip
         rows.append(("Laminography, 30° tilt", work / "tilted.nxs", work / "tilted-recon.nxs"))
         data = [
             (
                 label,
-                read(scan, "entry/processing/tomojax/volume"),
-                read(scan, "entry/data/projections"),
-                read(recon, "entry/processing/tomojax/volume"),
+                read(scan, "entry/phantom/data"),
+                read(scan, "entry/instrument/detector/data"),
+                read(recon, "entry/volume/data"),
             )
             for label, scan, recon in rows
         ]

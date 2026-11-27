@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import replace
 import importlib
-import json
 from typing import TYPE_CHECKING, Any
 
 import h5py
@@ -39,15 +38,14 @@ pytestmark = pytest.mark.surface
 def _write_frames(
     path: Path, frames: np.ndarray, image_key: list[int], angles: list[float]
 ) -> None:
-    rows, cols = frames.shape[1:]
     with h5py.File(path, "w") as handle:
         entry = handle.create_group("entry")
         entry.attrs["definition"] = "NXtomo"
-        entry.attrs["grid_meta_json"] = json.dumps(tiny_grid(nx=cols, ny=cols, nz=rows).to_dict())
         detector = entry.create_group("instrument/detector")
         detector.create_dataset("data", data=frames)
         detector.create_dataset("image_key", data=np.asarray(image_key, np.int32))
-        detector.attrs["detector_meta_json"] = json.dumps(tiny_detector(nu=cols, nv=rows).to_dict())
+        for pitch in ("x_pixel_size", "y_pixel_size"):
+            detector.create_dataset(pitch, data=1.0).attrs["units"] = "mm"
         sample = entry.create_group("sample")
         sample.create_dataset("name", data="fixture")
         rotation = sample.create_group("transformations").create_dataset(
@@ -84,11 +82,22 @@ def test_load_frames_reads_the_frames_lazily(tmp_path: Path) -> None:
 @pytest.mark.parametrize("recorded", [True, False])
 def test_frame_center_provenance_preserves_explicit_overrides(tmp_path, recorded):
     path = tmp_path / "raw.nxs"
-    write_raw_nxtomo(path)
-    if not recorded:
-        with h5py.File(path, "r+") as handle:
-            del handle["entry/instrument/detector"].attrs["detector_meta_json"]
-    if not recorded:  # pitches without a detector: the middle, and the record says so
+    if recorded:
+        from tomojax.io.api import NXTomoMetadata, save_nxtomo
+
+        counts = np.broadcast_to(np.array([5, 11, 9, 1], np.uint16)[:, None, None], (4, 2, 2))
+        save_nxtomo(
+            str(path),
+            counts,
+            metadata=NXTomoMetadata(
+                detector=tiny_detector(nu=2),
+                angles=np.array([0, 0, 90, 0]),
+                image_key=np.array([0, 1, 0, 2]),
+                geometry_meta={"detector_center_status": "recorded"},
+            ),
+        )
+    else:  # pitches without a detector: the middle, and the record says so
+        write_raw_nxtomo(path)
         loaded = tj.load_frames(path).source.geometry_metadata
         assert loaded["detector_center_status"] == "not_recorded" and "length_unit" not in loaded
     frames = tj.load_frames(path, **({} if recorded else {"detector": tiny_detector(nu=2)}))
@@ -951,14 +960,19 @@ def test_lazy_selections_compose_without_reading_storage(tmp_path, suffix):
 @pytest.mark.parametrize("tilted", [False, True])
 def test_only_detector_derived_output_grids_follow_crop_and_bin(tmp_path, explicit, tilted):
     path = tmp_path / "raw.nxs"
-    _write_frames(path, np.full((3, 6, 8), 500, np.uint16), [0, 0, 0], [0, 60, 120])
-    with h5py.File(path, "a") as handle:
-        if not explicit:
-            del handle["entry"].attrs["grid_meta_json"]
-        if tilted:
-            geometry = handle.require_group("entry/geometry")
-            geometry.attrs["type"] = "lamino"
-            geometry.attrs["geometry_meta_json"] = '{"tilt": 47}'
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
+
+    save_nxtomo(
+        str(path),
+        np.full((3, 6, 8), 500, np.uint16),
+        metadata=NXTomoMetadata(
+            angles=np.array([0, 60, 120]),
+            detector=tiny_detector(nu=8, nv=6),
+            grid=tiny_grid(nx=8, ny=8, nz=6) if explicit else None,
+            geometry_type="lamino" if tilted else "parallel",
+            geometry_meta={"tilt": 47} if tilted else {},
+        ),
+    )
     frames = tj.load_frames(path, flats=1000, darks=0)
     scan = frames.cropped(slice(2, 6), slice(1, 7)).corrected(binning=2)
     assert scan.projections.shape == (3, 2, 3)
