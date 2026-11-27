@@ -26,6 +26,7 @@ from tomojax.core.host_volume import host_array
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._continuation import Continuation
+from ._exterior_oblique import ObliqueExterior
 from ._truncation import axis_distance
 from .cgls import CGLSConfig, cgls, resident_bytes
 
@@ -245,6 +246,9 @@ def storage(
     if independent:
         grid = replace(grid, nz=1)
         detector = replace(detector, nv=1)
+    oblique = ObliqueExterior.for_scan(geometry, detector, views)
+    if oblique is not None:
+        geometry, detector = oblique.geometry, oblique.detector
     sample = _Sampling.fitting(geometry, grid, detector, views, room)
     if independent:
         depth = sample.depth(geometry, views, rows, room) if room is not None else 1
@@ -529,6 +533,9 @@ def _background(
         geometry = replace(geometry, grid=grid, detector=detector)
 
     views = data.shape[0]
+    oblique = ObliqueExterior.for_scan(geometry, detector, views)
+    if oblique is not None:
+        geometry, detector = oblique.geometry, oblique.detector
     with checkpoint.loop("exterior-sampling") as sampling:
         if sampling.saved is None:
             sample = _Sampling.fitting(geometry, grid, detector, views, room)
@@ -563,7 +570,7 @@ def _background(
             else grid
         )
         with checkpoint.scope(f"exterior-rows{z}-{section.stop}") if independent else nullcontext():
-            for part, block in _model(
+            blocks = _model(
                 geometry,
                 target,
                 measured_detector,
@@ -572,7 +579,11 @@ def _background(
                 local,
                 native=native,
                 axial=independent and native,
-            ):
+                oblique=oblique,
+            )
+            if oblique is not None:
+                blocks = oblique.measured_rays(blocks, positive=config.method == "mlem")
+            for part, block in blocks:
                 result.write(part, section, block)
     return result.result()
 
@@ -626,6 +637,7 @@ def _model(
     *,
     native: bool,
     axial: bool,
+    oblique: ObliqueExterior | None,
 ) -> Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]]:
     views, nv, nu = data.shape
     coarse = CGLSConfig(iterations=50)
@@ -633,7 +645,7 @@ def _model(
     # If both fitted edge windows contain only air on every view, every
     # virtual ray is identically zero. No interior samples enter that result.
     window = math.ceil(min(d.nu, max(2, d.nu // 16)) * nu / d.nu)
-    if not (data[..., :window].any() or data[..., -window:].any()):
+    if oblique is None and not (data[..., :window].any() or data[..., -window:].any()):
         return
     complete = replace(d, nu=3 * d.nu)
     poses = _poses(geometry, views)
@@ -644,12 +656,16 @@ def _model(
         and cone_parts(geometry, detector) is None
     ):
         return
-    mask = _unseen(geometry, complete, grid, poses)
-    mask[:, d.nu : 2 * d.nu] = False
-    if not mask.any():
+    unseen = _unseen(geometry, complete, grid, poses)
+    if oblique is None:
+        unseen[:, d.nu : 2 * d.nu] = False
+    if not unseen.any():
         return
-    full = sample.completed(geometry, data)
-    observed = np.sum(full, axis=-1, where=mask[:, None, :], dtype=np.float64)
+    if oblique is None:
+        full, mask = sample.completed(geometry, data), unseen[:, None, :]
+    else:
+        full, mask = oblique.completed(data, d, unseen)
+    observed = np.sum(full, axis=-1, where=mask, dtype=np.float64)
     # Positive exterior attenuation, fitted to the integral of the virtual rays
     # that no voxel can reach. The number of missed rays varies by view and can
     # be zero over most of a turn. The second moment of adjacent differences
@@ -673,7 +689,7 @@ def _model(
         block = numpy_float32_array(
             projected if isinstance(projected, np.ndarray) else projected.get()
         )
-        predicted += np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
+        predicted += np.sum(block, axis=(0, 2), where=mask[part], dtype=np.float64) / views
         residual[part] = full[part, :, d.nu : 2 * d.nu] - block[..., d.nu : 2 * d.nu]
     scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
     if not scale.any():
