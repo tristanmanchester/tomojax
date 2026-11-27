@@ -427,6 +427,57 @@ def sum_backproject_planes(
     return jax.lax.platform_dependent(coefficients, images, *initial, cuda=on_cuda, default=on_jax)
 
 
+def sum_backproject_pair(
+    coefficients: jax.Array,
+    images: tuple[jax.Array, jax.Array],
+    grid: Grid,
+    detector: Detector,
+    *,
+    backend: str,
+    interpolation: str,
+    absolute_weights: bool,
+    accumulate: tuple[jax.Array, jax.Array],
+    z_fast: bool,
+) -> tuple[jax.Array, jax.Array]:
+    """Apply two matched transposes, sharing the horizontal ray walk on axial CUDA grids."""
+    from ._cuda_axial import axial_coefficients, transpose_axial_pair_cuda
+    from ._cuda_joseph import use_cuda_gather
+
+    def separate() -> tuple[jax.Array, jax.Array]:
+        def transpose(i: int) -> jax.Array:
+            return sum_backproject_planes(
+                coefficients,
+                images[i],
+                grid,
+                detector,
+                backend=backend,
+                interpolation=interpolation,
+                absolute_weights=absolute_weights,
+                accumulate=accumulate[i],
+                z_fast=z_fast,
+            )
+
+        return transpose(0), transpose(1)
+
+    if (
+        backend == "cuda"
+        and z_fast
+        and interpolation == "linear"
+        and not absolute_weights
+        and use_cuda_gather(grid, axial=True)
+    ):
+
+        def on_cuda() -> tuple[jax.Array, jax.Array]:
+            return jax.lax.cond(
+                axial_coefficients(coefficients),
+                lambda: transpose_axial_pair_cuda(coefficients, images, accumulate, grid),
+                separate,
+            )
+
+        return jax.lax.platform_dependent(cuda=on_cuda, default=separate)
+    return separate()
+
+
 def plane_pose_columns(
     coefficients: jax.Array,
     volume: jax.Array,

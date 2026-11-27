@@ -23,6 +23,7 @@ from tomojax.core.joseph import (
     forward_jax,
     forward_project_planes,
     plane_coefficients,
+    sum_backproject_pair,
     sum_backproject_planes,
 )
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
@@ -980,7 +981,8 @@ def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector()
 
 @pytest.mark.gpu
 @pytest.mark.parametrize("nz", [8, 37])
-def test_two_axial_transposes_match_both_separate_accumulations(nz):
+def test_two_axial_transposes_match_both_separate_accumulations(nz, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_CUDA_KERNELS", "1")
     grid = Grid(11, 7, nz, 1, 0.8, 0.9)
     detector = Detector(13, 19, 0.7, 1.1, (0.4, -0.23))
     angles = np.linspace(0, 180, 7, endpoint=False)
@@ -990,7 +992,17 @@ def test_two_axial_transposes_match_both_separate_accumulations(nz):
     rng = np.random.default_rng(7)
     images = tuple(jnp.asarray(rng.normal(size=(7, 19, 13)), jnp.float32) for _ in range(2))
     initial = tuple(jnp.asarray(rng.normal(size=(11, 7, nz)), jnp.float32) for _ in range(2))
-    pair = axial.transpose_axial_pair_cuda(coeff, images, initial, grid)
+    pair = sum_backproject_pair(
+        coeff,
+        images,
+        grid,
+        detector,
+        backend="cuda",
+        interpolation="linear",
+        absolute_weights=False,
+        accumulate=initial,
+        z_fast=True,
+    )
     for result, image, start in zip(pair, images, initial, strict=True):
         separate = axial.transpose_axial_vu_cuda(
             coeff, image, start, grid=grid, interpolation="linear", z_fast=True

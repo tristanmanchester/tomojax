@@ -174,40 +174,32 @@ class ViewBatches:
         self,
         images: tuple[jax.Array, jax.Array],
         start: jax.Array,
-        batch: jax.Array,
         outputs: tuple[jax.Array, jax.Array],
     ) -> tuple[jax.Array, jax.Array]:
         """Two exact transposes with common batch geometry and separate accumulators."""
+        coeff = self._coefficients(start)
         if isinstance(self.model, ConeModel):
             return self.model.backproject_pair(
                 images,
-                self._coefficients(start),
+                coeff,
                 grid=self.grid,
                 detector=self.detector,
                 backend=self.cone_backend,
                 accumulate=outputs,
             )
+        from tomojax.core.joseph import sum_backproject_pair
 
-        def separate(_: None) -> tuple[jax.Array, jax.Array]:
-            return (
-                self.backproject(images[0], start, batch, outputs[0]),
-                self.backproject(images[1], start, batch, outputs[1]),
-            )
-
-        if self.z_fast and self.interpolation == "linear" and not self.absolute_weights:
-            from tomojax.core._cuda_joseph import use_cuda_gather
-
-            if use_cuda_gather(self.grid, axial=True):
-                from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_pair_cuda
-
-                coeff = self._coefficients(start)
-                return jax.lax.cond(
-                    axial_coefficients(coeff),
-                    lambda _: transpose_axial_pair_cuda(coeff, images, outputs, self.grid),
-                    separate,
-                    operand=None,
-                )
-        return separate(None)
+        return sum_backproject_pair(
+            coeff,
+            images,
+            self.grid,
+            self.detector,
+            backend=self.backend,
+            interpolation=self.interpolation,
+            absolute_weights=self.absolute_weights,
+            accumulate=outputs,
+            z_fast=self.z_fast,
+        )
 
     def zeros_volume(self) -> jax.Array:
         return jnp.zeros(volume_shape(self.storage, self.grid), dtype=jnp.float32)

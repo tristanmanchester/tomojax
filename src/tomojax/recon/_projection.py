@@ -335,7 +335,7 @@ def subset_operators(
                         counts[:, None, None].astype(jnp.float32), residual.shape
                     )
                     output, columns = selected.backproject_pair(
-                        (residual, ones), start, batch, (output, columns)
+                        (residual, ones), start, (output, columns)
                     )
                 else:
                     output = selected.backproject(residual, start, batch, output)
@@ -719,9 +719,7 @@ def _correction(
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)
         if curvature is not None:
             fraction = interior / jnp.where(positive, expected, 1.0)
-            return ops.backproject_pair(
-                (ratio, ratio * fraction), start, poses, (output, curvature)
-            )
+            return ops.backproject_pair((ratio, ratio * fraction), start, (output, curvature))
         return ops.backproject(ratio, start, poses, output), None
 
     zero = ops.zeros_volume()

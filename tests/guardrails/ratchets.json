@@ -66,7 +66,7 @@
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 881,
     "reportUnknownMemberType": 1623,
-    "reportUnknownVariableType": 979,
+    "reportUnknownVariableType": 980,
     "reportUnusedCallResult": 141
   },
   "explicit_any": 429,
