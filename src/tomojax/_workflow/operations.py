@@ -79,6 +79,7 @@ else:
 
 type Region = RegionName | _region.RegionEstimate
 LOG = logging.getLogger(__name__)
+_EXTERIOR_MODEL = "continued_horizontal_chords_v2"
 
 
 # ----------------------------------------------------------------------------- files
@@ -721,7 +722,7 @@ def reconstruct_resolved(
             settings=(plan.config, plan.warm_start, plan.cylinder, scan.geometry),
             input=scan.projections,
             **(
-                {"projection_model": "continued_exterior_v1"}
+                {"projection_model": _EXTERIOR_MODEL}
                 if method not in {"fourier", "fbp"}
                 else {}
             ),
@@ -979,7 +980,7 @@ def _reconstruct_slabs_context(
                 settings=(cfg, target, bound, epsilon, flat_weights, warm_start, frames.geometry),
                 input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
                 **(
-                    {"projection_model": "continued_exterior_v1"}
+                    {"projection_model": _EXTERIOR_MODEL}
                     if method not in {"fourier", "fbp"}
                     else {}
                 ),
