@@ -87,8 +87,10 @@ class DetectorRows:
         x = np.array([-0.5, 0.5]) * (horizontal.nu - 1) * horizontal.du
         z = (rows[:, None].astype(np.float64) - (horizontal.nv - 1) / 2) * horizontal.dv
         _, v = self.pixel_coordinates(x, z)
-        lo = np.clip(np.floor(v.min(axis=1)).astype(np.int64) - 1, 0, self.measured.nv - 1)
-        hi = np.clip(np.ceil(v.max(axis=1)).astype(np.int64) + 2, lo + 1, self.measured.nv)
+        lower: Float64Array = np.min(v, axis=1)
+        upper: Float64Array = np.max(v, axis=1)
+        lo = np.clip(np.floor(lower).astype(np.int64) - 1, 0, self.measured.nv - 1)
+        hi = np.clip(np.ceil(upper).astype(np.int64) + 2, lo + 1, self.measured.nv)
         return lo, hi
 
     @property

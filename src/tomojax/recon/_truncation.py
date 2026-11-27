@@ -163,9 +163,11 @@ class ChordSample:
         stats: list[np.ndarray] = []
         axial: list[float] = []
         for (_, coordinates), pieces in groups.items():
-            data = np.concatenate(pieces)[:, None, :]
+            data: npt.NDArray[np.float32] = np.concatenate(pieces, dtype=np.float32)[:, None, :]
             with np.errstate(invalid="ignore", divide="ignore"):
-                terms = np.asarray(_measure(coordinates, host=True, by_row=True)(data))[0]
+                terms: Host = np.asarray(
+                    _measure(coordinates, host=True, by_row=True)(data), np.float64
+                ).reshape(7)
             distance = np.frombuffer(coordinates, np.float64)
             width = data.shape[-1]
             if distance.item(width) <= 0 <= distance.item(2 * width - 1):
