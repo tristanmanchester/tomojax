@@ -20,8 +20,8 @@ import numpy as np
 
 from tomojax.geometry import Detector, Grid, ParallelGeometry
 from tomojax.recon import FBPConfig, fbp
+from tomojax.recon._fbp_filter import row_filter
 from tomojax.recon.fbp import _run_fbp_streamed
-from tomojax.recon.filters import rfft_filter_array
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -46,7 +46,7 @@ def run_case(size: int, n_views: int, repeats: int) -> dict:
         -(x[:, None, None] ** 2 + x[None, :, None] ** 2 + x[None, None, :] ** 2)
         / (2 * sigma * sigma)
     )
-    ramp = rfft_filter_array("ramp", nu, 1.0, jnp.float32)
+    ramp = row_filter("ramp", detector, projections)
     jax.block_until_ready((poses, projections, ramp))
     ones, unused = jnp.ones((n_views,), jnp.float32), jnp.zeros((n_views, 6), jnp.float32)
 
