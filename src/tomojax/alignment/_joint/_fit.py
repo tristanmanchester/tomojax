@@ -168,7 +168,7 @@ def _read(
     """
     n, nv, nu = measured.shape
     means = [np.empty((n, nv // b, nu // b), np.float32) for b in bins]
-    weights = [np.ones_like(y) for y in means]
+    weights: list[np.ndarray | None] = [None] * len(bins)
     step = max(1, n // 16)
     peak = np.float32(0)
     noise = Windows(measured.shape)
@@ -176,22 +176,33 @@ def _read(
         progress.check_canceled()
         src = np.asarray(measured[s : s + views_per_batch], np.float32)
         finite = np.isfinite(src)
-        filled = np.where(finite, src, 0)
-        for b, y, w in zip(bins, means, weights, strict=True):
+        complete = finite.all()
+        filled = src if complete else np.where(finite, src, 0)
+        for i, (b, y) in enumerate(zip(bins, means, strict=True)):
             blocks = (len(src), nv // b, b, nu // b, b)
-            count = finite.reshape(blocks).sum((2, 4))
-            total = filled.reshape(blocks).sum((2, 4), dtype=np.float64)
-            y[s : s + len(src)] = np.divide(total, count, out=np.zeros_like(total), where=count > 0)
-            w[s : s + len(src)] = count / (b * b)
+            target = y[s : s + len(src)]
+            if complete:
+                # Accumulate whole rows contiguously before reducing short column blocks.
+                rows = np.sum(filled.reshape(blocks), axis=2, dtype=np.float64)
+                _ = np.divide(np.sum(rows, axis=-1), b * b, out=target)
+                del rows
+            else:
+                count = np.sum(finite.reshape(blocks), axis=(2, 4))
+                total = np.sum(filled.reshape(blocks), axis=(2, 4), dtype=np.float64)
+                _ = np.divide(total, np.maximum(count, 1), out=target)
+                w = weights[i]
+                if w is None:
+                    w = weights[i] = np.ones_like(y)
+                w[s : s + len(src)] = count / (b * b)
         sample = src[-s % step :: step]
         peak = max(peak, np.max(np.abs(sample[np.isfinite(sample)]), initial=0.0))
         noise.gather(src, start=s)
-        del src, finite, filled  # release this converted slab before reading the next one
+        del src, finite, filled, sample  # release this converted slab before reading the next one
     scale = 2.0 ** -np.round(np.log2(peak)) if peak > 0 else 1.0
     sd = noise.sd()
     if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
         sd = estimate_noise(measured, dtype=np.float32)
-    binned = [(y, None if w.min() == 1 else w) for y, w in zip(means, weights, strict=True)]
+    binned = list(zip(means, weights, strict=True))
     return binned, scale, sd
 
 

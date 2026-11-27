@@ -30,14 +30,15 @@ def test_coarsening_memory_map_matches_dense_fp32(tmp_path, missing):
 
 
 def test_partial_blocks_average_their_finite_pixels():
-    measured = np.arange(2 * 4 * 4, dtype=np.float32).reshape(2, 4, 4)
-    measured[0, 0, 0] = np.nan
-    measured[1, 2:, 2:] = np.nan
-    [(y, precision)], _, _ = _fit._read(measured, [2])
-    np.testing.assert_allclose(y[0, 0, 0], np.mean([1, 4, 5]))
-    np.testing.assert_allclose(precision[0, 0, 0], 0.75)
-    assert y[1, 1, 1] == 0 and precision[1, 1, 1] == 0
-    np.testing.assert_array_equal(precision[1, :, 0], 1)
+    measured = np.arange(4 * 4 * 4, dtype=np.float32).reshape(4, 4, 4)
+    measured[1, 0, 0] = np.nan
+    measured[2, 2:, 2:] = np.nan
+    [(y, precision)], _, _ = _fit._read(measured, [2], views_per_batch=1)
+    np.testing.assert_allclose(y[1, 0, 0], np.mean([17, 20, 21]))
+    np.testing.assert_allclose(precision[1, 0, 0], 0.75)
+    assert y[2, 1, 1] == 0 and precision[2, 1, 1] == 0
+    np.testing.assert_array_equal(precision[2, :, 0], 1)
+    np.testing.assert_array_equal(precision[[0, 3]], 1)
 
 
 @pytest.mark.parametrize("missing_columns", [False, True])
