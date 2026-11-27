@@ -251,7 +251,7 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 
 `region=` restricts the fitting region just as in `tj.reconstruct` (`"auto"`, `"bbox"`, `"cube"`, `"cyl"`, or a `RegionEstimate`). Each level's resolved budgets, step count, and status are recorded in `info["levels"][i]`.
 
-`checkpoint="align.ckpt"` (`--checkpoint DIR` on the CLI) keeps each finished level and the volume and poses within a level in that directory, so a fit killed by a scheduler resumes when run again with the same directory and returns the poses an uninterrupted fit returns. See [Resume a run after a kill](large-scans.md#resume-a-run-after-a-kill).
+`checkpoint="align.ckpt"` (`--checkpoint DIR` on the CLI) saves each finished resolution level, the volume and poses within a level at Gauss-Newton step boundaries, and the poses during refinement. Running the same call again with that directory resumes a killed fit and returns what an uninterrupted fit returns (cone-beam pose derivatives accumulate with floating-point atomics, so two cone fits can still differ in the last bits). Direct axial center fits (`fit="center"` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop. See [Resume a run after a kill](large-scans.md#resume-a-run-after-a-kill) for save frequency, `SIGTERM` handling, and a Slurm script.
 
 ## How the figures were made
 

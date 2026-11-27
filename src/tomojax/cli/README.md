@@ -68,7 +68,12 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   field of the class's defaults, as `tj.reconstruct(config=...)` takes them;
   `--region cyl` zeros the volume outside the cylinder every view sees. The output
   holds the volume, its geometry and record, and names the input projections;
-  `--include-scan` keeps them too. `--dry-run` prints the plan: the method and why,
+  `--include-scan` keeps them too. `--checkpoint DIR` (an expert option listed by
+  `--config-keys`, also accepted as `checkpoint` in `--config`) saves solver state and
+  finished slabs in `DIR` so a killed run resumes when the same command runs again,
+  exiting `130` on `SIGTERM` after saving and deleting `DIR` once all outputs are
+  written ([resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill)).
+  `--dry-run` prints the plan: the method and why,
   the grid, and the estimated memory against the memory available.
 - `align`: estimate the named geometry corrections with `tj.align`, on top of the poses saved in
   the input unless `--no-apply-poses`. On an unposed, unrolled, well-sampled axial parallel scan,
@@ -81,7 +86,11 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution` are `tj.align`'s
   keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
   `--method opposite-views` runs the pair-only center check from near-opposite views without an
-  image. `--grid` sets image sampling. `--dry-run` prints the plan: sampled views and pairs for
+  image. `--grid` sets image sampling. `--checkpoint DIR` saves finished resolution levels,
+  within-level solver state, and refinement poses in `DIR` so a killed fit resumes when the
+  same command runs again, exiting `130` on `SIGTERM` after saving and deleting `DIR` once
+  all outputs are written ([resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill)).
+  `--dry-run` prints the plan: sampled views and pairs for
   direct axial center measurement, angular pairs for `opposite-views`, or each level's grid and
   budget for a joint fit, along with estimated memory.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
@@ -144,10 +153,13 @@ time left and metrics, and a line left behind for each finished level or solver,
 such as `✓ binning 2  4/12 steps  objective 4.38 → 0.0833  13.5s`. `bar` off a
 terminal prints only those finished lines and warnings; `none` prints warnings only.
 Press Ctrl-C to cancel at the next batch, solver chunk, or alignment step. The
-command exits 130 after cleanup. A second Ctrl-C interrupts immediately.
+command exits 130 after cleanup. A second Ctrl-C interrupts immediately. When
+`--checkpoint DIR` is set on `reconstruct` or `align`, `SIGTERM` finishes the
+current iteration, slab, or step, saves state to `DIR`, prints a message naming
+`DIR`, and exits 130.
 
 `reconstruct --watch-dir DIR` and `align --watch-dir DIR` rewrite PNGs of the
-solve's central planes in DIR at each checkpoint (`slice_z.png`, `slice_y.png`,
+solve's central planes in DIR as the solve progresses (`slice_z.png`, `slice_y.png`,
 `slice_x.png`, and `poses.png` for an alignment). Keep an image viewer open on DIR
 to watch a long run converge.
 

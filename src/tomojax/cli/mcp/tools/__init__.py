@@ -92,7 +92,7 @@ class Python(Record):
     expression is the result; arrays over 16 values come back summarized, so register
     big ones. Errors give the exception and your lines; set traceback for the full
     trace. Variables persist between calls; reset or a worker restart clears them and
-    restart also drops handles. Long runs are cancellable at TomoJAX's checkpoints.
+    restart also drops handles. Long runs can be canceled at TomoJAX's work boundaries.
     See tomojax://guide/python.
     """
 

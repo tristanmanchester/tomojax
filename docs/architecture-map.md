@@ -33,7 +33,7 @@ Three private modules stay at the root: `_parameters.py` holds the parameter voc
 | **Reconstruct** | Configure and queue reconstructions with worker validation and memory plans. [Inspector](../studio/crates/tomojax-studio/src/ui/inspector.rs) · [Validation and plans](../studio/crates/tomojax-studio/src/app/validation.rs) |
 | **Explore** | View linked slices and volumes, measure in physical coordinates and export results. [Viewer](../studio/crates/tomojax-studio/src/ui/viewer.rs) · [Viewing state](../studio/crates/tomojax-studio/src/app/viewing.rs) |
 | **Compare** | Inspect paired results side by side, with a split curtain or as a difference. [Viewer](../studio/crates/tomojax-studio/src/ui/viewer.rs) |
-| **Jobs** | Track the queue, solver checkpoints, pose tables and convergence. [Job scheduling](../studio/crates/tomojax-studio/src/app/jobs.rs) · [Progress views](../studio/crates/tomojax-studio/src/ui/progress.rs) |
+| **Jobs** | Track the queue, live slice previews, pose tables, and convergence. [Job scheduling](../studio/crates/tomojax-studio/src/app/jobs.rs) · [Progress views](../studio/crates/tomojax-studio/src/ui/progress.rs) |
 
 ## Sources of truth
 

@@ -41,6 +41,9 @@ from the root:
 - `tomojax.core.hardening`: the single-material beam hardening curve, a
   positive mixture of exponentials, with its inverse and its fit to path
   lengths, used by `tomojax.corrections.BeamHardening`.
+- `tomojax.core.checkpoint`: atomic directory-based checkpoint store, periodic
+  save schedule, main-thread `SIGTERM` handling, and loop/slab helpers used by
+  `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`.
 
 ## Dependencies
 

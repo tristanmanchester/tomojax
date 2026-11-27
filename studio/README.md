@@ -48,7 +48,7 @@ Five top-bar workspaces cover the full tomography loop, while the left sidebar k
 | **Reconstruct** | Configure analytical, iterative, or slab reconstructions with live parameter validation and memory plans, then queue jobs |
 | **Explore** | Inspect 3D GPU volume renders and linked axial, coronal, sagittal, projection, and sinogram views; take physical distance and ROI measurements; export volumes |
 | **Compare** | Compare two reconstructions side by side, with a draggable split curtain, or as a difference map on a shared display window |
-| **Jobs** | Follow active progress, live solver checkpoints, per-view pose tables, convergence plots, and the full processing record |
+| **Jobs** | Follow active progress, live slice previews, per-view pose tables, convergence plots, and the full processing record |
 
 ## Start a project and import data
 
@@ -122,9 +122,9 @@ Open **Compare** and pick a **Left** and **Right** result in the inspector (or s
 
 ## Follow jobs and convergence
 
-**Jobs** displays running, queued, and completed work with nested task progress, active-time ETAs, and live checkpoint previews (orthogonal slices for iterative reconstruction and alignment, plus per-view pose tables for alignment). **Activity** in the top bar opens a compact drawer of active jobs from any workspace.
+**Jobs** displays running, queued, and completed work with nested task progress, active-time ETAs, and live slice previews (orthogonal slices for iterative reconstruction and alignment, plus per-view pose tables for alignment). **Activity** in the top bar opens a compact drawer of active jobs from any workspace.
 
-Expand **Details** on any job to inspect its convergence plots (such as alignment objective and accepted pose step across pyramid levels), captured parameters, recorded warnings, and **Show worker trace** for internal worker stages. Pause, resume, and cancel controls act cooperatively at the worker's next checkpoint.
+Expand **Details** on any job to inspect its convergence plots (such as alignment objective and accepted pose step across pyramid levels), captured parameters, recorded warnings, and **Show worker trace** for internal worker stages. Pause, resume, and cancel controls act cooperatively at the worker's next work boundary (an iteration, slab, or alignment step).
 
 ![Jobs workspace with Details expanded on the watch-movement alignment job, showing multi-level Alignment objective and Accepted pose step convergence plots alongside the processing record.](../docs/images/studio-jobs.png)
 
@@ -141,7 +141,7 @@ cache/                 # local viewer cache
 
 - **Autosave and locking:** workspace state—active asset, slice indices, display window, 3D camera, clipping, comparison pair, measurements, and parameter drafts—saves atomically in the background. An OS file lock ensures only one Studio window writes to a project at a time. The manifest holds up to 32 MiB; if a write fails, the previous manifest stays intact and the status bar reports the error.
 - **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is canceled.
-- **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly.
+- **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly. Studio jobs do not write restartable checkpoints to disk; use `checkpoint=` in Python or `--checkpoint` on the CLI for long cluster runs.
 - **Export:** export derived results from **Explore** as NXtomo (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
 
 ## Shortcuts, preferences, and environment variables
@@ -169,7 +169,7 @@ uv run --no-sync python tools/verify_studio.py --build
 
 Studio is two crates: `studio-core` (projects, the worker protocol, jobs and previews) and `tomojax-studio` (native I/O, rendering, views and the binary). `studio-core` builds without Rune, wgpu or HDF5, so `cargo test --manifest-path studio/Cargo.toml -p studio-core` checks the protocol, manifest and state-machine logic in seconds.
 
-The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, checkpoints, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.
+The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, pause/cancel boundaries, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.
 
 Studio also supports headless offscreen rendering through the same scientific compositor:
 

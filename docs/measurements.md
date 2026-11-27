@@ -556,6 +556,37 @@ Measured on commit `1db61b18` on central rows of K11-52567 (2560 columns, warm r
 
 Warm time per additional iteration on one V100S with the separable axial CUDA Joseph pair: 0.58 s for 16 rows × 1,000 views resident CGLS (0.35 s forward, 0.22 s transpose), 4.90 s for 64 rows × 2,000 views resident CGLS, and on explicit host slabs (`out=`) for 16 rows × 1,000 views, 2.11 s for CGLS and 1.80 s for FISTA. In `tools/check_numerical_equivalence.py` (5 repeats), both parallel Shepp–Logan (NRMSE 0.03761, residual 0.0005108) and laminography (NRMSE 0.3328, residual 0.003923) pass at 0/0 median/max ULP.
 
+### Checkpoint and resume
+
+Measured 2026-11-26 and 2026-11-27 on Diamond K11-52567 (8,000 views of 2,160 × 2,560 pixels, center −2.103) on one Tesla V100S 32 GB GPU per job, writing checkpoints to `/dls/staging` at 1.0–1.6 GB/s (merged as `0a268293`–`33849c47`, verified against uninterrupted baselines on `1db61b18` and `ed4fdaef`). Every resumed output was checked plane by plane with `np.array_equal` against its uninterrupted reference.
+
+Overhead with the default schedule on a 64-row band, 60 iterations of CUDA CGLS:
+
+| Metric | Checkpointing off | Checkpointing on |
+| --- | ---: | ---: |
+| Solve time | 1146.0 s | 1164.3 s (+18.3 s, +1.6%) |
+| Periodic saves | — | 1 (at 633 s, taking 9.4 s) |
+| Checkpoint size | — | 9.57 GiB (iterate, direction, gradient 1.6 GiB each; residual 4.9 GiB) |
+| Peak host memory | 16.95 GiB | 18.69 GiB (saves copy one device array at a time) |
+| Peak GPU memory | 25,316 MiB | 25,316 MiB |
+
+Without a checkpoint, the same CGLS run matched `1db61b18` bit for bit (1146.0 s vs 1147.1 s, 16.95 vs 16.97 GiB host, 25,316 MiB GPU). Resumed CUDA CGLS segments reported 30.5–32.3 GiB peak host RSS because restored arrays stay memory-mapped while the loop runs (reclaimable page cache counted by Linux memory cgroups).
+
+Kill-and-resume checks on K11-52567 (every checkpoint directory was removed automatically on completion):
+
+| Run | Stops and segments | Save cost | Equivalence vs uninterrupted baseline |
+| --- | --- | --- | --- |
+| CUDA CGLS, 64 rows, 60 iters (Python API) | 3 × `SIGTERM`, 4 segments across two nodes | 6.3–10.4 s per `SIGTERM` save (9.57 GiB) | Bit-identical |
+| Same, 120 s save interval | 3 × `kill -9` inside the job (no final save), 4 segments | — | Bit-identical (loses at most work since previous save) |
+| `tomojax reconstruct --checkpoint`, same band (`--time=00:10:00 --signal=TERM@300 --requeue`) | 4 × time-limit `SIGTERM`, 5 segments across two nodes | Exit 130 per segment | Output `.nxs` volume bit-identical |
+| `tj.reconstruct_slabs(frames, "sirt")`, 128 rows into `.npy` memmap (`r+` on resume) | 3 × `SIGTERM`, 4 segments across two nodes (last resumed at plane 112/128) | 31 saves, 0.1–0.4 s each, up to 3.1 GiB; 1736 s total vs 1702 s uninterrupted | Bit-identical |
+| `tj.reconstruct_slabs(frames, "fourier", config=FourierConfig(filter="ramp"))`, 1024 rows into `.npy` memmap | 3 × `SIGTERM`, 4 segments (resumed at planes 12, 390, 392) | 2-plane slabs, 0.006 s per save | All 1,024 planes bit-identical to `ed4fdaef` |
+| `tj.reconstruct(scan, "fista")`, automatic TV, 64 rows (chunked JAX, 12.9 GB GPU) | 3 × `SIGTERM`, 4 segments | 3.13 GiB saved in 2.3–2.7 s | Volume, 200-entry loss history, `noise_score_rms`, `effective_tv_weight`, and `resolved_tv_weight` bit-identical to `ed4fdaef` |
+| Same with `out=` (host-slab FISTA), 32 rows | 3 × `SIGTERM`, 4 segments | 1.56 GiB saved in 0.7–0.85 s | Volume, 200-entry loss history, and calibration fields bit-identical to `ed4fdaef` |
+| `tj.align`, 256 rows binned 2, `resolution=640` | 2 × `SIGTERM` in level 1, 3 segments across two nodes | 0.04–0.08 GiB saved in 0.1–0.3 s | 8,000 × 6 poses and working image bit-identical |
+
+Without a checkpoint, `tools/check_numerical_equivalence.py` against `ed4fdaef` (parallel, cone, and laminography; `fbp`, `cgls`, `sirt`, `fista`, and `align`) passes at 0 ULP on CPU and on the RTX 4070 Laptop GPU (3 repeats, 0 spread).
+
 ## Calibrated detector count noise
 
 `tomojax.datasets.DetectorModel` fits photon gain and read noise from repeated flats and darks (`b608d187`, `0199b919`). Calibrating on the first half of flats and evaluating adjacent-frame log differences on the second half (16 rows, 100 exposures):

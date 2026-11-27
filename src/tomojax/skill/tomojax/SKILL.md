@@ -83,7 +83,7 @@ If TomoJAX raises an internal error, gives a result that is clearly wrong, or do
 | [thin-shell.md](references/thin-shell.md) | Segmenting or scoring a thin structure that touches two materials |
 | [python.md](references/python.md) | Writing code for the `python` tool, custom solvers or analysis |
 | [solvers.md](references/solvers.md), [geometry.md](references/geometry.md), [calibration.md](references/calibration.md) | Direct solver calls, custom geometry, acquisition metadata |
-| [large-scans.md](references/large-scans.md) | The scan or volume is larger than GPU or host memory, or there are several GPUs |
+| [large-scans.md](references/large-scans.md) | The scan or volume is larger than GPU or host memory, there are several GPUs, or a cluster job needs checkpoint and resume |
 | [reporting-bugs.md](references/reporting-bugs.md) | Filing an issue |
 
 The MCP server also serves the workflow references as `tomojax://guide/{topic}` resources and prompts, `tomojax://handle/{id}` for a handle's provenance and `tomojax://describe/{operation}` for an operation's settings.

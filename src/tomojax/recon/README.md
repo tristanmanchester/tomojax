@@ -21,6 +21,14 @@ keywords such as `iterations=` replace the fields of the same name. The same
 fields are the keys of a `tomojax reconstruct --config` TOML file
 (`tomojax reconstruct --method NAME --config-keys` lists them).
 
+Checkpoint and resume (`checkpoint=DIR` on `tj.reconstruct` and
+`tj.reconstruct_slabs`, or `--checkpoint DIR` on `tomojax reconstruct`) covers
+the iterative solvers (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) and the host-slab
+and raw-slab loops (`fbp`, `fdk`, `fourier`, `sirt`, `mlem`). Calling the lower-level
+functions in `tomojax.recon` directly (`cgls`, `cgls_multires`, `fista`, `fbp_host`,
+`fdk_host`, `fourier`, and the others) does not expose `checkpoint=`. See
+[Resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill).
+
 CGLS, FISTA and SPDHG default to `data_term="absolute"`, fitting measured
 line integrals. Use `data_term="per_view_contrast"` when material lies outside
 the field of view. This profiles one constant per complete detector view in the

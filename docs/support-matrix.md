@@ -22,6 +22,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap and `tj.reconstruct_slabs` ([large scans](large-scans.md)) |
+| Checkpoint and resume long runs (Python and CLI) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |
 | Plan, watch, or stream JSON progress for CLI and Python runs | `--dry-run`, `--watch-dir DIR`, `--progress auto\|bar\|json\|none`; `tomojax.progress.watch` |
 | Native desktop workspace (projects, live jobs, linked views, 3D volume rendering, comparison) | `tomojax studio [PROJECT_OR_INPUT] [--build] [--demo]` ([Studio](../studio/README.md)) |
 | AI agent integration over MCP stdio | `tomojax mcp` with `tomojax[mcp]` ([MCP guide](mcp.md)) |

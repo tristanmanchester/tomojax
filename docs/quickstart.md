@@ -154,7 +154,7 @@ The default `--method auto` chooses a solver from the geometry:
 - Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK), or `cgls` for an arc shorter than 180° plus the fan angle
 - Multi-orbit `ConeSegments` -> `cgls`
 
-Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, or `--watch-dir DIR` to rewrite central-slice PNGs as an iterative solve progresses. `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, `--watch-dir DIR` to rewrite central-slice PNGs as an iterative solve progresses, or `--checkpoint DIR` to save state on disk so a killed run resumes when repeated ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
 
 ### Region and grid options
 
@@ -223,7 +223,7 @@ tomojax correct corrected.nxs -o centered.nxs --detector-center U V
 
 ### Next steps
 
-- **Volumes larger than GPU or host memory** (including writing straight to a memmap with `out=`): [large scans and several GPUs](large-scans.md).
+- **Volumes larger than GPU or host memory, several GPUs, and checkpoint/resume for cluster jobs:** [large scans and several GPUs](large-scans.md).
 - **Laminography and TIFF stacks:** [real parallel and laminography scans](real-laminography.md).
 - **Lab cone-beam CT:** [lab cone-beam CT](lab-ct.md).
 - **Motion and setup-angle correction:** [align a scan](align-a-scan.md).
@@ -252,8 +252,7 @@ with progress.watch(report, control=stop):
     result = tj.reconstruct(scan, "cgls")
 ```
 
-Call `stop.pause()` to hold work at its next checkpoint and `stop.resume()`
-to continue. The task emits `Paused` and `Resumed` on its owner thread.
+Call `stop.pause()` to hold work in memory at the next work boundary (the end of an iteration, slab, or batch) and `stop.resume()` to continue; unlike `checkpoint=`, pausing does not write state to disk or survive a killed process. The task emits `Paused` and `Resumed` on its owner thread.
 The ETA on advances uses active elapsed time and excludes the pause.
 A `Placed` event names the devices doing the work, in coordinator order.
 Call `stop.cancel()` from the handler or another thread to request cancellation.

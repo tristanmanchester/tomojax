@@ -34,7 +34,7 @@ Warm times on one 8 GB laptop GPU (measured 2026-11-21) on identical corrected d
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real parallel and laminography scans](real-laminography.md) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](lab-ct.md) |
 | Correct per-view motion, setup angles, or the center of rotation | [Align a scan](align-a-scan.md) |
-| Reconstruct volumes larger than GPU memory, or use several GPUs | [Large scans and several GPUs](large-scans.md) |
+| Reconstruct volumes larger than GPU memory, use several GPUs, or resume killed cluster jobs | [Large scans and several GPUs](large-scans.md) |
 | Differentiate through projection in PyTorch | [PyTorch bridge](pytorch.md) |
 | Let an AI agent such as Claude Code drive TomoJAX through MCP | [Use TomoJAX from an AI agent](mcp.md) |
 | Split observations for held-out validation | [Held-out evaluation](held-out-evaluation.md) |

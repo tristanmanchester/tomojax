@@ -559,15 +559,21 @@ def reconstruct(
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
 
-    ``checkpoint`` names a directory where the run keeps its state, so a run
-    that is killed (by a scheduler's time limit, preemption or a failed node)
-    resumes when it is run again with the same directory, scan and settings,
-    and returns the volume it would have returned uninterrupted. Iterative
-    methods save their solver state, and slab reconstructions their finished
-    slabs, at most every 10 minutes and at most 5% of the run's time apart;
-    on SIGTERM the run saves at the end of the current iteration or slab and
-    raises :class:`tomojax.errors.Canceled`. The directory is deleted when the
-    call returns. A directory holding another run's checkpoint is refused.
+    ``checkpoint`` names a directory where the run saves its state, so a run
+    killed by a scheduler time limit, preemption, or a node failure resumes
+    when called again with the same directory, scan, and settings, returning
+    the volume an uninterrupted run returns. Iterative solvers save their loop
+    state at a boundary once both 10 minutes and 20 times the previous save
+    duration have passed (capping periodic save overhead at 5% of the run);
+    host-slab runs save each slab as it finishes (flushing and fingerprinting
+    named ``out`` memmaps instead of copying their planes). On SIGTERM inside a
+    checkpointed loop on the main thread, the run finishes its current
+    iteration or slab, saves, and raises :class:`tomojax.errors.Canceled`. Hard
+    kills resume from the last completed save. The directory is deleted when
+    the call returns. Another run's checkpoint, a directory of unrelated files,
+    an incompatible format, or a directory locked by another process is refused
+    with :class:`tomojax.errors.InvalidParameter`. Resuming on a different GPU
+    model, device count, build, or slab partition can change the last bits.
 
     Parameters
     ----------
@@ -617,7 +623,11 @@ def reconstruct(
     Raises
     ------
     ValueError
-        If the method, configuration or options are incompatible.
+        If the method, configuration, or options are incompatible, or if
+        ``checkpoint`` holds another run's state, unrelated files, an
+        incompatible format, or an active lock (``InvalidParameter``).
+    tomojax.errors.Canceled
+        If SIGTERM stops a checkpointed run on the main thread after saving.
 
     Examples
     --------
@@ -742,16 +752,19 @@ def reconstruct_slabs(
     neighbors. The oblique FBP filter and iterative projector couple the rows;
     these methods read the complete detector and return the coupled volume in one slab.
 
-    ``checkpoint`` names a directory recording which slabs are finished, so a run
-    that is killed resumes when it is run again with the same directory, frames
-    and settings. A slab is finished once the body of the loop that received it
-    returns; a resumed run yields the slabs after the last finished one, so
-    write each slab where it survives the kill (for example a memmap opened
-    with ``mode="r+"`` when it exists). SIRT and MLEM also save the state of the
-    slab in progress, at most every 10 minutes and at most 5% of the run's time
-    apart. On SIGTERM the loop stops after the slab its body is writing,
-    raising :class:`tomojax.errors.Canceled`. The directory is deleted when the
-    last slab is finished; a directory holding another run's checkpoint is refused.
+    ``checkpoint`` names a directory recording which slabs are finished, so a
+    killed run resumes when called again with the same directory, frames, and
+    settings. A slab counts as finished once the body of the loop receiving it
+    returns; a resumed run yields only the slabs after the last finished one,
+    so write and flush each slab to persistent storage (for example a memmap
+    opened with ``mode="r+"`` when it exists). SIRT and MLEM also save the
+    in-progress slab state once both 10 minutes and 20 times the previous save
+    duration have passed (at most 5% overhead). On SIGTERM in the main thread,
+    the run stops after the current slab (or SIRT/MLEM iteration), saves, and
+    raises :class:`tomojax.errors.Canceled`. Leaving the ``with`` block early
+    keeps the directory for a later run; finishing the last slab deletes it.
+    Another run's checkpoint, unrelated files, an incompatible format, or a
+    locked directory is refused with :class:`tomojax.errors.InvalidParameter`.
 
     Parameters
     ----------
@@ -780,7 +793,11 @@ def reconstruct_slabs(
     Raises
     ------
     ValueError
-        If geometry, method, corrections or configuration do not support slabs.
+        If geometry, method, corrections, or configuration do not support slabs,
+        or if ``checkpoint`` holds another run's state, unrelated files, an
+        incompatible format, or an active lock (``InvalidParameter``).
+    tomojax.errors.Canceled
+        If SIGTERM stops a checkpointed run on the main thread after saving.
 
     Examples
     --------
@@ -1064,15 +1081,22 @@ def align(
     ambiguous under strong defects or repetitive structure and records its pair
     diagnostics in ``info["diagnostics"]``.
 
-    ``checkpoint`` names a directory where the fit keeps its state, so a run
-    that is killed resumes when it is run again with the same directory, scan
-    and settings, and returns the alignment it would have returned
-    uninterrupted. Each finished resolution level is saved, and within a level
-    and the refinement the poses and volume are saved at most every 10 minutes
-    and at most 5% of the run's time apart; on SIGTERM the fit saves after the
-    current step and raises :class:`tomojax.errors.Canceled`. The directory is
-    deleted when the call returns. A directory holding another run's
-    checkpoint is refused.
+    ``checkpoint`` names a directory where a joint fit saves its state, so a
+    killed run resumes when called again with the same directory, scan, and
+    settings, returning the alignment an uninterrupted run returns. Each
+    finished resolution level is saved, and within a level and refinement the
+    volume, poses, damping, and step history are saved at step boundaries once
+    both 10 minutes and 20 times the previous save duration have passed (at
+    most 5% overhead). On SIGTERM inside a checkpointed loop on the main
+    thread, the fit saves after the current step and raises
+    :class:`tomojax.errors.Canceled`. Hard kills resume from the last completed
+    save. The directory is deleted when the call returns. Another run's
+    checkpoint, unrelated files, an incompatible format, or a locked directory
+    is refused with :class:`tomojax.errors.InvalidParameter`. Cone-beam pose
+    derivatives accumulate with floating-point atomics, so two cone fits can
+    differ in the last bits; resuming on a different GPU model or build can
+    also change the last bits. Direct axial center fits run on CPU without an
+    iterative loop.
 
     Parameters
     ----------
@@ -1126,8 +1150,12 @@ def align(
     Raises
     ------
     ValueError
-        If the fit selection is empty, repeated or unknown, the method does not
-        fit it, or the geometry has not been declared.
+        If the fit selection is empty, repeated, or unknown, the method does
+        not fit it, the geometry has not been declared, or ``checkpoint`` holds
+        another run's state, unrelated files, an incompatible format, or an
+        active lock (``InvalidParameter``).
+    tomojax.errors.Canceled
+        If SIGTERM stops a checkpointed run on the main thread after saving.
 
     Examples
     --------

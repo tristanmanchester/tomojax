@@ -1,6 +1,6 @@
 # Large scans and several GPUs
 
-TomoJAX automatically streams projections from host memory and reconstructs volumes in slabs when a scan exceeds GPU memory, and spills large host arrays to disk when they exceed half of available RAM. Streaming applies to projections held as NumPy arrays or memmaps (what `tj.load` returns); JAX arrays already on the GPU stay resident.
+TomoJAX automatically streams projections from host memory and reconstructs volumes in slabs when a scan exceeds GPU memory, and spills large host arrays to disk when they exceed half of available RAM. Streaming applies to projections held as NumPy arrays or memmaps (what `tj.load` returns); JAX arrays already on the GPU stay resident. For long runs on a cluster, pass `checkpoint=` (or `--checkpoint DIR` on the CLI) to save state to disk and [resume after a kill](#resume-a-run-after-a-kill).
 
 ## GPU allocator
 
@@ -59,7 +59,7 @@ tomojax reconstruct scan.nxs -o recon.nxs --method cgls --watch-dir watch
 
 ## Resume a run after a kill
 
-Pass `checkpoint=` to `tj.reconstruct`, `tj.reconstruct_slabs` or `tj.align` (`--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`) to keep the run's state in a directory. If the run is killed by a scheduler's time limit, preemption or a failed node, run the same call again with the same directory: it continues where the saved state left off and returns the result an uninterrupted run returns.
+Pass `checkpoint=DIR` to `tj.reconstruct`, `tj.reconstruct_slabs`, or `tj.align`, or `--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`, to save a run's state in `DIR`. You can also set `checkpoint = "DIR"` in a `--config` TOML file; on `tomojax reconstruct`, `--checkpoint` is an expert option listed by `--config-keys` rather than `--help`. If the run is killed by a scheduler time limit, preemption, or a node failure, run the same call again with the same directory, input, and settings. TomoJAX resumes from the saved state and returns what an uninterrupted run returns. `DIR` is created if absent and deleted when the call returns (for CLI commands, after all output files are written).
 
 ```python
 recon = tj.reconstruct(scan, "cgls", iterations=200, checkpoint="recon.ckpt")
@@ -68,28 +68,79 @@ result = tj.align(scan, fit="translations", checkpoint="align.ckpt")
 
 ```bash
 tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 200 --checkpoint recon.ckpt
+tomojax align scan.nxs -o aligned.nxs --fit translations --checkpoint align.ckpt
 ```
 
-What each run keeps:
+What each run saves:
 
 | Run | Saved state |
 | --- | --- |
-| Iterative methods (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) | The solver's iterate and every other vector its next iteration reads, such as CGLS's residual and search direction, and its counters and stopping state: a resumed automatic FISTA uses the same TV weight and stops at the same update |
-| Host-slab volumes (FBP, FDK and Fourier slabs; SIRT and MLEM independent-plane slabs) | Each slab as it finishes, and the state of the slab in progress |
-| `tj.reconstruct_slabs` | Which slabs are finished, and for SIRT and MLEM the state of the slab in progress |
-| `tj.align` | Each finished resolution level, the volume and poses within a level, and the poses during refinement |
+| Iterative solvers (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) | The iterate, every other array the next iteration reads (such as CGLS search direction and residual, or SPDHG primal and dual iterates), counters, and stopping state. A resumed automatic FISTA uses the same TV weight and stops at the same update; host-slab FISTA saves its calibrated noise level and skips the probe backprojection on resume. Warm-start FBP or FDK volumes are not saved because the solver state supersedes them. |
+| Host-slab volumes (`fbp`, `fdk`, and `fourier` slabs; independent-plane `sirt` and `mlem` slabs) | Each slab as it finishes, plus the solver state of the slab in progress. |
+| `tj.reconstruct_slabs` | Which slabs the caller has finished, plus the solver state of the slab in progress for `sirt` and `mlem`. |
+| `tj.align` (joint fits) | Each finished resolution level (volume, poses, and record), the volume, poses, damping, and step history within a level at Gauss-Newton step boundaries, and the poses during refinement. |
 
-Solver state is saved at the end of an iteration (or alignment step) once 10 minutes and 20 times the previous save's duration have passed since the previous save, so saving takes at most 5% of the run. A finished slab is saved when it finishes. On SIGTERM the run finishes its current iteration, slab or step, saves, and stops with `tomojax.errors.Canceled` (the command line exits with status 130). SIGTERM before the first checkpointed loop starts, while the scan loads for example, ends the process as it would without a checkpoint. A kill without warning loses at most the work since the last save; a save is written beside the previous one and replaces it in one step, so a kill during a save leaves the previous state.
+### Save schedule, time, and disk space
 
-`tj.reconstruct_slabs` yields only the slabs after the last finished one when it resumes, so write each slab where it survives the kill, such as a memmap opened with `mode="r+"` when the file exists. A slab counts as finished once the body of your loop returns for it.
+Iterative solvers and alignment save at a loop boundary (an iteration, a ~0.25 s JAX chunk, or an alignment step) once both 10 minutes and 20 times the previous save duration have passed since the previous save. That schedule caps periodic saving overhead at 5% of the run. Finished slabs are saved as each slab completes. Runs without `checkpoint=` take the unmodified code paths with no overhead. See [checkpoint measurements](measurements.md#checkpoint-and-resume) for measured overhead, save times, disk sizes, and host RSS on a synchrotron scan.
 
-The directory holds one copy of the solver's state: for CGLS the iterate, search direction and residual (two volumes and one projection-sized array, and a gradient volume more for CUDA CGLS), or three volumes for host-slab CGLS. Finished slabs of a volume held in memory or in a temporary file add one copy of the volume; slabs written into a memmap of a named file (`out=np.lib.format.open_memmap(...)`) are checked by a fingerprint instead of copied. The directory is deleted when the run returns its result. TomoJAX refuses a directory holding another run's checkpoint (a different scan, or different settings), and a directory holding other files.
+Each save writes a new `state-NNNNNN` directory of fsynced `.npy` files beside the previous entry, replaces `checkpoint.json` in one atomic rename (`os.replace`, fsynced), and then deletes the superseded entry. Budget disk space for one copy of the solver state, and up to twice that briefly while a save is written:
 
-A resumed run computes what the uninterrupted run computes, from the same state. Its result is identical to the uninterrupted run's whenever repeated runs are identical: on a CPU, and in every case TomoJAX's numerical checks run on an NVIDIA GPU.
+- **Iterative solver state:** CGLS saves iterate, search direction, and residual (two volumes and one projection-sized array, plus a gradient volume for CUDA CGLS), or three volumes for host-slab CGLS. Host-slab FISTA saves two volumes (iterate and extrapolate); host SIRT saves one volume (two with acceleration); host MLEM saves one volume and its seen-voxel mask.
+- **Finished slabs:** slabs of a volume held in memory or in an unlinked temporary file add one copy of the volume on disk. When `out=` is a writable memmap of a named file (`np.lib.format.open_memmap(...)`), TomoJAX flushes each finished slab to that file and records a CRC fingerprint in the checkpoint instead of copying the planes; if the file's planes later change, those slabs are recomputed.
+- **Host memory:** saving copies one device array at a time to host memory. A resumed run keeps restored arrays larger than 1 MiB memory-mapped while the loop runs; those pages are reclaimable file cache, though Linux memory cgroups count them toward RSS.
+
+### Signals, hard kills, and refused checkpoints
+
+On `SIGTERM` inside a checkpointed loop on the main thread, TomoJAX finishes the current iteration, slab, or alignment step, writes a checkpoint, and raises `tomojax.errors.Canceled` with a message naming the directory. The CLI prints that message and exits with status `130`. `SIGTERM` outside a checkpointed loop (for example, while loading a scan) terminates the process as usual. In a background thread, `SIGTERM` is not intercepted and only periodic saves run.
+
+On a hard kill (`SIGKILL`, a node failure, or a `SIGTERM` whose current step plus save runs past the scheduler grace period), no final save runs and the next run resumes from the last completed periodic or slab save. Because `checkpoint.json` is replaced atomically after the new entry is synced, a kill during a save leaves the previous entry intact, and any incomplete entry directory is deleted on the next open.
+
+TomoJAX refuses a checkpoint with `InvalidParameter` (a `ValueError` subclass) when:
+
+- the directory holds another run's checkpoint (different operation, TomoJAX version, input array digest, geometry, or settings such as method, config, filter, or warm start; arrays above 4 million elements are digested from 8 evenly spaced slices along axis 0, and the error names what differs);
+- the directory contains unrelated files without a `checkpoint.json`;
+- the checkpoint format version does not match; or
+- another process holds the directory's file lock (`checkpoint.lock` via `flock`).
+
+### Caller output with `tj.reconstruct_slabs`
+
+`tj.reconstruct_slabs` marks a slab finished only after your `for` loop body returns for it. On resume, it yields only the slabs after the last finished one, so write each slab to persistent storage that survives the kill and flush it before the body finishes. Leaving the `with` block early (with `break` or an exception) keeps the checkpoint directory so a later run can finish the remaining slabs:
+
+```python
+from pathlib import Path
+import numpy as np
+import tomojax as tj
+
+frames = tj.load_frames("raw.nxs")
+grid = frames.geometry.grid
+path = Path("volume.npy")
+mode = "r+" if path.exists() else "w+"
+volume = np.lib.format.open_memmap(
+    path, mode=mode, dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
+)
+with tj.reconstruct_slabs(frames, "sirt", checkpoint="slabs.ckpt") as slabs:
+    for z_slice, block in slabs:
+        volume[z_slice] = block.volume
+        volume.flush()
+```
+
+### Bit-level agreement and scope
+
+A resumed run continues from the exact arrays and scalars the next iteration reads, so it matches an uninterrupted run bit for bit whenever repeated uninterrupted runs match (on CPU, and in every case checked on one GPU model). A resumed result can differ in the last floating-point bits when:
+
+- you resume on a different GPU model, a different number of devices (`devices=`), or a different JAX or CUDA build;
+- you run cone-beam alignment, whose CUDA pose-derivative kernel accumulates per-view column sums with floating-point `atomicAdd` (two uninterrupted runs on the same GPU can differ in the same way);
+- free device memory changes between runs so a slabbed method picks a different slab partition, wherever a method's arithmetic depends on slab boundaries (slabs only partly covered by finished slabs are recomputed under the new plan); or
+- chunked JAX automatic FISTA recomputes its seeded calibration inside the compiled program on resume, which matches bit for bit only when the device and build repeat that arithmetic identically.
+
+In `tj.align`, step metrics of finished levels are restored from JSON as Python `float` values where an uninterrupted run holds NumPy `float32` scalars (equal values, different types).
+
+`checkpoint=` is available on `tj.reconstruct`, `tj.reconstruct_slabs`, `tj.align`, `tomojax reconstruct`, and `tomojax align`. Direct expert solver calls (`tomojax.recon.cgls`, `cgls_multires`, `fista`, `fbp_host`, `fdk_host`, `fourier`, and the other functions in `tomojax.recon`), the local worker (`tomojax serve`), the MCP server (`tomojax mcp`), and TomoJAX Studio do not expose it. Direct axial center fits (`tj.align(scan, fit="center")` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop.
 
 ### Checkpoint a Slurm job
 
-Ask Slurm to send SIGTERM some minutes before the time limit, run TomoJAX as a job step so that the signal reaches it, and requeue the job when the run stops:
+Request an early `SIGTERM` before the wall-clock limit, launch TomoJAX with `srun` so the signal reaches the process, enable requeuing, and requeue on exit status `130`:
 
 ```bash
 #!/bin/bash
@@ -97,11 +148,18 @@ Ask Slurm to send SIGTERM some minutes before the time limit, run TomoJAX as a j
 #SBATCH --signal=TERM@300
 #SBATCH --requeue
 #SBATCH --open-mode=append
+
+# Add your cluster's partition, GPU, CPU, and memory directives above.
 srun tomojax reconstruct scan.nxs -o recon.nxs --method cgls --iterations 500 --checkpoint recon.ckpt
-if [ $? -eq 130 ]; then scontrol requeue "$SLURM_JOB_ID"; fi
+status=$?
+if [ "$status" -eq 130 ]; then
+    scontrol requeue "$SLURM_JOB_ID"
+    exit 0
+fi
+exit "$status"
 ```
 
-Allow the warning time for one iteration and one save. Slurm also sends SIGTERM when a job is canceled with `scancel` or reaches its time limit, and kills it after the cluster's `KillWait` (often 30 seconds); a run that cannot finish its iteration and save in that time resumes from the save before. `--requeue` lets Slurm restart the job after preemption or a node failure.
+Set the `--signal=TERM@N` lead time `N` (in seconds) larger than one iteration (or slab) plus one save. Without `--signal`, Slurm sends `SIGTERM` at the time limit or on `scancel` and follows with `SIGKILL` after `KillWait` (commonly 30 seconds). Small solves finish a step and save within 30 seconds, but large host-slab volumes do not: writing three 57 GB CGLS volumes at ~1.3 GB/s takes roughly two minutes on top of the current iteration. If `SIGKILL` arrives before the save finishes, the requeued job falls back to the previous periodic save. `--requeue` lets Slurm restart the job after exit `130`, preemption, or a node failure, and `--open-mode=append` keeps output from all segments in one log file. Exiting with `$status` for any other code leaves real failures marked as failed in Slurm.
 
 ## Reconstruct a volume larger than the GPU
 
@@ -120,7 +178,7 @@ recon = tj.reconstruct(scan, "fbp", out=volume)  # FDK for cone, FBP for paralle
 volume.flush()
 ```
 
-Input projections and `out=` must not overlap (including separate mappings of the same file). Completed slabs are written as they finish, so an interrupted run can leave partial data on disk. `Reconstruction.info["host_slabs"]` is `True` whenever host slabs are used. Host-slab routes are not differentiable.
+Input projections and `out=` must not overlap (including separate mappings of the same file). Completed slabs are written as they finish, so an interrupted run can leave partial data on disk (pass `checkpoint=` to resume from the last finished slab). `Reconstruction.info["host_slabs"]` is `True` whenever host slabs are used. Host-slab routes are not differentiable.
 
 Geometry-specific slab behavior:
 

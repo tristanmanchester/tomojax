@@ -12,4 +12,6 @@ The line search compares each pose trial against the image-only trial at the sam
 
 A pyramid level stops after two consecutive small geometry updates (following at least `min_iterations` steps) when damping is at or below its starting value. Step size is measured before line-search scaling.
 
+Passing `checkpoint=DIR` to `tj.align` (or `--checkpoint DIR` to `tomojax align`) saves each finished resolution level, the within-level volume, poses, damping, and step history at Gauss-Newton step boundaries, and the poses during refinement, so a killed fit resumes when the same call runs again. See [Resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill).
+
 `tomojax.alignment.api` also exposes the pair-only opposing-view center estimator (`estimate_center`) and its diagnostic report (`estimate_center_report`), used by `tj.align(..., method="opposite-views")`.

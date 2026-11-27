@@ -17,7 +17,7 @@ These are the worker's own objects: derive new arrays from them and leave theirs
 
 The last expression is the result. Arrays of up to 16 values come back as lists; larger ones as their shape, dtype, minimum, maximum and mean, so `register` an array you want to keep or view. Printed output is clipped to its first and last 10,000 characters; write long output to a file instead. An error reports the exception and the lines of your code it passed through; set `traceback=true` for the full trace into TomoJAX.
 
-Variables persist between calls. `reset=true` clears them; a worker restart (`control` with `action="restart"`) clears them and closes every handle. A long call runs as an MCP task when the client supports tasks: canceling it stops at the next TomoJAX checkpoint, so a loop of `tj.reconstruct` calls stops within one iteration, but pure Python or NumPy work runs on until it returns.
+Variables persist between calls. `reset=true` clears them; a worker restart (`control` with `action="restart"`) clears them and closes every handle. A long call runs as an MCP task when the client supports tasks: canceling it stops at the next TomoJAX work boundary, so a loop of `tj.reconstruct` calls stops within one iteration, but pure Python or NumPy work runs on until it returns.
 
 The examples below assume a parallel scan, `scan = handles[scan_id]`, or `scan = handles[simulation_id].scan` for a simulation's acquisition.
 
