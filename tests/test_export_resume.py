@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import errno
 import json
 import os
 from pathlib import Path
@@ -191,6 +192,25 @@ def test_failed_export_removes_partial_and_preserves_published_files(tmp_path):
         tj.export(name, replace(item, volume=invalid), dtype="uint16", range=(0, 100))
     assert not (tmp_path / ".volume.mhd.partial").exists()
     assert [p.read_bytes() for p in files] == previous
+
+
+def test_disk_full_reports_partial_payload_before_cleanup(tmp_path, monkeypatch):
+    source(tmp_path)
+    item = tj.load_reconstruction(tmp_path / "source.nxs")
+    path = tmp_path / "voxels.raw"
+    tj.export(path, item)
+    previous = [p.read_bytes() for p in (path, path.with_suffix(".raw.json"))]
+
+    def disk_full(fd, data, offset):
+        os.write(fd, b"seven!!")
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "pwrite", disk_full)
+    with pytest.raises(OSError, match=r"stopped after 7 bytes; \d+ bytes free") as error:
+        tj.export(path, item)
+    assert error.value.errno == errno.ENOSPC
+    assert not (tmp_path / ".voxels.raw.partial").exists()
+    assert [p.read_bytes() for p in (path, path.with_suffix(".raw.json"))] == previous
 
 
 def gated_worker(root):

@@ -53,6 +53,22 @@ def publishing(paths: Sequence[Path]) -> Iterator[None]:
         yield
 
 
+@contextmanager
+def report_disk_full(path: Path, folder: Path) -> Iterator[None]:
+    """Measure staged payload bytes while the failed generation still exists."""
+    try:
+        yield
+    except OSError as exc:
+        if exc.errno != errno.ENOSPC:
+            raise
+        written = sum(p.stat().st_size for p in folder.rglob("*") if p.is_file())
+        raise OSError(
+            errno.ENOSPC,
+            f"export {path} stopped after {written} bytes; "
+            f"{shutil.disk_usage(path.parent).free} bytes free",
+        ) from exc
+
+
 def inspect_export(path: Path) -> Document | None:
     """Read the record at an interchange destination.
 
@@ -263,16 +279,22 @@ class ExportPlan:
         dict
             Receipt for this generation.
         """
-        if self.resume_request is None:
-            yield self._write(staged)
-            return
-        with continuing(self.path, self.resume_request, self.values) as journal:
-            folder = journal.root / "files"
+        with ExitStack() as stack:
+            journal = (
+                stack.enter_context(continuing(self.path, self.resume_request, self.values))
+                if self.resume_request is not None
+                else None
+            )
+            folder = journal.root / "files" if journal else staged.parent
+            stack.enter_context(report_disk_full(self.path, folder))
+            if journal is None:
+                yield self._write(staged)
+                return
             with protect_inputs(folder):
                 folder.mkdir(exist_ok=True)
             primary = folder / self.path.name
             receipt = self._write(primary, journal)
-            expected = self.resume_request["source"]
+            expected = journal.state.request["source"]
             identity = self.selection.source.identity
             if expected is not None and (identity is None or list(identity() or ()) != expected):
                 raise InvalidParameter(
@@ -353,25 +375,15 @@ class ExportPlan:
             else tempfile.TemporaryDirectory(prefix=f".{path.name}.partial-", dir=path.parent)
         ) as tmp:
             staged = Path(tmp) / path.name
-            try:
-                with self.staged(staged) as receipt:
-                    paths = self.format.paths(path)
-                    installs = dict(zip(paths, self.format.paths(staged), strict=True))
-                    with publishing(paths), ExitStack() as cleanup, ExitStack() as undo:
-                        install_export(
-                            installs, self.format, path, force=force, undo=undo, cleanup=cleanup
-                        )
-                        _ = undo.pop_all()
-                    return receipt
-            except OSError as exc:
-                if exc.errno != errno.ENOSPC:
-                    raise
-                written = sum(p.stat().st_size for p in Path(tmp).rglob("*") if p.is_file())
-                raise OSError(
-                    errno.ENOSPC,
-                    f"export {path} stopped after {written} bytes; "
-                    f"{shutil.disk_usage(path.parent).free} bytes free",
-                ) from exc
+            with self.staged(staged) as receipt:
+                paths = self.format.paths(path)
+                installs = dict(zip(paths, self.format.paths(staged), strict=True))
+                with publishing(paths), ExitStack() as cleanup, ExitStack() as undo:
+                    install_export(
+                        installs, self.format, path, force=force, undo=undo, cleanup=cleanup
+                    )
+                    _ = undo.pop_all()
+                return receipt
 
 
 def _resume_request(
