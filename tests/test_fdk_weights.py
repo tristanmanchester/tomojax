@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from tomojax.geometry import ConeBeam, ConeGeometry, Detector, Grid
+from tomojax.geometry import ConeBeam, ConeGeometry, ConeSegments, Detector, Grid
 from tomojax.recon.fdk import view_weights
 
 
@@ -42,6 +42,22 @@ def test_irregular_full_turn_weights_match_circular_midpoint_quadrature():
     expected = np.deg2rad([40, 37.5, 50, 52.5])
     np.testing.assert_allclose(weights, np.broadcast_to(expected[:, None], weights.shape))
     np.testing.assert_allclose(weights.sum(axis=0), np.pi)
+
+
+@pytest.mark.parametrize("arc", [220, 360])
+def test_fixed_offset_orbit_has_the_same_measure_when_split_into_segments(arc):
+    angles = 247 + np.linspace(0, arc, 63, endpoint=False)
+    angles += 1.7 * np.sin(np.deg2rad(2 * angles))
+    grid, panel = Grid(4, 4, 4, 1, 1, 1), Detector(15, 7, 1, 1, center=(5, 0))
+    beam = ConeBeam(80, 120, axis_offset=3, source_height=7)
+    orbit = ConeGeometry(grid, panel, angles, beam)
+    segments = ConeSegments(tuple(ConeGeometry(grid, panel, a, beam) for a in np.split(angles, 3)))
+    np.testing.assert_allclose(
+        view_weights(orbit, panel, len(angles)),
+        view_weights(segments, panel, len(angles)),
+        rtol=1e-11,
+        atol=1e-13,
+    )
 
 
 @pytest.mark.parametrize("arc", [210, 360])
@@ -96,8 +112,6 @@ def test_overscan_conjugate_rays_partition_one(arc):
 
 @pytest.mark.parametrize("span", [260, 360])
 def test_changing_and_repeated_panels_share_actual_conjugate_rays(span):
-    from tomojax.geometry import ConeSegments
-
     # A five-degree fan has an exact conjugate 190 degrees later. Some panels
     # do not contain -5 degrees; repetitions differ between angular nodes.
     step = 10

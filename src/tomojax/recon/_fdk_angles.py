@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from tomojax.core.geometry.cone import cone_parts
+from tomojax.core.geometry.cone import ConeGeometry, cone_parts
 from tomojax.core.geometry.views import host_view_poses
 
 from ._detector_rows import DetectorRows
@@ -41,6 +41,11 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
     degrees = degrees[:n_views]
     if not np.isfinite(degrees).all():
         raise ValueError("FDK needs one finite rotation angle per view")
+    if type(geometry) is ConeGeometry and geometry.axis_unit is None and not geometry.tilt:
+        # In this frame the source is Rz(-theta) @ (source - axis_offset).
+        # Its azimuth is theta plus a fixed phase. Angular cells, conjugates
+        # and coverage use only differences, so theta is already their coordinate.
+        return group_repeats(np.deg2rad(degrees))
     # The angle of the source around object z defines the quadrature. Inverting
     # world-from-object gives R.T @ (source - translation) in the object.
     parts = cone_parts(geometry)
