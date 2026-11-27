@@ -529,7 +529,10 @@ def read_tables(
             or tables[key].shape[1] != 6
             or (n is not None and tables[key].shape[0] != n)
         ):
-            raise ValueError(f"{paths[key]}: expected one pose row per view")
+            raise ValueError(
+                f"{paths[key]}: expected one pose row per view with exactly 6 columns, "
+                f"got shape {tables[key].shape}"
+            )
 
     return tables
 

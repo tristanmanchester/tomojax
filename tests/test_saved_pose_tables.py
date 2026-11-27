@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import h5py
 import numpy as np
 import pytest
 from scipy.spatial.transform import Rotation
@@ -163,6 +164,14 @@ def test_loading_five_column_pose_files_rejects_legacy_shape(
         align_gauge=meta["align_gauge"],
     )
     path = tmp_path / f"five_columns.{extension}"
+    if extension == "nxs":
+        with pytest.raises(ValueError, match="poses must have shape"):
+            save_dataset(path, dataset)
+        dataset.align_params = np.zeros((6, 6), np.float32)
     save_dataset(path, dataset)
+    if extension == "nxs":
+        with h5py.File(path, "r+") as file:
+            del file["/entry/tomojax/poses"]
+            file["/entry/tomojax/poses"] = meta["align_params"]
     with pytest.raises(ValueError, match="exactly 6 columns"):
         tj.load(path)

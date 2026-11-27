@@ -845,7 +845,11 @@ def test_backproject_reads_explicit_datasets(tmp_path):
     sim = tj.simulate(size=8, n_views=12)
     tj.save(path, sim)
     with h5py.File(path, "r+") as file:
-        del file["/entry/instrument/detector/data"]
+        record = json.loads(file["/entry/record"].asstr()[()])
+        projections = record["arrays"]["projections"]
+        file.move(projections["path"], "/relocated")
+        projections["path"] = "/relocated"
+        file["/entry/record"][()] = json.dumps(record)
         file["other"] = np.zeros_like(sim.scan.projections)
     plain = tmp_path / "arrays.h5"
     with h5py.File(plain, "w") as file:
