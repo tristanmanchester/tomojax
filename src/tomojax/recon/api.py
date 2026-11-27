@@ -427,6 +427,15 @@ def reconstruct_slabs[T](
         and geometry.detector_roll
     ):
         return _coupled_detector_volume(geometry, grid, detector, read, cfg, warm_start=warm_start)
+
+    def measured(
+        first: int, stop: int
+    ) -> tuple[np.ndarray | jnp.ndarray, tuple[T, np.ndarray | jnp.ndarray]]:
+        from ._truncation import truncation_values
+
+        data, context = read(first, stop)
+        return data, (context, truncation_values(geometry, detector, data))
+
     match cfg.method:
         case "fbp":
             from tomojax.core.geometry.cone import is_cone_beam
@@ -434,17 +443,17 @@ def reconstruct_slabs[T](
             if is_cone_beam(geometry):
                 from .fdk import fdk_slabs
 
-                slabs = fdk_slabs(geometry, grid, detector, read, config=fdk_config(cfg))
-                return _with_truncation(slabs, geometry, detector)
+                slabs = fdk_slabs(geometry, grid, detector, measured, config=fdk_config(cfg))
+                return _with_truncation(slabs)
             from .fbp_host import fbp_slabs
 
-            slabs = fbp_slabs(_parallel(geometry), grid, detector, read, config=cfg)
-            return _with_truncation(slabs, geometry, detector)
+            slabs = fbp_slabs(_parallel(geometry), grid, detector, measured, config=cfg)
+            return _with_truncation(slabs)
         case "fourier":
             from ._fourier_stream import fourier_slabs
 
-            slabs = fourier_slabs(_parallel(geometry), grid, detector, read, config=cfg)
-            return _with_truncation(slabs, geometry, detector)
+            slabs = fourier_slabs(_parallel(geometry), grid, detector, measured, config=cfg)
+            return _with_truncation(slabs)
         case "sirt" | "mlem":
             from ._iterative_slabs import iterative_slabs
 
@@ -456,17 +465,21 @@ def reconstruct_slabs[T](
 
 
 def _with_truncation[T](
-    slabs: Generator[ReconstructionSlab[T], None, None], geometry: Geometry, detector: Detector
+    slabs: Generator[ReconstructionSlab[tuple[T, np.ndarray | jnp.ndarray]], None, None],
 ) -> Generator[ReconstructionSlab[T], None, None]:
     """Give each analytic slab the truncation record of its rows, as a whole volume has."""
     from contextlib import closing
 
-    from ._truncation import truncation_record
+    from ._truncation import record_values
+    from .types import ReconstructionSlab
 
     with closing(slabs):
         for slab in slabs:
-            slab.info["truncation"] = truncation_record(geometry, detector, slab.projections)
-            yield slab
+            context, values = slab.context
+            slab.info["truncation"] = record_values(values)
+            yield ReconstructionSlab(
+                slab.start, slab.stop, slab.rows, slab.projections, slab.volume, context, slab.info
+            )
 
 
 def _parallel(geometry: Geometry) -> ParallelGeometry:

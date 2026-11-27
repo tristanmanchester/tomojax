@@ -11,6 +11,7 @@ when the rows do not end inside the detector.
 
 from __future__ import annotations
 
+from functools import lru_cache
 import math
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,8 @@ from ._continuation import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     import jax
 
     from tomojax.geometry import Detector, Geometry
@@ -80,35 +83,74 @@ def truncation_record(
     background of the order of a fraction of ``interior_shift``, while edges,
     contrast between neighbouring regions and fine detail do not depend on it.
     """
-    views, nv, nu = projections.shape
+    return record_values(truncation_values(geometry, detector, projections))
+
+
+def record_values(values: np.ndarray | jax.Array) -> dict[str, float]:
+    """Collect the five scalar diagnostics after their projection band has completed."""
+    keys = ("edge_ratio", "outside_fraction", "interior_shift", "radius", "field_of_view_radius")
+    return dict(zip(keys, map(float, np.asarray(values)), strict=True))
+
+
+def truncation_values(
+    geometry: Geometry, detector: Detector, projections: np.ndarray | jax.Array
+) -> np.ndarray | jax.Array:
+    """Submit the record on the source device; only the five scalars travel to the host."""
+    distance = _axis_distance(geometry, detector, continued_columns(projections.shape[-1]))
+    host = isinstance(projections, np.ndarray)
+    measure = _measure(distance.tobytes(), host=host)
+    if host:
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return measure(projections)
+    import jax
+
+    with jax.enable_x64(True):
+        values = measure(projections)
+        jax.copy_to_host_async(values)
+        return values
+
+
+@lru_cache(maxsize=16)
+def _measure(
+    coordinates: bytes, *, host: bool
+) -> Callable[[np.ndarray | jax.Array], np.ndarray | jax.Array]:
+    """Prepare a sampled row reduction for one detector's physical column coordinates."""
+    distance: Host = np.frombuffer(coordinates, np.float64)
+    nu = len(distance) // 3
     pad = continued_columns(nu)
-    distance = _axis_distance(geometry, detector, pad)
     fits = Continuation(distance, nu, pad)
-    view = radius_views(views)[:: max(1, math.ceil(min(views, 256) / _RECORD_SAMPLES))]
-    row = np.unique(np.linspace(0, nv - 1, min(nv, _RECORD_SAMPLES)).round().astype(np.int64))
-    picked: Host = np.asarray(projections[view[:, None], row[None, :]], np.float64)
-    sample = picked.swapaxes(0, 1)  # (rows, views, columns)
-    low, high = sample[..., : fits.window], sample[..., nu - fits.window :]
-    radius2: Host = np.asarray(fits.radius(np.asarray, low, high), np.float64)
-    amplitudes = fits.amplitudes(np.asarray, low, high, radius2)
-    edges: Host = np.concatenate(amplitudes)
-    # All views share each row's profile. Its integral depends only on the
-    # mean edge amplitudes, so form one pair of tails per row.
-    average = tuple(a.mean(axis=1, keepdims=True) for a in amplitudes)
-    tails: Host = np.concatenate(fits.tails(np.asarray, average[0], average[1], radius2), axis=-1)
-    # Each ray's share of the row, and of the level on the axis: FBP weighs a ray at
-    # distance s from the axis by -1 / (2 pi**2 s**2) there, over a half turn.
-    width: Host = abs(np.gradient(distance))
-    outside = np.concatenate([np.arange(pad), np.arange(pad + nu, nu + 2 * pad)])
-    measured = float(np.sum(sample * width[pad : pad + nu]))
-    continued = float(np.sum(tails * width[outside])) * view.size
-    on_axis: Host = np.sum(tails * (width[outside] / distance[outside] ** 2), axis=-1)
-    total = measured + continued
-    mean = float(np.mean(sample))
-    return {
-        "edge_ratio": float(np.mean(edges)) / mean if mean else 0.0,
-        "outside_fraction": continued / total if total else 0.0,
-        "interior_shift": -float(np.mean(on_axis)) / (2 * np.pi),
-        "radius": float(np.median(radius2**0.5)) * fits.scale,
-        "field_of_view_radius": min(abs(distance.item(pad)), abs(distance.item(pad + nu - 1))),
-    }
+    width = abs(np.gradient(distance))
+    outside = np.r_[0:pad, pad + nu : pad + nu + pad]
+    fov = min(abs(distance.item(pad)), abs(distance.item(pad + nu - 1)))
+    if host:
+        xp = np
+    else:
+        import jax
+        import jax.numpy as xp
+
+    def measure(projections: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
+        views, nv, _ = projections.shape
+        view = radius_views(views)[:: max(1, math.ceil(min(views, 256) / _RECORD_SAMPLES))]
+        row = np.unique(np.linspace(0, nv - 1, min(nv, _RECORD_SAMPLES)).round().astype(np.int64))
+        sample = projections[view[:, None], row[None, :]].astype(xp.float64).swapaxes(0, 1)
+        low, high = sample[..., : fits.window], sample[..., nu - fits.window :]
+        radius2 = fits.radius(xp.asarray, low, high)
+        low, high = fits.amplitudes(xp.asarray, low, high, radius2)
+        low, high = low.mean(axis=1, keepdims=True), high.mean(axis=1, keepdims=True)
+        before, after = fits.tails(xp.asarray, low, high, radius2)
+        tails = xp.concatenate((before, after), axis=-1)
+        measured = xp.sum(sample * xp.asarray(width[pad : pad + nu]))
+        continued = xp.sum(tails * xp.asarray(width[outside])) * view.size
+        on_axis = (tails * xp.asarray(width[outside] / distance[outside] ** 2)).sum(axis=-1)
+        total, mean = measured + continued, xp.mean(sample)
+        return xp.stack(
+            (
+                xp.where(mean != 0, (low.mean() + high.mean()) / (2 * mean), 0),
+                xp.where(total != 0, continued / total, 0),
+                -xp.mean(on_axis) / (2 * np.pi),
+                xp.median(radius2**0.5) * fits.scale,
+                xp.asarray(fov),
+            )
+        )
+
+    return measure if host else jax.jit(measure)
