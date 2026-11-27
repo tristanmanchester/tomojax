@@ -492,13 +492,16 @@ def estimate_center_report(
     *,
     views: slice | Sequence[int] | np.ndarray | None = None,
 ) -> CenterEstimate:
-    """Estimate an axial parallel center and retain pair and row diagnostics.
+    """Estimate an axial parallel center from opposing pairs and retain diagnostics.
 
     At most sixteen near-opposite pairs and 64 rows are sampled. Gradient
     correlations select matching modes; a symmetric fit on overlapping
     support estimates each location. Eight detector bands give conditional
     sandwich standard errors with leverage correction. Up to eight row bands
     measure the apparent row-center trend. No reconstruction is performed.
+    This is the pair-only estimator used by ``method="opposite-views"``; for
+    full-sinogram axial center calibration that handles large offsets, rings
+    and flat drift across a half-turn, use ``tomojax.align(scan, fit="center")``.
 
     Parameters
     ----------
@@ -537,7 +540,7 @@ def estimate_center(
     *,
     views: slice | Sequence[int] | np.ndarray | None = None,
 ) -> ParallelGeometry:
-    """Estimate an axial parallel detector's effective u-center placement.
+    """Estimate an axial parallel detector's effective u-center from opposing pairs.
 
     Opposing projections agree after detector-u reflection and a shift of twice
     the center offset. Gradient correlations of up to 64 corresponding rows are summed,
@@ -550,7 +553,9 @@ def estimate_center(
     not an increment to the input geometry. It fixes the median sampled-pair
     mean motion to zero; physical center and common sample motion cannot be
     separated from these observations alone. Use ``estimate_center_report``
-    to retain the conditional constraints and unresolved-center status.
+    to retain the conditional constraints and unresolved-center status, or
+    ``tomojax.align(scan, fit="center")`` for full-sinogram axial center
+    calibration across a half-turn.
 
     Parameters
     ----------

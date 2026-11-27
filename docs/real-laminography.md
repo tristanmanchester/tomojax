@@ -33,7 +33,7 @@ geometry = tj.ParallelGeometry(grid, detector, load_angles("angles.csv"))
 tj.save("corrected.nxs", tj.Scan(projections, geometry))
 ```
 
-Detector and voxel pitches share one physical length unit, and `Detector.center` is in that same unit (a 2-pixel offset at 0.65 pitch is `1.3`). Use `tomojax align --fit center` to refine the rotation center, and `tomojax reconstruct --grid NX NY NZ` to resample the output grid while preserving physical extent.
+Detector and voxel pitches share one physical length unit, and `Detector.center` is in that same unit (a 2-pixel offset at 0.65 pitch is `1.3`). Use `tomojax align --fit center` to find the rotation center (on an unposed, unrolled axial parallel scan this measures the axis directly from the projections without reconstructing a volume; on laminography it runs the joint fit), and `tomojax reconstruct --grid NX NY NZ` to resample the output grid while preserving physical extent.
 
 ### Raw intensities with flat and dark frames
 

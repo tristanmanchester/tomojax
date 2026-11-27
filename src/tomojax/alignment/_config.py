@@ -17,11 +17,14 @@ type Motion = Literal["independent", "smooth"]
 class AlignConfig:
     """The settings of :func:`tomojax.align`.
 
-    ``tj.align``'s keywords ``motion``, ``iterations``, ``image_iterations``,
-    ``tolerance``, ``interpolation`` and ``resolution`` replace the fields of the same name; the
-    rest are set here. ``info["config"]`` records the values a call used, with
-    the ones that depend on the scan resolved. Lengths in pixels are in the
-    working detector's pixels unless a field says native; angles are in degrees.
+    These fields configure the joint volume-and-geometry solver. Passing
+    ``config`` or any of the six keyword overrides (``motion``, ``iterations``,
+    ``image_iterations``, ``tolerance``, ``interpolation`` and ``resolution``)
+    to ``tj.align(scan, fit="center")`` runs the joint solver instead of the
+    direct axial center measurement. ``info["config"]`` records the values a
+    joint call used, with the ones that depend on the scan resolved. Lengths in
+    pixels are in the working detector's pixels unless a field says native;
+    angles are in degrees.
 
     Parameters
     ----------

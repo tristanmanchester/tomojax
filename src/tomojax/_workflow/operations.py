@@ -207,8 +207,9 @@ def load_alignment(path: str | PathLike[str]) -> Alignment:
     """Load an :class:`Alignment` saved by :func:`save` or ``tomojax align``.
 
     Preserves the scan's own grid on ``result.scan.grid`` separately from the
-    working image's grid on ``result.grid``, and supports image-free alignments
-    such as ``method="opposite-views"`` (leaving ``image`` and ``grid`` None).
+    working image's grid on ``result.grid``, and supports image-free center
+    alignments such as axial ``fit="center"`` and ``method="opposite-views"``
+    (leaving ``image`` and ``grid`` None).
 
     Parameters
     ----------
@@ -285,8 +286,8 @@ def save(
     the projections it came from (``info["source"]``: their path, shape, size and a
     hash of three views); ``include_scan=True`` saves the scan too, so the file also
     reloads with :func:`load`. An alignment is saved as its corrected scan with its
-    poses and working image. A simulation is saved as its scan together with its
-    ground-truth phantom as the stored volume.
+    poses and, for joint fits, its working image. A simulation is saved as its scan
+    together with its ground-truth phantom as the stored volume.
 
     Parameters
     ----------
@@ -966,7 +967,7 @@ def align(
     resolution: int | None = None,
     config: AlignConfig | None = None,
 ) -> Alignment:
-    """Fit selected geometry parameters jointly with a reconstruction.
+    """Estimate geometry errors and per-view motion for ``scan``.
 
     ``fit`` is one name or a tuple of names: ``center``, ``tilt``, ``roll``,
     ``translations`` and ``rotations``. Center, tilt and roll are shared by all
@@ -979,20 +980,32 @@ def align(
     ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
     prior on their physical size.
 
-    On a well-sampled axial parallel half-turn, ``fit="center"`` searches the
-    detector width using Fourier slice sharpness and native opposing-ray agreement.
-    This estimate has no working image. Supplying joint solver settings or a grid
-    requests a joint fit.
+    On an unposed, unrolled axial parallel scan with a well-sampled half-turn,
+    ``fit="center"`` alone (with ``method=None`` and no ``grid``, ``region``,
+    ``config`` or joint solver keywords) measures the rotation axis directly
+    from the projections across the full detector width without reconstructing
+    a working volume. Over up to 401 views it scores Fourier-slice edge
+    sharpness, half-turn Fourier parity and the sinusoidal first projection
+    moment, then refines the center to fractions of a native pixel with up to
+    16 opposing view pairs on their common illuminated support (including
+    endpoint-exclusive half-turns and narrow detectors), accounting for
+    stationary detector structure and linear flat-field drift. ``result.image``
+    and ``result.grid`` are None.
 
-    ``method="joint"`` fits an image and the parameters together;
-    the same solver handles parallel, laminography and cone-beam scans. Existing
-    poses are preserved and the fitted correction is composed with them. The
-    returned scan carries both calibrated global geometry and local poses, so
-    reconstructing or saving it preserves the fitted ray geometry. "opposite-views"
-    fits the center alone, without an image, from near-opposite views of an
-    unposed axial parallel scan (within two degrees): a quick estimate from
-    row-wise gradient correlations, which can be ambiguous for repetitive
-    structure and records its pair diagnostics in ``info``.
+    Passing ``method="joint"``, ``grid``, ``region``, ``config``, any joint
+    solver keyword, a multi-parameter ``fit`` or another geometry runs the
+    joint solver, fitting an image and the selected parameters together across
+    parallel, laminography and cone-beam scans. Axial parallel joint fits that
+    include ``"center"`` initialize from the measured center. Existing poses
+    are preserved and the fitted correction is composed with them. The returned
+    scan carries both calibrated global geometry and local poses, so
+    reconstructing or saving it preserves the fitted ray geometry.
+
+    ``method="opposite-views"`` runs the pair-only check without an image,
+    matching up to 16 near-opposite view pairs (within two degrees) of an
+    unposed axial parallel scan by row-wise gradient correlation. It can be
+    ambiguous under strong defects or repetitive structure and records its pair
+    diagnostics in ``info["diagnostics"]``.
 
     Parameters
     ----------
@@ -1023,8 +1036,14 @@ def align(
     Returns
     -------
     Alignment
-        Corrected scan, its per-view poses, the record and the joint fit's working image.
-        ``info["config"]`` holds the settings used.
+        Corrected scan, its per-view poses, the record and (for joint fits) the
+        working image on ``result.grid``. Direct axial center fits
+        (``info["method"] == "sinogram-focus"``) and ``method="opposite-views"``
+        leave ``image`` and ``grid`` as None and record their diagnostics in
+        ``info["diagnostics"]`` (``focus_px``, ``binning``, ``views``, ``pairs``
+        for direct fits; per-pair constraints and consistency statistics for
+        ``opposite-views``). Joint fits record resolved settings in
+        ``info["config"]`` and convergence diagnostics in ``info["report"]``.
         Each fitted global appears under its name in ``info["calibration"]`` as
         ``{"value": ..., "change": ...}``: the final value, the center in geometry
         length units (u, or u/v for cone beams) and angles in degrees, and the
@@ -1046,6 +1065,7 @@ def align(
     >>> import tomojax as tj
     >>> from tomojax.alignment import AlignConfig
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
+    >>> centered = tj.align(scan, fit="center")  # doctest: +SKIP
     >>> result = tj.align(scan, fit=("translations", "roll"))  # doctest: +SKIP
     >>> result = tj.align(scan, config=AlignConfig(levels=(1,)))  # doctest: +SKIP
     >>> recon = tj.reconstruct(result.scan)  # doctest: +SKIP

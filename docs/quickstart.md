@@ -38,7 +38,7 @@ tomojax inspect corrected.nxs
 When an external file omits metadata:
 
 - **Missing pixel pitch (parallel beam):** loads in pixel units (`length_unit: "pixel"`); override with `pixel_size=`, `detector=`, or `--pixel-size`. Cone-beam files require a physical pixel size.
-- **Missing rotation center:** defaults to the detector middle (`detector_center_status="not_recorded"`). Supply `detector=` / `--detector-center U V`, or fit it afterwards with `tj.align(scan, fit="center")` (or `method="opposite-views"` for a fast projection-only axial estimate).
+- **Missing rotation center:** defaults to the detector middle (`detector_center_status="not_recorded"`). Supply `detector=` / `--detector-center U V`, or fit it afterwards with `tj.align(scan, fit="center")`, which measures the axis directly across the full detector on axial parallel scans without fitting a volume (pass `method="opposite-views"` for a pair-only check).
 - **Missing angles or laminography tilt:** supply `angles=` or a complete `geometry=`. Explicit `detector=` or `geometry=` overrides are always used as given.
 
 In Python, `tj.load("raw.nxs")` runs the default flat/dark/`-log` correction. For cropping, view selection, or extra steps from `tomojax.corrections`, load frames first:
@@ -111,7 +111,7 @@ Binning reduces detector resolution without changing a recorded reconstruction g
 import tomojax as tj
 
 scan = tj.load_frames("raw.nxs").selected(slice(None, None, 4)).corrected(binning=8)
-scan = tj.align(scan, method="opposite-views").scan
+scan = tj.align(scan, fit="center").scan
 d = scan.detector
 grid = tj.Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
 tj.save("preview.nxs", tj.reconstruct(scan, grid=grid))

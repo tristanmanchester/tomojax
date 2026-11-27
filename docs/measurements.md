@@ -288,6 +288,52 @@ The smooth motion prior scales linearly in view count (`3aae66e`, FP64): factori
 
 On axial parallel scans, per-view rotations are weakly determined (`a64ea92e`): across 13 axial watch/rock cases, `fit=("translations", "rotations")` beat translations alone on 7, tied on 1, and was up to 27% worse on 5.
 
+### Axial rotation center
+
+Measured 2026-11-26 (`5d1a909f`; seeded `method="joint"` and least-negative FBP baselines from `4d1bc781`) comparing default `tj.align(scan, fit="center")` (direct full-sinogram and opposing-ray measurement on CPU) against `method="opposite-views"`, `method="joint"` (initialized from the measured center on axial parallel scans), and a least-negative FBP sweep. Errors are absolute deviations from the true physical center in native detector pixels.
+
+#### Synthetic scans with known offsets
+
+- **Twelve 512-column ellipse scans** (181 views over a half-turn, 8 rows, offsets from −147.25 to +150.00 px, spanning clean projections, fixed rings with 12 damaged columns, view-dependent streaks, drifting flat shadows, and low-contrast combinations with Poisson noise): default `fit="center"` had median / max error **0.072 / 0.407 px**, compared with **0.25 / 268.61 px** for `method="opposite-views"`, **0.50 / 8.22 px** for `method="joint"`, and **18.25 / 258.50 px** for the least-negative sweep (over −152 to +152 px in 4 px coarse / 0.25 px fine steps).
+- **Eighty low-contrast combined-defect ellipse scans** (512 columns, 18% attenuation contrast, Poisson noise, rings, streaks, and flat drift, offsets uniform in −150 to +150 px):
+
+| Method (80 combined-defect scans) | Median error (px) | 90th percentile (px) | Worst error (px) | Within 1 px | Within 2 px |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Default `fit="center"` | 0.317 | 1.096 | 2.434 | 71/80 | 78/80 |
+| `method="joint"` (seeded) | 3.00 | 8.42 | 16.32 | 18/80 | 32/80 |
+| `method="opposite-views"` | 103.64 | 235.49 | 290.51 | 2/80 | 2/80 |
+| Least-negative FBP sweep | 116.04 | 221.45 | 294.66 | 0/80 | 0/80 |
+
+- **Twenty-four hollow-tube and triangular-grain scans** (12 random objects on 641 or 769 columns, alternating angular order, offsets of 50–150 px magnitude, tested with photon noise alone and with added rings, spoiled flats, and short beam shadows):
+
+| Method (triangular grains) | Photon noise only, median / worst (px) | Combined defects, median / worst (px) |
+| --- | ---: | ---: |
+| Default `fit="center"` | 0.174 / 0.409 | 0.291 / 0.529 |
+| `method="joint"` (seeded) | 0.05 / 0.12 | 2.00 / 6.49 |
+| `method="opposite-views"` | 0.04 / 0.25 | 119.05 / 401.50 |
+| Least-negative FBP sweep | 72.09 / 206.49 | 81.20 / 297.80 |
+
+- **Detector widths from 24 to 2,048 columns** (12 analytic ellipses, 4 rows, 96 views over an endpoint-exclusive half-turn, +12% width offset, 0.8 px blur, 3 draws per width; noise adds 1% Gaussian SD; damaged adds fixed stripes, bad columns, and a drifting flat shadow):
+
+| Columns | Noise only, median error (px) | Damaged, median error (px) |
+| ---: | ---: | ---: |
+| 24 | 0.018 | 0.061 |
+| 32 | 0.026 | 0.089 |
+| 64 | 0.004 | 0.063 |
+| 128 | 0.010 | 0.049 |
+| 512 | 0.048 | 0.185 |
+| 2,048 | 0.225 | 0.751 |
+
+- **Smooth Gaussian absorbers with defects** (4 smooth Gaussians, uneven reverse-order angles, 0.7 pitch, random offsets up to 24% of width, fixed column errors, and a moving baseline; 12 draws per width): median / worst error was **0.140 / 0.804 px** (25 cols, 88 views), **0.162 / 0.313 px** (33 / 95), **0.183 / 1.669 px** (61 / 103), **0.345 / 2.093 px** (129 / 157), and **0.727 / 3.314 px** (511 / 181). Smooth, nearly stationary objects are harder to separate from detector errors on a half-turn.
+
+#### Real synchrotron scans (Diamond K11 DIAD)
+
+Evaluated on 32-row native bands (rows 1064–1095, 2,560 columns, 0.54 µm pitch, flat/dark corrected) across visit `mg40414-1` on one V100S host:
+
+- **22 specimen scans:** median absolute difference from `method="opposite-views"` was **0.020 px** and from the least-negative FBP sweep **0.969 px** (with a median **4.7 s** per native 32-row band excluding I/O at `4d1bc781`). On `k11-52544` and `k11-52557`, facility processing (`cor_broadcast_p3_vo_centering.h5`) recorded 0 and −25 px in TomoJAX units; `fit="center"` returned +2.37 and −25.19 px at `4d1bc781` (changing by at most 0.108 px across all 22 specimens at `5d1a909f`).
+- **Known ±120 px edge-crop displacements** (cropping 240 columns from either detector edge and comparing the fitted change against ±120 px): shift error stayed within **0.036 px** on three specimen scans (`k11-52544`, `k11-52548`, `k11-52561`). On the low-contrast holder setup scan `k11-52529`, the two crops missed ±120 px by **+2.21 and +2.17 px**; on the spoiled-flat setup scan `k11-52583`, they missed by **+4.67 and +10.96 px** (though its uncropped −24.37 px agreed with tracked interior grain trajectories and donor-flat registration).
+- **Dark and partly dark bands** (`k11-52535`, `k11-52537`, `k11-52539`): where 46/64 to 64/64 sampled views sit at the dark level, no transmitted specimen signal defines an axis (`fit="center"` returned +1253.87 px on partly dark `k11-52535` at `4d1bc781`).
+
 ### Projection-only detector center (`method="opposite-views"`)
 
 On real scans with injected ±0.25, ±0.5, and ±1 px shifts (`a04e5ee7`), 95th-percentile center-change errors across 3 detector rows were 0.00085 px (APS 2-BM), 0.00117 px (Diamond I12), 0.00292 px (Elettra 00024), 0.00488 px (Diamond I13), 0.00567 px (ESRF bamboo), 0.00051 px (PSI cSAXS phase), and 0.00285 px (PSI TOMCAT 00082, 64 rows).

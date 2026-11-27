@@ -49,13 +49,17 @@ A wrong rotation center turns every small bright feature into a ring of the same
 
 ![The balance wheel with a 6-pixel center error: each screw is drawn as a ring. After fit="center" the screws are points again, matching the true geometry.](images/alignment-ladder-center.png)
 
-`fit="center"` estimates a single scalar for parallel and laminography scans and is the fastest fit (23 s here). Run it first on a new instrument or after detector or stage changes.
+`fit="center"` estimates the horizontal detector center (`Detector.center[0]`) for parallel and laminography scans, and both detector-u and detector-v for cone data (cone data constrain detector-v weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically). Run it first on a new instrument or after detector or stage changes. On the laminography watch scan above, the joint center fit runs in 23 s.
 
-For cone data, `"center"` also fits detector-v, though the data constrain it weakly because a vertical detector shift is nearly equivalent to shifting the volume vertically.
+On an unposed, unrolled axial parallel scan with a well-sampled half-turn, `tj.align(scan, fit="center")` needs no extra options. It measures the rotation axis directly from the projections across the full detector width, including large offsets and narrow detectors, without reconstructing a working volume. Over up to 401 views across the half-turn, it combines Fourier-slice edge sharpness, half-turn Fourier parity (periodic real part and antiperiodic imaginary part after detector reflection), and the sinusoidal motion of the projected center of mass. Detector-edge signal, shared air-reference bias, and changing projection mass downweight that third term when background error or truncation is present. Up to 16 opposing view pairs then refine the center to fractions of a native pixel on their common illuminated detector support, closing an endpoint-exclusive half-turn at the measured view spacing. Both stages account for stationary detector column structure and linear flat-field drift.
 
-On an unposed, unrolled axial parallel scan with a densely sampled half-turn, `tj.align(scan, fit="center")` uses all sampled angles to measure the rotation center. It scores Fourier slice sharpness, checks how slices join across a half-turn, and fits the sinusoidal motion of the projected center of mass. Detector-edge signal and changing projection mass reduce the weight of the last measurement. Opposing views refine the center in fractions of a native pixel using their common detector area. An acquisition that ends one view short of 180° can still supply a pair. The fit accounts for stationary detector structure and linear flat-field drift. The corrected geometry is in `result.scan`. This fit has no working image. Supplying a working grid, region, solver settings or `method="joint"` requests a joint image and geometry fit. Other geometries use the joint fit.
+The returned `Alignment` holds the updated geometry in `result.scan`, the fitted center in `result.info["calibration"]["center"]` (`value` in geometry length units, `change` in native pixels), `result.info["method"] == "sinogram-focus"`, and `result.info["diagnostics"]` (`focus_px`, `binning`, `views`, and `pairs`). Both `result.image` and `result.grid` are `None`. Pass `method="joint"` when you also want a fitted working volume; supplying `grid=`, `region=`, `config=`, any joint solver keyword, a multi-parameter `fit`, or a geometry outside an unposed, unrolled, well-sampled axial parallel half-turn also runs the joint fit. Axial parallel joint fits initialize from the measured center. For a quick check from opposing view pairs alone (within 2°, with per-pair diagnostics), run `tj.align(scan, method="opposite-views")`, which also leaves `result.image` and `result.grid` as `None`.
 
-For a quick estimate from opposing rays alone, run `tj.align(scan, method="opposite-views")`, which matches near-opposite views directly (its result has no `image`).
+On well-sampled parallel scans with rings, streaks, and flat-field drift, the direct fit recovers the center with median error under 1 px across detector widths from 24 to 2,560 columns ([axial center measurements](measurements.md#axial-rotation-center)). Measurement requires transmitted sample signal across the turn: a dark or empty row band has no axis to locate and can return a large arbitrary offset. Strong artifacts, severely spoiled flats, or smooth, nearly stationary structure can still shift the estimate by several pixels. If reconstructed features still look doubled after `fit="center"`:
+
+1. Confirm the cropped row band holds illuminated sample structure across the turn, and apply `RejectViews()` or `Rings()` if broken frames or heavy rings are present.
+2. Sweep nearby centers by eye (below) and set the sharpest value with `--detector-center` or `Detector(..., center=...)`.
+3. If doubling grows from the middle towards the top and bottom, fit detector roll with `fit=("translations", "roll")`. If doubling varies across features within one slice, fit per-view drift with `fit="translations"` (which also absorbs a constant center offset on parallel scans). Pass `method="joint"` to run the joint image-and-geometry solver for the center alone.
 
 ### Check the center by eye
 
@@ -162,8 +166,7 @@ geometry. In Python, read the true shifts with
 
 ## Check the result
 
-The CLI prints the RMS and maximum absolute corrections for each fitted
-per-view component and the reason each fit stage stopped.
+The CLI prints shared corrections (such as `center` in native pixels or angles in degrees), the RMS and maximum absolute per-view corrections, and the reason each joint-fit stage stopped.
 
 1. **Compare reconstructions** against the unaligned baseline and simpler `fit=` choices; keep an extra parameter only when it removes a visible artifact.
 2. **Inspect fitted globals and poses.** `result.scan` carries both the updated geometry and per-view poses for reconstruction and saving. `result.info["calibration"]` holds `{"value": ..., "change": ...}` for each fitted global (`change` is in detector pixels for `center` and degrees for angles; segmented cone scans list values in segment order). Each `"value"` passes directly to constructors in another script:
@@ -176,9 +179,11 @@ per-view component and the reason each fit stage stopped.
 
    Per-view poses in `result.poses` have columns `(alpha, beta, phi, x, z, y)` in degrees and physical lengths.
 3. **Check physical plausibility.** Multi-degree tilt shifts or per-view rotations larger than a fraction of a degree usually indicate model mismatch rather than real stage motion. Remember that a global rigid motion of the object cannot be observed from projections; remove one common rigid transform before comparing pose tables.
-4. **Read `result.info["report"]`.** It summarizes each level's termination (`pose_steps_below_tolerance` or `step_budget_reached`), smooth and view-to-view correction magnitudes, offset ranges, `advisories` (for example, weakly determined rotations on an axial parallel scan), and flagged views that also trigger warnings:
+4. **Read `result.info["report"]` (joint fits) or `result.info["diagnostics"]` (direct center fits).** For joint fits, `report` summarizes each level's termination (`pose_steps_below_tolerance` or `step_budget_reached`), smooth and view-to-view correction magnitudes, offset ranges, `advisories` (for example, weakly determined rotations on an axial parallel scan), and flagged views that also trigger warnings:
    - `isolated_views`: single-view jumps away from both neighbors (not permanent slips).
    - `unusual_views`: views with residuals at least 3× their neighbors', such as broken frames or diffraction flashes. Inspect those frames and drop them or rerun with `RejectViews()`.
+
+   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records `focus_px`, `binning`, `views`, and `pairs`; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value.
 5. **Check held-out views** to test smooth motion recovery. Hold out every sixth view, align the remaining views, interpolate their poses to the held-out views, and compare projection error against nominal poses after removing each view's offset and vertical ramp:
 
    ```python
@@ -205,13 +210,13 @@ per-view component and the reason each fit stage stopped.
 
 ### Working grid and per-view background
 
-By default, `tj.align` fits on a bounded working grid of at most 16 million voxels and a detector of at most 320 pixels per side, binned no coarser than one voxel at the object (passing `grid=` fixes the grid and adjusts binning to match). The working volume extends slightly above and below the grid so shifted material stays inside the model, then crops back on return. `result.image` is this working-grid volume (filtered with `[1, 2, 1] / 4` along detector rows and columns to suppress Nyquist mismatch, so it carries fine-scale texture); reconstruct `result.scan` to get a full-resolution volume.
+For joint fits, `tj.align` fits on a bounded working grid of at most 16 million voxels and a detector of at most 320 pixels per side, binned no coarser than one voxel at the object (passing `grid=` fixes the grid and adjusts binning to match). The working volume extends slightly above and below the grid so shifted material stays inside the model, then crops back on return. `result.image` is this working-grid volume (filtered with `[1, 2, 1] / 4` along detector rows and columns to suppress Nyquist mismatch, so it carries fine-scale texture); reconstruct `result.scan` to get a full-resolution volume. Direct parallel `fit="center"` and `method="opposite-views"` fit no working volume and leave `result.image` and `result.grid` as `None`.
 
-Inside every step, the solver profiles out each view's offset and vertical row ramp relative to the scan-wide mean level so flux fluctuations or phase offsets do not mimic vertical motion (the data themselves are untouched; `info["offsets"]` records the fitted pairs). The shared mean level stays in the residual because removing it lets the solver invent a constant-projection disc.
+Inside every joint step, the solver profiles out each view's offset and vertical row ramp relative to the scan-wide mean level so flux fluctuations or phase offsets do not mimic vertical motion (the data themselves are untouched; `info["offsets"]` records the fitted pairs). The shared mean level stays in the residual because removing it lets the solver invent a constant-projection disc.
 
 ## Settings
 
-Pass the six common settings as keywords to `tj.align` (`motion`, `iterations`, `image_iterations`, `tolerance`, `interpolation`, `resolution`) and any remaining settings via `config=AlignConfig(...)` from `tomojax.alignment`. Keywords override matching fields in `config`, and `result.info["config"]` records all resolved values. Save a fit with `tj.save("aligned.nxs", result)` and read it back with `tj.load_alignment("aligned.nxs")`. On the CLI, pass `--motion`, `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation`, and `--resolution`, or a `--config` TOML file (`tomojax align --config-keys` lists every key, and `--dry-run` prints resolved settings).
+These settings configure the joint solver; passing any of them (or `config=`, `grid=`, or `region=`) alongside `fit="center"` selects the joint fit instead of direct axial measurement. Pass the six common settings as keywords to `tj.align` (`motion`, `iterations`, `image_iterations`, `tolerance`, `interpolation`, `resolution`) and any remaining settings via `config=AlignConfig(...)` from `tomojax.alignment`. Keywords override matching fields in `config`, and `result.info["config"]` records all resolved values. Save a fit with `tj.save("aligned.nxs", result)` and read it back with `tj.load_alignment("aligned.nxs")`. On the CLI, pass `--motion`, `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation`, and `--resolution`, or a `--config` TOML file (`tomojax align --config-keys` lists every key, and `--dry-run` prints resolved settings).
 
 ```python
 from tomojax.alignment import AlignConfig

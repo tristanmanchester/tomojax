@@ -18,7 +18,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Nikon `.xtekct` cone-beam import | `tomojax correct scan/part.xtekct --darks 0 -o scan.nxs` or `tj.load_frames("scan/part.xtekct", darks=0).corrected()` |
 | Zeiss `.txrm` projection acquisitions | `tj.load("scan.txrm")` or `tj.load_frames("scan.txrm", flats="reference_Front.xrm").corrected(...)` ([CPU preview](lab-ct.md#zeiss-xradia-preview)) |
 | Multi-orbit cone-beam scans (`ConeSegments`) | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then iterative `tj.reconstruct` and `tj.align` |
-| Joint alignment (center, translations, tilt, roll, per-view rotations) | `tomojax align corrected.nxs -o aligned.nxs --fit ...` or `tj.align(scan, fit=..., grid=...)` |
+| Alignment (direct parallel center fit; joint fit for center, translations, tilt, roll, per-view rotations) | `tomojax align corrected.nxs -o aligned.nxs --fit ...` or `tj.align(scan, fit=..., grid=...)` |
 | Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap and `tj.reconstruct_slabs` ([large scans](large-scans.md)) |
@@ -65,7 +65,7 @@ Tested against real acquisitions from ESRF NXtomo (`nxtomomill`), APS TomoBank (
 | Parallel FBP and Cone FDK | JAX (CPU/GPU) and CUDA C kernels (auto-selected on CUDA); automatic host-slab fallback (`fbp_host`, `fdk_host`) and raw-frame streaming (`tj.reconstruct_slabs`); full turns, offset-detector full turns, Parker-weighted short scans |
 | Fourier-slice inverse | `fourier` for axial parallel scans (uniform/nonuniform angles, offsets, anisotropic grids, per-view translations); optional FBP detector-response `filter` (`"ramp"`, `"hann"`, `"shepp-logan"`); NumPy reference or CuPy CUDA (`cuda12` / `fourier-cuda12`); host slabs; non-differentiable |
 | Iterative solvers (`cgls`, `cgls_multires`, `fista`, `spdhg`, `sirt`, `mlem`) | Exact matched JAX/CUDA projectors; automatic projection streaming and host-slab volume fallback (except SPDHG, which needs 5 volumes in VRAM); TV/Huber-TV (with detector-uncertainty weight calibration and noise-score stopping in FISTA), box bounds, support masks, `data_term="per_view_contrast"`, ordered subsets |
-| Joint alignment (`tj.align`) | Single Gauss-Newton/Schur solver for `center`, `translations`, `tilt`, `roll`, `rotations` across all geometries; `method="opposite-views"` projection-only center estimate for axial parallel scans |
+| Alignment (`tj.align`) | Direct half-turn sinogram and opposing-ray center measurement on CPU for `fit="center"` on unposed, unrolled axial parallel scans (no working volume); single Gauss-Newton/Schur joint solver for `center`, `translations`, `tilt`, `roll`, and `rotations` across all geometries (initializing axial parallel center fits from the measured center); `method="opposite-views"` pair-only check for axial parallel scans |
 | PyTorch bridge (`tomojax.torch.Projector`) | Zero-copy DLPack wrapper around CUDA forward and exact-transpose projectors with autograd |
 | Hardware tested | Linux x86_64 CPU; CUDA 12 on Tesla V100S (Volta, 32 GB), RTX 4070 Laptop GPU (Ada, 8 GB) and 4× H100 (80 GB); CUDA kernels target Volta (compute capability 7.0) and newer GPUs |
 

@@ -18,7 +18,7 @@ From 200 views at 10⁴ photons per pixel, filtered backprojection through the h
 
 ![Nominal-geometry, aligned and true slices of the watch movement, close-ups of the balance, and recovered against true shifts for every view.](https://github.com/tristanmanchester/tomojax/raw/main/images/alignment-example.png)
 
-`tomojax align` and `tj.align` solve the volume and requested geometry corrections jointly. By default they fit per-view translations; add `"tilt"` and `"roll"` for shared setup angles, or `"rotations"` for per-view wobble. See [align a scan](https://tomojax.dev/align-a-scan/).
+`tomojax align` and `tj.align` fit geometry errors and per-view motion. On well-sampled axial parallel scans, `fit="center"` measures the rotation axis directly from the projections across the full detector width without reconstructing a volume. By default `tj.align` fits per-view translations jointly with the volume; add `"tilt"` and `"roll"` for shared setup angles, or `"rotations"` for per-view wobble. See [align a scan](https://tomojax.dev/align-a-scan/).
 
 ## First reconstruction
 

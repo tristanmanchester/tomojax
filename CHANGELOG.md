@@ -2,10 +2,18 @@
 
 ## Unreleased
 
-- `tj.align(scan, fit="center")` searches the detector width on well-sampled axial
-  parallel scans. It uses the sharpness of a Fourier slice and registers native
-  opposing rays, including at large offsets. The result carries the corrected
-  scan. Use `method="joint"` when you also need a fitted working volume.
+- `tj.align(scan, fit="center")` (and `tomojax align --fit center`) now measures
+  the rotation axis directly from the projections on unposed, unrolled, well-sampled
+  axial parallel half-turns, without reconstructing a working volume (`result.image`
+  and `result.grid` are `None`). Over up to 401 views it combines Fourier-slice edge
+  sharpness, half-turn Fourier parity, and the sinusoidal first projection moment,
+  then refines the center to fractions of a native pixel with up to 16 opposing view
+  pairs (including endpoint-exclusive half-turns, narrow detectors, and large offsets)
+  while accounting for stationary detector structure and linear flat-field drift.
+  Passing `method="joint"`, a grid or region, joint solver settings, a multi-parameter
+  `fit`, or another geometry still runs the joint solver, which now initializes axial
+  parallel center fits from the measured center. `tomojax align --dry-run`, the worker
+  `plan` command (`sinogram_focus_plan`), and Studio report this plan.
 - `Rings()` (and `tomojax correct --rings`) is the single ring-artifact correction and
   estimates fine and wide detector offsets without a width parameter on half-turn and
   full-turn scans. `Stripes`, `--stripes WIDTH`, and `stripes_varying` have been removed

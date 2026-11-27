@@ -63,7 +63,7 @@ To try Studio without scan files on disk, choose **Try a demo project** on the s
 
 ## Prepare, preview, and reconstruct
 
-**Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artifact corrections, joint alignment, simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
+**Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artifact corrections, alignment (direct parallel center measurement and joint volume-and-pose alignment), simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
 
 ### Live interactive previews
 

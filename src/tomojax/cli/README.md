@@ -34,9 +34,7 @@ The options match the Python API's keywords: `tomojax reconstruct --method cgls
 `tomojax align --fit translations roll` is
 `tj.align(scan, fit=("translations", "roll"))`.
 
-With no `--fit`, alignment estimates per-view translations. `--fit` names the parameter blocks
-released in the same joint solver; it takes one or more of `center`, `translations`, `tilt`,
-`roll` and `rotations`. Reconstruction without `--method` selects its method from the geometry.
+With no `--fit`, alignment estimates per-view translations jointly with a volume. `--fit` takes one or more of `center`, `translations`, `tilt`, `roll` and `rotations`. On an unposed, unrolled axial parallel scan with a well-sampled half-turn, `--fit center` alone measures the rotation axis directly from the projections with no working image unless `--method joint`, `--grid`, `--region`, `--config` or a joint solver option is given. Reconstruction without `--method` selects its method from the geometry.
 
 ## Commands
 
@@ -72,14 +70,20 @@ released in the same joint solver; it takes one or more of `center`, `translatio
   holds the volume, its geometry and record, and names the input projections;
   `--include-scan` keeps them too. `--dry-run` prints the plan: the method and why,
   the grid, and the estimated memory against the memory available.
-- `align`: jointly estimate the image and the named geometry corrections with `tj.align`, on
-  top of the poses saved in the input unless `--no-apply-poses`. `--fit center` fits one shared center
-  (two for cone data); `--fit translations tilt roll` adds shared setup angles to per-view shifts.
-  `--iterations`, `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution`
-  are `tj.align`'s keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
-  `--method opposite-views` estimates the center from near-opposite views without an image.
-  `--fit translations rotations` adds per-view sample rotations. `--grid` sets image sampling.
-  `--dry-run` prints the plan: each level's grid and budget, and the estimated memory.
+- `align`: estimate the named geometry corrections with `tj.align`, on top of the poses saved in
+  the input unless `--no-apply-poses`. On an unposed, unrolled, well-sampled axial parallel scan,
+  `--fit center` measures the rotation center directly across the detector width from the half-turn
+  sinogram and opposing rays without writing a working image; pass `--method joint` (or `--grid`,
+  `--region`, `--config`, or a joint solver option) for a joint image-and-center fit, which starts
+  from the measured center. For cone data, `--fit center` fits detector-u and detector-v jointly;
+  `--fit translations tilt roll` adds shared setup angles to per-view shifts, and
+  `--fit translations rotations` adds per-view sample rotations. `--motion`, `--iterations`,
+  `--image-iterations`, `--tolerance`, `--interpolation` and `--resolution` are `tj.align`'s
+  keywords; a `--config` file sets the other `tomojax.alignment.AlignConfig` fields.
+  `--method opposite-views` runs the pair-only center check from near-opposite views without an
+  image. `--grid` sets image sampling. `--dry-run` prints the plan: sampled views and pairs for
+  direct axial center measurement, angular pairs for `opposite-views`, or each level's grid and
+  budget for a joint fit, along with estimated memory.
 - `export`: `tj.export`, writing a reconstruction as TIFF slices, or as one raw file when
   OUTPUT ends in `.raw`.
 - `simulate`: `tj.simulate`, writing a synthetic scan of a phantom with the phantom as its volume.

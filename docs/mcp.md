@@ -81,7 +81,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `correct` | Flat/dark correction, zingers, phase retrieval, rings, beam hardening and binning |
 | `reconstruct` | Reconstruct with an automatic or named method; returns central planes |
 | `reconstruct_slabs` | Reconstruct raw frames slab by slab straight into a file, for volumes too large to hold |
-| `align` | Fit the center, setup angles or per-view motion; returns a pose plot and slices |
+| `align` | Fit the rotation center, setup angles or per-view motion; returns slices for joint fits and a pose plot when per-view motion is fitted |
 | `simulate` | Simulate a scan of a phantom, with optional detector artifacts |
 | `project`, `backproject` | Apply the forward projector or its exact transpose |
 | `edit_scan` | Select views, crop, bin, replace poses or combine scans |
@@ -109,7 +109,7 @@ Handles last until you close them, the worker restarts, or the server exits. Sav
 
 ## Results, images and long jobs
 
-Every result has a short text summary, the same fields as structured content, and labeled PNG panels where an image helps: three central planes after `reconstruct`, a pose plot and slices after `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a center sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
+Every result has a short text summary, the same fields as structured content, and labeled PNG panels where an image helps: three central planes after `reconstruct`, working slices (and a pose plot when per-view motion is fitted) after joint `align`, and the requested planes from `view` and `preview`. Panels that are meant to be compared, such as a center sweep, share one display range. Large results are cut to fit the client's limits, and the rest is served as `tomojax://result/...` resources that the result names. Each connection retains up to 64 MiB of paged replies for up to 15 minutes, evicting the oldest first. Repeat the call if a page has expired or been evicted.
 
 Long jobs send progress with the current stage, its metrics and an estimate of the time left. Clients that support the MCP tasks extension receive long calls as tasks they can poll and cancel; other clients wait for the result. Cancel a job from the client or with `control`; it stops at the next checkpoint.
 
