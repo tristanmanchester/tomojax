@@ -185,7 +185,7 @@ def build_parser() -> ProgressParser:
         choices=("views", "position"),
         default=FLAT_WEIGHTS,
         help="Blend the flat sets around a view by what the views show of each, or by the "
-        "view's position between them (%(default)s)",
+        f"view's position between them (default {FLAT_WEIGHTS})",
     )
     add_progress(parser)
     hide_expert(parser, _PUBLIC)
