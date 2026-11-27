@@ -281,7 +281,12 @@ def _fitted(
     energy = np.maximum(around[1].mean(0), 0.0)
     found = [area.sum(), (share * energy * neither).sum(), around[4].mean(0).sum()]
     found += [(area * broad[0]).sum(), (area * broad[1]).sum()]
-    return ends.astype(np.float32), _levels(ends, broad, share, ratio), np.array(found)
+    # A nearby change in texture informs the regional blend but does not make
+    # this cell's own flat ratio a poor reference for the common row gain.
+    noise = np.sqrt(np.maximum(cell_sums[5].mean(0, dtype=np.float64), np.finfo(float).tiny))
+    significance = cell_sums[1].mean(0, dtype=np.float64) / noise
+    local_quiet = 1 / (1 + np.maximum(significance - 3.0, 0.0) ** 2)
+    return ends.astype(np.float32), _levels(ends, broad, share, ratio, local_quiet), np.array(found)
 
 
 @partial(jax.jit, static_argnames=("counts_steps",))
@@ -317,7 +322,7 @@ def _view_sums(
     # fine structure nor the flat's, whose products with them would bias the fit.
     around = _row_sum(jnp.where(lit, signal, 0.0)) / jnp.maximum(_row_sum(lit * flat), tiny)
     weight = jnp.where(lit, jnp.clip(around, 0.0, 1.0), 0.0)
-    y = jnp.log(jnp.maximum(signal, tiny) / flat)
+    y = jnp.log(jnp.where(lit, signal, flat) / flat)
     total = jnp.maximum(_row_sum(weight), tiny)
 
     def high(values: jax.Array) -> jax.Array:
@@ -443,6 +448,7 @@ def _levels(
     broad: NDArray[np.float64],
     share: NDArray[np.float64],
     ratio: np.ndarray[tuple[int, int], np.dtype[np.float64]],
+    local_quiet: np.ndarray,
 ) -> NDArray[np.float32]:
     """The log factor on the blended flat that sets its level.
 
@@ -468,7 +474,7 @@ def _levels(
     # Estimate the common row gain by absolute deviations. Give columns influence
     # in proportion to the position prior's share of the fit. The best available
     # reference sets its reliability when the entire row has changing texture.
-    quiet = _along_columns(1 - share, cols) * np.isfinite(ratio)
+    quiet = _along_columns(np.maximum(1 - share, local_quiet), cols) * np.isfinite(ratio)
     ratio = np.nan_to_num(ratio)
     reliability = np.amax(quiet, axis=1, keepdims=True)
     reference = np.quantile(
