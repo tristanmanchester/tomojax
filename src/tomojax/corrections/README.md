@@ -131,6 +131,9 @@ giving that fraction, the later set's weights at the start and end there, and
 both remedies: one of the flat sets does not match the beam the views saw.
 Python logs the warning on the `tomojax` logger, the CLI prints it, and the
 worker and MCP server return it in `notes`. Below 1%, no warning is emitted.
+The warning measures how far the two corrections disagree: true illumination
+can depart from both flat sets without moving the inferred weights, and a large
+correction can increase slice error.
 When the warning appears (or `flat_structure_unmatched` is large), inspect the
 reconstruction and either borrow clean flats from another scan of the same beam
 with `flats="other_scan.nxs"` (`tomojax correct --flats other_scan.nxs`, or
@@ -151,6 +154,14 @@ Two effects cannot be recovered from one scan's counts alone:
   distinguished from the object. An independent level change confined to a
   textured region therefore remains ambiguous without a separate beam
   measurement.
+
+The transmitted signal also gives a lower bound on incident intensity. Over
+each 16-row band, TomoJAX averages the weighted log transmission across the
+detector and groups neighboring views to estimate its uncertainty. If that
+mean exceeds zero by three standard errors, the fit raises the common level
+at the two ends by the smallest supported log gains. This can rule out a dim
+flat even when the object fills the detector. A bright flat and a more
+attenuating object can still produce identical counts.
 
 A flat set of a single frame has no measured noise, so its interval is
 interpolated linearly by position. Scans with one flat set or a scalar white

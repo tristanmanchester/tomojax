@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
+from pathlib import Path
 import re
-from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
@@ -17,9 +18,6 @@ from tomojax.cli.main import main
 from tomojax.corrections import Rings
 from tomojax.errors import InvalidParameter
 from tomojax.interactive import correction_preview
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 ROWS, COLS, VIEWS, FLATS, DARK, PHOTONS = 48, 256, 96, 16, 100.0, 20000.0
 
@@ -51,6 +49,14 @@ def _beam(rng: np.random.Generator) -> np.ndarray:
         * rows
         * (1 + 0.1 * np.sin(np.arange(COLS) / 90.0))
         * (1 + 0.02 * rng.normal(size=(ROWS, COLS)))
+    )
+
+
+def _geometry() -> tj.ParallelGeometry:
+    return tj.ParallelGeometry(
+        tj.Grid(COLS, COLS, ROWS, 1.0, 1.0, 1.0),
+        tj.Detector(COLS, ROWS, 1.0, 1.0),
+        np.linspace(0, 180, VIEWS, endpoint=False),
     )
 
 
@@ -94,11 +100,7 @@ def _frames(
     if middle_set:  # a third set halfway, through a wall of its own
         sets.insert(1, rng.poisson(np.broadcast_to(beam * wall(0.2), (flats, ROWS, COLS))))
         positions.insert(1, VIEWS // 2)
-    geometry = tj.ParallelGeometry(
-        tj.Grid(COLS, COLS, ROWS, 1.0, 1.0, 1.0),
-        tj.Detector(COLS, ROWS, 1.0, 1.0),
-        np.linspace(0, 180, VIEWS, endpoint=False),
-    )
+    geometry = _geometry()
     frames = tj.Frames(
         counts,
         geometry,
@@ -319,3 +321,161 @@ def test_the_command_line_chooses_the_blend_and_the_saved_scan_records_it(
     assert main([*argv, "--force"]) == 0
     assert "The views do not follow the flat sets' positions" in capsys.readouterr().err
     assert tj.load(out).corrections[0].settings["flat_weights"] == "views"
+
+
+def test_zero_photons_in_an_opaque_inclusion_do_not_corrupt_illuminated_rows() -> None:
+    frames, truth, _ = _frames("first set shadowed")
+    raw = np.asarray(frames.counts).copy()
+    raw[::3, 12:28, 50:77] = DARK
+    scan = replace(frames, counts=raw).corrected()
+    measured = raw > DARK
+    line = np.asarray(scan.projections)
+    assert np.isfinite(line).all()
+    assert _rms(line[measured] - truth[measured]) < 0.012
+
+
+def test_widespread_changing_specks_leave_a_narrow_reference_for_beam_growth() -> None:
+    rng = np.random.default_rng(116)
+    beam = _beam(rng)
+    truth = _line_integrals()
+    t = ((np.arange(VIEWS) + 0.5) / VIEWS)[:, None, None]
+    incident = beam * (1 + 0.12 * t)
+    specks = 0.012 * _texture(rng, 1.0) * (np.arange(COLS) < COLS - 32)
+    raw = rng.poisson(incident * np.exp(-truth)).astype(np.float32) + DARK
+    sets = np.concatenate(
+        [rng.poisson(field, (FLATS, ROWS, COLS)) for field in [beam * np.exp(specks), 1.12 * beam]]
+    )
+    frames = tj.Frames(
+        raw,
+        _geometry(),
+        flats=sets.astype(np.float32) + DARK,
+        darks=np.full((2, ROWS, COLS), DARK, np.float32),
+        flat_positions=np.repeat([0, VIEWS], FLATS),
+    )
+    ideal = -np.log((raw - DARK) / incident)
+    error = np.asarray(frames.corrected().projections) - ideal
+    assert abs(error[:16, :, : COLS // 2].mean()) < 0.005
+
+
+@pytest.mark.parametrize(
+    ("depth", "speck_rms"),
+    [
+        pytest.param(0.315, 0.013, id="broad-late-shadow-397"),
+        pytest.param(0.535, 0.0075, id="unequal-walls-253"),
+    ],
+)
+def test_broad_shadow_and_changing_texture_have_distinct_observability(
+    depth: float, speck_rms: float
+) -> None:
+    # Reduced versions of the two largest finite losses. A cylinder wider
+    # than the detector has this chord in every view of a stationary scan.
+    rng = np.random.default_rng(397)
+    col = (np.arange(COLS) + 0.5 - COLS / 2) / COLS
+    chord = depth * np.sqrt(1 - (col / 0.9) ** 2)
+    bright = _beam(rng)
+    dim = bright * np.exp(-chord)
+    truth = _line_integrals()
+    raw = dim * np.exp(-truth)
+    np.testing.assert_allclose(bright * np.exp(-(truth + chord)), raw, rtol=2e-15)
+    early = bright * np.exp(speck_rms * _texture(rng, 1.0))
+    geometry = _geometry()
+    frames = tj.Frames(
+        (raw + DARK).astype(np.float32),
+        geometry,
+        flats=np.repeat([early, dim], 4, axis=0).astype(np.float32) + DARK,
+        darks=np.full((2, ROWS, COLS), DARK, np.float32),
+        flat_positions=np.repeat([0, VIEWS], 4),
+    )
+    line = np.asarray(frames.corrected().projections)
+    # Both true objects lack the early flat's speckles. Constrain the
+    # identifiable fine detail while allowing the unresolved broad offset.
+    for obj in (truth, truth + chord):
+        error = line - obj
+        fine = error - gaussian_filter(error, (0, 0, 4))
+        assert _rms(fine) < 0.25 * speck_rms
+
+
+def test_thin_truncated_sample_excludes_a_deep_full_width_shadow() -> None:
+    # In sweep case 397 the views already contain the later texture, but the
+    # later flat is dimmer than the counts transmitted through the specimen.
+    rng = np.random.default_rng(397)
+    beam = _beam(rng)
+    truth = 0.1 * _line_integrals()
+    raw = rng.poisson(beam * np.exp(-truth)).astype(np.float32) + DARK
+    first = beam * np.exp(0.013 * _texture(rng, 1.0))
+    last = beam * np.exp(-0.315)
+    geometry = _geometry()
+    frames = tj.Frames(
+        raw,
+        geometry,
+        flats=np.concatenate([rng.poisson(f, (FLATS, ROWS, COLS)) for f in (first, last)]).astype(
+            np.float32
+        )
+        + DARK,
+        darks=np.full((2, ROWS, COLS), DARK, np.float32),
+        flat_positions=np.repeat([0, VIEWS], FLATS),
+    )
+    ideal = -np.log((raw - DARK) / beam)
+    line = np.asarray(frames.corrected().projections)
+    assert _rms(line - ideal) < 0.4 * _rms(_by_position(frames) - ideal)
+    assert np.min(line.mean(axis=(1, 2))) > -0.01
+
+
+@pytest.mark.parametrize(
+    ("case", "limit"),
+    [
+        pytest.param(196, 0.38, id="deep-partial-shadow-and-wide-second-wall"),
+        pytest.param(755, 0.85, id="unequal-overlapping-walls-with-changing-specks"),
+        pytest.param(596, 0.12, id="fading-beam-behind-a-truncated-specimen"),
+    ],
+)
+def test_sweep_tail_flat_estimate_against_the_incident_field(case: int, limit: float) -> None:
+    # The three largest losses with Rings, including the worst without Rings.
+    # Each fixture holds the original ellipse chords, illumination components
+    # and Poisson generator states for the two flat sets and the sampled views.
+    with np.load(Path(__file__).parent / "data" / "flat_weights" / f"case-{case}.npz") as data:
+        height, width = data["beam"].shape
+        u = np.arange(width) - (width - 1) / 2
+        coord = u - data["offset"] - data["tilt"]
+        projection = data["matrix"] * np.sqrt(np.maximum(0, 1 - (coord / data["radius"]) ** 2))
+        c, s = np.cos(data["angle_rad"]), np.sin(data["angle_rad"])
+        for x, y, radius, attenuation in data["inclusions"]:
+            chord = np.sqrt(np.maximum(0, 1 - ((coord - x * c - y * s) / radius) ** 2))
+            projection += attenuation * chord
+        t = data["t"]
+        incident = data["beam"] * (
+            1
+            + t * data["change"]
+            + data["drift_time"] * data["response"]
+            + data["speck_time"] * data["specks"]
+        )
+
+        def expose(rate: np.ndarray, state: str, shape: tuple[int, ...]) -> np.ndarray:
+            rng = np.random.default_rng()
+            rng.bit_generator.state = json.loads(state)
+            return np.minimum(rng.poisson(rate, size=shape), data["ceiling"]).astype(np.float32)
+
+        raw = expose(incident * np.exp(-projection), str(data["count_rng"]), projection.shape)
+        repeats = int(data["repeats"])
+        flats = np.concatenate(
+            [
+                expose(mean, str(state), (repeats, height, width))
+                for mean, state in zip(data["flat_means"], data["flat_rng"], strict=True)
+            ]
+        )
+        frames = tj.Frames(
+            raw,
+            tj.ParallelGeometry(
+                tj.Grid(width, width, height, 1, 1, 1),
+                tj.Detector(width, height, 1, 1),
+                data["angles"],
+            ),
+            flats=flats,
+            darks=np.zeros((2, height, width), np.float32),
+            flat_positions=np.repeat([0.0, 1.0], repeats),
+            view_positions=t.ravel(),
+        )
+        scored = data["scored_rows"]
+        ideal = -np.log(raw[:, scored] / incident[:, scored])
+        line = np.asarray(frames.corrected().projections)[:, scored]
+        assert _rms(line - ideal) < limit

@@ -18,7 +18,8 @@ A smooth change in incident flux and a change in object attenuation enter the lo
 view with opposite signs. Their absolute levels cannot be separated using this fit.
 Columns with little evidence of a change in texture provide a reference for a gain
 common to their detector row. Interpolate that gain by position. Without such a
-reference the common gain is unresolved and the texture blend retains its level.
+reference the absolute gain is unresolved. Views transmitting more than the inferred
+beam give a lower bound on its level, averaged over each detector row band.
 
 The weights describe the remaining structure. Where they change along a row while the
 sets differ, blending the sets would put a step in the flat that neither the views
@@ -49,6 +50,10 @@ if TYPE_CHECKING:
     from ._fields import CalibrationFrames, Fields
     from ._records import Json
     from ._steps import Step
+
+    type _Plane[T: np.generic] = np.ndarray[tuple[int, int], np.dtype[T]]
+    type _Stack[T: np.generic] = np.ndarray[tuple[int, int, int], np.dtype[T]]
+    type _CellSums = np.ndarray[tuple[int, int, int, int], np.dtype[np.float32]]
 
 LOG = logging.getLogger(__name__)
 
@@ -164,8 +169,8 @@ def view_weights(
         LOG.warning(
             "The views do not follow the flat sets' positions: over %.0f%% of the detector "
             "they hold the later set at %.2f at the start and %.2f at the end (position gives "
-            "0 and 1), which moves the flat by more than %g%% there. A flat set does not show "
-            "the beam the views had. The flat field follows the views; pass another scan's "
+            "0 and 1), which moves the flat by more than %g%% there. The flat field follows "
+            "the views; pass another scan's "
             "file as flats= (tomojax correct --flats) to use its flats, or "
             'flat_weights="position" (--flat-weights position) to blend by position.',
             100 * moved, *there, 100 * _MOVED,
@@ -254,7 +259,7 @@ def _sampled_sums(
 
 
 def _fitted(
-    cell_sums: np.ndarray, t: np.ndarray, ratio: np.ndarray
+    cell_sums: _CellSums, t: NDArray[np.float64], ratio: _Plane[np.float64]
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weights and levels of one interval from its views' cell sums, and what they found.
 
@@ -360,7 +365,9 @@ def _cells(values: jax.Array) -> jax.Array:
     return padded.reshape(views, -1, _CELL, padded.shape[2] // _CELL, _CELL).sum((2, 4))
 
 
-def _windows(sums: np.ndarray, reach: int) -> np.ndarray:
+def _windows[Shape: tuple[int, ...], T: np.floating](
+    sums: np.ndarray[Shape, np.dtype[T]], reach: int
+) -> np.ndarray[Shape, np.dtype[np.float64]]:
     """Sums over the cells within ``reach`` of each cell along the last two axes, in float64."""
     total = sums.astype(np.float64)
     for axis in (total.ndim - 2, total.ndim - 1):
@@ -370,16 +377,21 @@ def _windows(sums: np.ndarray, reach: int) -> np.ndarray:
         size = total.shape[axis]
         upper = np.take(along, np.arange(2 * reach + 1, 2 * reach + 1 + size), axis=axis)
         total = upper - np.take(along, np.arange(size), axis=axis)
-    return total
+    return total.reshape(sums.shape)
 
 
-def _structure_precision(signal: np.ndarray, doubt: np.ndarray) -> np.ndarray:
+def _structure_precision(
+    signal: NDArray[np.float32] | NDArray[np.float64],
+    doubt: NDArray[np.float32] | NDArray[np.float64],
+) -> NDArray[np.float64]:
     """Precision supported by flat structure more than three standard errors above noise."""
     error = np.sqrt(np.maximum(doubt.mean(0, dtype=np.float64), np.finfo(np.float64).tiny))
     return np.maximum(signal.mean(0, dtype=np.float64) / error - 3.0, 0.0) ** 2
 
 
-def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
+def _normal(
+    sums: np.ndarray[tuple[int, int, int, int], np.dtype[np.float64]], t: NDArray[np.float64]
+) -> _Stack[np.float64]:
     """What the views say of the later set's weight at both ends of an interval.
 
     ``sums`` are window sums of :func:`_view_sums`. In each cell, for view ``k``
@@ -404,7 +416,7 @@ def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
     known = _structure_precision(signal, doubt)
     huber = np.ones_like(product)
     inflation = bound = np.ones(product.shape[1:])
-    normal = np.zeros((5, *product.shape[1:]))
+    normal = np.zeros((5, sums.shape[2], sums.shape[3]))
     for _ in range(4):
         q = bound * huber / (variance * inflation)
         normal = np.stack(
@@ -428,12 +440,12 @@ def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 
 def _solve(
-    normal: np.ndarray,
-    prior: np.ndarray,
-    precision: np.ndarray | float = _PRIOR_PRECISION,
+    normal: _Stack[np.float64],
+    prior: _Stack[np.float64],
+    precision: _Plane[np.float64] | float = _PRIOR_PRECISION,
     *,
     clip: bool = True,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[_Stack[np.float64], _Plane[np.float64]]:
     """Weights at both ends from normal equations and a prior, and the views' share.
 
     By default the prior's two means are each as uncertain as a weight known only
@@ -455,7 +467,7 @@ def _levels(
     broad: NDArray[np.float64],
     share: NDArray[np.float64],
     ratio: np.ndarray[tuple[int, int], np.dtype[np.float64]],
-    local_quiet: np.ndarray,
+    local_quiet: NDArray[np.float64],
 ) -> NDArray[np.float32]:
     """The log factor on the blended flat that sets its level.
 
@@ -522,13 +534,13 @@ def _levels(
 
 
 def _row_transmission(
-    sums: np.ndarray,
-    t: np.ndarray,
-    ratio: np.ndarray,
-    ends: np.ndarray,
-    levels: np.ndarray,
-    share: np.ndarray,
-) -> np.ndarray:
+    sums: _CellSums,
+    t: np.ndarray[tuple[int], np.dtype[np.float64]],
+    ratio: _Plane[np.float64],
+    ends: _Stack[np.float64],
+    levels: _Stack[np.float32],
+    share: _Plane[np.float64],
+) -> NDArray[np.float64]:
     """The minimum common gain supported by excess transmission in a band of rows.
 
     The unknown sample can attenuate the mean signal even in its brightest
@@ -537,7 +549,7 @@ def _row_transmission(
     Group neighboring views and subtract three standard errors, including their
     angular scatter, before fitting the two endpoint log gains.
     """
-    starts = np.arange(0, ratio.shape[1], _CELL)
+    starts = np.arange(0, ratio.shape[1], _CELL, dtype=np.intp)
     valid = np.isfinite(ratio)
     columns = np.maximum(1, np.add.reduceat(valid, starts, axis=-1, dtype=np.int64))
     mean = np.add.reduceat(np.nan_to_num(ratio), starts, axis=-1) / columns
@@ -561,12 +573,12 @@ def _row_transmission(
     # at the active bound. Include zero bounds at both acquisition endpoints.
     pad = np.zeros_like(lower[:1])
     lower = np.concatenate([pad, lower, pad])
-    time = np.r_[0.0, [t[g].mean() for g in groups], 1.0][:, None]
-    hi = 2 * lower.max(0)  # the constant maximum is already a feasible pair
-    lo = -hi
+    time = np.array([0.0, *(t[g].mean() for g in groups), 1.0], dtype=np.float64)[:, None]
+    hi: NDArray[np.float64] = 2 * lower.max(0)  # the constant maximum is already a feasible pair
+    lo: NDArray[np.float64] = -hi
     for _ in range(24):  # float32 precision in the two endpoint gains
-        slope = (lo + hi) / 2
-        intercepts = lower - time * slope
+        slope: NDArray[np.float64] = (lo + hi) / 2
+        intercepts: NDArray[np.float64] = lower - time * slope
         start = intercepts.max(0)
         end = start + slope
         falling = end < time[intercepts.argmax(0), 0] * (start + end)
