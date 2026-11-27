@@ -16,8 +16,8 @@ import tempfile
 import numpy as np
 
 from tomojax import progress
-from tomojax.core.input_files import check_output, publishing as protect_inputs
 from tomojax._data import array_record
+from tomojax.core.input_files import check_output, publishing as protect_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
 from tomojax.io._export_formats import FORMATS, Document, Format, format_for, slice_path
@@ -167,6 +167,7 @@ def install_export(
         if os.path.lexists(p):
             backup = staged[p].parent / (p.name + ".previous")
             os.link(p, backup, follow_symlinks=False)
+            cleanup.callback(backup.unlink, missing_ok=True)
             undo.callback(backup.replace, p)
             if fmt.layout == "group" and p == paths[-1]:
                 p.unlink()

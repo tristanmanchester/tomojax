@@ -11,6 +11,8 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.files import replaced_when_complete
+from tomojax.core.host_volume import mapped_storage
+from tomojax.core.input_files import open_input_hdf5, reading
 
 from ._format2 import (
     contiguous,
@@ -96,7 +98,13 @@ def save_nxtomo(
         raise ValueError("projections must be (n_views, nv, nu)")
     if meta.volume is not None and meta.volume.ndim != 3:
         raise ValueError("volume must be 3D (nz, ny, nx)")
+    sources = (
+        Path(mapping.filename)
+        for pixels in (proj, meta.volume)
+        if (mapping := mapped_storage(pixels)) is not None and mapping.filename is not None
+    )
     with (
+        reading(*sources),
         replaced_when_complete(path, sizes_of(proj, meta.volume), overwrite=overwrite) as temporary,
         h5py.File(temporary, "w") as f,
     ):
@@ -206,7 +214,7 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
 def read_nxtomo(
     path: str, *, lazy: bool, layout_only: bool, located: LocatedFrames | None = None
 ) -> LoadedNXTomo:
-    with h5py.File(path, "r") as f:
+    with open_input_hdf5(Path(path)) as f:
         if "tomojax_format" in f.attrs:
             return read_format_2(f, layout_only=layout_only, lazy_projections=lazy)
         return read_unmarked(f, path, lazy=lazy, layout_only=layout_only, located=located)
@@ -287,7 +295,7 @@ def native_payload(
     """Read a marked TomoJAX generation before acquisition discovery."""
     if path.suffix.lower() not in {".nxs", ".h5", ".hdf5", ".hdf", ".nx"} or not path.is_file():
         return None
-    with h5py.File(path, "r") as file:
+    with open_input_hdf5(path) as file:
         if "tomojax_format" in file.attrs:
             return read_format_2(
                 file,
@@ -438,7 +446,7 @@ def validate_nxtomo(path: str) -> ValidationReport:
     """
     report: ValidationReport = {"issues": []}
     try:
-        with h5py.File(path, "r") as f:
+        with open_input_hdf5(Path(path)) as f:
             e = child_group(f, "/entry")
             if e is None:
                 report["issues"].append("Missing /entry")

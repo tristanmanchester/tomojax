@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 import gc
 from itertools import chain
+import os
 from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING, Literal
@@ -17,6 +18,9 @@ from tomojax.errors import InvalidParameter
 if TYPE_CHECKING:
     from collections.abc import Iterable, Iterator
 
+    import h5py
+
+_opened: ContextVar[dict[Path, h5py.File] | None] = ContextVar("tomojax_open_hdf5", default=None)
 _lock = RLock()
 _pins: Counter[InputFiles] = Counter()
 _python_results: WeakSet[InputFiles] = WeakSet()
@@ -31,7 +35,7 @@ class InputFiles:
         self.parents = tuple(parents)
         self.paths: dict[Path, Path] = {}
         self.identities: dict[tuple[int, int], Path] = {}
-        self.containers: set[tuple[Path, Path]] = set()
+        self.containers: set[tuple[Path, Path, int, int]] = set()
         self.ancestors: dict[Path, Path] = {}
 
     def lineage(self) -> set[InputFiles]:
@@ -67,10 +71,12 @@ class InputFiles:
             self.identities.update(child.identities)
             self.ancestors.update(child.ancestors)
 
-    def add(self, path: Path, owner: Path) -> None:
+    def add(self, path: Path, owner: Path, *, stat: os.stat_result | None = None) -> None:
         """Snapshot both names and identity before consuming this file."""
         path = path.absolute()
         with _lock:
+            if stat is not None:
+                self.identities[stat.st_dev, stat.st_ino] = path
             if path in self.paths:
                 return
             resolved = path.resolve()
@@ -78,36 +84,43 @@ class InputFiles:
             for parent in chain(path.parents, resolved.parents):
                 _ = self.ancestors.setdefault(parent, path)
             try:
-                stat = path.stat()
+                stat = stat or path.stat()
             except FileNotFoundError:
                 pass  # A VDS can supply fill values until its source appears.
             else:
                 self.identities[stat.st_dev, stat.st_ino] = path
 
-    def read(self, path: Path) -> None:
+    def read(self, path: Path, *, master: h5py.File | None = None) -> None:
         """Resolve a container once, retaining the spelling used for relative links."""
         import h5py
 
         from tomojax.core.files import hdf5_sources
 
         path = path.absolute()
-        if not path.exists():
-            # Inspection may first restore a missing primary from its previous directory.
-            return
         pending = [path]
         while pending:
             here = pending.pop()
-            self.add(here, path)
-            identity = here.resolve(), here.parent.resolve()
-            if identity in self.containers:
+            held = master if here == path else None
+            if held is None and not here.exists():
+                # A missing primary may be restored by directory recovery. Missing VDS
+                # sources are named inputs even while their pixels are fill values.
+                if here != path:
+                    self.add(here, path)
                 continue
-            self.containers.add(identity)
-            if here.is_file() and h5py.is_hdf5(here):
-                with h5py.File(here, "r") as file:
-                    linked, raw = hdf5_sources(file)
-                for storage in raw:
-                    self.add(storage, path)
-                pending.extend(linked)
+            if held is None and not (here.is_file() and h5py.is_hdf5(here)):
+                self.add(here, path)
+                continue
+            with nullcontext(held) if held is not None else h5py.File(here, "r") as file:
+                stat = os.fstat(file.id.get_vfd_handle()) if file.driver == "sec2" else here.stat()
+                self.add(here, path, stat=stat)
+                identity = here.resolve(), here.parent.resolve(), stat.st_dev, stat.st_ino
+                if identity in self.containers:
+                    continue
+                self.containers.add(identity)
+                linked, raw = hdf5_sources(file)
+            for storage in raw:
+                self.add(storage, path)
+            pending.extend(linked)
 
 
 def current_inputs() -> tuple[InputFiles, ...]:
@@ -123,16 +136,23 @@ def reading(
     owner: Literal["operation", "request", "result"] = "operation",
 ) -> Iterator[None]:
     """Pin a read scope and transfer ownership only for a successful public Python load."""
+    import h5py
+
     outer = _current.get()
     public_result = owner == "result" and not _owns_results.get()
     inputs = InputFiles() if public_result else group or outer or InputFiles()
     token = _current.set(inputs)
     ownership = _owns_results.set(owner != "operation" or _owns_results.get())
+    opened = dict(_opened.get() or {})
+    descriptors = _opened.set(opened)
     try:
-        with inputs.pinned():
+        with inputs.pinned(), ExitStack() as held:
             with _lock:
                 for path in paths:
-                    inputs.read(path)
+                    name = path.absolute()
+                    if name not in opened and name.is_file() and h5py.is_hdf5(name):
+                        opened[name] = held.enter_context(h5py.File(name, "r"))
+                    inputs.read(name, master=opened.get(name))
             yield
             if public_result:
                 with _lock:
@@ -140,8 +160,24 @@ def reading(
                     if outer is not None:
                         outer.include(inputs)
     finally:
+        _opened.reset(descriptors)
         _owns_results.reset(ownership)
         _current.reset(token)
+
+
+def open_input_hdf5(path: Path) -> AbstractContextManager[h5py.File]:
+    """Read from the master descriptor used to register this generation's dependencies."""
+    import h5py
+
+    file = (_opened.get() or {}).get(path.absolute())
+    return nullcontext(file) if file is not None else h5py.File(path, "r")
+
+
+def input_hdf5(file: h5py.File) -> None:
+    """Retain the actual external generation reached through a selected HDF5 link."""
+    if (inputs := _current.get()) is not None:
+        with _lock:
+            inputs.read(Path(file.filename), master=file)
 
 
 @contextmanager

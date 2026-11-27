@@ -256,6 +256,52 @@ def test_load_during_staging_prevents_publication(tmp_path):
     assert hashes(tmp_path) == before
 
 
+@pytest.mark.parametrize("writer", ["save", "exclusive", "slabs", "worker"])
+def test_native_writers_recheck_a_destination_acquired_after_staging(tmp_path, writer):
+    from tests.test_export import indexed
+    from tomojax import progress
+    from tomojax.cli._staging import Stages  # check-public-imports: allow-private
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo, slab_volume
+
+    master, physical = acquisition(tmp_path, "external")
+    original = hashes(tmp_path)
+    destination = tmp_path / "result.nxs"
+    value = indexed()
+    opened = []
+
+    def acquire():
+        destination.hardlink_to(physical)
+        opened.append(tj.load(master))
+
+    def observe(event):
+        if isinstance(event, progress.Advanced) and not destination.exists():
+            acquire()
+
+    def write():
+        if writer == "worker":
+            stages = Stages(tmp_path / "session")
+            with stages.temporary:
+                tj.save(stages.output(destination, force=True), value)
+                acquire()
+                stages.commit()
+        elif writer == "slabs":
+            with slab_volume(destination, NXTomoMetadata(), value.volume.shape) as volume:
+                volume[:] = value.volume
+                acquire()
+        else:
+            with progress.watch(observe):
+                if writer == "exclusive":
+                    save_nxtomo(str(destination), value.volume, overwrite=False)
+                else:
+                    tj.save(destination, value)
+
+    with pytest.raises(tj.InvalidParameter, match=physical.name):
+        write()
+    assert len(opened) == 1 and destination.samefile(physical)
+    destination.unlink()
+    assert hashes(tmp_path) == original
+
+
 def test_worker_releases_input_protection_with_the_last_derived_handle(
     worker, simulation, tmp_path
 ):
@@ -330,7 +376,7 @@ def export_conflicts(tmp_path):
     storage = tmp_path / "voxels.h5"
     tj.save(master, value)
     with h5py.File(master, "r+") as file, h5py.File(storage, "w") as physical:
-        volume = "/entry/processing/tomojax/volume"
+        volume = "/entry/volume/data"
         file.copy(volume, physical, name="pixels")
         del file[volume]
         file[volume] = h5py.ExternalLink(storage.name, "/pixels")
@@ -360,10 +406,41 @@ def export_conflicts(tmp_path):
     return master, storage, destinations
 
 
+def test_format2_load_uses_the_generation_registered_before_a_rename(
+    tmp_path, export_conflicts, monkeypatch
+):
+    from tomojax.core import files
+
+    master, physical, _ = export_conflicts
+    alias = tmp_path / "original.nxs"
+    alias.hardlink_to(master)
+    replacement = tmp_path / "next.nxs"
+    with h5py.File(replacement, "w") as file:
+        file["different_generation"] = 42
+    collect = files.hdf5_sources
+
+    def swap_after_discovery(file):
+        sources = collect(file)
+        if file.filename == str(master) and replacement.exists():
+            replacement.replace(master)
+        return sources
+
+    monkeypatch.setattr(files, "hdf5_sources", swap_after_discovery)
+    loaded = tj.load_reconstruction(master)
+    assert not replacement.exists() and loaded.volume[2, 3, 4] == 234
+    before = hashes(tmp_path)
+    for dependency in (physical, alias):
+        with pytest.raises(tj.InvalidParameter, match="different destination"):
+            tj.save(dependency, loaded)
+    assert hashes(tmp_path) == before
+
+
 def test_python_export_protects_each_format_and_directory_recovery(tmp_path, export_conflicts):
     master, storage, destinations = export_conflicts
     original = hashes(tmp_path)
     volume = tj.load_reconstruction(master)
+    with pytest.raises(tj.InvalidParameter, match=storage.name):
+        tj.save(storage, volume)
     for path in destinations:
         for dry in (True, False):
             with pytest.raises(tj.InvalidParameter, match=storage.name):
@@ -397,6 +474,8 @@ def test_worker_export_protects_each_format_and_manifest(tmp_path, worker, expor
     (tmp_path / "manifest.tif").write_bytes(b"previous output")
     (tmp_path / "manifest.tif.manifest.json").hardlink_to(storage)
     original = hashes(tmp_path)
+    for force in (False, True):
+        refused(worker, dict(type="save", source=source, path=str(storage), force=force), storage)
     for path in [*destinations, tmp_path / "manifest.tif"]:
         for force in (False, True):
             refused(
@@ -413,6 +492,12 @@ def test_mcp_export_protects_each_format_and_manifest(tmp_path, export_conflicts
     original = hashes(tmp_path)
     with connection(tmp_path) as client:
         source = client.call("open", kind="reconstruction", path=master.name)["structuredContent"]
+        for force in (False, True):
+            for dry in (True, False):
+                reply = client.call(
+                    "save", source=source["handle"], path=storage.name, force=force, dry_run=dry
+                )
+                assert reply["isError"] and str(storage) in reply["structuredContent"]["message"]
         for path in [*destinations, tmp_path / "manifest.tif"]:
             for force in (False, True):
                 reply = client.call("export", source=source["handle"], path=path.name, force=force)
@@ -435,7 +520,8 @@ def test_worker_inspection_restores_a_directory_with_no_live_inputs(worker, tmp_
     assert path.is_dir() and not previous.exists()
 
 
-def test_python_export_protects_the_mapped_volume_it_reads(tmp_path):
+@pytest.mark.parametrize("write", [tj.export, tj.save])
+def test_python_writers_protect_the_mapped_volume_they_read(tmp_path, write):
     from dataclasses import replace
 
     from tests.test_export import indexed
@@ -444,11 +530,11 @@ def test_python_export_protects_the_mapped_volume_it_reads(tmp_path):
     source = tmp_path / "mapped.bin"
     item.volume.tofile(source)
     mapped = np.memmap(source, mode="r", dtype=np.float32, shape=item.volume.shape)
-    alias = tmp_path / "volume.raw"
+    alias = tmp_path / ("volume.raw" if write is tj.export else "volume.nxs")
     alias.hardlink_to(source)
     before = hashes(tmp_path)
     with pytest.raises(tj.InvalidParameter, match=source.name):
-        tj.export(alias, replace(item, volume=mapped))
+        write(alias, replace(item, volume=mapped))
     assert hashes(tmp_path) == before
 
 

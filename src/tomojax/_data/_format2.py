@@ -19,6 +19,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.host_volume import release_planes
+from tomojax.core.input_files import input_hdf5
 from tomojax.core.registration import (
     pose_columns,
     projection_values,
@@ -78,6 +79,8 @@ def signal_at(file: h5py.Group, path: str, *, argument: str | None = None) -> h5
         if argument is not None:
             raise KeyError(f"{argument}: {file.file.filename} has no dataset {path!r}")
         raise ValueError(f"missing dataset at {path}")
+    if dataset.file.id != file.file.id:
+        input_hdf5(dataset.file)
     return dataset
 
 

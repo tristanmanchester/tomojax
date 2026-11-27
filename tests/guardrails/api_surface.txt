@@ -127,6 +127,7 @@ class tomojax.Reconstruction(
         length_unit: 'str | None' = None,
         source_path: 'str | None' = None,
         input_files: 'tuple[InputFiles, ...]' = <factory>,
+        source_record: 'ProjectionDataset | None' = None,
     ) -> None
     .grid
 class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None
@@ -940,6 +941,7 @@ class tomojax.io.ProjectionDataset(
     ) -> 'ProjectionDataset'
     .geometry_inputs(self) -> 'dict[str, Any]'
     .image_key
+    .projection_domain
     .to_nxtomo_metadata(self) -> 'NXTomoMetadata'
     .with_detector(self, detector: 'Detector') -> 'ProjectionDataset'
     .with_parallel_detector(self) -> 'ProjectionDataset'

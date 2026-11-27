@@ -37,7 +37,7 @@ class Destination:
             ) from err
 
     def clean(self) -> None:
-        if not self.keep_backup:
+        if not self.keep_backup and self.work.exists():
             shutil.rmtree(self.work)
 
     def install(self, undo: ExitStack) -> None:
@@ -138,5 +138,7 @@ class Stages:
                     staged, plan.format, plan.path, force=force, undo=undo, cleanup=cleanup
                 )
             for destination in remaining.values():
+                # Retire private backups while publication still holds input protection.
+                cleanup.callback(destination.clean)
                 destination.install(undo)
             undo.pop_all()
