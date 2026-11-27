@@ -422,11 +422,8 @@ def test_oversized_line_is_drained_through_one_newline(client):
     c.shutdown()
 
 
-def test_simulation_transcript_artifact_lineage(schema):
-    lines = [
-        json.loads(line)
-        for line in (DOCS / "transcripts/simulation.jsonl").read_text().splitlines()
-    ]
+@pytest.fixture
+def worker(schema):
     with subprocess.Popen(
         [sys.executable, "-m", "tomojax.cli.main", "serve"],
         stdin=subprocess.PIPE,
@@ -436,28 +433,51 @@ def test_simulation_transcript_artifact_lineage(schema):
         try:
             client = Client(proc, None, schema)
             assert client.read()["type"] == "ready"
-            outputs = {}
-            for request, expected in zip(lines[::2], lines[1::2], strict=True):
-                operation = request["command"]["operation"]
-                if operation["type"] == "backproject":
-                    operation["projections"] = outputs["p"]["value"]["projections"]["storage"]
-                client.send(request["id"], "run", operation=operation)
-                reply = client.end(request["id"])
-                assert reply["type"] == "result", reply
-                output = reply["result"]
-                assert output["value"]["type"] == expected["result"]["value"]["type"]
-                assert (
-                    output["manifest"]["operation"] == expected["result"]["manifest"]["operation"]
-                )
-                outputs[request["id"]] = output
-            sim, project, back = (outputs[rid]["manifest"] for rid in ("s", "p", "b"))
-            assert sim["inputs"] == []
-            assert project["inputs"] == [sim, sim]
-            assert back["inputs"] == [sim, project]
+            yield client
             client.shutdown()
         finally:
             if proc.poll() is None:
                 proc.kill()
+
+
+def test_simulation_transcript_artifact_lineage(worker):
+    lines = [
+        json.loads(line)
+        for line in (DOCS / "transcripts/simulation.jsonl").read_text().splitlines()
+    ]
+    outputs = {}
+    for request, expected in zip(lines[::2], lines[1::2], strict=True):
+        operation = request["command"]["operation"]
+        if operation["type"] == "backproject":
+            operation["projections"] = outputs["p"]["value"]["projections"]["storage"]
+        worker.send(request["id"], "run", operation=operation)
+        reply = worker.end(request["id"])
+        assert reply["type"] == "result", reply
+        output = reply["result"]
+        assert output["value"]["type"] == expected["result"]["value"]["type"]
+        assert output["manifest"]["operation"] == expected["result"]["manifest"]["operation"]
+        outputs[request["id"]] = output
+    sim, project, back = (outputs[rid]["manifest"] for rid in ("s", "p", "b"))
+    assert sim["inputs"] == []
+    assert project["inputs"] == [sim, sim]
+    assert back["inputs"] == [sim, project]
+
+
+def test_raw_slabs_transcript_matches_worker(worker, tmp_path):
+    from tests._helpers import write_raw_nxtomo
+
+    write_raw_nxtomo(tmp_path / "raw.nxs")
+    lines = (DOCS / "transcripts/raw-slabs.jsonl").read_text().replace("/data/", f"{tmp_path}/")
+    rows = [json.loads(line) for line in lines.splitlines()]
+    for request, expected in zip(rows[::2], rows[1::2], strict=True):
+        command = request["command"]
+        worker.send(request["id"], command.pop("type"), **command)
+        actual = worker.end(request["id"])
+        assert actual["type"] == "result", actual
+        if request["id"] == "v":
+            saved = expected["result"]["info"]["summary"]
+            saved["truncation"] = pytest.approx(saved["truncation"])
+        assert actual == expected
 
 
 def test_invalid_command_echoes_readable_id(client):
