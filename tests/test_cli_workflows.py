@@ -984,7 +984,7 @@ def test_export_cli_validates_flags_cleans_stale_tiffs_and_fails_without_volume(
 
     no_vol = tmp_path / "scan.nxs"
     write_projection_dataset(no_vol)
-    assert main(["export", str(no_vol), "-o", str(tmp_path / "out.raw")]) == 1
+    assert main(["export", str(no_vol), "-o", str(tmp_path / "out.raw"), "--member", "volume"]) == 1
     assert "no reconstructed volume" in capsys.readouterr().err
 
     recon = tmp_path / "recon.nxs"

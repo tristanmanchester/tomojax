@@ -571,5 +571,6 @@ def test_saved_matlab_evaluation_reads_only_selected_phase_views(tmp_path, monke
     cmd = op.Evaluate(op.PathInput(str(path)), (CGLS,), STRIDE, (), CGLS)
     actual = admitted(op.Run(cmd), None, Stage(tmp_path), None)
     assert actual.scores == expected.scores
-    assert max(reads) == pixels[0].nbytes
-    assert sum(reads) < pixels.nbytes
+    # Nine training views (0, 4, 5, 9, 10, 14, 15, 19, 20) bracket four
+    # held-out views (2, 7, 12, 17). Adjacent training views share a read.
+    assert sum(reads) == 13 * pixels[0].nbytes
