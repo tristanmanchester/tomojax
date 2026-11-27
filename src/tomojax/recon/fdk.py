@@ -44,8 +44,14 @@ from tomojax.recon._continuation import Continuation, cone_axis_distance, contin
 from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
 from tomojax.recon._fdk_coverage import full_turn_weights, reliability
 from tomojax.recon._fdk_cuda import backproject_cuda
-from tomojax.recon._fdk_filter import continued_rows, filter_operator, filter_rows, grid_columns
+from tomojax.recon._fdk_filter import (
+    continued_rows,
+    filter_operator,
+    grid_columns,
+    measured_and_exterior,
+)
 from tomojax.recon._host_arrays import validate_host_arrays
+from tomojax.recon._row_filter import filter_rows, filtered_profiles
 from tomojax.recon.filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
@@ -76,9 +82,6 @@ class FDKConfig:
 
     Parameters
     ----------
-    exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
     filter : str, optional
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     backend : ProjectorBackend, optional
@@ -90,6 +93,9 @@ class FDKConfig:
     devices : jax.Device or sequence of jax.Device or None, optional
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
+    exterior : {"cylinder", "zero"}, optional
+        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
+        the scan contains the object.
     """
 
     filter: Filter = "ramp"
@@ -252,9 +258,9 @@ def _cosine_weights(beam: ConeBeam, detector: Detector) -> np.ndarray:
     normal /= np.linalg.norm(normal)
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du
     v = (np.arange(detector.nv) - (detector.nv - 1) / 2) * detector.dv
-    pixel = center + u[None, :, None] * u_dir + v[:, None, None] * v_dir
-    ray = pixel - beam.source()
-    return np.abs(ray @ normal) / np.linalg.norm(ray, axis=-1)
+    ray = center - beam.source()
+    z = abs(ray @ normal)
+    return z / np.sqrt((ray @ u_dir + u[None, :]) ** 2 + (ray @ v_dir + v[:, None]) ** 2 + z**2)
 
 
 def _cosines(parts: tuple[tuple[int | None, ConeBeam, Detector], ...], n_views: int) -> np.ndarray:
@@ -334,6 +340,7 @@ def _fdk_batch(
     kernel: jax.Array,
     operator: jax.Array | None,
     radius2: jax.Array | None,
+    profiles: jax.Array | None,
     out: jax.Array,
     *,
     grid: Grid,
@@ -350,6 +357,11 @@ def _fdk_batch(
     nu = views.shape[-1]
     wide = replace(detector, nu=len(distance) or nu)
     cosine = _batch_cosines(cosine, start, views.shape[0], wide)
+    if profiles is not None and radius2 is not None:
+        rows, correction = measured_and_exterior(
+            views, weights, cosine, radius2, distance, profiles
+        )
+        return backproject_cuda(rows, coeff, grid, detector, scale, out, operator, correction)
     rows = continued_rows(views, weights, cosine, radius2, distance)
     if operator is not None:
         return backproject_cuda(rows, coeff, grid, detector, scale, out, operator)
@@ -477,7 +489,9 @@ def _prepare(
     )
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
-        operator = jax.device_put(filter_operator(kernel, detector.nu, pad_lo, pad_hi, pad))
+        operator = jax.device_put(
+            filter_operator(kernel, detector.nu, pad_lo, pad_hi, 0 if len(parts) == 1 else pad)
+        )
     # Cosine weights of the continued columns too: the same detector, wider.
     continued = tuple(
         (count, beam, replace(own, nu=own.nu + 2 * pad)) for count, beam, own in parts
@@ -599,6 +613,13 @@ def _accumulate(
         here = prep.on(device, views)
         share = jax.device_put(coeff[views.start : views.stop], device)
         radius = jax.device_put(radius2, device)
+        profiles = (
+            filtered_profiles(
+                radius, here.cosine, here.kernel, prep.distance, prep.pad_lo, prep.pad_hi
+            )
+            if radius is not None and here.operator is not None and here.cosine.ndim == 2
+            else None
+        )
         out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32, device=device)
         target = next(iter(out.devices()))
         starts = list(range(0, len(views), prep.batch))
@@ -627,6 +648,7 @@ def _accumulate(
                             here.kernel,
                             here.operator,
                             radius,
+                            profiles,
                             out,
                             grid=kernel_grid,
                             detector=virtual,

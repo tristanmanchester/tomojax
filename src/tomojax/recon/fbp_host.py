@@ -378,7 +378,9 @@ def _general_slabs(
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.fbp.scale)
     host_poses = np.asarray(poses, np.float32)
     detector_f = _filter_detector(grid, detector, host_poses, pad_v=not separable)
-    spectrum = row_filter(cfg.fbp.filter, detector_f, projections, cfg.fbp.exterior)
+    spectrum = row_filter(
+        cfg.fbp.filter, detector_f, projections, cfg.fbp.exterior, separable=separable
+    )
     batch = min(views, projections.shape[0])
     if slices is None:
         # Filtering workspace: padded real batch plus its complex spectrum.

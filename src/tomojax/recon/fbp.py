@@ -28,9 +28,10 @@ from tomojax.core.validation import (
 from tomojax.errors import InvalidParameter
 
 from ._backend import reconstruction_backend
-from ._fbp_filter import RowFilter, continued_rows, detector_columns, ramp_rows, row_filter
+from ._fbp_filter import RowFilter, continued_rows, ramp_rows, row_filter
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
+from ._row_filter import output_columns
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -53,9 +54,6 @@ class FBPConfig:
 
     Parameters
     ----------
-    exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
     filter : str, optional
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     scale : float | None, optional
@@ -66,6 +64,9 @@ class FBPConfig:
     devices : jax.Device or sequence of jax.Device or None, optional
         JAX device or sequence of devices. None uses the current default; multiple
         devices divide the views and each hold the full volume.
+    exterior : {"cylinder", "zero"}, optional
+        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
+        the scan contains the object.
     """
 
     method: ClassVar[Literal["fbp"]] = "fbp"
@@ -182,7 +183,6 @@ def _filter_views(
         filtered = _filter_rows_bounded(rows, view_scale, filter, detector)
         return jnp.pad(filtered, ((0, 0), (pad_v, pad_v), (0, 0))) if pad_v else filtered
     spectrum = filter.spectrum
-    nu = rows.shape[-1]
     continued = continued_rows(rows, detector, filter.radius2)
     rows = jnp.pad(continued, ((0, 0), (pad_v, pad_v), (0, 0)))
     n_u, n_v = 2 * (spectrum.shape[0] - 1), _fft_length(detector.nv)
@@ -204,9 +204,8 @@ def _filter_views(
     oblique = jnp.where((fu == 0) & (fv == 0), length * spectrum[0], jnp.abs(along) * along_window)
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
-    return detector_columns(
-        filtered[:, : detector.nv], nu, detector, (continued.shape[-1] - nu) // 2
-    )
+    first = (continued.shape[-1] - detector.nu) // 2
+    return output_columns(filtered[:, : detector.nv], first, detector.nu)
 
 
 _FILTER_WORKSPACE_BYTES = 128 * 1024**2
@@ -217,7 +216,7 @@ def _filter_rows_bounded(
 ) -> jnp.ndarray:
     """Bound FFT scratch without changing backprojection batches or their sums."""
     n = rows.shape[0]
-    n_fft = 2 * (filter.spectrum.shape[0] - 1)
+    n_fft = 2 * (filter.measured.shape[0] - 1)
     capacity = max(1, _FILTER_WORKSPACE_BYTES // (16 * rows.shape[1] * n_fft))
     if capacity >= n:
         return ramp_rows(rows * view_scale[:, None, None], filter, detector)
@@ -791,7 +790,7 @@ def _plan(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    filter = row_filter(cfg.filter, filter_detector, projections, cfg.exterior)
+    filter = row_filter(cfg.filter, filter_detector, projections, cfg.exterior, separable=separable)
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,

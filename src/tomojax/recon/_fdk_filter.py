@@ -6,6 +6,7 @@ from functools import partial
 import math
 from typing import TYPE_CHECKING
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 
@@ -14,8 +15,6 @@ from tomojax.core.geometry.base import grid_volume_origin
 from ._continuation import Continuation, continued_columns
 
 if TYPE_CHECKING:
-    import jax
-
     from tomojax.core.geometry import ConeBeam, Detector, Grid
 
     from ._continuation import Host
@@ -74,23 +73,6 @@ def filter_operator(
     )
 
 
-def filter_rows(rows: jax.Array, kernel: jax.Array, nu: int, pad_lo: int, pad_hi: int) -> jax.Array:
-    """Ramp-filter continued rows, keeping ``pad_lo``/``pad_hi`` columns beyond the detector.
-
-    Filtered rows extend past the data; an offset detector's backprojection
-    needs that tail on its short side.
-    """
-    n_fft = 2 * (int(kernel.shape[0]) - 1)
-    out = jnp.fft.irfft(jnp.fft.rfft(rows, n=n_fft, axis=-1) * kernel, n=n_fft, axis=-1)
-    first = (rows.shape[-1] - nu) // 2 - pad_lo
-    if first >= 0:
-        return out[..., first : first + pad_lo + nu + pad_hi]
-    # Virtual columns beyond the continuation read the circular transform's tail.
-    return jnp.concatenate(
-        [out[..., n_fft + first :], out[..., : first + pad_lo + nu + pad_hi]], -1
-    )
-
-
 def continued_rows(
     views: jax.Array,
     weights: jax.Array,
@@ -114,3 +96,22 @@ def continued_rows(
     fits = Continuation(np.asarray(distance), nu, pad)
     before, after = fits.continued(partial(jnp.asarray, dtype=rows.dtype), rows, radius2)
     return jnp.concatenate([before, rows, after], axis=-1) * cosine
+
+
+def measured_and_exterior(
+    views: jax.Array,
+    weights: jax.Array,
+    cosine: jax.Array,
+    radius: jax.Array,
+    distance: tuple[float, ...],
+    profiles: jax.Array,
+) -> tuple[jax.Array, jax.Array]:
+    """Weighted measured rows and the two filtered profiles at each view's edge amplitudes."""
+    nu = views.shape[-1]
+    fits = Continuation(np.asarray(distance), nu, nu)
+    rows = views * weights[:, None, :]
+    low, high = fits.amplitudes(
+        jnp.asarray, rows[..., : fits.window], rows[..., -fits.window :], radius
+    )
+    correction = low * profiles[0] + high * profiles[1]
+    return rows * cosine[:, nu : 2 * nu], jnp.swapaxes(correction, 1, 2)

@@ -296,9 +296,8 @@ def test_filter_workspace_tiles_keep_odd_tail_views_and_scales(monkeypatch):
     rows = jnp.asarray(rng.normal(size=(17, 3, 19)).astype(np.float32))
     scales = jnp.linspace(0.3, 1.7, 17)
     # Rows of 19 columns, continued by 19 a side, in a 64-point transform.
-    ramp = jnp.fft.rfftfreq(64)
-    spectrum = module.RowFilter(ramp, jnp.full((3, 1), 0.5, jnp.float32), ramp)
     detector = Detector(19, 3, 1.0, 1.0)
+    spectrum = module.row_filter("ramp", detector, rows)
     reference = module._filter_rows_bounded(rows, scales, spectrum, detector)
     monkeypatch.setattr(module, "_FILTER_WORKSPACE_BYTES", 16 * 3 * 64 * 4)
     tiled = module._filter_rows_bounded(rows, scales, spectrum, detector)

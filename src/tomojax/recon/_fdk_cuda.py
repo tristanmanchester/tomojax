@@ -225,7 +225,7 @@ def _textures(images: Any, width: int) -> tuple[list[Any], int]:
     return textures, start
 
 
-def _filter_into(stream: Any, images: Any, rows: Any, operator: Any) -> None:
+def _filter_into(stream: Any, images: Any, rows: Any, operator: Any, *, add: bool) -> None:
     """``images[k] = operator.T @ rows[k].T``: filtered rows as ``(view, u, v)`` images.
 
     cuBLAS, called directly: XLA would autotune the product for seconds on first use.
@@ -238,12 +238,12 @@ def _filter_into(stream: Any, images: Any, rows: Any, operator: Any) -> None:
     cublas.setPointerMode(handle, cublas.CUBLAS_POINTER_MODE_HOST)
     views, nv, nu = rows.shape
     width = operator.shape[1]
-    one, zero = np.ones(1, np.float32), np.zeros(1, np.float32)
+    one, beta = np.ones(1, np.float32), np.array(add, np.float32)
     # Column-major, images[k] is (nv, width) = rows[k] (nv, nu) @ operator (nu, width).
     cublas.sgemmStridedBatched(
         handle, cublas.CUBLAS_OP_T, cublas.CUBLAS_OP_T, nv, width, nu,
         one.ctypes.data, rows.data.ptr, nu, nv * nu, operator.data.ptr, width, 0,
-        zero.ctypes.data, images.data.ptr, nv, nv * width, views,
+        beta.ctypes.data, images.data.ptr, nv, nv * width, views,
     )  # fmt: skip
 
 
@@ -273,8 +273,10 @@ def _launch(context: Any, out: Any, *buffers: Any, grid: Grid, det: Detector, sc
         finished = cp.cuda.Event(disable_timing=True)
         if len(out) == 3:  # unfiltered rows and the filter's operator
             target, half, images = (cp.asarray(b) for b in out)
-            coeff, rows, operator, initial = (cp.asarray(b) for b in buffers)
-            _filter_into(stream, images, rows, operator)
+            coeff, rows, operator, initial, *extra = (cp.asarray(b) for b in buffers)
+            if extra and images.data.ptr != extra[0].data.ptr:
+                images[...] = extra[0]
+            _filter_into(stream, images, rows, operator, add=bool(extra))
         else:
             target, half = (cp.asarray(b) for b in out)
             coeff, images, initial = (cp.asarray(b) for b in buffers)
@@ -312,6 +314,7 @@ def backproject_cuda(
     scale: float,
     out: jax.Array,
     operator: jax.Array | None = None,
+    exterior: jax.Array | None = None,
 ) -> jax.Array:
     """Add the backprojection of ``(view, nv, width)`` filtered rows to ``out``.
 
@@ -335,5 +338,8 @@ def backproject_cuda(
         call = buffer_callback(launch, shapes, input_output_aliases={2: 0})
         return call(coeff, jnp.swapaxes(filtered, 1, 2), out)[0]
     images = jax.ShapeDtypeStruct((views, width, detector.nv), jnp.float32)
+    if exterior is not None:
+        call = buffer_callback(launch, (*shapes, images), input_output_aliases={3: 0, 4: 2})
+        return call(coeff, filtered, operator, out, exterior)[0]
     call = buffer_callback(launch, (*shapes, images), input_output_aliases={3: 0})
     return call(coeff, filtered, operator, out)[0]
