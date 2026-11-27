@@ -641,6 +641,12 @@ def test_the_command_line_stops_and_resumes(tmp_path: Path, stop: signal.Signals
     assert stopped.wait() == 130
     assert error["kind"] == "canceled"
     assert error["checkpoint"] == str(tmp_path / "run")
+    request = tj.inspect(tmp_path / "run")["checkpoint"]["request"]  # type: ignore[index]
+    assert request == {  # what to run again, and where
+        "command": " ".join(["tomojax", *args, "--progress", "json", "-o", "part.nxs",
+                             "--checkpoint", "run"]),
+        "cwd": str(tmp_path),
+    }  # fmt: skip
     assert (tmp_path / "run" / "checkpoint.json").is_file()
     assert command("-o", "part.nxs", "--checkpoint", "run").wait() == 0
 

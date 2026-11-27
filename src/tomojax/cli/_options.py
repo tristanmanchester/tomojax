@@ -74,7 +74,7 @@ def checkpointed[T](
     from tomojax.core.checkpoint import opened
 
     if request is None:
-        command = shlex.join(["tomojax", *sys.argv[1:]])
+        command = f"{sys.argv[0]} {shlex.join(sys.argv[1:])}"  # argv[0] is "tomojax COMMAND"
         request = {"command": command, "cwd": str(Path.cwd())}
     with opened(path, request=request):
         return operation()
