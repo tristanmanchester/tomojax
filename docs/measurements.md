@@ -451,6 +451,41 @@ Reconstructed image-domain checks across seven facilities (`a3bef73d`, same anal
 
 `Rings` alters off-axis structure far less than Algotom across every facility, though it still exceeds 5% image alteration on ESRF (28.5%), Elettra (8.0%), and native I13 rows (6.7–17.4% across six rows). On finite-reference raw-count simulations on I13 row 1080 (4 seeds), `Rings` + FBP retained 48–83% of the injected image-error RMS; on synthetic calibration-gap controls, calibration-only NRMSE (0.150–0.280) rose to 0.258–0.320 after `Rings`. Constrained inverse feasibility (`694a9ae7`) ensures every fitted response curve has a monotonic inverse (minimum derivative 0.501, closure error ≤ 3.6e−7).
 
+## Flat sets weighted by the views
+
+Flat sets before and after a scan are weighted by what the views show of each ([flat fields](../src/tomojax/corrections/README.md#flat-fields)). Measured at `13adca9f` on 2026-11-27.
+
+### DIAD scans whose flats were taken with the sample stage in the beam
+
+Three half-turn scans of a Diamond DIAD visit (8,000 views of 2160 × 2560, 10 flats before and 10 after) took their flats with part of the compression rig in the beam: the first set is 15–24% darker than the beam everywhere, the second 12–20% darker over the right third of the detector. Each row gives the RMS difference of a full Fourier slice (8 detector rows, `Rings()` on, one V100S) from the same slice corrected with the flats of the neighboring scan, inside 900 px of the axis, in units of that slice's robust spread, for three bands (rows 536, 1076, 1616):
+
+| Scan | Sets interpolated by position | Sets weighted by the views | `flat_weights_from_views` | `later_flat_weight` | `flat_structure_unmatched` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| k11-52557 | 0.224 / 0.361 / 0.251 | 0.103 / 0.197 / 0.135 | 0.9996 | 0.74, 0.74 | 0.0044 |
+| k11-52583 | 1.190 / 1.345 / 1.260 | 0.532 / 0.596 / 0.473 | 1.0 | 0.78, 0.78 | 0.0044 |
+| k11-52615 | 0.251 / 0.375 / 0.243 | 0.117 / 0.156 / 0.073 | 0.9996 | 0.76, 0.76 | 0.0042 |
+
+What remains is broad half rings outside the radius where one set is clear (320–480 px), where both sets are shadowed. On k11-52583, a featureless sample, the direct axial center fit on rows 1076–1084 returns −19.98 px with the sets interpolated by position, −13.67 px with the weights, and −13.75 px with the neighbor's flats.
+
+On the middle band of 40 rotation scans of the same visit, the 21 with clean flats give slices equal to the fourth decimal of the slice's spread and identical center fits with and without the weights (the views set at most 0.5% of them). Seven scans whose flat sets differ by a 0.02% structure move by 0.003–0.016 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
+
+### Simulated flat-field faults
+
+A 512 px slice of a particle-packed disc, 768 views over a half turn, 64 detector rows, 33,000 photons per flat pixel, the same photon noise in every case (CPU). Error is the RMS difference from the slice corrected with each view's true flat, inside the object, in units of that slice's robust spread:
+
+| Case | Flats per set | By position | By the views | By position, `Rings()` | By the views, `Rings()` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Beam rows brighten 1%, level falls 0.5% | 100 | 0.012 | 0.012 | 0.008 | 0.008 |
+| First set shadowed over 60% of the width | 10 | 0.252 | 0.051 | 0.237 | 0.034 |
+| First set shadowed everywhere, second beyond an edge | 10 | 0.342 | 0.149 | 0.303 | 0.107 |
+| Both sets behind different textured walls | 20 | 0.307 | 0.264 | 0.237 | 0.176 |
+| Detector response drifts 2% in fine structure | 100 | 0.013 | 0.014 | 0.008 | 0.009 |
+| Opaque holder over 15% of the second set | 100 | 0.932 | 0.018 | 0.867 | 0.011 |
+
+### Cost
+
+On an 8,000-view 2160 × 2560 DIAD scan with 200 flats and 200 darks (one V100S, 10 CPUs), the flat and dark means take 5.0 s, and 6.6 s with the weights (7.4 s on the first call): the step reads 125 extra views and adds about 2 s. File to full Fourier volume with `Rings()` took 65.8 s and 45.6 s in two runs, a spread larger than the step.
+
 ## Memory
 
 ### Scans larger than the GPU
