@@ -8,25 +8,30 @@ conjugate coverage and cylinder continuation before the ordinary 1-D ramp.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import cached_property
+from functools import cached_property, lru_cache, partial
+import math
 from typing import TYPE_CHECKING
 
+import jax
+import jax.numpy as jnp
 import numpy as np
-from scipy.fft import irfft, rfft
 
 from ._continuation import Continuation, cone_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
 from ._fdk_angles import fan_angles, grouped_angles, ordered_arc, parker_weights
 from ._fdk_coverage import full_turn_weights, reliability
+from ._fdk_filter import cosines
+from ._row_filter import filter_rows
 from .filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from typing import Protocol
 
-    import jax
+    from numpy.typing import NDArray
 
     from tomojax._parameters import Filter
+    from tomojax._typed_arrays import Device
     from tomojax.core.geometry import ConeBeam, Detector, Geometry
 
     class ProjectionBands(Protocol):
@@ -50,8 +55,8 @@ class FanRows:
         # Pad smaller segment footprints symmetrically to the common array shape.
         horizontal = [layout.horizontal for layout in layouts]
         du, dv = min(d.du for d in horizontal), min(d.dv for d in horizontal)
-        nu = max(int(np.ceil(d.nu * d.du / du - 1e-10)) for d in horizontal)
-        nv = max(int(np.ceil(d.nv * d.dv / dv - 1e-10)) for d in horizontal)
+        nu = max(math.ceil(d.nu * d.du / du - 1e-10) for d in horizontal)
+        nv = max(math.ceil(d.nv * d.dv / dv - 1e-10) for d in horizontal)
         virtual = tuple(
             (n, replace(beam, detector_roll=0), replace(d, nu=nu, nv=nv, du=du, dv=dv))
             for (n, beam, _), d in zip(parts, horizontal, strict=True)
@@ -91,7 +96,7 @@ class FanRows:
         order = np.argsort(angles)
         nodes = angles[order]
         measure = np.empty_like(nodes)
-        wrapped = np.r_[nodes[-1] - 2 * np.pi, nodes, nodes[0] + 2 * np.pi]
+        wrapped = np.concatenate((nodes[-1:] - 2 * np.pi, nodes, nodes[:1] + 2 * np.pi))
         measure[order] = (wrapped[2:] - wrapped[:-2]) / 2
         return measure[groups] / repeats[groups]
 
@@ -110,7 +115,7 @@ class FanRows:
             self.parts, self.bounds, self.fans, strict=True
         ):
             pixel = det.du / beam.source_to_detector
-            lo, hi = first[row], stop[row]
+            lo, hi = int(first.item(row)), int(stop.item(row))
             limits.append(
                 [fan[lo] - pixel / 2, fan[max(0, hi - 1)] + pixel / 2, pixel]
                 if hi > lo
@@ -149,9 +154,10 @@ class PermutedRows:
 
     def __getitem__(self, views: slice) -> np.ndarray:
         start = 0
-        batches = []
+        batches: list[np.ndarray] = []
         for layout, count in zip(self.fan.layouts, self.fan.counts, strict=True):
-            lo, hi = max(views.start, start), min(views.stop, start + count)
+            first_view, last_view, _ = views.indices(self.shape[0])
+            lo, hi = max(first_view, start), min(last_view, start + count)
             start += count
             if hi <= lo:
                 continue
@@ -163,8 +169,53 @@ class PermutedRows:
         return batches[0] if len(batches) == 1 else np.concatenate(batches)
 
 
+@partial(jax.jit, static_argnames=("pad_lo", "pad_hi"))
+def _filter_chords(
+    frames: jax.Array,
+    coordinates: jax.Array,
+    angular: jax.Array,
+    measure: jax.Array,
+    cosine: jax.Array,
+    kernel: jax.Array,
+    coefficients: jax.Array | None,
+    tails: jax.Array | None,
+    *,
+    pad_lo: int,
+    pad_hi: int,
+) -> jax.Array:
+    """Interpolate, continue and ramp-filter a batch of horizontal lines on its device."""
+
+    def taps(coord: jax.Array, size: int) -> tuple[jax.Array, jax.Array]:
+        lower = jnp.floor(coord).astype(jnp.int32)
+        t = coord - lower
+        weights = jnp.stack(
+            (
+                -0.5 * t * (1 - t) ** 2,
+                1 - t * t * (2.5 - 1.5 * t),
+                t * (0.5 + t * (2 - 1.5 * t)),
+                -0.5 * t * t * (1 - t),
+            )
+        )
+        indices = lower + jnp.arange(-1, 3)[:, None, None]
+        return jnp.clip(indices, 0, size - 1), weights
+
+    u, wx = taps(coordinates[0], frames.shape[2])
+    v, wy = taps(coordinates[1], frames.shape[1])
+    rows = jnp.zeros((frames.shape[0], *u.shape[1:]), frames.dtype)
+    for i in range(4):
+        for j in range(4):
+            rows += frames[:, v[i], u[j]] * (wy[i] * wx[j])
+    rows *= angular * measure[:, None, None]
+    nu = rows.shape[-1]
+    if coefficients is not None and tails is not None:
+        low = (rows * coefficients[0]).sum(axis=-1, keepdims=True)
+        high = (rows * coefficients[1]).sum(axis=-1, keepdims=True)
+        rows = jnp.pad(rows, ((0, 0), (0, 0), (nu, nu))) + low * tails[0] + high * tails[1]
+    return filter_rows(rows * cosine, kernel, nu, pad_lo, pad_hi)
+
+
 class FilteredChords:
-    """Read and filter view batches of the physical rows a slab needs."""
+    """Filter the measured horizontal chords a volume slab needs in bounded view batches."""
 
     def __init__(
         self,
@@ -179,36 +230,73 @@ class FilteredChords:
         *,
         cylinder: bool,
     ) -> None:
-        self.fan, self.data, self.native, self.first = fan, data, native, first
-        self.pad_lo, self.pad_hi, self.name = pad_lo, pad_hi, name
-        self.samples: list[RowSamples] = []
-        self.fits: list[list[Continuation | None]] = []
-        self.radii: list[list[np.ndarray | None]] = []
-        self.shape = (len(fan.angles[1]), stop - first, fan.parts[0][2].nu + pad_lo + pad_hi)
-        start = 0
-        for index, (count, beam, det) in enumerate(fan.parts):
-            size = count or self.shape[0]
-            u, v = fan.layouts[index].coordinates(det, np.arange(first, stop))
-            measured = fan.layouts[index].measured
-            samples = RowSamples(np.clip(u, 0, measured.nu - 1), np.clip(v, 0, measured.nv - 1))
-            self.samples.append(samples)
-            lo, hi = fan.bounds[index]
-            fits = []
-            for row in range(first, stop):
-                width = int(hi[row] - lo[row])
-                if not cylinder or not width:
-                    fits.append(None)
-                    continue
-                shift = (lo[row] + (width - 1) / 2 - (det.nu - 1) / 2) * det.du
-                own = replace(det, nu=width, center=(det.center[0] + shift, det.center[1]))
-                fits.append(Continuation(cone_axis_distance(beam, own, width), width, width))
-            self.fits.append(fits)
-            self.radii.append(
-                self._radii(samples, fits, start, size, lo[first:stop], hi[first:stop])
-                if cylinder
-                else []
+        self.fan, self.data, self.native = fan, data, native
+        self.first, self.stop = first, stop
+        self.pad_lo, self.pad_hi, self.name, self.cylinder = pad_lo, pad_hi, name, cylinder
+        self.starts = np.concatenate(([0], np.cumsum(fan.counts)))
+        # A scan can carry a separate calibrated panel for each exposure.
+        self.panel = lru_cache(maxsize=2)(self._panel)
+
+    def _panel(self, index: int, device: Device) -> tuple[jax.Array, ...]:
+        _, beam, det = self.fan.parts[index]
+        layout = self.fan.layouts[index]
+        vertical = np.arange(self.first, self.stop)
+        u, v = layout.coordinates(det, vertical)
+        samples = RowSamples(
+            np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
+        )
+        coordinates = np.stack((samples.u, samples.v - self.native))
+        lo, hi = (side[self.first : self.stop] for side in self.fan.bounds[index])
+        mask = (np.arange(det.nu) >= lo[:, None]) & (np.arange(det.nu) < hi[:, None])
+        angular = mask.astype(np.float32)
+        if len(self.fan.parts) == 1 and self.fan.ordering[2]:
+            one = slice(0, 1)
+            for r, row in enumerate(range(self.first, self.stop)):
+                angular[r] *= self.fan.weights(index, row, one)[0] / self.fan.measure[0]
+        pad = det.nu if self.cylinder else 0
+        wide = replace(det, nu=det.nu + 2 * pad)
+        cosine = cosines(((None, beam, wide),), 1)[self.first : self.stop]
+        scale = (self.fan.parts[0][1].magnification / beam.magnification) ** 2
+        kernel = (
+            get_fbp_filter_np(
+                self.name,
+                det.nu + pad + max(self.pad_lo, self.pad_hi),
+                det.du / beam.magnification,
+                "float32",
             )
-            start += size
+            * scale
+        )
+        arrays = [coordinates, angular, cosine, kernel]
+        if self.cylinder:
+            fits: list[Continuation | None] = []
+            for left, right in zip(lo.tolist(), hi.tolist(), strict=True):
+                width = right - left
+                if width:
+                    shift = (left + (width - det.nu) / 2) * det.du
+                    chord = replace(det, nu=width, center=(det.center[0] + shift, det.center[1]))
+                    fits.append(Continuation(cone_axis_distance(beam, chord, width), width, width))
+                else:
+                    fits.append(None)
+            radii = self._radii(
+                samples, fits, self.starts.item(index), self.fan.counts[index], lo, hi
+            )
+            coeff = np.zeros((2, len(vertical), det.nu), np.float32)
+            tails = np.zeros((2, len(vertical), wide.nu), np.float32)
+            for r, (fit, radius) in enumerate(zip(fits, radii, strict=True)):
+                if fit is None or radius is None:
+                    continue
+                left, right = lo.item(r), hi.item(r)
+                basis = np.eye(fit.window)
+                low, high = fit.amplitudes(np.asarray, basis, basis, radius)
+                coeff[0, r, left : left + fit.window] = low.ravel()
+                coeff[1, r, right - fit.window : right] = high.ravel()
+                low, high = fit.tails(
+                    np.asarray, np.ones_like(radius), np.ones_like(radius), radius
+                )
+                tails[0, r, pad + left - fit.pad : pad + left] = low.ravel()
+                tails[1, r, pad + right : pad + right + fit.pad] = high.ravel()
+            arrays.extend((coeff, tails))
+        return tuple(jax.device_put(np.asarray(a, np.float32), device) for a in arrays)
 
     def _radii(
         self,
@@ -216,14 +304,14 @@ class FilteredChords:
         fits: Sequence[Continuation | None],
         start: int,
         size: int,
-        lo: np.ndarray,
-        hi: np.ndarray,
+        lo: NDArray[np.int64],
+        hi: NDArray[np.int64],
     ) -> list[np.ndarray | None]:
         # Only fitted edge pixels enter the radius. Read their interpolation
         # neighbours, accumulating mean squares across the scan in bounded batches.
         widths = np.array([f.window if f else 0 for f in fits])
         row = np.repeat(np.arange(len(fits)), widths)
-        starts = np.r_[0, np.cumsum(widths)]
+        starts = np.concatenate(([0], np.cumsum(widths)))
         index = np.arange(len(row)) - starts[row]
         edges = np.stack((lo[row] + index, hi[row] - widths[row] + index))
         coordinates = RowSamples(samples.u[row, edges], samples.v[row, edges])
@@ -240,51 +328,37 @@ class FilteredChords:
             for f, a, b in zip(fits, starts[:-1], starts[1:], strict=True)
         ]
 
-    def __getitem__(self, views: slice) -> np.ndarray:
-        data = np.asarray(self.data[views], np.float32)
-        result = np.zeros((len(data), *self.shape[1:]), np.float32)
-        start = 0
-        for index, ((_, beam, det), size) in enumerate(
-            zip(self.fan.parts, self.fan.counts, strict=True)
+    def read(self, first: int, stop: int, device: Device) -> jax.Array:
+        batches: list[jax.Array] = []
+        for index in range(
+            int(np.searchsorted(self.starts, first, side="right")) - 1,
+            int(np.searchsorted(self.starts, stop)),
         ):
-            lo, hi = max(start, views.start), min(start + size, views.stop)
-            start += size
-            if hi <= lo:
-                continue
-            group = slice(lo - views.start, hi - views.start)
-            values = self.samples[index].read(data[group], self.native)
-            for r in range(self.shape[1]):
-                row = self.first + r
-                left, right = (side[row] for side in self.fan.bounds[index])
-                width = right - left
-                if width == 0:
-                    continue
-                weights = self.fan.weights(index, row, slice(lo, hi))[:, left:right]
-                measured = values[:, r, left:right] * weights
-                fit = self.fits[index][r]
-                pad = width if fit else 0
-                if fit is not None:
-                    low, high = fit.continued(np.asarray, measured, self.radii[index][r])
-                    measured = np.concatenate((low, measured, high), axis=1)
-                x = (np.arange(left - pad, right + pad) - (det.nu - 1) / 2) * det.du
-                z = (row - (det.nv - 1) / 2) * det.dv
-                center, u, v = beam.detector_frame(det)
-                ray = center - beam.source()
-                normal = abs(ray @ np.cross(u, v))
-                cosine = normal / np.sqrt((x + ray @ u) ** 2 + (z + ray @ v) ** 2 + normal**2)
-                kernel = get_fbp_filter_np(
-                    self.name,
-                    det.nu + pad + max(self.pad_lo, self.pad_hi),
-                    det.du / beam.magnification,
-                    "float32",
+            lo, hi = max(first, self.starts.item(index)), min(stop, self.starts.item(index + 1))
+            views = slice(lo, hi)
+            coords, mask, cosine, kernel, *fit = self.panel(index, device)
+            if len(self.fan.parts) == 1 and self.fan.ordering[2]:
+                angular, measure = mask, self.fan.measure[views]
+            else:
+                weights = np.stack(
+                    [self.fan.weights(index, row, views) for row in range(self.first, self.stop)],
+                    axis=1,
                 )
-                nfft = 2 * (len(kernel) - 1)
-                filtered = np.asarray(
-                    irfft(rfft(np.asarray(measured * cosine, np.float32), n=nfft) * kernel, n=nfft)
+                angular = jax.device_put(weights.astype(np.float32), device) * mask
+                measure = np.ones(hi - lo, np.float32)
+            frames = jax.device_put(self.data[views], device).astype(jnp.float32)
+            batches.append(
+                _filter_chords(
+                    frames,
+                    coords,
+                    angular,
+                    jax.device_put(measure.astype(np.float32), device),
+                    cosine,
+                    kernel,
+                    fit[0] if fit else None,
+                    fit[1] if fit else None,
+                    pad_lo=self.pad_lo,
+                    pad_hi=self.pad_hi,
                 )
-                columns = np.arange(-self.pad_lo, det.nu + self.pad_hi) - (left - pad)
-                result[group, r] = (
-                    filtered[:, columns % nfft]
-                    * (self.fan.parts[0][1].magnification / beam.magnification) ** 2
-                )
-        return result
+            )
+        return batches[0] if len(batches) == 1 else jnp.concatenate(batches)

@@ -221,7 +221,7 @@ def _fdk_batch(
     coeff: jax.Array,
     cosine: jax.Array,
     weights: jax.Array,
-    kernel: jax.Array,
+    kernel: jax.Array | None,
     operator: jax.Array | None,
     radius2: jax.Array | None,
     profiles: jax.Array | None,
@@ -237,6 +237,9 @@ def _fdk_batch(
 ) -> jax.Array:
     # The batch's views of the scan's coefficients and weights.
     coeff = jax.lax.dynamic_slice_in_dim(coeff, start, views.shape[0])
+    backproject = backproject_cuda if cuda else _backproject_jax
+    if kernel is None:
+        return backproject(views, coeff, grid, detector, scale, out)
     weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
     nu = views.shape[-1]
     wide = replace(detector, nu=len(distance) or nu)
@@ -250,22 +253,6 @@ def _fdk_batch(
     if operator is not None:
         return backproject_cuda(rows, coeff, grid, detector, scale, out, operator)
     filtered = filter_rows(rows, kernel, nu, pad_lo, pad_hi)
-    backproject = backproject_cuda if cuda else _backproject_jax
-    return backproject(filtered, coeff, grid, detector, scale, out)
-
-
-@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
-def _backproject_chords(
-    filtered: jax.Array,
-    coeff: jax.Array,
-    out: jax.Array,
-    *,
-    grid: Grid,
-    detector: Detector,
-    scale: float,
-    cuda: bool,
-) -> jax.Array:
-    backproject = backproject_cuda if cuda else _backproject_jax
     return backproject(filtered, coeff, grid, detector, scale, out)
 
 
@@ -303,7 +290,8 @@ class _Prepared:
         """Bound transfers for the current row window, up to the configured view cap."""
         # Prefetch and transfer staging can retain several input buffers.
         # Size these for the measured rows, not the uncropped detector.
-        transfer_views = max(1, (64 * 2**20) // (4 * self.detector.nu * self.detector.nv))
+        mib = 8 if self.fan is not None and not self.fan.permuted else 64
+        transfer_views = max(1, (mib * 2**20) // (4 * self.detector.nu * self.detector.nv))
         return max(1, min(self.views_per_batch, transfer_views))
 
     def coefficients(
@@ -565,7 +553,7 @@ def _accumulate(
             first = views.start + start
             stop = min(first + prep.batch, views.stop)
             if chords is not None:
-                return upload_host(chords[first:stop], target)
+                return chords.read(first, stop, target)
             return _device_views(projections, first, stop, target)
 
         # Copy the next batch to the device while the current one is filtered
@@ -579,36 +567,25 @@ def _accumulate(
                     if index + 1 < len(starts):
                         pending = copier.submit(read, starts[index + 1])
                     with progress.preparing("dispatch cone backprojection", index):
-                        if chords is not None:
-                            out = _backproject_chords(
-                                batch,
-                                share[start : start + batch.shape[0]],
-                                out,
-                                grid=kernel_grid,
-                                detector=virtual,
-                                scale=prep.scale,
-                                cuda=prep.cuda,
-                            )
-                        else:
-                            out = _fdk_batch(
-                                batch,
-                                start,
-                                share,
-                                here.cosine,
-                                here.weights,
-                                here.kernel,
-                                here.operator,
-                                radius,
-                                profiles,
-                                out,
-                                grid=kernel_grid,
-                                detector=virtual,
-                                scale=prep.scale,
-                                cuda=prep.cuda,
-                                pad_lo=prep.pad_lo,
-                                pad_hi=prep.pad_hi,
-                                distance=prep.distance,
-                            )
+                        out = _fdk_batch(
+                            batch,
+                            start,
+                            share,
+                            here.cosine,
+                            here.weights,
+                            here.kernel if chords is None else None,
+                            here.operator,
+                            radius,
+                            profiles,
+                            out,
+                            grid=kernel_grid,
+                            detector=virtual,
+                            scale=prep.scale,
+                            cuda=prep.cuda,
+                            pad_lo=prep.pad_lo,
+                            pad_hi=prep.pad_hi,
+                            distance=prep.distance,
+                        )
                     # Keep only this batch and its prefetched successor live.
                     out.block_until_ready()
                 yield out

@@ -2,6 +2,7 @@
 
 from dataclasses import replace
 
+import jax
 import numpy as np
 import pytest
 
@@ -38,7 +39,10 @@ def test_pose_carried_angles_reconstruct_the_same_measurements(method, magnitude
     expected = tj.reconstruct(direct, method, config=config).volume
     actual = tj.reconstruct(posed, method, config=config).volume
     # The float32 composed poses can move interpolation coordinates by a few ulps.
-    assert np.linalg.norm(actual - expected) < 5e-6 * np.linalg.norm(expected)
+    # CUDA texture coordinates have eight fractional bits; crossing a bin in
+    # a few voxels amplifies these coordinate ulps.
+    tolerance = 3e-5 if method == "fbp" and jax.default_backend() == "gpu" else 5e-6
+    assert np.linalg.norm(actual - expected) < tolerance * np.linalg.norm(expected)
 
 
 @pytest.mark.parametrize(("nominal", "actual"), [(170, 215), (215, 170)])
