@@ -3994,7 +3994,8 @@
                 "compress"
               ],
               "carries": "ImageJ reads voxel size, origin and value calibration in classic TIFF. Bio-Formats reads voxel size in classic and BigTIFF.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": false
             },
             {
               "name": "OME-TIFF",
@@ -4012,7 +4013,8 @@
                 "compress"
               ],
               "carries": "Bio-Formats reads voxel sizes. Classic ImageJ and ITK read the in-plane sizes.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": false
             },
             {
               "name": "TIFF slices",
@@ -4027,7 +4029,8 @@
                 "compress"
               ],
               "carries": "ImageJ, Bio-Formats and ITK read the in-plane pixel size.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": true
             },
             {
               "name": "Raw",
@@ -4043,7 +4046,8 @@
                 "axis"
               ],
               "carries": "The adjacent JSON record gives axes, units and value scaling.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": true
             },
             {
               "name": "MetaImage",
@@ -4059,7 +4063,8 @@
                 "axis"
               ],
               "carries": "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": true
             },
             {
               "name": "AmiraMesh",
@@ -4074,7 +4079,8 @@
                 "binning"
               ],
               "carries": "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. The bounding box records placement.",
-              "spatial_only": true
+              "spatial_only": true,
+              "resumable": false
             },
             {
               "name": "NeXus NXdata",
@@ -4093,7 +4099,8 @@
                 "compress"
               ],
               "carries": "silx reads physical coordinates and stored samples. The signal's offset and scaling factor recover physical values.",
-              "spatial_only": false
+              "spatial_only": false,
+              "resumable": false
             },
             {
               "name": "OME-Zarr 0.5",
@@ -4111,7 +4118,8 @@
                 "compress"
               ],
               "carries": "ome-zarr-py reads the axes, voxel size and origin of every level. The tomojax attribute holds value scaling.",
-              "spatial_only": true
+              "spatial_only": true,
+              "resumable": false
             }
           ]
         },

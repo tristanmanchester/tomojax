@@ -59,6 +59,10 @@ A run prints the same plan in one line as it starts. If it then runs out of memo
 tomojax reconstruct scan.nxs -o recon.nxs --method cgls --watch-dir watch
 ```
 
+## Resume an export
+
+Rerun the same export command after an interruption. Slice directories, raw and MetaImage exports from an unchanged file continue from the last synced slab. The partial directory lives beside the destination. Reconnect the destination drive before retrying. See [Continue an interrupted export](export.md#continue-an-interrupted-export).
+
 ## Resume a run after a kill
 
 Pass `checkpoint=DIR` to `tj.reconstruct`, `tj.reconstruct_slabs`, or `tj.align`, `--checkpoint DIR` to `tomojax reconstruct` and `tomojax align`, or `checkpoint` to the worker's and MCP server's `reconstruct`, `reconstruct_slabs` and `align`, to save a run's state in `DIR`. You can also set `checkpoint = "DIR"` in a `--config` TOML file. If the run is killed by a scheduler time limit, preemption, or a node failure, run the same call again with the same directory, input, and settings. TomoJAX resumes from the saved state and returns what an uninterrupted run returns. `DIR` is created if absent and deleted when the call returns (for CLI commands, after all output files are written).

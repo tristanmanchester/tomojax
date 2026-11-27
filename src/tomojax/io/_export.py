@@ -23,7 +23,7 @@ from tomojax.core.input_files import check_output, publishing as protect_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.io import _export_formats as formats
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
-from tomojax.io._export_formats import Document, Format, format_for, slice_path
+from tomojax.io._export_formats import Document, Format, format_for
 from tomojax.io._export_resume import Journal, continuing, partial_path, prior_state
 
 
@@ -266,7 +266,7 @@ class ExportPlan:
         if self.resume_request is None:
             yield self._write(staged)
             return
-        with continuing(self.path, self.resume_request, asdict(self.values)) as journal:
+        with continuing(self.path, self.resume_request, self.values) as journal:
             folder = journal.root / "files"
             with protect_inputs(folder):
                 folder.mkdir(exist_ok=True)
@@ -274,7 +274,7 @@ class ExportPlan:
             receipt = self._write(primary, journal)
             expected = self.resume_request["source"]
             identity = self.selection.source.identity
-            if isinstance(expected, list) and (identity is None or tuple(expected) != identity()):
+            if expected is not None and (identity is None or list(identity() or ()) != expected):
                 raise InvalidParameter(
                     "source", "the source file changed during export; rerun the export"
                 )
@@ -294,7 +294,7 @@ class ExportPlan:
                 self.format.paths(primary), self.format.paths(staged), strict=True
             ):
                 if source.is_dir():
-                    shutil.copytree(source, target, copy_function=os.link)
+                    _ = shutil.copytree(source, target, copy_function=os.link)
                 else:
                     os.link(source, target)
             yield receipt
@@ -361,7 +361,7 @@ class ExportPlan:
                         install_export(
                             installs, self.format, path, force=force, undo=undo, cleanup=cleanup
                         )
-                        undo.pop_all()
+                        _ = undo.pop_all()
                     return receipt
             except OSError as exc:
                 if exc.errno != errno.ENOSPC:
@@ -372,6 +372,45 @@ class ExportPlan:
                     f"export {path} stopped after {written} bytes; "
                     f"{shutil.disk_usage(path.parent).free} bytes free",
                 ) from exc
+
+
+def _resume_request(
+    selection: Selection,
+    fmt: Format,
+    metadata: Document,
+    dtype: str | None,
+    value_range: Sequence[float] | None,
+    binning: int,
+    compress: bool | None,
+) -> Document | None:
+    """Identify the selected bytes, registration and encoding of a restartable payload."""
+    if not fmt.resumable:
+        return None
+    source = selection.source
+    identity = source.identity() if source.identity else None
+    registration: Document = {
+        "array": array_record(
+            source.shape, source.dtype.str, source.axes, source.unit, source.domain
+        ),
+        "record": {k: v for k, v in metadata.items() if k != "provenance"},
+    }
+    return {
+        "registration": hashlib.sha256(
+            msgspec.json.encode(registration, order="sorted")
+        ).hexdigest(),
+        "source": list(identity) if identity is not None else None,
+        "member": source.name,
+        "shape": list(source.shape),
+        "input_dtype": source.dtype.str,
+        "domain": source.domain,
+        "format": fmt.name,
+        "dtype": dtype,
+        "bounds": [list(pair) for pair in selection.bounds],
+        "binning": binning,
+        "order": list(selection.order),
+        "range": list(value_range) if value_range is not None else None,
+        "compress": compress,
+    }
 
 
 def plan_export(
@@ -433,38 +472,12 @@ def plan_export(
     metadata = (
         source.record(selection.bounds, binning) if callable(source.record) else source.record
     )
-    resume_request = None
-    previous = None
-    if fmt.resumable:
-        identity = source.identity() if source.identity else None
-        registration = {
-            "array": array_record(
-                source.shape, source.dtype.str, source.axes, source.unit, source.domain
-            ),
-            "record": {k: v for k, v in metadata.items() if k != "provenance"},
-        }
-        resume_request = {
-            "registration": hashlib.sha256(
-                msgspec.json.encode(registration, order="sorted")
-            ).hexdigest(),
-            "source": list(identity) if identity is not None else None,
-            "member": source.name,
-            "shape": list(source.shape),
-            "input_dtype": source.dtype.str,
-            "domain": source.domain,
-            "format": fmt.name,
-            "dtype": dtype,
-            "bounds": [list(pair) for pair in selection.bounds],
-            "binning": binning,
-            "order": list(selection.order),
-            "range": list(value_range) if value_range is not None else None,
-            "compress": compress,
-        }
-        previous = prior_state(path, resume_request)
+    resume_request = _resume_request(
+        selection, fmt, metadata, dtype, value_range, binning, compress
+    )
+    previous = prior_state(path, resume_request) if resume_request is not None else None
     values = (
-        Values(**previous.values)
-        if previous is not None
-        else Values.resolve(selection, dtype, value_range)
+        previous.values if previous is not None else Values.resolve(selection, dtype, value_range)
     )
     array = {
         "name": source.name,
@@ -472,13 +485,7 @@ def plan_export(
     }
     nbytes = math.prod(selection.shape) * np.dtype(values.dtype).itemsize
     paths = fmt.paths(path)
-    slices = fmt.layout == "directory" and fmt.ordered_pages
-    files = {
-        "count": selection.shape[0] + 1 if slices else len(paths),
-        "first": str(slice_path(path, 0) if slices else paths[0]),
-        "last": str(slice_path(path, selection.shape[0] - 1) if slices else paths[-1]),
-        "record": str(fmt.record_path(path)),
-    }
+    files = fmt.file_summary(path, selection.shape[0])
     selection_info = {
         "source_shape": list(source.shape),
         "axes": [a.name for a in selection.axes],

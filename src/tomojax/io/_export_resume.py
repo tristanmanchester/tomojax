@@ -12,61 +12,15 @@ from pathlib import Path
 import shutil
 from time import monotonic
 
-import h5py
-import numpy as np
+import msgspec
 
 from tomojax.core.files import replaced_when_complete
-from tomojax.core.host_volume import mapped_storage
 from tomojax.core.input_files import check_output, publishing
 from tomojax.errors import Canceled, InvalidParameter
+from tomojax.io._export_data import Values
 
 INTERVAL = 2.0
 _MARKER = "tomojax-export-1"
-
-
-def mapped_identity(pixels: object) -> tuple[int, ...] | None:
-    """Identify the mapped bytes, including a sliced view's actual offset and strides."""
-    mapping = mapped_storage(pixels)
-    if (
-        not isinstance(pixels, np.ndarray)
-        or mapping is None
-        or mapping.filename is None
-        or mapping.mode == "c"
-    ):
-        return None
-    try:
-        stat = Path(mapping.filename).stat()
-        with Path("/proc/self/maps").open() as regions:
-            for line in regions:
-                bounds, _, offset, device, inode, *_ = line.split(maxsplit=5)
-                low, high = (int(value, 16) for value in bounds.split("-"))
-                if low <= pixels.ctypes.data < high:
-                    major, minor = (int(value, 16) for value in device.split(":"))
-                    if os.makedev(major, minor) == stat.st_dev and int(inode) == stat.st_ino:
-                        return (
-                            stat.st_dev,
-                            stat.st_ino,
-                            stat.st_size,
-                            stat.st_mtime_ns,
-                            int(offset, 16) + pixels.ctypes.data - low,
-                            *pixels.strides,
-                        )
-                    break
-    except OSError:
-        pass
-    return None
-
-
-def hdf5_identity(data: h5py.Dataset) -> tuple[int, ...] | None:
-    """Identify one HDF5 signal. Several backing files need a fresh export."""
-    file = data.file
-    if file.driver != "sec2" or data.is_virtual or data.id.get_create_plist().get_external_count():
-        return None
-    stat = os.fstat(file.id.get_vfd_handle())
-    offset = data.id.get_offset()
-    if offset is None:
-        offset = h5py.h5o.get_info(data.id).addr
-    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, offset
 
 
 def partial_path(path: Path) -> Path:
@@ -84,8 +38,8 @@ def sync(path: Path) -> None:
 @dataclass
 class State:
     marker: str
-    request: dict
-    values: dict
+    request: dict[str, object]
+    values: Values
     planes: int = 0
     pages: int = 0
     below: int = 0
@@ -124,19 +78,19 @@ def saved(root: Path) -> State | None:
             raise InvalidParameter("path", f"{root} contains files without an export journal")
         return None
     try:
-        state = State(**json.loads(journal.read_bytes()))
+        state = msgspec.json.decode(journal.read_bytes(), type=State)
         if state.marker == _MARKER:
             return state
-    except (TypeError, ValueError):
+    except msgspec.DecodeError:
         pass
     raise InvalidParameter("path", f"{journal} is not a recognized export journal")
 
 
-def matching(state: State | None, request: dict) -> bool:
+def matching(state: State | None, request: dict[str, object]) -> bool:
     return state is not None and request["source"] is not None and state.request == request
 
 
-def prior_state(path: Path, request: dict) -> State | None:
+def prior_state(path: Path, request: dict[str, object]) -> State | None:
     with locked(path, create=False) as root:
         state = saved(root) if root else None
         return state if matching(state, request) else None
@@ -157,7 +111,9 @@ class Journal:
         for parent in {p.parent for p in self.dirty}:
             sync(parent)
         with replaced_when_complete(self.root / "journal.json", "export journal") as temporary:
-            temporary.write_text(json.dumps(asdict(self.state), allow_nan=False), encoding="utf-8")
+            _ = temporary.write_text(
+                json.dumps(asdict(self.state), allow_nan=False), encoding="utf-8"
+            )
         sync(self.root)
         self.dirty.clear()
         self.last = monotonic()
@@ -172,7 +128,7 @@ class Journal:
 
 
 @contextmanager
-def continuing(path: Path, request: dict, values: dict) -> Iterator[Journal]:
+def continuing(path: Path, request: dict[str, object], values: Values) -> Iterator[Journal]:
     with locked(path, create=True) as root:
         assert root is not None
         state = saved(root)

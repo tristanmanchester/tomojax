@@ -6,6 +6,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
 import hashlib
+import os
 from os import PathLike
 from pathlib import Path
 from typing import cast
@@ -182,6 +183,69 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     }, geometry.grid
 
 
+def mapped_identity(pixels: object) -> tuple[int, ...] | None:
+    """Identify the mapped bytes, including a sliced view's actual offset and strides."""
+    from tomojax.core.host_volume import mapped_storage
+
+    mapping = mapped_storage(pixels)
+    if (
+        not isinstance(pixels, np.ndarray)
+        or mapping is None
+        or mapping.filename is None
+        or mapping.mode == "c"
+    ):
+        return None
+    try:
+        stat = Path(mapping.filename).stat()
+        with Path("/proc/self/maps").open() as regions:
+            for line in regions:
+                bounds, _, offset, device, inode, *_ = line.split(maxsplit=5)
+                low, high = (int(value, 16) for value in bounds.split("-"))
+                if low <= pixels.ctypes.data < high:
+                    major, minor = (int(value, 16) for value in device.split(":"))
+                    if os.makedev(major, minor) == stat.st_dev and int(inode) == stat.st_ino:
+                        return (
+                            stat.st_dev,
+                            stat.st_ino,
+                            stat.st_size,
+                            stat.st_mtime_ns,
+                            int(offset, 16) + pixels.ctypes.data - low,
+                            *pixels.strides,
+                        )
+                    break
+    except OSError:
+        pass
+    return None
+
+
+def hdf5_identity(data: h5py.Dataset) -> tuple[int, ...] | None:
+    """Identify one HDF5 signal. Several backing files need a fresh export."""
+    file = data.file
+    if file.driver != "sec2" or data.is_virtual or data.id.get_create_plist().get_external_count():
+        return None
+    stat = os.fstat(file.id.get_vfd_handle())
+    offset = data.id.get_offset()
+    if offset is None:
+        offset = h5py.h5o.get_info(data.id).addr
+    return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, offset
+
+
+def source_identity(pixels: object) -> tuple[int, ...] | None:
+    if isinstance(pixels, PinnedFrames | Hdf5Frames | MatlabFrames):
+        stack = pixels.stored if isinstance(pixels, MatlabFrames) else pixels
+        if isinstance(stack, PinnedFrames):
+            generation = hdf5_identity(stack.signal)
+        else:
+            with open_input_hdf5(Path(stack.path)) as file:
+                field = file[stack.dataset]
+                generation = hdf5_identity(field) if isinstance(field, h5py.Dataset) else None
+        if generation is None:
+            return None
+        views = hashlib.blake2b(stack.frames.tobytes(), digest_size=8).digest()
+        return (*generation, stack.first_row, stack.first_col, int.from_bytes(views))
+    return mapped_identity(pixels)
+
+
 def export_source(
     item: Reconstruction | Simulation | Alignment | Scan, *, samples: ProjectionPixels | None = None
 ) -> ExportSource:
@@ -201,7 +265,6 @@ def export_source(
         dataset = result_dataset(item)
         record = metadata_record(replace_dataset(dataset, volume=None).to_nxtomo_metadata())
     from tomojax.core.host_volume import mapped_storage, release_planes
-    from tomojax.io._export_resume import hdf5_identity, mapped_identity
 
     mapped = mapped_storage(pixels)
     if mapped is not None and mapped.filename is not None:
@@ -223,21 +286,6 @@ def export_source(
             release_planes(pixels, region[0].start, region[0].stop)
         return data
 
-    def identity() -> tuple[int, ...] | None:
-        if isinstance(pixels, PinnedFrames | Hdf5Frames | MatlabFrames):
-            stack = pixels.stored if isinstance(pixels, MatlabFrames) else pixels
-            if isinstance(stack, PinnedFrames):
-                generation = hdf5_identity(stack.signal)
-            else:
-                with open_input_hdf5(Path(stack.path)) as file:
-                    field = file[stack.dataset]
-                    generation = hdf5_identity(field) if isinstance(field, h5py.Dataset) else None
-            if generation is None:
-                return None
-            views = hashlib.blake2b(stack.frames.tobytes(), digest_size=8).digest()
-            return (*generation, stack.first_row, stack.first_col, int.from_bytes(views))
-        return mapped_identity(pixels)
-
     return ExportSource(
         member.name,
         pixels.shape,
@@ -247,7 +295,7 @@ def export_source(
         member.domain,
         read,
         record,
-        identity,
+        partial(source_identity, pixels),
     )
 
 
@@ -317,8 +365,6 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
                 return values
             selection = tuple(region["zyx".index(a)] for a in order)
             return np.asarray(data[selection]).transpose(*(order.index(a) for a in "zyx"))
-
-        from tomojax.io._export_resume import hdf5_identity
 
         source = ExportSource(
             name,

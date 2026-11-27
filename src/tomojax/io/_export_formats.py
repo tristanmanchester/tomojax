@@ -90,6 +90,43 @@ def slice_path(path: Path, i: int) -> Path:
     return path / f"{path.name}_{i:05d}.tif"
 
 
+def _slice_directory(
+    path: Path,
+    blocks: Blocks,
+    stack: Iterator[np.ndarray],
+    record: str,
+    compression: str | None,
+    resolution: tuple[float, float],
+    *,
+    physical: bool,
+) -> None:
+    journal = blocks.journal
+    with publishing(path) if journal else nullcontext():
+        path.mkdir(exist_ok=journal is not None)
+    transposed = blocks.selection.order[0] != 0
+    first = journal.state.pages if journal and transposed else blocks.first
+    for i, plane in enumerate(stack, first):
+        page = slice_path(path, i)
+        with publishing(page) if journal else nullcontext():
+            tifffile.imwrite(
+                page,
+                plane,
+                photometric="minisblack",
+                metadata=None,
+                compression=compression,
+                resolution=resolution,
+                resolutionunit="CENTIMETER" if physical else "NONE",
+                maxworkers=1,
+            )
+        if journal:
+            journal.dirty.add(page)
+            if transposed:
+                journal.page(i + 1)
+    record_path = path / f"{path.name}.json"
+    with publishing(record_path) if journal else nullcontext():
+        record_path.write_text(record, encoding="utf-8")
+
+
 def tiff(
     path: Path, blocks: Blocks, record: Document, *, dialect: Literal["imagej", "ome", "slices"]
 ) -> None:
@@ -109,31 +146,7 @@ def tiff(
     text = json.dumps(record, ensure_ascii=True, allow_nan=False)
     stack = pages(path, blocks)
     if dialect == "slices":
-        journal = blocks.journal
-        with publishing(path) if journal else nullcontext():
-            path.mkdir(exist_ok=journal is not None)
-        transposed = blocks.selection.order[0] != 0
-        first = journal.state.pages if journal and transposed else blocks.first
-        for i, plane in enumerate(stack, first):
-            page = slice_path(path, i)
-            with publishing(page) if journal else nullcontext():
-                tifffile.imwrite(
-                    page,
-                    plane,
-                    photometric="minisblack",
-                    metadata=None,
-                    compression=compression,
-                    resolution=resolution,
-                    resolutionunit="CENTIMETER" if physical else "NONE",
-                    maxworkers=1,
-                )
-            if journal:
-                journal.dirty.add(page)
-                if transposed:
-                    journal.page(i + 1)
-        record_path = path / f"{path.name}.json"
-        with publishing(record_path) if journal else nullcontext():
-            record_path.write_text(text, encoding="utf-8")
+        _slice_directory(path, blocks, stack, text, compression, resolution, physical=physical)
         return
     metadata: dict[str, object] = {"axes": "ZYX"}
     if dialect == "imagej":
@@ -268,6 +281,16 @@ class Format:
             return (path,)
         payload = (path.with_suffix(self.payload_suffix),) if self.payload_suffix else ()
         return (*payload, path, sidecar(path))
+
+    def file_summary(self, path: Path, planes: int) -> Document:
+        paths = self.paths(path)
+        slices = self.layout == "directory" and self.ordered_pages
+        return {
+            "count": planes + 1 if slices else len(paths),
+            "first": str(slice_path(path, 0) if slices else paths[0]),
+            "last": str(slice_path(path, planes - 1) if slices else paths[-1]),
+            "record": str(self.record_path(path)),
+        }
 
     def record_path(self, path: Path) -> Path:
         if self.record_reader:

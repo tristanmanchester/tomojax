@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Interrupted TIFF slice directories, raw files and MetaImage exports can resume from synced slabs when the input file and options match. The CLI, Python, worker and MCP use the same journal and destination lock.
+
 - Export scan projections or sinograms with their measured angles, poses and acquisition positions. Select detector windows and views before export through Python, the CLI, the worker or MCP.
 
 - FDK, parallel FBP, and Fourier inversion filter rolled measurements along physical horizontal detector lines. Quarter turns exchange rows and columns without interpolation.
