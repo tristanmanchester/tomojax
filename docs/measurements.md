@@ -4,7 +4,7 @@ Measured speed, accuracy, and memory results behind the TomoJAX guides, includin
 
 ## Test environment
 
-Unless noted otherwise, measurements run on Linux with one NVIDIA GeForce RTX 4070 Laptop GPU (Ada, 8 GB), Python 3.12, JAX 0.11.2, ASTRA 2.5.0, TIGRE 3.1.3, TomoPy 1.15.2, and tomocupy 1.1.0. Multi-GPU runs use four H100 80 GB GPUs on a single Modal host.
+Unless noted otherwise, measurements run on Linux with one NVIDIA GeForce RTX 4070 Laptop GPU (Ada, 8 GB), Python 3.12, JAX 0.11.2, ASTRA 2.5.0, TIGRE 3.1.3, TomoPy 1.15.2, and tomocupy 1.1.0. Cluster and multi-GPU runs use Tesla V100S 32 GB nodes (one or four PCIe GPUs), RTX PRO 6000 Blackwell 96 GB nodes, or four H100 80 GB GPUs on a single Modal host where noted.
 
 - **Cold time:** fresh process through the first result, including imports, compilation, and host-device transfers (filesystem cache not cleared).
 - **Warm time:** repeated call in the same process.
@@ -288,6 +288,34 @@ The smooth motion prior scales linearly in view count (`3aae66e`, FP64): factori
 
 On axial parallel scans, per-view rotations are weakly determined (`a64ea92e`): across 13 axial watch/rock cases, `fit=("translations", "rotations")` beat translations alone on 7, tied on 1, and was up to 27% worse on 5.
 
+### Full-scale native-detector alignment
+
+Measured 2026-11-27 on commit `ea6fab6f` (faster host reading and binning, skipping precision-array allocation and pixel counting on all-finite slabs and summing contiguous rows in `float64` before column reduction) against the previous build. Runs used default `tj.align` (`resolution=320`, 16-million-voxel cap, 12 coarse / 8 fine Gauss-Newton steps, checkpointing enabled) on Tesla V100S 32 GiB or RTX PRO 6000 Blackwell 96 GB nodes with 10 CPUs per GPU. Wall time starts after native file decoding or twin generation; arrows run from the previous build to `ea6fab6f`. Every output image and pose table matched its baseline byte for byte.
+
+| Fit (scan and dimensions) | GPU | Returned grid (coarse / fine bin) | Read and bin (s) | Wall time (s) | Peak host RSS / driver / live JAX (GiB) |
+| --- | --- | --- | ---: | ---: | ---: |
+| DIAD `k11-52544` translations (8,000 × 2,160 × 2,560) | V100S | 256 × 256 × 216 (16 / 8) | 455.0 → 133.0 | 1,438.5 → 1,072.6 | 173.1 / 17.19 / 12.59 |
+| DIAD `k11-52544` translations + rotations (8,000 × 2,160 × 2,560) | Blackwell | 256 × 256 × 216 (16 / 8) | 277.7 → 51.0 | 1,201.7 → 960.4 | 174.0 / 34.56 / 15.23 |
+| K11 `54013` ruby sphere, center + tilt (1,441 × 540 × 640, 2.16 µm) | V100S | 352 × 352 × 117 (4 / 2) | 13.3 → 4.0 | 823.8 → 783.3 | 4.8 / 4.43 / 3.13 |
+| FIPS Walnut 1 translations, warm (3 orbits, 3,600 × 972 × 768) | Blackwell | 251 × 251 × 251 (8 / 4) | 26.1 → 4.7 | 152.0 → 140.2 | 14.6 / 8.81 / 4.41 |
+| Parallel twin, translations + rotations (3,001 × 2,160 × 2,560) | V100S | 256 × 256 × 216 (16 / 8) | 182.9 → 68.7 | 1,598.1 → 1,488.3 | 66.5 / 8.43 / 6.47 |
+| Laminography twin, tilt + translations (1,441 × 540 × 640) | Blackwell | 214 × 214 × 180 (4 / 2) | 8.8 → 2.5 | 151.2 → 144.5 | 5.0 / 4.79 / 3.03 |
+| Laminography twin, full detector, tilt + translations (3,001 × 2,160 × 2,560) | Blackwell | 256 × 256 × 216 (16 / 8) | 109.9 → 31.8 | 420.5 → 342.6 | 66.8 / 8.79 / 5.96 |
+| Cone twin, translations + rotations (3,201 × 2,028 × 2,028) | Blackwell | 226 × 226 × 226 (14 / 7) | 98.6 → 28.9 | 206.5 → 138.7 | 53.7 / 8.79 / 6.96 |
+
+For the DIAD translation fit on V100S, wall time dropped 25% (24.0 to 17.9 minutes; including 140 / 149 s of native file decoding and flat/dark correction, 26.3 to 20.4 minutes). The native `float32` DIAD stack alone occupies 164.8 GiB in host RAM, accounting for most of the 173.1–174.0 GiB host RSS peak. Alignment runs on one GPU even when multiple GPUs are visible (on two visible 96 GB Blackwell cards, the solve ran on GPU 0 using 9,018 MiB while the second card held a 560 MiB context). In Nsight Systems traces of the second fine step on Blackwell, ray kernels (forward, adjoint, and pose derivatives) accounted for 72.79 s of an 84.04 s trace span (75.83 s GPU busy) on DIAD translations + rotations, and 5.89 s of a 9.47 s span (7.53 s GPU busy) on Walnut translations.
+
+Accuracy and held-out checks on the same runs:
+
+- **Known-pose native-pitch twins** (analytic Gaussian-mixture line integrals with seeded drift, slips, random translations, 0.1° angular jitter, column offsets of 0.002 SD, and 20,000-photon noise; landmark errors in native detector pixels after removing one rigid gauge):
+  - Parallel (3,001 × 2,160 × 2,560): landmark RMS fell from 3.994 to **0.9289 px** (worst view 2.829 px; image relative L2 **0.012631**).
+  - Laminography (1,441 × 540 × 640): landmark RMS fell from 10.281 to **0.4802 px** (worst view 1.307 px; image relative L2 **0.070253**; fitted tilt 34.4957° vs 34.5° truth).
+  - Laminography, full detector (3,001 × 2,160 × 2,560): landmark RMS fell from 39.497 to **1.8857 px** (worst view 5.986 px; image relative L2 **0.061577**; fitted tilt 34.4929° vs 34.5° truth, with simulated per-view angular jitter unmodeled).
+  - Cone (3,201 × 2,028 × 2,028): landmark RMS fell from 3.742 to **0.6167 px** (worst view 1.957 px; image relative L2 **0.012637**).
+- **K11 `54013` ruby sphere:** from −30.9° nominal tilt, `fit=("center", "tilt")` returned −35.1666° and center +2.9491 native px, within 0.144° and 0.290 px of an independent sinusoid track of the sphere (35.3102° and +2.659 px). Even/odd half-fits at `resolution=160` gave 35.1239° and 35.1388° and lowered FBP half-plane disagreement from 6.27% to 5.15%.
+- **FIPS Walnut 1 (3 native orbits):** relative to orbit 1, `fit="translations"` recovered orbit heights −0.385 and −0.753 mm against the authors' −0.397 and −0.794 mm (0.0245 mm RMS across orbit means). On the working grid, FDK relative L2 error on occupied support fell from 0.26347 (original geometry) to 0.10753 (aligned), compared with 0.10668 for the authors' corrected geometry.
+- **DIAD `k11-52544` battery (where motion fits hurt):** even and odd half-fits agreed closely in fitted shifts (0.066 and 0.009 native px RMS) and Euler angles (0.010° and 0.011° RMS), yet both fits worsened 120-view held-out FBP predictions (even / odd line-integral RMS rose from 0.02536 / 0.02533 to 0.04680 / 0.04680 for translations and to 0.06980 / 0.06939 for translations + rotations; fixed-image RMS also rose) and left compression-platen step widths unsharpened (median 10–90% width 5.60 nominal vs 5.61 with translations and 5.70 working voxels with rotations).
+
 ### Axial rotation center
 
 Measured 2026-11-26 (`5d1a909f`; seeded `method="joint"` and least-negative FBP baselines from `4d1bc781`) comparing default `tj.align(scan, fit="center")` (direct full-sinogram and opposing-ray measurement on CPU) against `method="opposite-views"`, `method="joint"` (initialized from the measured center on axial parallel scans), and a least-negative FBP sweep. Errors are absolute deviations from the true physical center in native detector pixels.
@@ -482,7 +510,7 @@ Set `FourierConfig(slices_per_batch=8, backend="cupy")` to trade slight throughp
 
 ## Several GPUs
 
-Measured 2026-10-08 (`a3a925b`) on four H100 80 GB GPUs on Modal: 20 nonnegative FISTA iterations on the binned FIPS walnut (3 orbits, every 4th view = 900 views of 486 × 384, 501³ grid) using `devices=`. Warm (second-call) times:
+Measured 2026-10-08 (`a3a925b`, before shared CUDA TV slabs and ray-scheduled axial backprojection) on four H100 80 GB GPUs connected over NVLink on Modal: 20 nonnegative FISTA iterations on the binned FIPS walnut (3 orbits, every 4th view = 900 views of 486 × 384, 501³ grid) using `devices=`. Warm (second-call) times:
 
 | GPUs | Warm time (s) | Cold time (s) | Speedup | Diff vs 1 GPU (rel. L2) |
 | ---: | ---: | ---: | ---: | ---: |
@@ -490,7 +518,7 @@ Measured 2026-10-08 (`a3a925b`) on four H100 80 GB GPUs on Modal: 20 nonnegative
 | 2 | 13.6 | 15.8 | 1.83× | 2.9e-7 |
 | 4 | 7.4 | 9.5 | 3.34× | 2.9e-7 |
 
-Volume-sized solver updates stay constant per GPU and a 0.5 GB volume reduction crosses NVLink once per iteration.
+In that run, a 0.5 GB volume reduction crossed NVLink once per iteration and each GPU ran the full TV update. Current four-GPU scaling with ray-scheduled axial backprojection and slab-shared CUDA TV is measured on four PCIe V100S cards in [single-GPU, host-slab, and multi-GPU axial CGLS and FISTA-TV](#single-gpu-host-slab-and-multi-gpu-axial-cgls-and-fista-tv) below.
 
 ## Large axial synchrotron scans (V100S and Blackwell)
 
@@ -547,14 +575,26 @@ In `tools/check_numerical_equivalence.py` on Shepp–Logan FBP (5 repeats), pack
 
 ### Single-GPU, host-slab, and multi-GPU axial CGLS and FISTA-TV
 
-Measured on commit `1db61b18` on central rows of K11-52567 (2560 columns, warm runs on one node with four Tesla V100S and 40 CPUs):
+Measured 2026-11-27 (`4fcf452f`–`9499c200`, compared against the previous build) on Diamond K11-52567: 2,000 views of 2,560 columns, corrected detector rows 1048–1111 (`64 × 2560 × 2560` = 419,430,400 voxels), 50 warm iterations after a cold run in a fresh process (timed from `tj.reconstruct` through materializing the NumPy volume, scan ingest excluded). All runs used one exclusive node with four Tesla V100S 32 GB GPUs (two cards per CPU socket, cross-socket communication over PCIe) and 40 CPU cores.
 
-| Case | 1 GPU | 2 GPUs | 4 GPUs | Equivalence |
-| --- | ---: | ---: | ---: | --- |
-| 64 rows × 2,000 views, CGLS, 50 warm iterations | 254 s | 141 s (1.8×) | 90 s (2.8×) | Five-iteration volumes byte-identical to the previous kernels at each device count |
-| 64 rows × 2,000 views, nonnegative FISTA-TV, 50 warm iterations | 284 s | 171 s (1.7×) | 115 s (2.5×) | — |
+| Method | GPUs | Before → after (s) | Speedup (after) | Time saved | Peak GPU / host RSS (MiB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| CGLS | 1 | 255.07 → 223.19 | 1.00× | 12.5% | 9,396 / 10,091 |
+| CGLS | 2 | 139.42 → 122.17 | 1.83× | 12.4% | 17,986 / 10,077 |
+| CGLS | 4 | 89.68 → 73.70 | 3.03× | 17.8% | 13,378 / 10,094 |
+| Nonnegative FISTA-TV | 1 | 283.15 → 249.14 | 1.00× | 12.0% | 17,038 / 10,073 |
+| Nonnegative FISTA-TV | 2 | 170.86 → 145.20 | 1.72× | 15.0% | 14,086 / 10,036 |
+| Nonnegative FISTA-TV | 4 | 115.27 → 86.06 | 2.89× | 25.3% | 13,574 / 10,096 |
 
-Warm time per additional iteration on one V100S with the separable axial CUDA Joseph pair: 0.58 s for 16 rows × 1,000 views resident CGLS (0.35 s forward, 0.22 s transpose), 4.90 s for 64 rows × 2,000 views resident CGLS, and on explicit host slabs (`out=`) for 16 rows × 1,000 views, 2.11 s for CGLS and 1.80 s for FISTA. In `tools/check_numerical_equivalence.py` (5 repeats), both parallel Shepp–Logan (NRMSE 0.03761, residual 0.0005108) and laminography (NRMSE 0.3328, residual 0.003923) pass at 0/0 median/max ULP.
+Scheduling axial CUDA backprojection threads along each group's middle ray axis equalized per-card backprojection time on four-GPU CGLS (from 24.44, 40.90, 40.71, and 23.79 s to 24.42, 23.80, 24.75, and 23.78 s) and cut arrival skew from 12.8% to 4.9% (11.46 to 3.61 s). Sharing FISTA's automatic TV calibration and splitting its CUDA TV proximal into overlapping gradient slabs cut per-device primal and dual TV kernel time from 17.84 s on 1 GPU to 9.25 s on 2 and 4.47 s on 4 (compared with ~17.65 s per card before).
+
+On this PCIe node, cross-device collectives set the scaling ceiling: a synchronized 1.56 GiB all-reduce took a median of 0.240 s on 2 GPUs (7.00 GB/s) and 0.288 s on 4 GPUs (5.83 GB/s). Across 51 reductions in four-GPU CGLS, collectives took 19.7% of wall time (14.53 s after the last arrival, plus 3.61 s arrival skew; projectors took 53.13 s per card). In four-GPU FISTA-TV, collectives took 17.8% (16.06 s, plus 1.65 s skew; projectors took 51.96 s per card). Peak device memory matched baseline on all six configurations; peak host RSS stayed within 49 MiB of baseline.
+
+On K11-52567, all three CGLS runs and the 1- and 2-GPU FISTA-TV runs matched baseline bit for bit; four-GPU FISTA-TV differed by `5.94 × 10⁻⁷` relative L2 (`1.54 × 10⁻⁸` max absolute difference) from changed floating-point addition order in the shared calibration and slab collectives. In `tools/check_numerical_equivalence.py` across 18 parallel, cone, and laminography phantom checks (1, 2, and 4 GPUs), all ground-truth NRMSE checks passed; all 9 CGLS cases and 5 of 9 FISTA cases matched bit for bit, and the remaining multi-GPU FISTA cases differed by `2.28 × 10⁻⁷` to `5.55 × 10⁻⁷` relative L2.
+
+On the same V100S node, a smaller 257³ cone-beam Shepp phantom (360 views, 10 nonnegative FISTA iterations, median of 5 warm fits) exceeds the 64 MiB threshold for slab-shared CUDA TV and ran in **4.707 s** (1 GPU), **3.453 s** (2 GPUs), and **2.572 s** (4 GPUs), with NRMSE `0.1800334` and relative projection residual `0.0304855` (1 and 2 GPUs bit-identical to baseline; 4 GPUs `6.89 × 10⁻⁸` relative L2). Host preparation with all GPUs idle took 0.673 s of the 2.643 s traced four-GPU run, limiting speedup on short solves.
+
+Earlier single-GPU per-iteration and host-slab timings on one V100S (`1db61b18`, before ray-scheduled axial backprojection): 0.58 s per iteration for 16 rows × 1,000 views resident CGLS (0.35 s forward, 0.22 s transpose), 4.90 s for 64 rows × 2,000 views resident CGLS, and on explicit host slabs (`out=`) for 16 rows × 1,000 views, 2.11 s for CGLS and 1.80 s for FISTA.
 
 ### Checkpoint and resume
 

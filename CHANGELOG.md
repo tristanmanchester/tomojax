@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Multi-GPU iterative reconstruction scales faster on CUDA (`devices=` on `cgls` and `fista`).
+  The axial parallel-beam CUDA backprojector now schedules neighboring threads along the middle
+  view's dominant plane axis, evening backprojection time across contiguous angular ranges on
+  multiple GPUs and cutting single-card time with bit-identical voxel sums. Multi-GPU FISTA
+  shares automatic TV-weight noise-probe backprojection across devices (each device generates
+  its own views from global indices and sums partial backprojections) and, for resident
+  `float32` CUDA volumes of at least 64 MiB where the longest axis splits into slabs with a
+  `tv_prox_iterations` halo per side, reduces view gradients directly into overlapping slabs
+  (`psum_scatter`), runs the CUDA TV proximal per slab with the full grid's step size, and
+  gathers the disjoint interiors (`all_gather`) instead of replicating TV on every device. Both
+  parallel-beam and cone-beam FISTA use these paths. On Diamond K11-52567 (2,000 views,
+  `64 × 2560 × 2560`, 50 warm iterations on four PCIe Tesla V100S 32 GB GPUs), CGLS drops from
+  255.07 / 139.42 / 89.68 s to 223.19 / 122.17 / 73.70 s on 1 / 2 / 4 GPUs (3.03× on 4 cards,
+  17.8% faster), and nonnegative FISTA-TV drops from 283.15 / 170.86 / 115.27 s to
+  249.14 / 145.20 / 86.06 s (2.89× on 4 cards, 25.3% faster).
+- `tj.align` reads and bins native projections on the host faster with bit-identical output
+  images and pose tables. Slabs with all-finite pixels skip per-block pixel counting and
+  precision-array allocation, summing contiguous rows in `float64` before reducing column
+  blocks; slabs with non-finite pixels still average observed samples and allocate
+  observed-fraction weights on first use. On Diamond K11-52544 (8,000 views of `2160 × 2560`,
+  44.2 billion native samples, default `resolution=320`), `fit="translations"` drops from
+  24.0 to 17.9 minutes on one Tesla V100S 32 GiB (read and bin 455.0 to 133.0 s) and
+  `fit=("translations", "rotations")` drops from 20.0 to 16.0 minutes on one RTX PRO 6000
+  Blackwell 96 GB (read and bin 277.7 to 51.0 s).
 - Stopped-early scans at the standard NXtomo detector path now load the same
   frames as scans discovered by NeXus structure. Loading keeps the prefix
   covered by the detector, frame labels and angles. Inspection reports the

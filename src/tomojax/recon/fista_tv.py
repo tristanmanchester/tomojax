@@ -173,9 +173,15 @@ class FISTAConfig:
     Unmasked resident nonnegative Joseph volumes larger than the data reuse two
     owned buffers; this changes FP32 summation order.
 
-    ``devices`` (two or more JAX devices) shares the views among them, each
-    holding the whole volume, and sums their backprojections; one device, or
-    ``None``, runs on the default device. It needs the batched operators and
+    ``devices`` (two or more JAX devices) splits views across them, each
+    holding the whole volume, shares automatic TV noise-probe calibration
+    across devices, and reduces view gradients across devices; one device, or
+    ``None``, runs on the default device. For resident float32 CUDA volumes of
+    at least 64 MiB whose longest axis gives each device an interior of at
+    least ``2 * tv_prox_iterations`` voxels and a haloed slab smaller than the
+    axis, the gradient reduction (``psum_scatter``) and CUDA TV proximal run in
+    overlapping slabs with a ``tv_prox_iterations`` halo per side and gather
+    disjoint interiors (``all_gather``). It needs the batched operators and
     projections held in device memory (no streaming).
 
     Parameters
@@ -677,8 +683,9 @@ def fista(
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Run FISTA with TV regularization using an explicit solver configuration.
 
-    Host-slab CUDA Joseph solves use the separable axial projector pair on axial
-    parallel scans and the matched 3-D pair on tilted or nonseparable geometries.
+    CUDA Joseph solves (resident and host-slab) use the separable axial
+    projector pair on axial parallel scans and the matched 3-D pair on tilted
+    or nonseparable geometries.
 
     Parameters
     ----------

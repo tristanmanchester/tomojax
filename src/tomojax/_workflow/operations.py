@@ -573,10 +573,15 @@ def reconstruct(
     Mismatched config classes or unknown keywords raise ``ValueError``.
 
     ``devices`` (``fbp``, ``cgls`` and ``fista``; one or several,
-    ``jax.devices()`` for all) shares the views among them: each projects its
-    own views and holds the whole volume, and their backprojections are
-    summed. The volume, on the first device, is the one-device result up to
-    the order of that sum. Host slabs use the first device only.
+    ``jax.devices()`` for all) splits views across the devices: each projects
+    its share against a full copy of the volume and reduces backprojections
+    across devices. In ``fista``, automatic TV calibration is shared across
+    devices, and resident float32 CUDA volumes of at least 64 MiB split the
+    gradient reduction and CUDA TV proximal into overlapping slabs when each
+    device gets a proper subvolume. The returned volume, on the first device,
+    matches the one-device result up to cross-device reduction order. Automatic
+    FDK slabs distribute z-slabs across devices; other host-slab paths use the
+    first device only.
 
     :attr:`Reconstruction.info` holds ``config`` and solver records (iterations,
     termination, losses). Fourier's ``backend`` records the actual selected

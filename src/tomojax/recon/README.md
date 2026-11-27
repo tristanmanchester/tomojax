@@ -55,12 +55,26 @@ Haar-MAD measurement noise and the RMS linear interpolation error implied by
 detector curvature, including both the mean error in a detector cell and the
 variation within the cell. A centered Gaussian backprojection propagates that
 scale into the data gradient to estimate the voxel noise-score SD
-(`noise_score_rms`). Comparing the expected largest absolute noise score over
-supported voxels with the TV cost of a unit impulse in the flat interior sets
-the weight. Coverage variation, detector correlations, and model bias limit this
-approximation, and coherent artifacts such as rings should be removed beforehand.
-SPDHG uses Haar-MAD calibration with an empirical minimum of `5e-5`. Both
-solvers accept an explicit dimensionless weight, including `0` to disable TV.
+(`noise_score_rms`). On multiple GPUs (`devices=`), each device generates its
+own noise-probe views from their global indices and sums the partial
+backprojections across devices. Comparing the expected largest absolute noise
+score over supported voxels with the TV cost of a unit impulse in the flat
+interior sets the weight. Coverage variation, detector correlations, and model
+bias limit this approximation, and coherent artifacts such as rings should be
+removed beforehand. SPDHG uses Haar-MAD calibration with an empirical minimum of
+`5e-5`. Both solvers accept an explicit dimensionless weight, including `0` to
+disable TV.
+
+On multiple CUDA GPUs, when the resident `float32` volume is at least 64 MiB and
+partitioning its longest axis gives each device an interior of at least
+`2 * tv_prox_iterations` voxels and a haloed slab smaller than the axis, FISTA
+reduces per-device view gradients directly into overlapping slabs
+(`psum_scatter`) with a `tv_prox_iterations` halo per side, runs the CUDA TV
+proximal on each device's slab using the full grid's step size, and gathers the
+disjoint updated interiors (`all_gather`). Both parallel-beam and cone-beam
+FISTA use this path. Smaller volumes, non-CUDA devices, or large
+`tv_prox_iterations` fall back to all-reducing the gradient and running TV on
+each device.
 
 With `tv_weight=None` and `tolerance=None`, FISTA stops when the largest
 absolute component of the proximal gradient mapping falls below one estimated
@@ -431,10 +445,12 @@ starts from FBP/FDK clipped to nonnegative values, retaining its zero set.
 
 ### Parallel and laminographic CGLS beyond device memory
 
-Native single-GPU CUDA CGLS and host-slab CUDA linear Joseph solves (CGLS and
-FISTA) use the separable axial CUDA Joseph projector pair on axial parallel
-scans (with four-row aligned forward loads when voxel planes align with detector
-rows), and the matched 3-D pair on tilted or nonseparable geometries.
+CUDA linear Joseph solves (single-GPU, multi-GPU, and host-slab CGLS and FISTA)
+use the separable axial CUDA Joseph projector pair on axial parallel scans (with
+four-row aligned forward loads when voxel planes align with detector rows, and
+backprojection threads scheduled along the middle view's dominant plane axis so
+contiguous view groups take matching time across devices with identical voxel
+sums), and the matched 3-D pair on tilted or nonseparable geometries.
 
 CUDA linear Joseph CGLS streams z slabs automatically when its working volumes
 do not fit on the GPU. Slab forward projections are summed before the residual,

@@ -423,7 +423,11 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     persisted metadata. ``grid`` is present only when the file stores grid
     metadata; a saved volume does not establish physical voxels. Volumes are returned in
     ``(z, y, x)`` order. With ``lazy`` the projections are an
-    :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed.
+    :class:`~tomojax._data._io_frames.Hdf5Frames`, read only as indexed. When
+    ``image_key`` or angles have a different length from the frame stack (for
+    example when a scan stopped early), the common prefix from frame 0 is read
+    with a warning and the original counts are recorded in
+    ``metadata.geometry_meta["acquisition"]["frame_records"]``.
 
     Parameters
     ----------
