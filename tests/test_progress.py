@@ -1079,7 +1079,7 @@ def test_error_kinds_use_structured_status_and_keep_parameter_path():
 @pytest.mark.parametrize(
     "message",
     [
-        "INTERNAL: fft_plan != nullptr: Failed to create cuFFT batched plan with scratch allocator",
+        "RESOURCE_EXHAUSTED: failed to allocate device memory",
         "INTERNAL: Failed to load in-memory CUBIN: CUDA_ERROR_OUT_OF_MEMORY: out of memory",
     ],
 )
@@ -1093,6 +1093,53 @@ def test_device_allocation_failures_reported_as_internal_are_out_of_memory(messa
     wrapped.__cause__ = error
     assert is_oom_error(error) and is_oom_error(wrapped)
     assert classify(error).kind == classify(wrapped).kind == "out_of_memory"
+
+
+def test_reconstruction_reports_fatal_cuda_error(monkeypatch):
+    from tomojax.recon import api
+
+    def fail(*args, **kwargs):
+        raise jax.errors.JaxRuntimeError("INTERNAL: CUDA_ERROR_ILLEGAL_ADDRESS")
+
+    monkeypatch.setattr(api, "reconstruct_arrays", fail)
+    with pytest.raises(RuntimeError, match="CUDA context is lost. Restart the process") as failure:
+        tj.reconstruct(scan(), "fbp")
+    assert isinstance(failure.value.__cause__, jax.errors.JaxRuntimeError)
+
+
+@pytest.mark.parametrize("context_lost", [False, True])
+def test_cufft_plan_failure_reports_only_confirmed_context_loss(monkeypatch, context_lost):
+    import sys
+    from types import SimpleNamespace
+
+    from tomojax.recon import api
+
+    failure = jax.errors.JaxRuntimeError("INTERNAL: Failed to create cuFFT batched plan")
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    def memory_info():
+        if context_lost:
+
+            class IllegalAddress(RuntimeError):
+                status = 700
+
+            raise IllegalAddress()
+        return 1024, 4096
+
+    source = scan()
+    monkeypatch.setattr(api, "reconstruct_arrays", fail)
+    monkeypatch.setitem(
+        sys.modules, "cupy_backends.cuda.api.runtime", SimpleNamespace(memGetInfo=memory_info)
+    )
+    with pytest.raises(RuntimeError) as result:
+        tj.reconstruct(source, "fbp")
+    if context_lost:
+        assert "Restart the process" in str(result.value)
+        assert result.value.__cause__ is failure
+    else:
+        assert result.value is failure
 
 
 def test_recognizing_a_cupy_allocation_failure_does_not_import_jax():

@@ -219,7 +219,7 @@ def test_segmented_warm_start_rejects_invalid_scans(case, views, message):
         )
 
 
-def test_fbp_halves_view_batches_after_a_cufft_scratch_failure(monkeypatch):
+def test_fbp_does_not_retry_an_unspecified_cufft_plan_failure(monkeypatch):
     module = importlib.import_module("tomojax.recon.fbp")
     grid, detector, geometry = _tiny_geometry()
     calls = []
@@ -234,7 +234,7 @@ def test_fbp_halves_view_batches_after_a_cufft_scratch_failure(monkeypatch):
     monkeypatch.setattr(module, "_run_fbp_streamed", fail)
     with pytest.raises(jax.errors.JaxRuntimeError, match="Failed to create cuFFT"):
         fbp(geometry, grid, detector, jnp.ones((4, 4, 4)))
-    assert calls == [4, 2, 1]
+    assert calls == [4]
 
 
 def test_quicklook_transfers_only_the_central_slice_of_a_device_volume():

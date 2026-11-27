@@ -55,6 +55,7 @@ from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import Device
 from tomojax.alignment import AlignConfig
 from tomojax.core.registration import SlabPlanes, recorded_length_unit, registration
+from tomojax.errors import explain_cuda_failure
 from tomojax.geometry import Grid, ScanGeometry
 from tomojax.progress import warn
 from tomojax.recon.api import MethodConfig
@@ -714,6 +715,7 @@ def reconstruct(
     return reconstruct_resolved(plan, out=out, checkpoint=checkpoint)
 
 
+@explain_cuda_failure()
 def reconstruct_resolved(
     plan: ResolvedReconstruction,
     *,
@@ -943,7 +945,10 @@ def _reconstruct_slabs_context(
     from tomojax.recon.api import reconstruct_slabs as array_slabs, solver_name
 
     cone = is_cone_beam(frames.geometry)
-    with progress.task("reconstruct", solver_name(method, frames.geometry), None, "slabs"):
+    with (
+        explain_cuda_failure(),
+        progress.task("reconstruct", solver_name(method, frames.geometry), None, "slabs"),
+    ):
         target, cfg, bound = slab_settings(
             frames,
             method,
