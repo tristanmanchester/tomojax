@@ -21,12 +21,14 @@ if TYPE_CHECKING:
     from tomojax.geometry import ScanGeometry
 
 
-def acquisition_segments(geometry: ScanGeometry, positions: np.ndarray | None) -> np.ndarray:
-    """Label uninterrupted acquisition trajectories, including explicit cone orbit breaks."""
+def acquisition_segments(
+    geometry: ScanGeometry, positions: np.ndarray | None, *, separate_orbits: bool = True
+) -> np.ndarray:
+    """Label acquisition clock resets, optionally including explicit cone orbit breaks."""
     starts = np.zeros(len(geometry.angles), bool)
     if positions is not None:
         starts[1:] = np.diff(positions) <= 0
-    if parts := segments_of(geometry):
+    if separate_orbits and (parts := segments_of(geometry)):
         starts[np.cumsum(parts.trajectory_lengths)[:-1]] = True
     return np.cumsum(starts)
 

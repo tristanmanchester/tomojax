@@ -71,11 +71,17 @@ def test_row_common_shadow_report_is_distinct_from_specimen_slip():
 def test_pose_interpolation_stops_at_trajectory_boundaries():
     scan = tj.simulate("shepp", size=12, n_views=24, translation_sigma=0.4).scan
     scan = replace(scan, view_positions=np.tile(np.arange(12), 2))
-    cfg = AlignConfig(exclude_views=((9, 15),), iterations=1, levels=(1,), refine_iterations=0)
+    cfg = AlignConfig(
+        motion="smooth", exclude_views=((4, 19),), iterations=1, levels=(1,), refine_iterations=0
+    )
     result = tj.align(scan, config=cfg)
-    # The left trajectory ends at 8. The next starts at 15.
-    np.testing.assert_array_equal(result.poses[9:12], np.repeat(result.poses[8:9], 3, axis=0))
-    np.testing.assert_array_equal(result.poses[12:15], np.repeat(result.poses[15:16], 3, axis=0))
+    # The retained timestamps go from 3 to 7 across the gap, hiding the reset to 0 at view 12.
+    kept = np.r_[0:4, 19:24]
+    independent = replace(scan.selected(kept), view_positions=np.r_[0:4, 0:5])
+    ref = tj.align(independent, config=replace(cfg, exclude_views=()))
+    np.testing.assert_array_equal(result.poses[kept], ref.poses)
+    np.testing.assert_array_equal(result.poses[4:12], np.repeat(result.poses[3:4], 8, axis=0))
+    np.testing.assert_array_equal(result.poses[12:19], np.repeat(result.poses[19:20], 7, axis=0))
     with pytest.raises(ValueError, match="one per trajectory"):
         tj.align(scan, config=replace(cfg, exclude_views=((0, 12),)))
 

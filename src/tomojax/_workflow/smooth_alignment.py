@@ -77,8 +77,12 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     frames = plan.frames
     segments = acquisition_segments(scan.geometry, scan.view_positions)
     kept = plan.kept if plan.kept is not None else np.arange(len(segments))
+    motion_at = scan.view_positions
     if plan.kept is not None:
+        # A gap can hide a clock reset when the next retained timestamp is larger.
+        clocks = acquisition_segments(scan.geometry, motion_at, separate_orbits=False)
         scan = scan.selected(kept)
+        motion_at = trajectory_positions(scan.view_positions, clocks[kept])
     views = len(scan.angles)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
@@ -98,7 +102,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             keep_grid=grid is not None,
             frames=frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
-            view_positions=scan.view_positions,
+            view_positions=motion_at,
             disturbance_positions=trajectory_positions(scan.view_positions, segments[kept]),
             schedule=plan.schedule,
             config=plan.config,
