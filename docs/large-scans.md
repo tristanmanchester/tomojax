@@ -254,7 +254,11 @@ Only whole-row line-integral corrections (such as `Rings`) are supported in `rec
 
 ## Read one plane of a saved result
 
+A saved volume can be larger than RAM. Index the plane you need after opening the file.
+
 ```python
+import tomojax as tj
+
 result = tj.load_reconstruction("volume.nxs")
 plane = result.volume[result.grid.nz // 2]
 ```

@@ -316,7 +316,11 @@ tomojax export recon.nxs -o recon.tif
 tomojax export recon.nxs -o detail.mhd --crop 100:300,:,: --binning 2
 ```
 
-In Python, `tj.export("recon.tif", recon)` writes the same volume. The output suffix selects ImageJ TIFF (`.tif`, `.tiff`), OME-TIFF (`.ome.tif`, `.ome.tiff`), raw binary (`.raw`), MetaImage (`.mhd`), AmiraMesh (`.am`), or a numbered TIFF slice directory when no format suffix matches. Pass `--dry-run` (`dry_run=True` in Python) to inspect the output files, axes, value mapping, and space estimates before writing. See [export a reconstruction](export.md) for reader-specific calibration and file formats.
+The first command writes one TIFF stack that you can open in Fiji. The second
+takes planes 100 through 299 and averages each two-by-two-by-two block of
+voxels before writing the MetaImage. Add `--dry-run` to see the output shape,
+files and space required. In Python, use `tj.export("recon.tif", recon)`.
+See [Export a reconstruction](export.md) to choose a viewer or export projections.
 
 ### Checking trial rotation centers by eye
 
@@ -339,16 +343,38 @@ tomojax correct corrected.nxs -o centered.nxs --detector-center U V
 
 ## Reopen a saved result
 
-`tj.load_reconstruction("recon.nxs")` maps the saved volume in read-only
-`(z, y, x)` order. With `--include-scan` or `tj.save(..., include_scan=True)`,
-the same file holds the projections and their geometry. Open a saved scan with
-`tj.load`, an alignment with `tj.load_alignment`, or a simulation with
-`tj.load_simulation`. A saved scan contains line integrals. In another reader,
-use those projections directly and skip detector calibration and the logarithm.
+To keep a reconstruction for later work in TomoJAX, save it as a NeXus
+file. By default the file holds the volume, its geometry and the processing
+record. If you also need the measured projections, include the scan when
+you save. The CLI equivalent is `tomojax reconstruct --include-scan`.
 
-`tj.inspect("recon.nxs")["contents"]` lists the stored arrays and their
-coordinates. In a NeXus viewer, opening the file displays the volume on its
-physical grid.
+```python
+import tomojax as tj
+
+scan = tj.load("corrected.nxs")
+recon = tj.reconstruct(scan)
+tj.save("recon-with-scan.nxs", recon, include_scan=True)
+
+restored = tj.load_reconstruction("recon-with-scan.nxs")
+middle = restored.volume[restored.grid.nz // 2]
+projections = restored.scan.projections
+```
+
+Opening the saved reconstruction maps its volume read-only in z, y, x order.
+You can read a plane this way even when the whole volume exceeds available
+memory. Run `tomojax inspect recon-with-scan.nxs --json` to see which arrays
+are present, their coordinates and how the file was produced.
+
+| What you saved | How to reopen it |
+| --- | --- |
+| Corrected projections and scan geometry | `tj.load("corrected.nxs")` |
+| Reconstructed volume | `tj.load_reconstruction("recon.nxs")` |
+| Aligned scan, with the working image when the fit produced one | `tj.load_alignment("aligned.nxs")` |
+| Simulated scan and its phantom | `tj.load_simulation("simulation.nxs")` |
+
+A saved scan already contains line integrals. When opening its projections
+in another application, skip flat-field correction and the logarithm. For an
+older TomoJAX file, see [Saved objects](support-matrix.md#saved-objects).
 
 ## Watch a Python operation
 

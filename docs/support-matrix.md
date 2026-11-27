@@ -19,7 +19,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Zeiss `.txrm` projection acquisitions | `tj.load("scan.txrm")` or `tj.load_frames("scan.txrm", flats="reference_Front.xrm").corrected(...)` ([CPU preview](lab-ct.md#zeiss-xradia-preview)) |
 | Multi-orbit cone-beam scans (`ConeSegments`) | `tj.Scan.from_astra(...)` or `tj.Scan.combine([...])`, then iterative `tj.reconstruct` and `tj.align` |
 | Alignment (direct parallel center fit; joint fit for center, translations, tilt, roll, per-view rotations; crossing screening and manual view exclusion) | `tomojax align corrected.nxs -o aligned.nxs --fit ...`, `tj.align(scan, fit=..., grid=..., config=AlignConfig(...))`, or `tomojax.alignment.api.disturbed_views` |
-| [Export a registered volume](export.md) as ImageJ TIFF, OME-TIFF, TIFF slices, raw binary, MetaImage, or AmiraMesh | `tomojax export recon.nxs -o slices/`, `tj.export("recon.tif", recon)`, or worker/MCP `export` |
+| [Export a volume, projection stack, sinogram, or feature mask](export.md) | `tomojax export recon.nxs -o slices/`, `tj.export("recon.tif", recon)`, or worker/MCP `export` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
 | Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap, `tj.reconstruct_slabs`, and worker/MCP `reconstruct_slabs` ([large scans](large-scans.md)) |
 | Checkpoint and resume long runs (Python, CLI, worker, and MCP) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`; `checkpoint` on worker and MCP `reconstruct`, `reconstruct_slabs`, and `align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |
@@ -42,13 +42,29 @@ This page lists supported workflows, acquisition formats, and numerical backends
 
 ## Saved objects
 
-`tj.save` writes scans, reconstructions, alignments and simulations as
-format-2 NeXus in `.nxs`, `.nx`, `.h5`, `.hdf` or `.hdf5` files. NeXus viewers
-can open the default array at its physical coordinates. `tj.inspect` reports
-the file format, arrays and processing record. Use the format-2 migration
-release (build `4378e691`) to open rc6 HDF5 or NPZ datasets and re-save them
-as NeXus before upgrading. Worker and MCP feature masks use the same container.
-Their array lives under `/entry/masks/<name>/data` and the record holds the recipe.
+Save a scan, reconstruction, alignment or simulation with
+`tj.save("result.nxs", result)`. TomoJAX uses NeXus format 2 for the endings
+`.nxs`, `.nx`, `.h5`, `.hdf` and `.hdf5`. A NeXus viewer opens the main
+array on its physical grid. The worker and MCP can also save a feature mask
+with its labels, coordinates and the recipe used to select it. To see the
+contents and processing history, run `tomojax inspect result.nxs --json`.
+
+For a file saved by TomoJAX 1.0.0rc6, open the old NeXus or NPZ file with
+the format-2 migration build (`4378e691`) and write a new NeXus file.
+Choose the loader for the object in the old file. This example keeps a
+reconstruction's projections if they were saved with it.
+
+```python
+import tomojax as tj
+
+recon = tj.load_reconstruction("old-recon.nxs")
+tj.save("converted.nxs", recon, include_scan=recon.scan is not None)
+```
+
+For a scan, alignment or simulation, use `tj.load`, `tj.load_alignment` or
+`tj.load_simulation` in that build, then save the returned object.
+[Reopen a saved result](quickstart.md#reopen-a-saved-result) shows how to
+load the new file and read a slice.
 
 ## Acquisition formats
 

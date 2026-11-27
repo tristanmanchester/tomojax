@@ -1,12 +1,14 @@
 # tomojax.io
 
-`tomojax.io` reads and writes TomoJAX datasets, exports registered volumes to
-interchange formats (ImageJ TIFF, OME-TIFF, TIFF slices, raw binary, MetaImage,
-and AmiraMesh via `tj.export`; see [export](../../../docs/export.md)), reads
-Nikon, SkyScan, Zeiss and ESRF acquisitions, TIFF stacks and PSI cSAXS
-ptychographic tomography `.mat` files, and validates and inspects datasets.
-Detector frames are read with `tomojax.load_frames` and corrected with
-[`tomojax.corrections`](../corrections/README.md).
+Open a corrected scan with `tj.load("scan.nxs")` or a saved volume with
+`tj.load_reconstruction("recon.nxs")`. Use `tj.save` to keep the object for
+another TomoJAX session. To take an array into Fiji or another application,
+see [Export a reconstruction](../../../docs/export.md).
+
+For raw data, `tj.load_frames` reads detector frames from supported beamline
+and lab acquisitions. You can then apply [detector corrections](../corrections/README.md).
+See the [acquisition formats](../../../docs/support-matrix.md#acquisition-formats)
+for the calibration available from each type of input.
 
 Zeiss Xradia acquisitions are recognized by OLE content, with lazy raw counts,
 embedded or explicitly selected XRM reference images and physical calibration;
@@ -28,9 +30,13 @@ batches; the caller retains ownership of the open dataset.
 
 ## Saved NeXus files
 
-The root attribute `tomojax_format = 2` selects the native reader and
-`default = "entry"` opens the NeXus entry. Its default plot is the volume,
-working image, phantom or projection stack stored by the object.
+Open the file in a NeXus viewer to see the reconstruction, alignment image,
+simulation phantom, feature mask or projections. Use `tj.inspect(path)["contents"]`
+in Python to find the arrays and their coordinates. To reopen one in TomoJAX,
+choose the [loader for the saved object](../../../docs/quickstart.md#reopen-a-saved-result).
+
+For direct HDF5 access, the root has `tomojax_format = 2` and the default entry
+is `/entry`. The entry's default selects the array shown in the viewer.
 
 | HDF5 path under `/entry` | Contents |
 | --- | --- |
@@ -41,12 +47,13 @@ working image, phantom or projection stack stored by the object.
 | `sample/rotation_angle` | Rotation angles in degrees |
 | `data` | Projection NXdata with links to detector data, rotation angles and image keys, plus detector coordinates `v` and `u` |
 | `volume`, `image`, `phantom` | NXdata with a `data` signal and voxel-center coordinates `z`, `y`, `x` |
+| `masks/<name>/data` | Selected feature labels on their original grid, with zero outside the feature |
 | `tomojax` | Effective geometry parameters, reported alignment poses, simulation truth poses and angle offsets when available |
 
 An axis starts at the center of element zero. Recorded spatial units apply to
 grid and detector coordinates. Uncalibrated coordinates use `scan_length`.
 Projection datasets written by `tj.save` contain corrected line integrals.
-Readers that import raw NXtomo counts must skip their flat-field and log steps.
+If you import these projections into a reader for raw NXtomo data, skip its flat-field and log steps.
 A low-level save of detector counts labels the signal `counts`.
 
 | Record field | Meaning |

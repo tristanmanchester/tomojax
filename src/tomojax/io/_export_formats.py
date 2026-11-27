@@ -324,8 +324,8 @@ FORMATS = (
         (".tif", ".tiff"),
         "file",
         (*_COMMON, "compress"),
-        "ImageJ reads voxel size, origin and value calibration in classic TIFF. "
-        "Bio-Formats reads voxel size in classic and BigTIFF.",
+        "ImageJ reads voxel size, origin and calibrated intensities in classic TIFF. "
+        "Bio-Formats reads voxel size in both classic TIFF and BigTIFF.",
         partial(tiff, dialect="imagej"),
         tiff_record,
         ordered_pages=True,
@@ -335,7 +335,8 @@ FORMATS = (
         (".ome.tif", ".ome.tiff"),
         "file",
         (*_COMMON, "compress"),
-        "Bio-Formats reads voxel sizes. Classic ImageJ and ITK read the in-plane sizes.",
+        "Bio-Formats reads all three voxel dimensions. "
+        "ImageJ and ITK read the in-plane pixel size.",
         partial(tiff, dialect="ome"),
         tiff_record,
         ordered_pages=True,
@@ -355,7 +356,7 @@ FORMATS = (
         (".raw",),
         "group",
         _COMMON,
-        "The adjacent JSON record gives axes, units and value scaling.",
+        "The JSON file beside the pixels gives the axis order, units and intensity scale.",
         partial(raw, dialect="raw"),
         resumable=True,
     ),
@@ -364,7 +365,7 @@ FORMATS = (
         (".mhd",),
         "group",
         _COMMON,
-        "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
+        "ITK and VTK read the voxel spacing and origin. The header gives lengths without a unit.",
         partial(raw, dialect="metaimage"),
         resumable=True,
         payload_suffix=".raw",
@@ -375,7 +376,7 @@ FORMATS = (
         "group",
         _COMMON[:-1],
         "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. "
-        "The bounding box records placement.",
+        "The bounding box gives the position of the volume.",
         partial(raw, dialect="amira"),
         spatial_only=True,
     ),
@@ -384,8 +385,8 @@ FORMATS = (
         (".h5", ".hdf5", ".nxs"),
         "file",
         (*_COMMON, "compress"),
-        "silx reads physical coordinates and stored samples. "
-        "The signal's offset and scaling factor recover physical values.",
+        "silx reads the physical coordinates and stored voxel values. "
+        "For integer images, use the recorded offset and scale to recover intensities.",
         write_nexus,
         nexus_record,
         settings=nexus_settings,
@@ -395,8 +396,8 @@ FORMATS = (
         (".zarr", ".ome.zarr"),
         "directory",
         (*_COMMON, "compress"),
-        "ome-zarr-py reads the axes, voxel size and origin of every level. "
-        "The tomojax attribute holds value scaling.",
+        "ome-zarr-py reads the axis order, voxel size and origin at each resolution. "
+        "The export record gives the intensity scale.",
         write_zarr,
         zarr_record,
         spatial_only=True,

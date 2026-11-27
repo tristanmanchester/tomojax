@@ -4053,7 +4053,7 @@
                 "axis",
                 "compress"
               ],
-              "carries": "ImageJ reads voxel size, origin and value calibration in classic TIFF. Bio-Formats reads voxel size in classic and BigTIFF.",
+              "carries": "ImageJ reads voxel size, origin and calibrated intensities in classic TIFF. Bio-Formats reads voxel size in both classic TIFF and BigTIFF.",
               "spatial_only": false,
               "resumable": false
             },
@@ -4072,7 +4072,7 @@
                 "axis",
                 "compress"
               ],
-              "carries": "Bio-Formats reads voxel sizes. Classic ImageJ and ITK read the in-plane sizes.",
+              "carries": "Bio-Formats reads all three voxel dimensions. ImageJ and ITK read the in-plane pixel size.",
               "spatial_only": false,
               "resumable": false
             },
@@ -4105,7 +4105,7 @@
                 "binning",
                 "axis"
               ],
-              "carries": "The adjacent JSON record gives axes, units and value scaling.",
+              "carries": "The JSON file beside the pixels gives the axis order, units and intensity scale.",
               "spatial_only": false,
               "resumable": true
             },
@@ -4122,7 +4122,7 @@
                 "binning",
                 "axis"
               ],
-              "carries": "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
+              "carries": "ITK and VTK read the voxel spacing and origin. The header gives lengths without a unit.",
               "spatial_only": false,
               "resumable": true
             },
@@ -4138,7 +4138,7 @@
                 "crop",
                 "binning"
               ],
-              "carries": "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. The bounding box records placement.",
+              "carries": "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. The bounding box gives the position of the volume.",
               "spatial_only": true,
               "resumable": false
             },
@@ -4158,7 +4158,7 @@
                 "axis",
                 "compress"
               ],
-              "carries": "silx reads physical coordinates and stored samples. The signal's offset and scaling factor recover physical values.",
+              "carries": "silx reads the physical coordinates and stored voxel values. For integer images, use the recorded offset and scale to recover intensities.",
               "spatial_only": false,
               "resumable": false
             },
@@ -4177,7 +4177,7 @@
                 "axis",
                 "compress"
               ],
-              "carries": "ome-zarr-py reads the axes, voxel size and origin of every level. The tomojax attribute holds value scaling.",
+              "carries": "ome-zarr-py reads the axis order, voxel size and origin at each resolution. The export record gives the intensity scale.",
               "spatial_only": true,
               "resumable": false
             }
