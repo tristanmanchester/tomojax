@@ -237,7 +237,7 @@ result = tj.align(scan, config=AlignConfig(exclude_views=((120, 134),)))
 # After reviewing all reported intervals, use tuple(map(tuple, report["ranges"])) instead.
 ```
 
-Only the retained projections enter the image and geometry solve. Excluded views receive a pose increment interpolated in acquisition time within their own trajectory. At an unbracketed end they receive the nearest measured increment. Their existing poses still apply. A slip within a gap cannot be located from the retained measurements. The result keeps every projection and records the retained input indices in `info["fit_views"]`. Per-view fit statistics such as `offsets` follow those retained indices.
+Only the retained projections enter the image and geometry solve. Excluded views receive a pose increment interpolated in acquisition time within their own trajectory. At an unbracketed end they receive the nearest measured increment. Their existing poses still apply. A slip within a gap cannot be located from the retained measurements. The result keeps every projection. When you exclude at least one view, `info["fit_views"]` gives the retained input indices. Per-view fit statistics such as `offsets` follow those indices.
 
 Reconstruct `result.scan` to keep the measured rays with those interpolated poses. To omit confirmed obstructions from the reconstruction as well, reconstruct `result.scan.selected(result.info["fit_views"])`. A contiguous angular gap gives directional streaks and costs more detail as it grows. Compare slices on the same grid and gray scale. `RejectViews()` is a separate correction for abrupt changes in mean flux, such as a shutter closing. It drops the affected exposures during correction.
 
