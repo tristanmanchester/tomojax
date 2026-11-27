@@ -39,7 +39,7 @@ if TYPE_CHECKING:
     from .spdhg_tv import SPDHGConfig
 
 
-def _bin(values: Float32Array | CuPyValue, count: int, axis: int) -> Float32Array | CuPyValue:
+def _bin(values: Float32Array, count: int, axis: int) -> Float32Array:
     """Equal-area averages over a detector axis, including fractional end cells."""
     length = int(values.shape[axis])
     if length == count:
@@ -47,23 +47,12 @@ def _bin(values: Float32Array | CuPyValue, count: int, axis: int) -> Float32Arra
     source = values.swapaxes(axis, -1)
     if length % count == 0:
         shape = (*map(int, source.shape[:-1]), count, length // count)
-        # Round only the pixel average. FP32 reductions use different trees on
-        # NumPy and CuPy, which can change a later coarse Krylov direction.
-        means = source.reshape(shape).mean(axis=-1, dtype=np.float64).astype(np.float32)
+        means = source.reshape(shape).mean(axis=-1, dtype=np.float32)
     else:
         edges = np.linspace(0, length, count + 1, dtype=np.float64)
         cell = edges.astype(np.intp)
-        # The partial cells transfer mass only between adjacent bins. Reduce
-        # directly to the coarse lattice, without a fine-grid prefix-sum copy.
-        if isinstance(source, np.ndarray):
-            xp = np
-        else:
-            from ._cgls_cuda import array_module
-
-            xp = array_module()
-        indices = xp.asarray(cell)
-        totals = xp.add.reduceat(source, indices[:-1], axis=-1, dtype=np.float64)
-        partial = xp.asarray(edges[1:-1] - cell[1:-1]) * source[..., indices[1:-1]]
+        totals = np.add.reduceat(source, cell[:-1], axis=-1, dtype=np.float64)
+        partial = (edges[1:-1] - cell[1:-1]) * source[..., cell[1:-1]]
         totals[..., :-1] += partial
         totals[..., 1:] -= partial
         means = (totals * (count / length)).astype(np.float32)
@@ -196,7 +185,9 @@ class _Sampling:
             fitting = min(fitting, max(1, room // resident_bytes(self.grid, shape)))
         return 2 ** (fitting.bit_length() - 1)
 
-    def completed(self, geometry: Geometry, data: np.ndarray | jax.Array) -> Float32Array:
+    def completed(
+        self, geometry: Geometry, data: np.ndarray | jax.Array | CuPyValue
+    ) -> Float32Array:
         d = self.detector
         views, nv, nu = data.shape
         full: Float32Array = host_array((views, d.nv, 3 * d.nu), copies=4)
@@ -205,10 +196,14 @@ class _Sampling:
         for i in range(0, views, batch):
             progress.check_canceled()
             block = data[i : i + batch]
-            if not isinstance(block, np.ndarray) and hasattr(block, "devices"):
-                block = np.asarray(block, np.float32)
-            binned = _bin(_bin(block.astype(np.float32, copy=False), d.nu, -1), d.nv, -2)
-            middle[i : i + batch] = binned if isinstance(binned, np.ndarray) else binned.get()
+            # The continuation and the reference detector averages are on the host.
+            # The same FP32 reduction tree matters to the auxiliary Krylov directions.
+            if not isinstance(block, np.ndarray) and not hasattr(block, "devices"):
+                from ._cgls_cuda import array_module
+
+                block = array_module().asnumpy(block)
+            host = np.asarray(block, dtype=np.float32)
+            middle[i : i + batch] = _bin(_bin(host, d.nu, -1), d.nv, -2)
         fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu)
         radius = fit.stack_radius(middle)[None]
         batch = max(1, (16 << 20) // (8 * d.nv * d.nu))
@@ -304,19 +299,11 @@ def _fit(
         if isinstance(geometry, ParallelGeometry) and stride > 1:
             geometry = replace(geometry, angles=np.asarray(geometry.angles)[::stride])
             full = np.ascontiguousarray(full[::stride])
-        result = None
         if axial:
             from ._exterior_cuda import axial_fit
 
-            result = axial_fit(_poses(geometry, len(full)), wide, detector, full, config)
-        elif native and cone_parts(geometry, detector) is not None:
-            from tomojax.core.cone import use_cuda_cone
-
-            if use_cuda_cone():
-                from ._exterior_cuda import cone_fit
-
-                result = cone_fit(geometry, wide, detector, full, config)
-        if result is None:
+            volume = axial_fit(_poses(geometry, len(full)), wide, detector, full, config)
+        else:
             reconstruction, info = cgls(
                 geometry,
                 wide,
@@ -326,9 +313,14 @@ def _fit(
                 det_grid=detector_grid_from_geometry_inputs(detector, geometry),
             )
             volume = numpy_float32_array(reconstruction)
-            native = info.get("execution_backend") == "cupy"
-        else:
-            volume, native = result, True
+            if native and cone_parts(geometry, detector) is not None:
+                from tomojax.core.cone import use_cuda_cone
+
+                # Reproject the reference cone iterate with the same native kernel.
+                # Its CGLS reductions determine the fitted low-frequency background.
+                native = use_cuda_cone()
+            else:
+                native = info.get("execution_backend") == "cupy"
         fitted.save((volume,), _Runtime(native))
         return volume, native
 
@@ -354,12 +346,9 @@ def _project(
         with native_device(cp):
             device_volume = cp.asarray(volume, order="C")
             if cone_parts(geometry, detector) is not None:
-                from ._exterior_cuda import ConeOperator
+                from ._exterior_cuda import project_cone
 
-                cone = ConeOperator(geometry, grid, detector, poses, batch=batch, z_fast=False)
-                for first in range(0, len(poses), batch):
-                    part = slice(first, first + batch)
-                    yield part, cone.project(device_volume, part)
+                yield from project_cone(geometry, grid, detector, poses, device_volume, batch)
                 return
             z_fast = grid.nz > 1
             if z_fast:

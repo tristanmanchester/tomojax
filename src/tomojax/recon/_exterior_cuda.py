@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING
 
@@ -10,12 +9,9 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._typed_arrays import Float32Array, numpy_float32_array
-from tomojax.core import backend_policy, checkpoint
 from tomojax.core.cuda_types import CuPyValue
-from tomojax.core.geometry.views import stack_view_poses
 
-from ._cgls_cuda import array_module, iterate, native_device, update_kernels
-from .cgls import CGLSConfig, resident_bytes
+from ._cgls_cuda import array_module, native_device, update_kernels
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -26,6 +22,7 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
     from ._exterior import LinearAxis
+    from .cgls import CGLSConfig
 
 
 class DeviceRows:
@@ -69,55 +66,29 @@ class DeviceRows:
             return self.output, float(self.removed) / measured if measured else 0.0
 
 
-class ConeOperator:
-    """The same cone kernels as resident CGLS, called on the current CUDA stream."""
+def project_cone(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    poses: Float32Array,
+    volume: CuPyValue,
+    batch: int,
+) -> Iterator[tuple[slice[int, int, None], CuPyValue]]:
+    """Project the fitted cone volume directly into blocks on the active CUDA stream."""
+    from jax.lax import convert_element_type
 
-    def __init__(
-        self,
-        geometry: Geometry,
-        grid: Grid,
-        detector: Detector,
-        poses: CuPyValue,
-        *,
-        batch: int,
-        z_fast: bool,
-    ) -> None:
-        from tomojax.core.cone import cone_model
+    from tomojax.core.cone import cone_model, forward_into
 
-        model = cone_model(geometry, detector)
-        assert model is not None
-        self.cp = array_module()
-        self.grid, self.detector, self.batch, self.z_fast = grid, detector, batch, z_fast
-        self.coeff = self.cp.from_dlpack(model.coefficients(poses, grid))
-        self.views = int(self.coeff.shape[0])
-
-    def project(self, volume: CuPyValue, part: slice) -> CuPyValue:
-        from tomojax.core.cone import forward_into
-
-        coeff = self.coeff[part]
-        out = self.cp.empty((len(coeff), self.detector.nv, self.detector.nu), np.float32)
-        forward_into(out, coeff, volume, grid=self.grid, det=self.detector, z_fast=self.z_fast)
-        return out
-
-    def forward(self, volume: CuPyValue) -> CuPyValue:
-        return self.project(volume, slice(None))
-
-    def adjoint(self, images: CuPyValue) -> CuPyValue:
-        from tomojax.core.cone import adjoint_into
-
-        out = self.cp.zeros(self.grid.shape[::-1] if self.z_fast else self.grid.shape, np.float32)
-        for first in range(0, self.views, self.batch):
-            part = slice(first, first + self.batch)
-            adjoint_into(
-                out,
-                self.coeff[part],
-                images[part],
-                out,
-                grid=self.grid,
-                det=self.detector,
-                z_fast=self.z_fast,
-            )
-        return out
+    model = cone_model(geometry, detector)
+    assert model is not None
+    cp = array_module()
+    coefficients = cp.from_dlpack(model.coefficients(convert_element_type(poses, np.float32), grid))
+    for first in range(0, len(poses), batch):
+        part = slice(first, first + batch)
+        coeff = coefficients[part]
+        out = cp.empty((len(coeff), detector.nv, detector.nu), dtype=np.float32)
+        forward_into(out, coeff, volume, grid=grid, det=detector, z_fast=False)
+        yield part, out
 
 
 class _Planes:
@@ -237,37 +208,6 @@ def axial_fit(
             beta = np.divide(next_gamma, gamma, out=np.zeros_like(gamma), where=active & ~restart)
             kernels["xpay"](gradient, cp.asarray(beta), direction)
             gamma, verified = next_gamma, check
-        return np.ascontiguousarray(x.get().transpose(2, 1, 0))
-
-
-def cone_fit(
-    geometry: Geometry, grid: Grid, detector: Detector, data: Float32Array, config: CGLSConfig
-) -> Float32Array | None:
-    """Run the coarse matched CGLS solve without compiling a second XLA solver."""
-    cp = array_module()
-    with native_device(cp):
-        if resident_bytes(grid, data.shape) > backend_policy.cupy_available_bytes():
-            return None
-        ops = ConeOperator(
-            geometry,
-            grid,
-            detector,
-            stack_view_poses(geometry, len(data)),
-            batch=config.views_per_batch,
-            z_fast=True,
-        )
-        with checkpoint.loop() as saves:
-            x, _ = iterate(
-                cp,
-                ops,
-                cp.asarray(data),
-                cp.zeros(grid.shape[::-1], np.float32),
-                grid,
-                replace(config, tolerance=1e-6),
-                saves,
-                zero_start=True,
-                target=None,
-            )
         return np.ascontiguousarray(x.get().transpose(2, 1, 0))
 
 

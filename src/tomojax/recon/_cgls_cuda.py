@@ -6,7 +6,7 @@ import functools
 import importlib.util
 import os
 import sys
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -41,15 +41,6 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
     from .types import DataTerm
-
-
-class DeviceOperator(Protocol):
-    """Matched native projector and transpose in the solver's private volume order."""
-
-    batch: int
-
-    def forward(self, volume: CuPyValue) -> CuPyValue: ...
-    def adjoint(self, images: CuPyValue) -> CuPyValue: ...
 
 
 def available(
@@ -165,7 +156,7 @@ def solve(
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         with checkpoint.loop() as saves:
-            result, info = iterate(
+            result, info = _iterate(
                 cp, ops, data, x, grid, cfg, saves, zero_start=initial is None, target=target
             )
         volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
@@ -221,7 +212,7 @@ def _all(cp: CuPyValue, kernel: CuPyValue, *args: object) -> CuPyValue:
 
 def _initial(
     cp: CuPyValue,
-    ops: DeviceOperator,
+    ops: JosephCUDA,
     data: CuPyValue,
     x: CuPyValue,
     cfg: CGLSConfig,
@@ -273,9 +264,9 @@ class _Scalars(NamedTuple):
         )
 
 
-def iterate(
+def _iterate(
     cp: CuPyValue,
-    ops: DeviceOperator,
+    ops: JosephCUDA,
     data: CuPyValue,
     x: CuPyValue,
     grid: Grid,
@@ -370,7 +361,7 @@ def iterate(
 
 def _step(
     cp: CuPyValue,
-    ops: DeviceOperator,
+    ops: JosephCUDA,
     x: CuPyValue,
     direction: CuPyValue,
     residual: CuPyValue,
@@ -411,7 +402,7 @@ def _step(
 
 def _verify(
     cp: CuPyValue,
-    ops: DeviceOperator,
+    ops: JosephCUDA,
     data: CuPyValue,
     x: CuPyValue,
     gradient: CuPyValue,
