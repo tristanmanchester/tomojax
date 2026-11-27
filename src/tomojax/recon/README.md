@@ -69,8 +69,9 @@ the configured finite proximal solve. With an explicit `tv_weight`, or with
 `tolerance=0`, FISTA runs to the `iterations` cap; positive `tolerance` with
 positive `patience` selects relative objective-change stopping. `info` reports
 `resolved_tv_weight`, `effective_tv_weight`, `noise_score_rms`,
-`effective_iterations`, and `early_stop` (`True` for early stopping, `False`
-when the budget was exhausted). To replay an automatic run, pass
+`effective_iterations`, `early_stop` (`True` for early stopping, `False`
+when the budget was exhausted), and `termination` (`"noise_score"`,
+`"objective_tolerance"`, or `"iteration_limit"`). To replay an automatic run, pass
 `resolved_tv_weight` and `effective_iterations` from `info`.
 
 With no iteration budget, unpenalized CGLS and full-data SIRT stop when the

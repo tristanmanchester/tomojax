@@ -8,7 +8,7 @@ This guide walks through inspecting, correcting, reconstructing, and exporting a
 tomojax inspect scan.nxs
 ```
 
-`inspect` prints the projection count and shape, angles, detector and voxel pitches, geometry type, and any recorded corrections, then exits 0 with `Valid: yes` (or lists problems and exits 1). Pass `--json` for machine-readable output. It recognizes NXtomo, NeXus scan files (including Diamond/GDA), APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, and ESRF acquisitions and inspects raw frames without applying corrections.
+`inspect` prints a `Loading` section (whether the file loads with no further arguments or needs one, pixel units when no pixel size is recorded, an unrecorded rotation center or rotation axis, and the frame counts a stopped scan was cut to), followed by the projection count and shape, angles, detector and voxel pitches, geometry type, and any recorded corrections. It exits 0 with `Valid: yes`, or lists problems and exits 1. Pass `--json` for machine-readable output (the same structure `tj.inspect(path)` returns, with `loading`). Given a checkpoint directory from `--checkpoint DIR`, `tomojax inspect DIR` reports the saved run, the command or operation that started it, its save time, and whether a live process holds it. It recognizes NXtomo, NeXus scan files (including Diamond/GDA), APS Data Exchange, Nikon `.xtekct`, Zeiss `.txrm`, and ESRF acquisitions and inspects raw frames without applying corrections.
 
 Reconstruction expects line integrals (log attenuation), not raw counts or normalized transmission. TomoJAX applies flat/dark correction and `-log` automatically when the file marks raw frames (NXtomo `image_key`, Data Exchange `data_white`/`data_dark`, Nikon, Zeiss, or ESRF). If flats or darks are absent, supply `flats=` (frames or a single white level) and `darks=` to `tj.load_frames` (pass `darks=0` only when counts are already dark-subtracted).
 
@@ -39,6 +39,7 @@ When an external file omits metadata:
 
 - **Missing pixel pitch (parallel beam):** loads in pixel units (`length_unit: "pixel"`); override with `pixel_size=`, `detector=`, or `--pixel-size`. Cone-beam files require a physical pixel size.
 - **Missing rotation center:** defaults to the detector middle (`detector_center_status="not_recorded"`). Supply `detector=` / `--detector-center U V`, or fit it afterwards with `tj.align(scan, fit="center")`, which measures the axis directly across the full detector on axial parallel scans without fitting a volume (pass `method="opposite-views"` for a pair-only check).
+- **Missing rotation axis:** a file that records no rotation axis or pixel scale logs a warning on load (`loading["geometry"] == "not_recorded"` in `inspect`). Reconstruction and alignment refuse it until geometry is declared when loading: pass `geometry=...` to `tj.load`, `--geometry parallel` (or `lamino` / `cone`) to `tomojax correct`, or `geometry: {"kind": "parallel"}` to worker or MCP `open`.
 - **Missing angles or laminography tilt:** supply `angles=` or a complete `geometry=`. Explicit `detector=` or `geometry=` overrides are always used as given.
 
 In Python, `tj.load("raw.nxs")` runs the default flat/dark/`-log` correction. For cropping, view selection, or extra steps from `tomojax.corrections`, load frames first:
@@ -163,7 +164,7 @@ The default `--method auto` chooses a solver from the geometry:
 - Single-arrangement `ConeGeometry` -> `fbp` (dispatched to FDK), or `cgls` for an arc shorter than 180° plus the fan angle
 - Multi-orbit `ConeSegments` -> `cgls`
 
-Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, `--watch-dir DIR` to rewrite central-slice PNGs as an iterative solve progresses, or `--checkpoint DIR` to save state on disk so a killed run resumes when repeated ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
+Pass `--method` explicitly to fix a solver (`fourier`, `fbp`, `cgls`, `fista`, `spdhg`, `sirt`, `mlem`). Add `--dry-run` to inspect the resolved method, grid, and memory estimate before running, `--watch-dir DIR` to rewrite central-slice PNGs as an iterative solve progresses, or `--checkpoint DIR` to save state on disk so a canceled or killed run resumes when repeated ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). For iterative solvers, `tomojax reconstruct` ends by printing how many updates ran, why the solve stopped, and any automatic TV weight. `recon.nxs` stores the volume, geometry, and record (add `--include-scan` to keep projections too), `--manifest` writes the resolved method and settings to JSON, and `inspect --preview-dir` writes display-scaled PNGs of the central slices (such as `slice_z_64.png`, plus `projection.png` when present). Use the floating-point volume in `recon.nxs` for quantitative analysis.
 
 ### Region and grid options
 
@@ -203,7 +204,7 @@ recon = tj.reconstruct(scan, "fista", config=FISTAConfig(regularizer="huber_tv",
 Direct keywords (such as `iterations=100`) override fields of the same name in `config`.
 
 - **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
-- **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, and `early_stop` (`False` means the solver reached the iteration cap). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
+- **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` (or `--manifest`, or the closing line of `tomojax reconstruct`) for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, `early_stop`, and `termination` (`"noise_score"`, `"objective_tolerance"`, or `"iteration_limit"`). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
 
 ![One region of a cathode slice from Diamond K11, reconstructed by FBP and by FISTA with its automatic TV weight, each above an enlarged part. The FBP slice is grainy; the FISTA slice keeps the particles and their edges without the grain.](images/fista-tv-weight.png)
 
@@ -225,9 +226,9 @@ Unregularized iterative solvers (CGLS and SIRT) fit noise and discretization err
 | `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
 | `spdhg` | Fixed stochastic block-update budget | 600 block updates | Pass `iterations=N` |
 
-Check `recon.info` (or the JSON `--manifest`) after an automatic CGLS or SIRT run:
+Check `recon.info`, the JSON `--manifest`, or the closing line of `tomojax reconstruct` after an iterative run:
 
-- `termination` is `"projection_discrepancy"` when the residual crossed the threshold and `"iteration_limit"` when the 50-update cap ended the run (CGLS can also report `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"`). `early_stop` is `False` when the budget was exhausted.
+- `termination` names why the solve ended: `"projection_discrepancy"` (CGLS/SIRT) or `"noise_score"` (FISTA) when the solver stopped at the estimated error level, `"objective_tolerance"` (FISTA with an explicit `tolerance`), `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"` (CGLS), or `"iteration_limit"` when the budget ran out. `early_stop` is `False` when the budget was exhausted.
 - `effective_iterations` gives the completed updates or sweeps, `measurement_noise_rms` gives the estimated detector noise SD, and `projection_error_rms` gives the total discrepancy threshold in projection units.
 - CGLS reports the final `residual_rms`; SIRT reports `pre_update_residual_rms` (measured at the point projected for the last sweep, including momentum when accelerated) and the resolved `acceleration` flag. On independent axial SIRT slabs, `slab_stopping` lists each slab's range, sweep count, and residual, while top-level `effective_iterations` is the largest sweep count across slabs.
 
@@ -302,7 +303,9 @@ The ETA on advances uses active elapsed time and excludes the pause.
 A `Placed` event names the devices doing the work, in coordinator order.
 Call `stop.cancel()` from the handler or another thread to request cancellation.
 The operation raises `progress.Canceled` at the next work boundary and closes
-its files and workers. A caller-supplied output array can contain completed
+its files and workers. When `checkpoint=` is set, a checkpointed loop saves at
+its next boundary before raising `progress.Canceled`, whose `checkpoint`
+attribute names the directory. A caller-supplied output array can contain completed
 slabs. Cancellation requested on the last completed unit preserves the result.
 An exception raised by the handler reaches the caller and ends event delivery.
 

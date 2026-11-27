@@ -76,9 +76,11 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   proximal-gradient noise score, capped at 200 updates). Ordered-subset `sirt`
   and `mlem` run 50 sweeps, and `spdhg` runs 600 block updates. Passing
   `--iterations N` fixes the budget (and runs plain sweeps for `sirt` unless
-  `acceleration = true` is also set in `--config`). Check `termination` and
-  `effective_iterations` in `--manifest` to see whether an automatic solve stopped
-  at the threshold or at the cap. The output
+  `acceleration = true` is also set in `--config`). For iterative solvers,
+  `reconstruct` prints a closing line stating how many updates ran, why the
+  solve stopped, and any automatic TV weight; check `termination`,
+  `early_stop`, and `effective_iterations` (plus `resolved_tv_weight` for
+  `fista`) in `--manifest` for the same fields in JSON. The output
   holds the volume, its geometry and record, and names the input projections;
   `--include-scan` keeps them too. `--checkpoint DIR` (also accepted as `checkpoint` in
   `--config`) saves solver state and finished slabs in `DIR` so a killed run resumes
@@ -102,7 +104,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `--method opposite-views` runs the pair-only center check from near-opposite views without an
   image. `--grid` sets image sampling. `--checkpoint DIR` saves finished resolution levels,
   within-level solver state, and refinement poses in `DIR` so a killed fit resumes when the
-  same command runs again, exiting `130` on `SIGTERM` after saving and deleting `DIR` once
+  same command runs again, exiting `130` on `SIGTERM` or Ctrl-C after saving and deleting `DIR` once
   all outputs are written ([resume a run after a kill](../../../docs/large-scans.md#resume-a-run-after-a-kill)).
   `--dry-run` prints the plan: sampled views and pairs for
   direct axial center measurement, angular pairs for `opposite-views`, or each level's grid and
@@ -138,7 +140,11 @@ tomojax export recon.nxs -o slices/
 
 A file that records the pixel size but not the rotation center (external
 NXtomo or Data Exchange, ESRF Bliss or EDF) loads with the center at the middle
-of the detector, and `reconstruct` reports that status. Fit the center first:
+of the detector, and `reconstruct` reports that status. A file that records no
+rotation axis or pixel scale warns on load (`geometry: not recorded` under
+`Loading` in `inspect`) and requires `--geometry` on `tomojax correct` (for
+example, `--geometry parallel`) before `align` or `reconstruct`. Fit the center
+first:
 
 ```bash
 tomojax align scan.h5 -o aligned.nxs --fit center
@@ -166,7 +172,8 @@ live progress when stderr is a terminal: a row per running task with its count,
 time left and metrics, and a line left behind for each finished level or solver,
 such as `✓ binning 2  4/12 steps  objective 4.38 → 0.0833  13.5s`. `bar` off a
 terminal prints only those finished lines and warnings; `none` prints warnings only.
-Press Ctrl-C to cancel at the next batch, solver chunk, or alignment step. The
+Press Ctrl-C to cancel at the next work boundary (batch, iteration, slab, or
+alignment step). The
 command exits 130 after cleanup. A second Ctrl-C interrupts immediately. When
 `--checkpoint DIR` is set on `reconstruct` or `align`, Ctrl-C or `SIGTERM`
 finishes the current iteration, slab, or step, saves state to `DIR`, prints a

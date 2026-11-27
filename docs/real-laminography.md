@@ -8,7 +8,7 @@ This guide covers supplying measured geometry for parallel-beam and tilted-axis 
 tomojax inspect scan.nxs
 ```
 
-Confirm view count and order, angles in degrees, detector and voxel pitches, and geometry type. For laminography, verify `tilt` and `tilt_about` (`tilt` is the angle of the rotation axis away from the perpendicular tomography axis, not the angle to the beam). When laminography tilt is missing from the file, supply an explicit `geometry=`.
+Confirm view count and order, angles in degrees, detector and voxel pitches, and geometry type, and read the `Loading` section (`loading` in `tj.inspect` and MCP `inspect`) to see whether the file omits pixel size, rotation center, or rotation axis. For laminography, verify `tilt` and `tilt_about` (`tilt` is the angle of the rotation axis away from the perpendicular tomography axis, not the angle to the beam). When laminography tilt or the rotation axis is missing from the file, declare geometry when loading: `geometry=` in Python, `--geometry lamino --tilt ...` on `tomojax correct`, or `geometry` on worker or MCP `open`.
 
 For raw NXtomo, NeXus, or Data Exchange frames with flats and darks, start with [correct raw detector frames](quickstart.md#correct-raw-detector-frames); for other HDF5 layouts, pass `--data-path`, `--angles-path`, and `--image-key-path` (or `data_path=`, `angles_path=`, and `image_key_path=` in `tj.load_frames`).
 
@@ -84,7 +84,7 @@ tomojax reconstruct corrected-lamino.nxs -o recon.nxs \
 tomojax inspect recon.nxs --preview-dir previews
 ```
 
-With default settings, FISTA-TV calibrates its TV weight from detector noise and interpolation error and stops when the proximal gradient reaches the estimated noise level or at 200 iterations (override with `--iterations` or `--tv-weight`, and inspect `resolved_tv_weight`, `effective_iterations`, and `early_stop` in the manifest or `recon.info`). On simulated laminography benchmarks, automatic nonnegative FISTA-TV cuts FBP's measured-band error roughly in half and suppresses missing-cone fog (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.
+With default settings, FISTA-TV calibrates its TV weight from detector noise and interpolation error and stops when the proximal gradient reaches the estimated noise level or at 200 iterations (override with `--iterations` or `--tv-weight`, and inspect `termination`, `resolved_tv_weight`, `effective_iterations`, and `early_stop` in the manifest, `recon.info`, or the closing line of `tomojax reconstruct`). On simulated laminography benchmarks, automatic nonnegative FISTA-TV cuts FBP's measured-band error roughly in half and suppresses missing-cone fog (see [laminography measurements](measurements.md#laminography-the-default-fbp-against-fista)). Enable `--nonnegative` only when attenuation is nonnegative.
 
 ![Diamond K11 scan 54286 reconstructed by FBP and by FISTA-TV: in-plane slices through a layer of glass spheres, enlarged regions and vertical sections. The FISTA-TV slice has sharper sphere edges and a clean background, and its vertical section is dark around the layer where FBP's is gray.](images/k11-fbp-fista.png)
 

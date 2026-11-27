@@ -191,7 +191,7 @@ The CLI prints shared corrections (such as `center` in native pixels or angles i
    - `isolated_views`: single-view jumps away from both neighbors (not permanent slips).
    - `unusual_views`: views with residuals at least 3× their neighbors', such as broken frames or diffraction flashes. Inspect those frames and drop them or rerun with `RejectViews()`.
 
-   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records `focus_px`, `binning`, `views`, and `pairs`; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value.
+   For direct axial center fits (`info["method"] == "sinogram-focus"`), `info["diagnostics"]` records `focus_px`, `binning`, `views`, and `pairs`; for `method="opposite-views"`, it holds the per-pair offsets, scatter, row slope, and consistency p-value. MCP `align` results return both `calibration` and `diagnostics`.
 5. **Check held-out views** to test smooth motion recovery. Hold out every sixth view, align the remaining views, interpolate their poses to the held-out views, and compare projection error against nominal poses after removing each view's offset and vertical ramp:
 
    ```python
@@ -259,7 +259,7 @@ result = tj.align(scan, fit="translations", iterations=12, config=config)
 
 `region=` restricts the fitting region just as in `tj.reconstruct` (`"auto"`, `"bbox"`, `"cube"`, `"cyl"`, or a `RegionEstimate`). Each level's resolved budgets, step count, and status are recorded in `info["levels"][i]`.
 
-`checkpoint="align.ckpt"` (`--checkpoint DIR` on the CLI) saves each finished resolution level, the volume and poses within a level at Gauss-Newton step boundaries, and the poses during refinement. Running the same call again with that directory resumes a killed fit and returns what an uninterrupted fit returns (cone-beam pose derivatives accumulate with floating-point atomics, so two cone fits can still differ in the last bits). Direct axial center fits (`fit="center"` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop. See [Resume a run after a kill](large-scans.md#resume-a-run-after-a-kill) for save frequency, `SIGTERM` handling, and a Slurm script.
+`checkpoint="align.ckpt"` (`--checkpoint DIR` on the CLI, or `checkpoint` on the worker and MCP `align` operations) saves each finished resolution level, the volume and poses within a level at Gauss-Newton step boundaries, and the poses during refinement. Canceling a checkpointed fit (Ctrl-C, `Control.cancel()`, worker `control`, or `SIGTERM`) saves before stopping, and running the same call again with that directory resumes and returns what an uninterrupted fit returns (cone-beam pose derivatives accumulate with floating-point atomics, so two cone fits can still differ in the last bits). Direct axial center fits (`fit="center"` on unposed axial parallel half-turns and `method="opposite-views"`) run on CPU without an iterative loop. See [Resume a run after a kill](large-scans.md#resume-a-run-after-a-kill) for save frequency, `SIGTERM` handling, and a Slurm script.
 
 ## How the figures were made
 

@@ -35,12 +35,20 @@ stacks. Optional NXtomo labels are not needed; `validate_nxtomo` remains the
 strict NXtomo schema check.
 
 Validation of recognized raw acquisitions reports missing detector/axis metadata
-and flat/dark references, using the same requirements as frame loading. A
+and flat/dark references, using the same requirements as frame loading.
+`tj.inspect(path)` includes a `loading` section (`LoadingReport`: `length_unit`,
+`center`, `geometry`, `frame_records`, or `message` naming a missing argument)
+describing what loading reads from the file alone; given a checkpoint directory,
+`tj.inspect(DIR)` reports the stopped run under `checkpoint` instead. A
 parallel-beam file without a recorded pixel size loads in pixel units (pitch 1,
 `length_unit: "pixel"`); pass `pixel_size=`, `detector=`, or `--pixel-size` for
 physical units. A file without a recorded axial center loads with the center at
 the middle of the detector and `detector_center_status="not_recorded"`; fit it
-with `tj.align(scan, fit="center")` or supply `detector=`. CLI errors name
+with `tj.align(scan, fit="center")` or supply `detector=`. A file that records
+no rotation axis or pixel scale warns on load (`geometry_status="not_recorded"`)
+and is refused by reconstruction and alignment until geometry is declared
+(`geometry=` in `tj.load`, `--geometry parallel` on `tomojax correct`, or
+`geometry: {"kind": "parallel"}` on worker or MCP `open`). CLI errors name
 `--flats`, `--darks`, `--angles`, or `--pixel-size` where those flags supply the
 missing input.
 

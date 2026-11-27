@@ -11,7 +11,9 @@
   `reconstruct_slabs` and `align` take `checkpoint` (a directory, relative paths against the
   project directory). A checkpointed run that is canceled (`control` cancel, Ctrl-C on the
   CLI, `Control.cancel()` in Python) or sent `SIGTERM` saves at its next work boundary
-  before stopping; `tomojax serve` now handles `SIGTERM` by shutting down that way. The
+  before stopping; `tomojax serve` now handles `SIGTERM` by shutting down that way, and
+  `tomojax mcp` gives a worker running a checkpointed job up to two minutes to save when
+  stopped (an MCP client must stop its server when signaled by a scheduler). The
   stopped run's error names its directory: `tomojax.errors.Canceled.checkpoint`, a
   `checkpoint` field on the CLI's JSON `error` record, the worker's `error` and the MCP tool
   error, whose `next` says how to resume. A checkpoint records what run it holds, how it was

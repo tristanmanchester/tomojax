@@ -6,7 +6,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 
 | Workflow | Entry point |
 | --- | --- |
-| Inspect, validate, and preview datasets (including slice previews and center sweeps) | `tomojax inspect scan.nxs [--json] [--preview-dir DIR] [--slice AXIS=INDEX] [--centers SPEC]` |
+| Inspect, validate, and preview datasets (including loader findings, slice previews, center sweeps, and checkpoint directories) | `tomojax inspect INPUT [--json] [--preview-dir DIR] [--slice AXIS=INDEX] [--centers SPEC]`, `tj.inspect(path)`, or worker/MCP `inspect` |
 | Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax correct scan.npz -o scan.nxs` |
 | Preview corrections on a row band before writing | `tomojax correct raw.nxs --dry-run --preview band.png` or `tomojax.interactive.correction_preview` |
 | Load and correct HDF5 raw frames (NXtomo, NeXus scan files, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
@@ -21,8 +21,8 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Alignment (direct parallel center fit; joint fit for center, translations, tilt, roll, per-view rotations) | `tomojax align corrected.nxs -o aligned.nxs --fit ...` or `tj.align(scan, fit=..., grid=...)` |
 | Export volume to 32-bit TIFF z-slices or raw binary (`float32`/`uint16`) | `tomojax export recon.nxs -o slices/` or `-o recon.raw --dtype uint16` |
 | Synthetic scan generation | `tomojax simulate -o synthetic.nxs --size 64 --geometry parallel\|lamino\|cone` |
-| Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap and `tj.reconstruct_slabs` ([large scans](large-scans.md)) |
-| Checkpoint and resume long runs (Python and CLI) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |
+| Volumes larger than GPU or host memory | Automatic host slabs for FBP, FDK, Fourier, CGLS, FISTA-TV, SIRT, MLEM; `out=` memmap, `tj.reconstruct_slabs`, and worker/MCP `reconstruct_slabs` ([large scans](large-scans.md)) |
+| Checkpoint and resume long runs (Python, CLI, worker, and MCP) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`; `checkpoint` on worker and MCP `reconstruct`, `reconstruct_slabs`, and `align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |
 | Plan, watch, or stream JSON progress for CLI and Python runs | `--dry-run`, `--watch-dir DIR`, `--progress auto\|bar\|json\|none`; `tomojax.progress.watch` |
 | Native desktop workspace (projects, live jobs, linked views, 3D volume rendering, comparison) | `tomojax studio [PROJECT_OR_INPUT] [--build] [--demo]` ([Studio](../studio/README.md)) |
 | AI agent integration over MCP stdio | `tomojax mcp` with `tomojax[mcp]` ([MCP guide](mcp.md)) |
@@ -32,7 +32,8 @@ This page lists supported workflows, acquisition formats, and numerical backends
 ## Metadata and calibration rules
 
 - **Missing pixel pitch:** parallel-beam scans fall back to pixel units (`length_unit: "pixel"`); override with `pixel_size=`, `detector=`, or `--pixel-size`. Cone-beam scans require a physical pixel size.
-- **Missing rotation center:** defaults to the detector middle `(0.0, 0.0)` with `detector_center_status="not_recorded"`. Supply `detector=` or fit it with `tj.align(scan, fit="center")`.
+- **Missing rotation center:** defaults to the detector middle `(0.0, 0.0)` with `detector_center_status="not_recorded"`. Supply `detector=` / `--detector-center U V`, or fit it with `tj.align(scan, fit="center")`, `tomojax align --fit center`, or MCP `align`.
+- **Missing rotation axis:** a file that records no rotation axis or pixel scale warns on load (`geometry_status="not_recorded"`, shown under `loading` in `inspect`). Reconstruction and alignment refuse it until geometry is declared: pass `geometry=...` to `tj.load`, `--geometry parallel` (or `lamino` / `cone`) to `tomojax correct`, or `geometry: {"kind": "parallel"}` to worker/MCP `open`.
 - **Missing angles or laminography tilt:** raise an error naming the argument (`angles=` or `geometry=`) rather than assuming defaults.
 - **Missing flats or darks:** supply `flats=` (frames or scalar white level) and `darks=`. Nikon and SkyScan require explicit `darks=` (SkyScan also requires `flats=`); Zeiss skips darks when `AcquisitionSettings/CameraStaticBackground = 1`.
 - **Cropping and binning:** compressed TIFF crops decode only intersecting strips or tiles. Detector binning reduces output resolution automatically when no explicit grid is recorded; `Scan.binned()` and file-owned grids keep their sampling unless overridden with `grid=`.

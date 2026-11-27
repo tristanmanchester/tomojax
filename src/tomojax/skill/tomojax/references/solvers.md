@@ -13,10 +13,10 @@ Unpenalized CGLS and SIRT have no image-space regularizer: running them for hund
 | `spdhg` | Fixed stochastic block-update budget | 600 block updates | Pass `iterations=N` |
 | `cgls_multires` | Explicit per-level budgets (`(32, 16)`), numerical stopping per level | Per-level budgets | Pass `iterations_per_level=(...)` |
 
-Inspect `info` after automatic CGLS or SIRT:
+Inspect `info` after an automatic iterative run (MCP results put every scalar field at the top level and include the stopping summary in the text):
 
-- `termination`: `"projection_discrepancy"` when the residual crossed the estimated noise plus sampling error, `"iteration_limit"` when the 50-update cap ended the run (CGLS also reports `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"`). `early_stop` is `False` when the cap was exhausted.
-- `effective_iterations`, `measurement_noise_rms`, `projection_error_rms`, and the residual (`residual_rms` for CGLS; `pre_update_residual_rms` and resolved `acceleration` for SIRT, plus `slab_stopping` on independent axial SIRT slabs).
+- `termination`: `"projection_discrepancy"` (CGLS/SIRT) or `"noise_score"` (FISTA) when the solver stopped at the estimated error level, `"objective_tolerance"` (FISTA with an explicit `tolerance`), `"iteration_limit"` when the budget ended the run, or `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"` for CGLS. `early_stop` is `False` when the cap was exhausted.
+- `effective_iterations`, plus `resolved_tv_weight`, `effective_tv_weight`, and `noise_score_rms` for FISTA, or `measurement_noise_rms`, `projection_error_rms`, and the residual (`residual_rms` for CGLS; `pre_update_residual_rms` and resolved `acceleration` for SIRT, plus `slab_stopping` on independent axial SIRT slabs).
 
 On real scans, motion, scatter, calibration bias, and correlated detector errors often leave the projection residual above `projection_error_rms` at 50 updates, so `termination="iteration_limit"` is expected. Check the slices before raising `iterations`, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run, pass `iterations=info["effective_iterations"]` for CGLS, both `iterations` and `acceleration` from `info` for SIRT, and `tv_weight=info["resolved_tv_weight"]` with `iterations=info["effective_iterations"]` for FISTA.
 
