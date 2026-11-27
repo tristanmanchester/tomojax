@@ -57,10 +57,12 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         frames,
         detector_roll,
         view_positions,
+        disturbance_positions,
         schedule,
         config=None,
     ):
         assert initial_center == 0
+        assert disturbance_positions is None
         assert projections is scan.projections and d == detector and keep_grid == explicit
         assert view_positions is None
         assert g == (supplied or grid) and nominal.shape == (25, 4, 4)

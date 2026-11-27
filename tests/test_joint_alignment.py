@@ -361,9 +361,11 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         detector_roll,
         config=None,
         view_positions,
+        disturbance_positions,
         schedule,
     ):
         assert initial_center == 0
+        assert disturbance_positions is None
         assert fit == ("translations", "rotations")
         assert frames is None and detector_roll == 0.3 and view_positions is None
         assert schedule.detector_binning == 1
