@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 _TURN = 2 * np.pi
 
 
-def _require_source_orbit(radius: np.ndarray | float, distance: np.ndarray | float) -> None:
+def _require_source_orbit(radius: Float64Array | float, distance: Float64Array | float) -> None:
     # Aligning the spin axis can leave a roundoff-sized transverse component.
     if np.any(radius <= 1e-10 * np.asarray(distance)):
         raise ValueError("FDK needs a source orbit around the rotation axis")
@@ -51,10 +51,10 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
         # Rz(-theta) @ S.T @ (source - translation). Its azimuth is theta
         # plus a constant phase, which cancels from every angular difference.
         if geometry.axis_unit is not None or geometry.tilt:
-            source = geometry.beam.source()
-            source[0] -= geometry.beam.axis_offset
-            radius = float(np.linalg.norm(np.cross(geometry.rotation_axis(), source)))
-            _require_source_orbit(radius, float(np.linalg.norm(source)))
+            lab_source = geometry.beam.source()
+            lab_source[0] -= geometry.beam.axis_offset
+            radius = float(np.linalg.norm(np.cross(geometry.rotation_axis(), lab_source)))
+            _require_source_orbit(radius, float(np.linalg.norm(lab_source)))
         return group_repeats(np.deg2rad(degrees))
     # The angle of the source around object z defines the quadrature. Inverting
     # world-from-object gives R.T @ (source - translation) in the object.
@@ -67,10 +67,11 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
     for count, beam, _ in parts:
         stop = n_views if count is None else min(start + count, n_views)
         pose = poses[start:stop]
-        source: Float64Array = np.einsum(
-            "nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3]
+        source = np.asarray(
+            np.einsum("nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3]), np.float64
         )
-        _require_source_orbit(np.hypot(source[:, 0], source[:, 1]), np.linalg.norm(source, axis=1))
+        radii = np.hypot(source[:, 0], source[:, 1])
+        _require_source_orbit(radii, np.hypot(radii, source[:, 2]))
         azimuth[start:stop] = np.arctan2(-source[:, 0], -source[:, 1])
         start = stop
     return group_repeats(azimuth)
