@@ -287,8 +287,9 @@ def export(
     ----------
     path : str or path-like
         Destination. The longest matching suffix selects the format. A directory
-        with no recognized suffix holds numbered TIFF slices. All output files and
-        directories are checked against live TomoJAX inputs, including physical aliases.
+        with no recognized suffix holds numbered TIFF slices. For HDF5, append
+        ``::/entry/group/signal`` to choose the dataset.
+        Files and directories are checked against live inputs, including physical aliases.
     item : Reconstruction, Alignment or Simulation
         Reconstruction volume, alignment working image or simulation phantom.
         An integer or boolean volume supplies mask labels.
@@ -304,7 +305,7 @@ def export(
     axis : str or None, optional
         Stack planes along this axis. The default preserves stored order.
     compress : bool or None, optional
-        Use the format's lossless codec. TIFF uses LZW and defaults to compressed for masks.
+        Use the format's lossless codec. OME-Zarr volumes and masks default to compressed.
     dry_run : bool, optional
         Return the resolved plan before writing any files.
 

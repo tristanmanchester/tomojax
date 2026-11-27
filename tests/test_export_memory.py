@@ -34,7 +34,16 @@ def check_last(path: Path, recon: tj.Reconstruction, axis: str) -> None:
             i = (recon.volume.shape[0] - 1, y, x) if axis == "z" else (y, x, 1023)
             stream.seek(4 * int(np.ravel_multi_index(i, recon.volume.shape)))
             expected.append(np.frombuffer(stream.read(4), "<f4")[0])
-    if path.is_dir():
+    if path.suffix == ".zarr":
+        import zarr
+
+        actual = zarr.open_group(path, mode="r")["0"][-1]
+    elif path.suffix == ".h5":
+        import h5py
+
+        with h5py.File(path) as file:
+            actual = file["entry/data/data"][-1]
+    elif path.is_dir():
         actual = tifffile.imread(sorted(path.glob("*.tif"))[-1])
     elif path.suffix == ".raw":
         with path.open("rb") as stream:
@@ -70,7 +79,7 @@ def test_two_gibibytes_stay_bounded_across_formats_and_stack_axes(tmp_path):
         for _ in range(512):
             rng.random((1024, 1024), np.float32).tofile(stream)
     for axis in ("z", "x"):
-        for name in ("volume.tif", "slices", "volume.raw", "lzw.tif"):
+        for name in ("volume.tif", "slices", "volume.raw", "lzw.tif", "volume.h5", "volume.zarr"):
             for mode in ("write", "read"):
                 subprocess.run(
                     [sys.executable, __file__, mode, str(tmp_path), name, axis], check=True

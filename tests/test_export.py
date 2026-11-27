@@ -62,7 +62,16 @@ def test_each_writer_preserves_samples_and_registration(tmp_path, fmt, axis, wid
         assert a["coordinates"]["spacing"] == (0.5, 0.3, 0.2)[i]
         assert a["unit"] == "mm"
     expected = np.moveaxis(item.volume[1:5, 1:7], "zyx".index(axis), 0)
-    if path.is_dir():
+    if path.suffix == ".zarr":
+        import zarr
+
+        actual = zarr.open_group(path, mode="r")["0"][:]
+    elif path.suffix == ".h5":
+        import h5py
+
+        with h5py.File(path) as file:
+            actual = file["/entry/data/data"][:]
+    elif path.is_dir():
         actual = np.stack([tifffile.imread(p) for p in sorted(path.glob("*.tif"))])
     elif path.suffix == ".tif":
         with tifffile.TiffFile(path) as t:
@@ -219,3 +228,129 @@ def test_publication_to_a_new_file_is_exclusive(tmp_path):
     with ThreadPoolExecutor(2) as pool:
         assert sorted(pool.map(publish, plans)) == [False, True]
     np.testing.assert_array_equal(np.fromfile(path, "<f4"), indexed().volume.ravel())
+
+
+def test_nexus_custom_group_scaling_and_whole_file_replacement(tmp_path, capsys):
+    import shutil
+    import subprocess
+
+    import h5py
+
+    item = indexed()
+    native = tmp_path / "input.nxs"
+    tj.save(native, item)
+    path = tmp_path / "nested" / "output.h5"
+    target = f"{path}::/analysis/final/attenuation"
+    args = [
+        "export",
+        str(native),
+        "-o",
+        target,
+        "--dtype",
+        "uint16",
+        "--range",
+        "-4",
+        "32763.5",
+        "--compress",
+    ]
+    assert cli([*args, "--dry-run"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["replacement"] == "whole file" and not path.parent.exists()
+    assert plan["paths"] == [str(path)]
+    assert cli(args) == 0
+    with h5py.File(path, "r+") as file:
+        group = file["analysis/final"]
+        assert file.attrs["default"] == "analysis" and file["analysis"].attrs["default"] == "final"
+        signal = group[group.attrs["signal"]]
+        assert signal.name == "/analysis/final/attenuation"
+        assert signal[3, 5, 9] == 726
+        assert (726 + group["attenuation_offset"][()]) * group["attenuation_scaling_factor"][
+            ()
+        ] == 359
+        assert signal.compression == "gzip" and signal.shuffle
+        file["unrelated"] = 21
+    if h5dump := shutil.which("h5dump"):
+        dump = subprocess.check_output(
+            [h5dump, "-d", "/analysis/final/attenuation", "-s", "3,5,9", "-c", "1,1,1", str(path)],
+            text=True,
+        )
+        assert "(3,5,9): 726" in dump
+    assert cli([*args, "--force"]) == 0
+    with h5py.File(path) as file:
+        assert "unrelated" not in file
+    for where in ("/data", "relative/group", "/entry/final/x", "/entry/record/data"):
+        with pytest.raises(tj.InvalidParameter, match="HDF5"):
+            tj.export(f"{path}::{where}", item, dry_run=True)
+    with pytest.raises(SystemExit) as refused:
+        cli(["export", str(native), "-o", f"{native}::/entry/volume/data", "--force"])
+    assert refused.value.code == 2
+
+
+@pytest.mark.parametrize(
+    ("shape", "axis"), [((517, 5, 7), "z"), ((517, 5, 7), "x"), ((1, 9, 513), "y")]
+)
+def test_pyramid_one_pass_on_odd_and_singleton_axes(tmp_path, monkeypatch, shape, axis):
+    from ome_zarr_models import open_ome_zarr
+    import zarr
+
+    from tomojax._loading.files import volume_source
+    from tomojax.io._export_data import Selection  # check-public-imports: allow-private
+    from tomojax.io.api import plan_export
+
+    item = indexed(shape)
+    source = volume_source(item)
+    reads = []
+
+    def read(region):
+        reads.extend(range(region[0].start, region[0].stop))
+        return source.read(region)
+
+    # An odd slab depth forces pairs to span reads at multiple pyramid levels.
+    monkeypatch.setattr(Selection, "block_depth", property(lambda self: 11))
+    path = tmp_path / "volume.ome.zarr"
+    plan_export(path, replace(source, read=read), axis=axis).publish(force=False)
+    assert reads == list(range(shape[0]))
+    root = zarr.open_group(path, mode="r")
+    assert open_ome_zarr(root) is not None
+    expected = np.moveaxis(item.volume, "zyx".index(axis), 0)
+    order = [dict(z=0, y=1, x=2)[s] for s in axis + "zyx".replace(axis, "")]
+    spacing = np.array([0.5, 0.3, 0.2])[order]
+    origin = np.array([-5.0, 2.0, 1.0])[order]
+    levels = root.attrs["ome"]["multiscales"][0]["datasets"]
+    for i, level in enumerate(levels):
+        np.testing.assert_array_equal(root[str(i)][:], expected)
+        scale, shift = level["coordinateTransformations"]
+        np.testing.assert_allclose(scale["scale"], spacing)
+        np.testing.assert_allclose(shift["translation"], origin)
+        if max(expected.shape) <= 256:
+            assert i == len(levels) - 1
+            break
+        for d in range(3):
+            n = expected.shape[d]
+            if n > 1:
+                even, odd = np.arange(0, n - 1, 2), np.arange(1, n, 2)
+                expected = (expected.take(even, axis=d) + expected.take(odd, axis=d)) / 2
+                origin[d] += spacing[d] / 2
+                spacing[d] *= 2
+    assert max(expected.shape) <= 256
+
+
+def test_zarr_labels_and_missing_optional_dependency(tmp_path, monkeypatch):
+    import sys
+
+    import zarr
+
+    item = indexed((1, 5, 519))
+    mask = np.zeros(item.volume.shape, dtype="u1")
+    mask[0, 1, 501] = 3
+    path = tmp_path / "labels.zarr"
+    tj.export(path, replace(item, volume=mask))
+    root = zarr.open_group(path, mode="r")
+    assert list(root.array_keys()) == ["0"]
+    np.testing.assert_array_equal(root["0"][:], mask)
+    absent = tmp_path / "missing.zarr"
+    monkeypatch.setitem(sys.modules, "zarr", None)
+    for dry in (False, True):
+        with pytest.raises(tj.InvalidParameter, match=r"tomojax\[zarr\]"):
+            tj.export(absent, item, dry_run=dry)
+    assert not absent.exists()

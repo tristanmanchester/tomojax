@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from tomojax._data._format2 import registered_members, saved_volume_grid
+from tomojax._data._format2 import nxdata, registered_members, saved_volume_grid
 from tomojax._data._frame_stack import FrameStack
 from tomojax._data._io_acquisition import (
     ROTATION_ANGLE_PATHS,
@@ -48,6 +48,7 @@ __all__ = [
     "metadata_record",
     "native_payload",
     "npz_layout",
+    "nxdata",
     "provenance",
     "read_nxtomo",
     "read_projections",

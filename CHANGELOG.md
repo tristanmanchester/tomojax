@@ -10,6 +10,8 @@
   vendor frame files and separate calibration. The worker, MCP, CLI and Python reject
   output names and checkpoint directories that would replace an input, including aliases.
   Validation releases its input files on return or error.
+- Export a registered array to a NeXus NXdata signal at a chosen HDF5 path, or export a volume to an OME-Zarr 0.5 pyramid with `tomojax[zarr]`. Both preserve the physical coordinates of the written axes.
+
 - `tj.save` writes NeXus format 2 with read-only, memory-mappable arrays,
   physical coordinate vectors and a processing record at `/entry/record`.
   TomoJAX 1.0.0rc6 cannot read format 2. Use this release to convert rc6 files

@@ -83,12 +83,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
             except InvalidParameter as exc:
                 parser.error(str(exc))
-            paths = plan.format.paths(out)
+            paths = plan.format.paths(plan.path)
             check_paths(parser, inputs=[data], outputs=paths, force=args.force or args.dry_run)
             report = plan.details if args.dry_run else plan.publish(force=args.force)
         if args.progress == "json":
             return report_result(
-                out,
+                plan.path,
                 () if args.dry_run else tuple(map(str, paths)),
                 report,
                 arrays={"source_volume": disk},

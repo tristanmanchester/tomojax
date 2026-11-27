@@ -730,7 +730,9 @@ class Admission:
             axis=operation.axis,
             compress=operation.compress,
         )
-        paths = self.durable_paths(path, list(plan.format.paths(path)), force=operation.force)
+        paths = self.durable_paths(
+            plan.path, list(plan.format.paths(plan.path)), force=operation.force
+        )
         self.details.update(plan.details)
 
         def write() -> p.Files:

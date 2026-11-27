@@ -4006,6 +4006,9 @@ mcp = [
 spectra = [
     { name = "xraylib" },
 ]
+zarr = [
+    { name = "zarr" },
+]
 
 [package.dev-dependencies]
 benchmark = [
@@ -4020,6 +4023,7 @@ dev = [
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "numpydoc" },
+    { name = "ome-zarr-models" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -4027,6 +4031,7 @@ dev = [
     { name = "ruff" },
     { name = "sphinx" },
     { name = "twine" },
+    { name = "zarr" },
 ]
 examples = [
     { name = "matplotlib" },
@@ -4060,8 +4065,9 @@ requires-dist = [
     { name = "scipy", specifier = ">=1.16.1,<2" },
     { name = "tifffile", specifier = ">=2026.9.20" },
     { name = "xraylib", marker = "extra == 'spectra'", specifier = ">=4.1,<5" },
+    { name = "zarr", marker = "extra == 'zarr'", specifier = ">=3.1,<4" },
 ]
-provides-extras = ["mcp", "cpu", "cuda12", "fourier-cuda12", "spectra"]
+provides-extras = ["zarr", "mcp", "cpu", "cuda12", "fourier-cuda12", "spectra"]
 
 [package.metadata.requires-dev]
 benchmark = [
@@ -4076,6 +4082,7 @@ dev = [
     { name = "jsonschema", specifier = ">=4.23,<5" },
     { name = "mcp", specifier = ">=2.3,<3" },
     { name = "numpydoc", specifier = ">=1.11,<2" },
+    { name = "ome-zarr-models", specifier = ">=1.9,<2" },
     { name = "pre-commit", specifier = ">=4,<5" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "pytest-cov", specifier = ">=7,<8" },
@@ -4083,6 +4090,7 @@ dev = [
     { name = "ruff", specifier = ">=0.11,<0.12" },
     { name = "sphinx", specifier = ">=9,<10" },
     { name = "twine", specifier = ">=6,<7" },
+    { name = "zarr", specifier = ">=3.1,<4" },
 ]
 examples = [{ name = "matplotlib", specifier = ">=3.10,<4" }]
 interop = [

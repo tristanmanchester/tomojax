@@ -452,3 +452,42 @@ def test_export_plan_and_receipt_across_surfaces(tmp_path, worker, agent, capsys
         for k in plan.keys() - {"paths", "free_bytes", "destination_exists"}:
             assert receipt[k] == plan[k], k
         assert receipt["clipped"] == {"below": 0, "above": 0}
+
+
+@pytest.mark.parametrize(
+    "destination", ["custom.h5::/series/result/absorption", "pyramid.ome.zarr"]
+)
+def test_container_export_paths_match_on_every_surface(
+    tmp_path, worker, agent, capsys, destination
+):
+    from tests.test_export import indexed
+
+    item = indexed()
+    native = tmp_path / "input.nxs"
+    tj.save(native, item)
+    argument = str(tmp_path / destination)
+    container = Path(argument.partition("::")[0])
+    plan = tj.export(argument, item, dry_run=True)
+    args = ["export", str(native), "-o", argument]
+    assert cli([*args, "--dry-run"]) == 0
+    terminal = json.loads(capsys.readouterr().out)
+    opened = worker.request(dict(type="open", kind="reconstruction", path=str(native)))
+    source = dict(type="member", handle=opened["result"]["value"]["handle"], member="volume")
+    operation = dict(type="export", source=source, path=argument)
+    validation = worker.request(dict(type="validate", operation=operation))
+    worker_plan = validation["result"]["value"]["details"]
+    handle = agent.call("open", path=str(native), kind="reconstruction")["structuredContent"][
+        "handle"
+    ]
+    reply = agent.call("export", source=handle, path=argument, dry_run=True)
+    assert not reply["isError"], reply["content"]
+    for result in (terminal, worker_plan, reply["structuredContent"]):
+        for key in ("format", "paths", "files", "replacement", "shape", "values"):
+            assert result[key] == plan[key]
+    assert not container.exists()
+    run = worker.request(dict(type="run", operation=operation))
+    assert run["type"] == "result", run
+    assert tj.inspect(container)["record"]["export"]["format"] == plan["format"]
+    receipt = agent.call("export", source=handle, path=argument, force=True)
+    assert not receipt["isError"], receipt["content"]
+    assert receipt["structuredContent"]["bytes_written"] > 0

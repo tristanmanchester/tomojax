@@ -19,8 +19,9 @@ from tomojax import progress
 from tomojax._data import array_record
 from tomojax.core.input_files import check_output, publishing as protect_inputs
 from tomojax.errors import InvalidParameter
+from tomojax.io import _export_formats as formats
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
-from tomojax.io._export_formats import FORMATS, Document, Format, format_for, slice_path
+from tomojax.io._export_formats import Document, Format, format_for, slice_path
 
 
 def existing_parent(path: Path) -> Path:
@@ -312,13 +313,11 @@ def plan_export(
     ExportPlan
         Resolved selection, value mapping, files and storage requirements.
     """
-    if not path.name or path.name == "..":
-        raise InvalidParameter("path", "expected an output file or directory name")
-    fmt = format_for(path)
-    _check_export_paths(fmt, path)
     selection = Selection.select(source, crop, binning, axis)
+    path, fmt, settings = formats.destination(path, selection)
+    _check_export_paths(fmt, path)
     if fmt.spatial_only and any(a.frame != "volume" for a in source.axes):
-        choices = ", ".join(f.name for f in FORMATS if not f.spatial_only)
+        choices = ", ".join(f.name for f in formats.FORMATS if not f.spatial_only)
         raise InvalidParameter("path", f"{fmt.name} needs a spatial volume; choose from {choices}")
     options = {
         "dtype": dtype,
@@ -329,7 +328,7 @@ def plan_export(
     }
     for name, value in options.items():
         if value is not None and name not in fmt.options:
-            choices = ", ".join(f.name for f in FORMATS if name in f.options)
+            choices = ", ".join(f.name for f in formats.FORMATS if name in f.options)
             raise InvalidParameter(
                 name, f"{fmt.name} does not support {name}; choose from {choices}"
             )
@@ -354,10 +353,13 @@ def plan_export(
         "binning": binning,
     }
     encoding = {
+        **settings,
         "format": fmt.name,
         "selection": selection_info,
         "values": {**asdict(values), "range": list(values.range) if values.range else None},
-        "compress": ("compress" in fmt.options and source.domain == "mask")
+        "compress": (
+            "compress" in fmt.options and (fmt.compressed_by_default or source.domain == "mask")
+        )
         if compress is None
         else bool(compress and "compress" in fmt.options),
         "bigtiff": fmt.layout == "file" and fmt.ordered_pages and nbytes >= (4 << 30) - (64 << 20),

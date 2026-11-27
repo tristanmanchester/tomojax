@@ -319,9 +319,13 @@ def test_worker_releases_input_protection_with_the_last_derived_handle(
 @pytest.mark.parametrize(
     ("name", "alias"),
     [
+        ("plot.h5", "plot.h5"),
+        ("custom.h5::/plot/signal", "custom.h5"),
         ("image.tif", "image.tif"),
         ("image.ome.tif", "image.ome.tif"),
         ("slices", "slices/extra.h5"),
+        ("pyramid.zarr", "pyramid.zarr/extra.h5"),
+        ("previous.zarr", ".previous.zarr.previous/extra.h5"),
         ("volume.raw", "volume.raw.json"),
         ("header.mhd", "header.raw"),
         ("amira.am", "amira.am.json"),
@@ -335,9 +339,9 @@ def test_export_rechecks_the_group_after_staging(tmp_path, name, alias):
     master, source = acquisition(tmp_path, "external")
     target = tmp_path / name
     volume = indexed()
-    if name == "recovery":
+    if alias.startswith("."):
         tj.export(target, volume)
-        target.rename(tmp_path / ".recovery.previous")
+        target.rename(tmp_path / f".{name}.previous")
     elif target != tmp_path / alias:
         tj.export(target, volume)
     dependency = tmp_path / alias
@@ -383,10 +387,13 @@ def export_conflicts(tmp_path):
 
     destinations = []
     for name, written in [
+        ("plot.h5", "plot.h5"),
+        ("custom.h5::/plot/signal", "custom.h5"),
         ("image.tif", "image.tif"),
         ("image.ome.tif", "image.ome.tif"),
         ("binary.raw", "binary.raw"),
         ("raw-record.raw", "raw-record.raw.json"),
+        ("alias.zarr", "alias.zarr"),
         ("header.mhd", "header.mhd"),
         ("meta.mhd", "meta.raw"),
         ("meta-record.mhd", "meta-record.mhd.json"),
@@ -395,12 +402,12 @@ def export_conflicts(tmp_path):
     ]:
         (tmp_path / written).hardlink_to(storage)
         destinations.append(tmp_path / name)
-    for name in ("slices", "recovery"):
+    for name in ("slices", "recovery", "pyramid.zarr", "previous.zarr"):
         path = tmp_path / name
         tj.export(path, value)
         directory = path
-        if name == "recovery":
-            directory = path.rename(tmp_path / ".recovery.previous")
+        if name in {"recovery", "previous.zarr"}:
+            directory = path.rename(tmp_path / f".{name}.previous")
         (directory / "extra.h5").hardlink_to(storage)
         destinations.append(path)
     return master, storage, destinations
@@ -445,9 +452,10 @@ def test_python_export_protects_each_format_and_directory_recovery(tmp_path, exp
         for dry in (True, False):
             with pytest.raises(tj.InvalidParameter, match=storage.name):
                 tj.export(path, volume, dry_run=dry)
-    with pytest.raises(tj.InvalidParameter, match=storage.name):
-        tj.inspect(tmp_path / "recovery")
-    assert not (tmp_path / "recovery").exists()
+    for missing in ("recovery", "previous.zarr"):
+        with pytest.raises(tj.InvalidParameter, match=storage.name):
+            tj.inspect(tmp_path / missing)
+        assert not (tmp_path / missing).exists()
     assert hashes(tmp_path) == original
     z, y, x = np.indices((7, 9, 11))
     np.testing.assert_array_equal(tj.load_reconstruction(master).volume, 100 * z + 10 * y + x)
@@ -500,12 +508,20 @@ def test_mcp_export_protects_each_format_and_manifest(tmp_path, export_conflicts
                 assert reply["isError"] and str(storage) in reply["structuredContent"]["message"]
         for path in [*destinations, tmp_path / "manifest.tif"]:
             for force in (False, True):
-                reply = client.call("export", source=source["handle"], path=path.name, force=force)
-                error = reply["structuredContent"]
-                assert reply["isError"] and error["path"] == "path", reply
-                assert (
-                    str(storage) in error["message"] and "different destination" in error["message"]
-                )
+                for dry in (True, False):
+                    reply = client.call(
+                        "export",
+                        source=source["handle"],
+                        path=str(path.relative_to(tmp_path)),
+                        force=force,
+                        dry_run=dry,
+                    )
+                    error = reply["structuredContent"]
+                    assert reply["isError"] and error["path"] == "path", reply
+                    assert (
+                        str(storage) in error["message"]
+                        and "different destination" in error["message"]
+                    )
     assert hashes(tmp_path) == original
 
 

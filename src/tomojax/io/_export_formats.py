@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from functools import partial
 import json
 import math
+import os
 from pathlib import Path
 import tempfile
 from typing import IO, Literal, TypedDict
@@ -16,7 +17,10 @@ import numpy as np
 import tifffile
 
 from tomojax.core.host_volume import read_at, write_at
-from tomojax.io._export_data import Blocks
+from tomojax.errors import InvalidParameter
+from tomojax.io._export_data import Blocks, Selection
+from tomojax.io._export_nexus import nexus_record, nexus_settings, write_nexus
+from tomojax.io._export_zarr import write_zarr, zarr_record, zarr_settings
 from tomojax.wire.arrays import Uniform
 
 type Document = dict[str, object]
@@ -223,6 +227,8 @@ class Format:
     payload_suffix: str | None = None
     spatial_only: bool = False
     ordered_pages: bool = False
+    settings: Callable[[Selection, str | None], Document] | None = None
+    compressed_by_default: bool = False
 
     def paths(self, path: Path) -> tuple[Path, ...]:
         if self.layout != "group":
@@ -313,6 +319,30 @@ FORMATS = (
         partial(raw, dialect="amira"),
         spatial_only=True,
     ),
+    Format(
+        "NeXus NXdata",
+        (".h5", ".hdf5", ".nxs"),
+        "file",
+        (*_COMMON, "compress"),
+        "silx reads physical coordinates and stored samples. "
+        "The signal's offset and scaling factor recover physical values.",
+        write_nexus,
+        nexus_record,
+        settings=nexus_settings,
+    ),
+    Format(
+        "OME-Zarr 0.5",
+        (".zarr", ".ome.zarr"),
+        "directory",
+        (*_COMMON, "compress"),
+        "ome-zarr-py reads the axes, voxel size and origin of every level. "
+        "The tomojax attribute holds value scaling.",
+        write_zarr,
+        zarr_record,
+        spatial_only=True,
+        settings=zarr_settings,
+        compressed_by_default=True,
+    ),
 )
 
 
@@ -328,6 +358,19 @@ def format_for(path: Path) -> Format:
         if matches
         else next(f for f in FORMATS if not f.suffixes)
     )
+
+
+def destination(path: Path, selection: Selection) -> tuple[Path, Format, Document]:
+    """Resolve a container and the format's internal path once before staging."""
+    container, separator, dataset = os.fspath(path).partition("::")
+    path = Path(container)
+    if not path.name or path.name == "..":
+        raise InvalidParameter("path", "expected an output file or directory name")
+    fmt = format_for(path)
+    if separator and fmt.settings is None:
+        raise InvalidParameter("path", "only HDF5 accepts ::/group/signal")
+    settings = fmt.settings(selection, dataset if separator else None) if fmt.settings else {}
+    return path, fmt, settings
 
 
 def format_descriptions() -> list[FormatDescription]:

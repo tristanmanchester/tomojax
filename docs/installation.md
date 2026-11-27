@@ -33,6 +33,7 @@ Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
 | Extra | Adds |
 | --- | --- |
 | `cpu` | JAX CPU backend |
+| `zarr` | Write OME-Zarr 0.5 multiscale volumes |
 | `cuda12` | JAX CUDA 12 runtime, CuPy, and NVIDIA runtime/NVRTC wheels |
 | `fourier-cuda12` | CuPy alone for GPU-accelerated Fourier-slice inversion (`method="fourier"`) alongside `cpu` |
 | `mcp` | Model Context Protocol server (`tomojax mcp`); see [use TomoJAX from an AI agent](mcp.md) |

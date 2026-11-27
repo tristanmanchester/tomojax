@@ -212,6 +212,61 @@ def native_nexus(root: Path) -> None:
     np.testing.assert_allclose(det.y_pixel_size.to("mm").magnitude, 0.051)
 
 
+def nexus_and_ngff(root: Path) -> None:
+    """Read a custom signal through silx and each registered NGFF level through ome-zarr-py."""
+    from dataclasses import replace
+
+    import h5py
+    from ome_zarr.io import parse_url
+    from ome_zarr.reader import Reader
+    from ome_zarr_models import open_ome_zarr
+    from silx.io.nxdata.parse import get_default
+    import zarr
+
+    source = indexed()
+    path = root / "export.h5"
+    tj.export(
+        f"{path}::/analysis/result/attenuation",
+        source,
+        dtype="uint16",
+        range=(-4, 32763.5),
+        compress=True,
+    )
+    with h5py.File(path) as file:
+        plot = get_default(file)
+        assert plot is not None
+        assert isinstance(plot.signal, h5py.Dataset)
+        assert plot.signal.name == "/analysis/result/attenuation"
+        np.testing.assert_allclose([axis[0] for axis in plot.axes], [-0.006, -0.006, -0.0075])
+        stored = plot.signal[3, 5, 9]
+        assert stored == 61026
+        offset = plot.group["attenuation_offset"]
+        scale = plot.group["attenuation_scaling_factor"]
+        assert isinstance(offset, h5py.Dataset)
+        assert isinstance(scale, h5py.Dataset)
+        assert (stored + offset[()]) * scale[()] == 30509
+
+    grid = tj.Grid(513, 3, 1, 0.5, 2, 3, vol_origin=(1.0, -2.0, 9.0))
+    geometry = tj.ParallelGeometry(grid, source.geometry.detector, [0.0])
+    volume = np.arange(513 * 3, dtype=np.float32).reshape(1, 3, 513)
+    path = root / "export.ome.zarr"
+    tj.export(path, replace(source, geometry=geometry, volume=volume))
+    assert open_ome_zarr(zarr.open_group(path, mode="r")) is not None
+    location = parse_url(str(path))
+    assert location is not None
+    image = next(iter(Reader(location)()))
+    assert [a["name"] for a in image.metadata["axes"]] == ["z", "y", "x"]
+    transforms = image.metadata["coordinateTransformations"]
+    assert len(transforms) == len(image.data) == 2
+    for fields, scale, origin in zip(
+        transforms, ([3, 2, 0.5], [3, 4, 1]), ([9, -2, 1], [9, -1, 1.25]), strict=True
+    ):
+        np.testing.assert_allclose(fields[0]["scale"], scale)
+        np.testing.assert_allclose(fields[1]["translation"], origin)
+    np.testing.assert_array_equal(image.data[0], volume)
+    np.testing.assert_array_equal(image.data[1][0, 0], 257 + 2 * np.arange(256))
+
+
 def main() -> None:
     """Verify samples and calibration in independently maintained readers."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -223,8 +278,9 @@ def main() -> None:
         imagej_and_bioformats(root)
         metaimage(root)
         native_nexus(root)
+        nexus_and_ngff(root)
         big_stacks(root, read_big)
-    print("ImageJ, Bio-Formats, SimpleITK and VTK read the registered test volumes.")
+    print("All TIFF, raw, NeXus and OME-Zarr reader checks passed.")
 
 
 if __name__ == "__main__":

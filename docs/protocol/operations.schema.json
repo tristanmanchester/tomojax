@@ -3441,6 +3441,43 @@
               ],
               "carries": "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. The bounding box records placement.",
               "spatial_only": true
+            },
+            {
+              "name": "NeXus NXdata",
+              "suffixes": [
+                ".h5",
+                ".hdf5",
+                ".nxs"
+              ],
+              "layout": "file",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "silx reads physical coordinates and stored samples. The signal's offset and scaling factor recover physical values.",
+              "spatial_only": false
+            },
+            {
+              "name": "OME-Zarr 0.5",
+              "suffixes": [
+                ".zarr",
+                ".ome.zarr"
+              ],
+              "layout": "directory",
+              "options": [
+                "dtype",
+                "range",
+                "crop",
+                "binning",
+                "axis",
+                "compress"
+              ],
+              "carries": "ome-zarr-py reads the axes, voxel size and origin of every level. The tomojax attribute holds value scaling.",
+              "spatial_only": true
             }
           ]
         },
