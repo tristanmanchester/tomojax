@@ -66,10 +66,6 @@ class MatlabFrames:
         self.stored = stored
         self.shape = (len(stored), stored.cols, stored.rows)
 
-    def frames_at(self, mask: np.ndarray) -> MatlabFrames:
-        """Keep the selected MATLAB views in their original storage order."""
-        return MatlabFrames(self.stored.frames_at(mask))
-
     def __getitem__(self, views: int | slice) -> np.ndarray:
         return self.stored[views].swapaxes(-1, -2).astype(self.dtype, copy=False)
 
@@ -89,9 +85,11 @@ class ProjectionStorage:
 
     def frames_at(self, mask: np.ndarray) -> ProjectionPixels:
         """Restrict the selected storage without reading lazy pixels."""
-        return (
-            self.stack[mask] if isinstance(self.stack, np.ndarray) else self.stack.frames_at(mask)
-        )
+        if isinstance(self.stack, np.ndarray):
+            return self.stack[mask]
+        if isinstance(self.stack, MatlabFrames):
+            return MatlabFrames(self.stack.stored.frames_at(mask))
+        return self.stack.frames_at(mask)
 
 
 def projection_storage(path: Path, *, layout_only: bool, **paths: str | None) -> ProjectionStorage:
