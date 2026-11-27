@@ -4,6 +4,7 @@ Coarsened observations average finite pixels and weight each block by its observ
 """
 
 from dataclasses import replace
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -42,6 +43,30 @@ def test_partial_blocks_average_their_finite_pixels():
     assert y[2, 1, 1] == 0 and precision[2, 1, 1] == 0
     np.testing.assert_array_equal(precision[2, :, 0], 1)
     np.testing.assert_array_equal(precision[[0, 3]], 1)
+
+
+def test_the_native_detector_window_is_released_after_binning(tmp_path):
+    maps = Path("/proc/self/smaps")
+    if not maps.exists():
+        pytest.skip("mapping RSS requires Linux procfs")
+    path = tmp_path / "native.bin"
+    projections = np.memmap(path, np.float32, "w+", shape=(33, 257, 263))
+    projections[:] = np.random.default_rng(4).normal(size=projections.shape)
+    projections.flush()
+
+    def resident_bytes():
+        selected = False
+        total = 0
+        for line in maps.read_text().splitlines():
+            if "-" in line.split(maxsplit=1)[0]:
+                selected = line.endswith(str(path))
+            elif selected and line.startswith("Rss:"):
+                total += int(line.split()[1]) * 1024
+        return total
+
+    assert resident_bytes() >= projections.nbytes
+    _fit._read(projections[:, :256, :256], [4, 8], views_per_batch=3)
+    assert resident_bytes() < projections[0].nbytes
 
 
 @pytest.mark.parametrize("missing_columns", [False, True])

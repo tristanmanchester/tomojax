@@ -649,3 +649,21 @@ def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedest
     truth = fine.reshape(n, 4, n, 4, n, 4).mean((1, 3, 5))
     empty = truth.sum((1, 2)) == 0
     assert np.asarray(result.image)[empty].sum() < 0.05 * truth.sum()
+
+
+@pytest.mark.slow
+@pytest.mark.numerical
+def test_sharing_uneven_view_batches_preserves_the_fit():
+    from tomojax.core.devices import sharing
+
+    devices = jax.local_devices()[:2]
+    if len(devices) < 2:
+        pytest.skip("two devices required")
+    scan = tj.simulate("shepp", size=20, n_views=35, translation_sigma=0.5).scan
+    with jax.default_device(devices[0]):
+        reference = tj.align(scan)
+    with sharing(devices):
+        shared = tj.align(scan)
+    assert shared.info["placement"]["devices"] == tuple(f"{d.platform}:{d.id}" for d in devices)
+    np.testing.assert_array_equal(shared.poses, reference.poses)
+    np.testing.assert_array_equal(shared.image, reference.image)

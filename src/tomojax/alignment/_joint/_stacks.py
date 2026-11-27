@@ -129,7 +129,9 @@ class Stack[Data: jax.Array | jax.ShapeDtypeStruct]:
             jax.ShapeDtypeStruct(shape, dtype), host=False, shape=shape, dtype=dtype, batch=batch
         )
 
-    def read(self: Stack[jax.Array], i: int | jax.Array) -> jax.Array:
+    def read(
+        self: Stack[jax.Array], i: int | jax.Array, first: jax.Array | None = None
+    ) -> jax.Array:
         """Batch ``i`` (``batch`` views) on the device.
 
         Behind an optimization barrier whatever the placement: a slice of a device
@@ -139,7 +141,17 @@ class Stack[Data: jax.Array | jax.ShapeDtypeStruct]:
         """
         start = i * self.batch
         if self.host:
-            block = read_block(self.data, start, (self.batch, *self.shape[1:]), self.dtype)
+            if first is not None:
+                # The immutable host stack spans all shares. A mesh-padding batch has
+                # zero valid rays and may read the last real batch.
+                start = jnp.minimum(start + first, self.shape[0] - self.batch)
+            block = read_block(
+                self.data,
+                start,
+                (self.batch, *self.shape[1:]),
+                self.dtype,
+                immutable=first is not None,
+            )
         else:
             block = jax.lax.dynamic_slice_in_dim(self.data, start, self.batch, 0)
         return jax.lax.optimization_barrier(block)
