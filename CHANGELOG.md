@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feature bands, overlays, grid comparisons, and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.
 - Loading uses explicit HDF5 projection, frame-label and angle paths in saved scans.
   Explicit flat and dark calibration corrects unlabeled counts in integer and
   floating-point storage. Geometry overrides retain acquisition gaps and restarts
@@ -14,72 +15,55 @@
 - Reloading a saved scan with its stored detector preserves its fitted poses and rays,
   including after selecting views or binning. A detector override on a segmented cone
   scan changes the common sampling and moves each panel by the same physical offset.
-  Load the raw Zeiss acquisition with `apply_poses=False` for nominal geometry.
-- Joint alignment reports possible objects crossing the field of view with per-view scores,
-  exposure ranges and angles. Review the projections, then set `AlignConfig.exclude_views`
-  to exclude confirmed ranges. The result retains all projections and interpolates their
-  pose increments within each trajectory. `tomojax.alignment.api.disturbed_views` screens
-  the coarsest measurements before a fit.
-- `AlignConfig.detector_columns` enables fixed offsets, transient column shadows, or both.
-  `image_tv_weight="coverage"` enables noise-scaled regularization at changes in detector
-  coverage. Both options default to off and are available through Python, CLI TOML, worker and MCP.
-- Joint alignment estimates fixed stripes and transient column shadows from separated detector
-  rows. The volume fit uses measured noise to regularize differences between neighboring
-  voxels where their detector coverage changes. An explicit `image_tv_weight` sets uniform regularization.
-  rows. The volume fit uses local detector coverage and measured noise to regularize partially
-  observed voxels. An explicit `image_tv_weight` sets uniform regularization.
-- Joint alignment corrects fixed detector stripes and estimates the variance of shadows shared
-  across detector rows. The image and pose fit uses that variance to weight column residuals.
-- Joint alignment estimates fixed detector stripes and transient shadows shared across
-  detector rows. It corrects the working projections before fitting the image and geometry.
-- The general cone transpose reuses each detector footprint when all the views
-  in a launch fit in one 32-view tile batch. On the three-orbit FIPS walnut
-  translation fit, the second fine step fell from 26.09 to 25.13 s on V100S
-  and from 7.80 to 7.59 s on RTX PRO 6000 Blackwell. The fitted image and poses
-  matched the previous build bit for bit.
-- Two GPU tests now account for FP32 reduction order across XLA builds. The
-  Joseph projector test checks both sets of ray coordinates against the physical
-  ray matrix and compares the CUDA entry points using identical coordinates.
-  The ring correction test allows two FP32 epsilons at the sinogram's peak
-  when restoring the original view order.
-- SPDHG now takes about 600 × √B updates for B measured-data blocks. Its TV
-  penalty uses the same noise calibration as FISTA, and its stochastic step
-  sizes scale with the probability of selecting a block. An explicit iteration
-  count still fixes the work budget.
+  Passing `apply_poses=False` on a saved scan that incorporated Zeiss corrections raises
+  `ValueError`; load the original `.txrm` acquisition with `apply_poses=False` for nominal
+  geometry, or call `scan.with_poses(None)` to clear rigid poses.
+- Joint alignment reports possible objects crossing the field of view in
+  `info["disturbed_views"]` with per-view scores, half-open index ranges, angle spans,
+  and a review message. Review the flagged projections, then pass confirmed ranges to
+  `AlignConfig(exclude_views=...)` (or `exclude_views` in CLI TOML, worker, and MCP
+  configs). Excluded views stay in `result.scan` with pose increments interpolated in
+  acquisition time within each trajectory, and `info["fit_views"]` lists the retained
+  input indices. `tomojax.alignment.api.disturbed_views` screens the coarsest binned
+  measurements before a fit.
+- `AlignConfig.detector_columns` (`"none"`, `"fixed"`, `"transient"`, or `"both"`,
+  default `"none"`) models stationary detector stripes, changing column shadows, or both
+  on the working projections during joint alignment, carrying transient column variance
+  into the image and pose weights. `AlignConfig.image_tv_weight="coverage"` (default
+  `0.0`) weights local total variation on the working volume by faint-ray noise and
+  changes in detector-footprint coverage between neighboring voxels. Both options are
+  available in Python, CLI `--config` TOML, worker, and MCP `align`.
+- The general cone transpose reuses each detector footprint when all views in a launch
+  fit in one 32-view tile batch. On the three-orbit FIPS walnut translation fit, the
+  second fine step fell from 26.09 to 25.13 s on V100S and from 7.80 to 7.59 s on RTX
+  PRO 6000 Blackwell, with bit-identical fitted images and poses.
+- Two GPU tests account for FP32 reduction order across XLA builds: the Joseph projector
+  test checks both sets of ray coordinates against the physical ray matrix and compares
+  CUDA entry points on identical coordinates, and the ring correction test allows two
+  FP32 epsilons at the sinogram peak when restoring view order.
+- `SPDHGConfig.iterations` now defaults to `None`, scaling the update budget to
+  `ceil(600 × √B)` for `B` measured-data blocks (an explicit integer still fixes the
+  budget). SPDHG's automatic `tv_weight=None` uses the same isolated-voxel noise
+  calibration as FISTA, and its stochastic step sizes scale with block selection
+  probability.
 - Export a registered volume as ImageJ TIFF, OME-TIFF, TIFF slices, raw binary,
-  MetaImage or AmiraMesh. Python, CLI, worker and MCP accept crop, binning,
-  stack axis, integer scaling and format-specific compression. Dry runs report
-  the files and registration, and `tj.inspect` reads them back. The directory
-  names its slices and owns its contents. The `prefix` option is removed.
-
-- Flat sets taken before and after a scan are weighted by what the scan's views show of
-  each, instead of by each view's position between them. A set taken with something in
-  the beam is left out where the other set matches the views, a blend that matches
-  neither stays fixed through the scan (so `Rings()` can remove its fine part), and the
-  flat's level is kept continuous across an edge that only one set has. Sets that differ
-  by noise, by level, or smoothly along a detector row are interpolated in position as
-  before, as are sets of one frame. Columns with stable texture estimate the gain change
-  common to a detector row. That gain follows position even where specks or stripes
-  change early, including when only a narrow strip stays stable. Views brighter than the
-  inferred beam can raise its common level. Pixels at or below the dark count no longer
-  cause a nonfinite flat fit in opaque regions. The step reads about one view in 64 beforehand.
-  `flat_weights="position"` (`--flat-weights position`, `flat_weights` in the worker's and
-  MCP server's `correct` and `reconstruct_slabs`) interpolates by position alone, and the
-  `flat_dark` record's `flat_weights` setting says which was used. The record reports
-  `flat_weights_from_views`, `later_flat_weight`, `flat_structure_unmatched` and
-  `flat_moved_by_views`, the share of the detector where the views move the flat by more
-  than 1%; above 1% of the detector a warning says so and names both remedies
-  ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
-- Raw slab reconstruction saves and reports whole-scan truncation and iterative stopping diagnostics through the worker and MCP. Python callers can collect the same record with `tj.reconstruct_slabs(..., info=info)`.
+  MetaImage, or AmiraMesh through `tj.export`, `tomojax export`, worker, and MCP.
+  All interfaces accept `crop`, `binning`, `axis`, `dtype`, `range`, and format-specific
+  `compress`; dry runs report files, axes, value mapping, and space estimates, and
+  `tj.inspect` reads exported records back. A slice directory names its slices and owns
+  its contents. The `prefix` option is removed.
 - Bracketing flat sets taken before and after a scan are weighted by what a sample of
   the scan's views (about 1 in 64, at least 64) shows of each set, separating common
-  row gain (estimated from columns with stable texture and interpolated by position)
-  from local texture weights (`flat_weights="views"`, the default). A set taken with
-  something in the beam is left out where the other set matches the views, a region
-  where both sets carry different shadows keeps a fixed blend so `Rings()` can remove
-  its fine part, and flat level stays continuous across one-sided edges. Sets of one
-  frame and sets that differ only by noise, level, or smooth row variation are
-  interpolated by position. Pass `flat_weights="position"` in Python
+  row gain (estimated from columns with stable texture using local flat noise and
+  interpolated by position, even when only a narrow strip stays stable) from local
+  texture weights (`flat_weights="views"`, the default). A set taken with something in
+  the beam is left out where the other set matches the views, a region where both sets
+  carry different shadows keeps a fixed blend so `Rings()` can remove its fine part, and
+  flat level stays continuous across one-sided edges. Views brighter than the inferred
+  beam can raise its common level over each 16-row band, and pixels at or below the dark
+  count are masked before taking logarithms so opaque regions do not produce nonfinite
+  flat fits. Sets of one frame and sets that differ only by noise, level, or smooth row
+  variation are interpolated by position. Pass `flat_weights="position"` in Python
   (`Frames.corrected`, `tj.reconstruct_slabs`, `tomojax.interactive.correction_preview`,
   `correct_frames`, `corrected_row_source`), `--flat-weights position` (or
   `flat_weights = "position"` in `--config`) on `tomojax correct`, or
@@ -87,8 +71,8 @@
   `correction_preview` to blend by position alone. The `flat_dark` record stores
   `flat_weights`, `flat_weights_from_views`, `later_flat_weight`,
   `flat_structure_unmatched`, and `flat_moved_by_views` (the detector fraction where
-  views move the flat by more than 1%); above 1% of the detector, a warning names both
-  remedies ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
+  views move the flat by more than 1%); above 1% of the detector, a warning reports the
+  shift and names both remedies ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
 - `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI;
   `flats` and `darks` on worker and MCP `open`) use that file's flat or dark frames.
   Previously every frame in the file was averaged.
