@@ -653,7 +653,7 @@ def test_a_half_turn_of_a_flat_sharp_object_recovers_its_motion_without_a_pedest
 
 @pytest.mark.slow
 @pytest.mark.numerical
-@pytest.mark.parametrize("size, views, shift", [(20, 35, 0.5), (24, 48, 1.0)])
+@pytest.mark.parametrize(("size", "views", "shift"), [(20, 35, 0.5), (24, 48, 1.0)])
 def test_sharing_uneven_view_batches_preserves_the_fit(size, views, shift):
     from tomojax.core.devices import sharing
 
