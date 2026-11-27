@@ -118,6 +118,7 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     tj.save(path, tj.Scan(frames, cone))
     record = load_dataset(path)
     record.geometry_metadata["detector_roll"] = 1.5
-    save_dataset(path, record)
+    invalid = tmp_path / "ambiguous-roll.npz"
+    save_dataset(invalid, record)
     with pytest.raises(ValueError, match="belongs in cone_beam"):
-        tj.load(path, apply_poses=False)
+        tj.load(invalid, apply_poses=False)

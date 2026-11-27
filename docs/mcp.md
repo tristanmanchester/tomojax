@@ -145,7 +145,7 @@ For an inner rim one voxel thick, use `inner=-1, outer=0`. The space beyond ever
 
 ## Files
 
-`save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.
+`save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A dry run releases its inputs on success or failure. Protection covers HDF5 links, virtual datasets, external raw storage, individual frame files and calibration from another scan. It also applies to sidecars and checkpoint directories. A conflicting path, including a symlink or hard link, returns an error naming the input. Choose a different destination. Each output is written beside its destination and moved into place once whole.
 
 The tools carry MCP annotations for clients that decide what to confirm: `status`, `inspect`, `describe`, `view` and `preview` are read-only; `save`, `export`, `reconstruct_slabs`, `control` (which can close handles and restart the worker) and `python` (which runs any code) are marked destructive; the others only add handles. None reaches beyond the local machine.
 

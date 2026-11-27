@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from tomojax.core.input_files import input_path
 from tomojax.geometry import ConeBeam
 
 from ._acquisition import RawAcquisition, metadata_candidates
@@ -53,7 +54,10 @@ def _projection_files(file: Path, params: configparser.ConfigParser) -> tuple[li
     files.sort(key=lambda p: int(p.stem[len(prefix) :]))
     # SkyScan counts the separate arc/scout image, not an additional angular view.
     arc = file.parent / f"{prefix}_arc.tif"
-    expected = int(acquisition["Number of Files"]) - int(arc.is_file())
+    has_arc = arc.is_file()
+    if has_arc:
+        _ = input_path(arc)
+    expected = int(acquisition["Number of Files"]) - int(has_arc)
     return files, len(files) == expected
 
 
@@ -69,7 +73,9 @@ def _beam_hardening(file: Path, params: configparser.ConfigParser) -> dict[str, 
     log = file.with_name(f"{acquisition['Filename Prefix'].strip()}_rec.log")
     if log.is_file():
         reconstruction = configparser.ConfigParser(interpolation=None)
-        reconstruction.read_string(log.read_text(encoding="utf-8-sig", errors="replace"))
+        reconstruction.read_string(
+            input_path(log).read_text(encoding="utf-8-sig", errors="replace")
+        )
         for section in reconstruction.sections():
             for key, value in reconstruction[section].items():
                 if key.startswith("beam hardening"):

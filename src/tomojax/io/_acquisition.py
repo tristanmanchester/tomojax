@@ -7,6 +7,8 @@ from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tomojax.core.input_files import input_path
+
 from .dataset_paths import check_dataset_paths
 
 if TYPE_CHECKING:
@@ -126,5 +128,7 @@ def read_acquisition(
             family = acquisition.nominal_record.source_format
             assert family is not None
             check_dataset_paths(family, paths)
+            if (source := acquisition.nominal_record.source_path) is not None:
+                _ = input_path(Path(source))
             return acquisition
     return None

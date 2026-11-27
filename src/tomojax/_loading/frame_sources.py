@@ -28,6 +28,7 @@ def line_integral_frames(scan: Scan, stack: Any) -> Frames:
         scan.geometry,
         name=scan.name,
         source=scan.source,
+        input_files=scan.input_files,
         view_positions=scan.view_positions,
         corrections=scan.corrections,
     )

@@ -58,6 +58,7 @@ from tomojax._scan.model import (
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import Device
 from tomojax.alignment import AlignConfig
+from tomojax.core.input_files import check_output, reading
 from tomojax.core.registration import SlabPlanes, recorded_length_unit, registration
 from tomojax.errors import explain_cuda_failure
 from tomojax.geometry import Grid, ScanGeometry
@@ -124,7 +125,8 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
     """
     from tomojax.io import load_dataset
 
-    return reconstruction_from_record(path, load_dataset(os.fspath(path)), load)
+    with reading(Path(path), owner="result"):
+        return reconstruction_from_record(path, load_dataset(os.fspath(path)), load)
 
 
 def reconstruction_from_record(
@@ -197,7 +199,8 @@ def load_simulation(path: str | PathLike[str]) -> Simulation:
     """
     from tomojax.io import load_dataset
 
-    return simulation_from_record(path, load_dataset(os.fspath(path)), load)
+    with reading(Path(path), owner="result"):
+        return simulation_from_record(path, load_dataset(os.fspath(path)), load)
 
 
 def simulation_from_record(
@@ -242,7 +245,8 @@ def load_alignment(path: str | PathLike[str]) -> Alignment:
     """
     from tomojax.io import load_dataset
 
-    return alignment_from_record(path, load_dataset(os.fspath(path)), load)
+    with reading(Path(path), owner="result"):
+        return alignment_from_record(path, load_dataset(os.fspath(path)), load)
 
 
 def alignment_from_record(
@@ -274,6 +278,7 @@ def validate_save(
     from tomojax.errors import InvalidParameter
     from tomojax.io.api import dataset_output_format
 
+    check_output(path)
     dataset_output_format(path)
     if isinstance(item, Reconstruction) and item.scan is None and include_scan:
         raise InvalidParameter(
@@ -299,7 +304,8 @@ def save(
     Parameters
     ----------
     path : str or path-like
-        Output dataset path; an existing file is overwritten.
+        Output dataset path. Existing outputs can be replaced. Files used by live
+        TomoJAX inputs in this process are protected, including linked storage and aliases.
     item : Scan, Reconstruction, Alignment or Simulation
         Scan or result to save with its geometry and metadata.
     include_scan : bool, optional
@@ -1080,6 +1086,7 @@ def _slab_results(
                 frames.name,
                 (*frames.corrections, cropped, *slab.context.records),
                 frames.source,
+                input_files=frames.input_files,
                 view_positions=frames.view_positions,
             )
             info = {

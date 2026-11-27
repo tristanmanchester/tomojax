@@ -15,6 +15,7 @@ from tomojax import progress
 from tomojax._scan.model import Alignment, Reconstruction, geometry_record
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import object_mapping
+from tomojax.core.input_files import input_path, reading
 from tomojax.core.registration import recorded_length_unit, volume_axes
 from tomojax.io.api import (
     ExportCrop,
@@ -231,6 +232,8 @@ def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource
     from tomojax.core.host_volume import mapped_storage, release_planes
 
     mapped = mapped_storage(pixels)
+    if mapped is not None and mapped.filename is not None:
+        _ = input_path(Path(mapped.filename))
 
     def read(region: tuple[slice, ...]) -> np.ndarray:
         data = np.asarray(pixels[region])
@@ -257,7 +260,7 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
     """Read a legacy volume by windows from the same open file as its registration."""
     from tomojax.geometry import Grid
 
-    with h5py.File(path, "r") as file:
+    with reading(path), h5py.File(path, "r") as file:
         meta, data, order = volume_entry(file)
         geom = meta.geometry_meta or {}
         name = (
@@ -313,7 +316,8 @@ def export(
     ----------
     path : str or path-like
         Destination. The longest matching suffix selects the format. A directory
-        with no recognized suffix holds numbered TIFF slices.
+        with no recognized suffix holds numbered TIFF slices. All output files and
+        directories are checked against live TomoJAX inputs, including physical aliases.
     item : Reconstruction, Alignment or Simulation
         Reconstruction volume, alignment working image or simulation phantom.
         An integer or boolean volume supplies mask labels.
@@ -350,15 +354,20 @@ def export(
     >>> recon = tj.load_reconstruction("scan.nxs")  # doctest: +SKIP
     >>> receipt = tj.export("detail.tif", recon, crop=(slice(10, 30), None, None))  # doctest: +SKIP
     """
-    source = volume_source(item)
-    plan = plan_export(
-        Path(path),
-        source,
-        dtype=dtype,
-        value_range=range,
-        crop=crop,
-        binning=binning,
-        axis=axis,
-        compress=compress,
-    )
-    return plan.details if dry_run else plan.publish(force=bool(plan.details["destination_exists"]))
+    with reading():
+        source = volume_source(item)
+        plan = plan_export(
+            Path(path),
+            source,
+            dtype=dtype,
+            value_range=range,
+            crop=crop,
+            binning=binning,
+            axis=axis,
+            compress=compress,
+        )
+        return (
+            plan.details
+            if dry_run
+            else plan.publish(force=bool(plan.details["destination_exists"]))
+        )

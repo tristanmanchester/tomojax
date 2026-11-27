@@ -161,6 +161,7 @@ def test_views_and_a_detector_block(tmp_path: Path) -> None:
     np.testing.assert_allclose(np.asarray(scan.projections), [[[-np.log(0.8)]]], rtol=1e-6)
     np.testing.assert_allclose(scan.angles, [90.0])
     assert (scan.detector.nu, scan.detector.nv, scan.detector.center) == (1, 1, (9.0, 18.5))
+    del scan  # Release the open destination before checking the out-of-bounds view range.
     assert _preprocess(tmp_path / "raw.nxs", "-o", out, "--force", "--views", "0:3") == 1
 
 

@@ -11,7 +11,8 @@ import tempfile
 from uuid import uuid4
 
 from tomojax.cli.execution import ArrayStage
-from tomojax.io.api import ExportPlan, install_export, publishing
+from tomojax.core.input_files import check_output, publishing
+from tomojax.io.api import ExportPlan, install_export, publishing as lock_directories
 from tomojax.wire.arrays import Npy
 
 
@@ -91,6 +92,7 @@ class Stages:
         if not destination.name or destination.name == "..":
             raise ValueError("expected an output file or directory name")
         dest = destination.parent.resolve() / destination.name
+        check_output(dest)
         if dest.is_relative_to(self.root) or self.root.is_relative_to(dest):
             raise ValueError("durable destination overlaps session storage")
         for prior in self.outputs:
@@ -125,15 +127,16 @@ class Stages:
         """Install a complete group, undoing replacements in reverse on failure."""
         for path in self.outputs:
             path.parent.mkdir(parents=True, exist_ok=True)
-        with publishing(list(self.outputs)), ExitStack() as cleanup, ExitStack() as undo:
-            grouped = set()
+        with lock_directories(list(self.outputs)), ExitStack() as cleanup, ExitStack() as undo:
+            staged_paths = self.export_group[1] if self.export_group else ()
+            grouped = {path.parent.resolve() / path.name for path in staged_paths}
+            remaining = {p: dest for p, dest in self.outputs.items() if p not in grouped}
+            _ = cleanup.enter_context(publishing(*remaining))
             if self.export_group:
                 plan, staged, force = self.export_group
-                grouped = {p.parent.resolve() / p.name for p in staged}
                 install_export(
                     staged, plan.format, plan.path, force=force, undo=undo, cleanup=cleanup
                 )
-            for path, destination in self.outputs.items():
-                if path not in grouped:
-                    destination.install(undo)
+            for destination in remaining.values():
+                destination.install(undo)
             undo.pop_all()

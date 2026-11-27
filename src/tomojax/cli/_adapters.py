@@ -42,12 +42,13 @@ from tomojax.cli._browse import check_input_grid, source_array
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._inputs import check_scan_calibration
 from tomojax.cli._interactive import correction_product, region_product, slice_product
-from tomojax.cli._options import ancestor_paths, check_destinations, checkpointed
+from tomojax.cli._options import check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import unit_of
 from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_grid import Grid
 from tomojax.core.array_ops import check_binning
+from tomojax.core.input_files import check_checkpoint, check_output, reading
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
@@ -95,10 +96,13 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
 
     for snapshot in sample():
         context.snapshot(snapshot)
-    with progress.watch(
-        partial(report_event, context),
-        control=cast("progress.Control", context.control),
-        previews=isinstance(command, op.Run) and command.previews,
+    with (
+        reading(owner="request"),
+        progress.watch(
+            partial(report_event, context),
+            control=cast("progress.Control", context.control),
+            previews=isinstance(command, op.Run) and command.previews,
+        ),
     ):
         if isinstance(operation, op.Python):
             from tomojax.cli._python import run_python
@@ -435,6 +439,7 @@ class Admission:
             layout_only=layout_only,
         )
         checkpoint = None if isinstance(operation, op.Slice) else operation.checkpoint
+        check_checkpoint(checkpoint)
         if not isinstance(operation, op.Align):
             options["metadata_only"] = layout_only
         if isinstance(operation, op.Align):
@@ -549,11 +554,12 @@ class Admission:
         self.check_support(operation.config, grid, unit_of(item))
         validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
         path = Path(operation.path)
+        check_output(path)
         if dataset_output_format(path) != "hdf5":
             raise InvalidParameter("path", "slab reconstruction requires a NeXus/HDF5 destination")
         sidecar = path.with_name(path.name + ".manifest.json")
-        inputs = set(ancestor_paths((self.manifest,)))
-        check_destinations(inputs, (path, sidecar), force=operation.force)
+        check_checkpoint(operation.checkpoint)
+        check_destinations((path, sidecar), force=operation.force)
 
         def fill() -> p.Files:
             record = geometry_record(item.geometry, name=item.name, grid=grid, source=item.source)
@@ -657,9 +663,7 @@ class Admission:
         self.details.update(
             paths=[str(p) for p in paths], destination_exists=any(p.exists() for p in paths)
         )
-        check_destinations(
-            set(ancestor_paths((self.manifest,))), paths, force=force or self.validating
-        )
+        check_destinations(paths, force=force or self.validating)
         return paths
 
     def write_manifest(self, paths: list[Path], *, force: bool) -> p.Files:

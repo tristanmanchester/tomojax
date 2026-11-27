@@ -20,6 +20,7 @@ import msgspec
 from tomojax import progress
 from tomojax.cli import _console
 from tomojax.cli._display import Display
+from tomojax.core.input_files import reading
 from tomojax.wire.progress import Error, Result
 
 if TYPE_CHECKING:
@@ -255,6 +256,7 @@ def run_command(
 
     try:
         with (
+            reading(owner="request"),
             display,
             watch or nullcontext(),
             _owned_messages(mode),

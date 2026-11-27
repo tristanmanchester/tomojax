@@ -3976,7 +3976,7 @@
         "path": {
           "type": "string",
           "minLength": 1,
-          "description": "Destination. The longest matching suffix selects the format. A directory with no recognized suffix holds numbered TIFF slices.",
+          "description": "Destination. The longest matching suffix selects the format. A directory with no recognized suffix holds numbered TIFF slices. All output files and directories are checked against live TomoJAX inputs, including physical aliases.",
           "x-formats": [
             {
               "name": "ImageJ TIFF",

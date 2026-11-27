@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    import h5py
+
 
 def virtual_mappings(data: Any) -> Iterator[Any]:
     """Expand HDF5's %b block number in virtual file and dataset names."""
@@ -79,6 +81,37 @@ def virtual_source_paths(data: Any) -> dict[Path, list[Any]]:
     return sources
 
 
+def hdf5_sources(file: h5py.File) -> tuple[set[Path], set[Path]]:
+    """Files referenced by link and dataset storage metadata, without reading pixel data."""
+    import h5py
+
+    here = Path(file.filename)
+    linked: set[Path] = set()
+    raw: set[Path] = set()
+
+    def visit(name: str, link: object) -> None:
+        if isinstance(link, h5py.ExternalLink):
+            linked.add(source_file(here, link.filename, "HDF5_EXT_PREFIX"))
+            target = file.get(name)
+            if target is not None:
+                linked.add(Path(target.file.filename))
+        elif isinstance(link, h5py.HardLink):
+            data = file[name]
+            if isinstance(data, h5py.Dataset):
+                if data.is_virtual:
+                    linked.update(virtual_source_paths(data))
+                layout = data.id
+                creation = layout.get_create_plist()
+                if count := creation.get_external_count():
+                    prefix = os.fsdecode(layout.get_access_plist().get_efile_prefix())
+                    for index in range(count):
+                        filename, _, _ = creation.get_external(index)
+                        raw.add(Path(prefix) / os.fsdecode(filename))
+
+    file.visititems_links(visit)
+    return linked, raw
+
+
 def validate_mapping(path: Path, source: Any, pixels: Any) -> None:
     """Check that the mapped source selection fits the physical detector data."""
     import h5py
@@ -129,7 +162,10 @@ def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator
     ``OSError`` saying how much was written, the room left and ``parts``, what was
     being written.
     """
+    from tomojax.core.input_files import check_output, publishing
+
     target = Path(path)
+    check_output(target)
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, name = tempfile.mkstemp(prefix=f".{target.name}.partial-", dir=target.parent)
     os.close(handle)
@@ -141,7 +177,8 @@ def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator
         yield temporary
         with temporary.open("rb+") as stream:
             os.fsync(stream.fileno())
-        _ = temporary.replace(target)  # one step: the old file or the new, never neither
+        with publishing(target):
+            _ = temporary.replace(target)
     except BaseException as err:
         written = temporary.stat().st_size if temporary.exists() else 0
         temporary.unlink(missing_ok=True)

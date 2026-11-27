@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -88,13 +89,15 @@ def validate_host_arrays(
         raise ValueError(f"{context}: out must be a float32 NumPy array with the volume shape")
     if not out.flags.writeable:
         raise ValueError(f"{context}: out must be writable")
-    if not host_input:
-        return out
-    if np.may_share_memory(projections, out):
-        raise ValueError(f"{context}: input and output storage must not overlap")
     from tomojax.core.host_volume import mapped_storage
+    from tomojax.core.input_files import check_output
 
-    input_map, output_map = mapped_storage(projections), mapped_storage(out)
+    output_map = mapped_storage(out)
+    if output_map is not None and output_map.filename is not None and output_map.mode != "c":
+        check_output(Path(output_map.filename), field="out")
+    if host_input and np.may_share_memory(projections, out):
+        raise ValueError(f"{context}: input and output storage must not overlap")
+    input_map = mapped_storage(projections)
     if input_map is not None and output_map is not None:
         from tomojax.core.host_volume import file_identity
 

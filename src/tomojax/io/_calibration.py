@@ -4,6 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from tomojax._data import FrameStack, locate_frames
+from tomojax.core.input_files import input_path
 
 from ._tiff import TiffFrames, read_tiff_frames
 from ._zeiss import read_zeiss_images
@@ -44,7 +45,7 @@ def read_calibration_frames(
     OSError
         If the input cannot be read.
     """
-    file = Path(path)
+    file = input_path(Path(path), container=True)
     zeiss = read_zeiss_images(file)
     if zeiss is not None:
         return zeiss

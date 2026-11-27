@@ -136,6 +136,7 @@ def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> t
         fields.corrections,
         fields.source,
         fields.view_positions,
+        input_files=fields.input_files,
     )
 
 
@@ -174,6 +175,7 @@ def partition_layout(
             data.corrections,
             data.source,
             positions[ids],
+            input_files=data.input_files,
         )
         return Partition(scan, ids, segments[ids])
 

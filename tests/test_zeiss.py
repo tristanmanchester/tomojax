@@ -741,8 +741,9 @@ def test_saved_vendor_shifts_describe_the_original_acquisition(tmp_path, shifted
         with pytest.raises(ValueError, match="original acquisition"):
             tj.load(path, apply_poses=False, **overrides)
     nominal = tj.load(tmp_path / "shifted.txrm", darks=0, apply_poses=False)
-    tj.save(path, nominal.selected([1, 2]))
-    again = tj.load(path, detector=nominal.detector)
+    selected = tmp_path / "nominal.nxs"
+    tj.save(selected, nominal.selected([1, 2]))
+    again = tj.load(selected, detector=nominal.detector)
     assert again.poses is None and again.detector.center == (0.0, 0.0)
     # Positions still index the original three views, in unbinned detector pixels.
     np.testing.assert_array_equal(
@@ -759,17 +760,18 @@ def test_legacy_vendor_tables_remain_acquisition_history(tmp_path, shifted_zeiss
     if not applied:
         scan = tj.load(tmp_path / "shifted.txrm", darks=0, apply_poses=False)
     before = scan.selected([0, 2])
-    path = tmp_path / "legacy.nxs"
-    tj.save(path, before)
-    record = load_dataset(path)
+    current = tmp_path / "current.nxs"
+    tj.save(current, before)
+    record = load_dataset(current)
     # Older files placed the three original rows beside two effective poses.
     # Importing with corrections disabled had already zeroed every offset.
     original = record.geometry_metadata["zeiss"].pop("detector_view_offsets_pixels")
     record.geometry_metadata["detector_view_offsets_pixels"] = (
         original if applied else np.zeros((3, 2)).tolist()
     )
-    save_dataset(path, record)
-    loaded = tj.load(path, detector=before.detector)
+    legacy = tmp_path / "legacy.nxs"
+    save_dataset(legacy, record)
+    loaded = tj.load(legacy, detector=before.detector)
     for i in range(2):
         np.testing.assert_array_equal(
             loaded.geometry.pose_matrix(i), before.geometry.pose_matrix(i)

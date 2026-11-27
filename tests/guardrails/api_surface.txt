@@ -60,6 +60,7 @@ class tomojax.Frames(
         name: 'str' = 'sample',
         corrections: 'tuple[Correction, ...]' = (),
         source: 'ProjectionDataset | None' = None,
+        input_files: 'tuple[InputFiles, ...]' = <factory>,
     ) -> None
     .corrected(
         self,
@@ -125,6 +126,7 @@ class tomojax.Reconstruction(
         *,
         length_unit: 'str | None' = None,
         source_path: 'str | None' = None,
+        input_files: 'tuple[InputFiles, ...]' = <factory>,
     ) -> None
     .grid
 class tomojax.RegionEstimate(scan: 'Scan', info: 'Mapping[str, object]') -> None
@@ -136,6 +138,8 @@ class tomojax.Scan(
         corrections: 'tuple[Correction, ...]' = (),
         source: 'ProjectionDataset | None' = None,
         view_positions: 'np.ndarray | None' = None,
+        *,
+        input_files: 'tuple[InputFiles, ...]' = <factory>,
     ) -> None
     .angles
     .binned(self, binning: 'int') -> 'Scan'
@@ -925,6 +929,8 @@ class tomojax.io.ProjectionDataset(
         source_path: 'str | None' = None,
         source_format: 'str | None' = None,
         sample_name: 'str | None' = None,
+        *,
+        input_files: 'tuple[InputFiles, ...]' = <factory>,
     ) -> None
     .from_nxtomo(
         cls,

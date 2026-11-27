@@ -234,6 +234,7 @@ class _Args(argparse.Namespace):
     """The command's arguments."""
 
     data: str
+    config: str | None
     out: str | None
     method: Method
     filter: Filter | None
@@ -275,7 +276,7 @@ class _Args(argparse.Namespace):
         if not Path(self.data).exists():
             raise FileNotFoundError(f"input not found: {self.data}")
         outputs = [] if self.dry_run else [self.out, self.preview, self.manifest]
-        check_paths(parser, inputs=[self.data], outputs=outputs, force=self.force)
+        check_paths(parser, inputs=[self.data, self.config], outputs=outputs, force=self.force)
         try:
             return self.method_config(settings)
         except (TypeError, ValueError) as exc:
@@ -354,8 +355,7 @@ def main() -> int:
         parser.error("the following arguments are required: -o/--output")
     watch = watch_directory(args.watch_dir, working=False)
     work = partial(_run, parser, args, metadata, watch)
-    operation = partial(checkpointed, None if args.dry_run else args.checkpoint, work)
-    return run_command("reconstruct", args.progress, operation, watch=watch)
+    return run_command("reconstruct", args.progress, work, watch=watch)
 
 
 def _run(
@@ -366,16 +366,33 @@ def _run(
 ) -> Result | None:
     import tomojax as tj
     from tomojax import progress
-    from tomojax.cli._runtime import beyond_detector, report_automatic, solve_summary
 
     config = args.validate(parser, metadata["settings"])
     progress.check_canceled()
 
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
+    if not args.dry_run:
+        check_paths(parser, outputs=[args.out, args.preview, args.manifest], force=args.force)
+    if watch is not None:
+        watch.check_destinations()
+    work = partial(_solve, args, metadata, config, watch, scan)
+    return checkpointed(None if args.dry_run else args.checkpoint, work)
+
+
+def _solve(
+    args: _Args,
+    metadata: ConfigMetadata,
+    config: MethodConfig | None,
+    watch: WatchDirectory | None,
+    scan: Scan,
+) -> Result | None:
+    import tomojax as tj
+    from tomojax import progress
     from tomojax._workflow.operations import reconstruct_resolved
     from tomojax._workflow.planning import resolve_reconstruction
     from tomojax.cli._plans import announce, dry_run, plan_product
+    from tomojax.cli._runtime import beyond_detector, report_automatic, solve_summary
 
     shape = None if args.grid is None else (args.grid[2], args.grid[1], args.grid[0])
     work = resolve_reconstruction(

@@ -7,6 +7,7 @@ from pathlib import Path
 import h5py
 
 from tomojax._typed_arrays import numpy_float32_array, write_image
+from tomojax.core.input_files import reading
 from tomojax.recon.quicklook import scale_to_uint8
 
 type PathLike = str | Path
@@ -52,17 +53,17 @@ def save_projection_quicklook(input_path: PathLike, output_path: PathLike) -> Pa
     """
     in_path = Path(input_path)
     out_path = Path(output_path)
-    with h5py.File(in_path, "r") as file:
-        dataset = _projection_dataset(file)
-        if dataset is None:
-            raise KeyError("Could not find projections dataset under /entry")
-        if dataset.ndim != 3:
-            raise ValueError(
-                f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}"
-            )
-        central = numpy_float32_array(dataset[int(dataset.shape[0]) // 2])
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    write_image(out_path, scale_to_uint8(central))
+    with reading(in_path):
+        with h5py.File(in_path, "r") as file:
+            dataset = _projection_dataset(file)
+            if dataset is None:
+                raise KeyError("Could not find projections dataset under /entry")
+            if dataset.ndim != 3:
+                raise ValueError(
+                    f"projection dataset must be 3D (n_views, nv, nu), got {dataset.shape}"
+                )
+            central = numpy_float32_array(dataset[int(dataset.shape[0]) // 2])
+        write_image(out_path, scale_to_uint8(central))
     return out_path
 
 

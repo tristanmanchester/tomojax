@@ -113,3 +113,14 @@ def test_owned_unlinked_output_can_be_reused_with_mapped_input(monkeypatch, tmp_
     descriptor = slab_file(view)
     assert descriptor is not None
     os.close(descriptor[0])
+
+
+def test_mapped_output_must_preserve_a_loaded_file(tmp_path):
+    source = tmp_path / "scan.nxs"
+    tj.save(source, tj.simulate("sphere", size=8, n_views=4))
+    scan = tj.load(source)
+    before = source.read_bytes()
+    destination = np.memmap(source, mode="r+", dtype=np.float32, shape=scan.grid.shape)
+    with pytest.raises(ValueError, match="different destination"):
+        arrays.validate_host_arrays(scan.projections, destination, destination.shape)
+    assert source.read_bytes() == before

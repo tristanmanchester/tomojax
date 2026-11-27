@@ -592,3 +592,24 @@ def test_raw_frames_refuse_a_dangling_frame_label_link(tmp_path: Path, link: str
         )
     with pytest.raises(ValueError, match="image_key"):
         tj.load_frames(path)
+
+
+def test_dataset_readers_keep_their_inputs_protected(tmp_path: Path) -> None:
+    from tomojax.io.api import save_projection_quicklook
+
+    source = tmp_path / "scan.nxs"
+    save_dataset(source, make_projection_dataset())
+    originals = source.read_bytes()
+    png = tmp_path / "preview.png"
+    png.hardlink_to(source)
+    with pytest.raises(ValueError, match="different destination"):
+        save_projection_quicklook(source, png)
+    converted = tmp_path / "converted.npz"
+    converted.hardlink_to(source)
+    with pytest.raises(ValueError, match="different destination"):
+        convert_dataset(source, converted)
+
+    loaded = load_dataset(source)
+    with pytest.raises(ValueError, match="different destination"):
+        save_dataset(source, loaded)
+    assert source.read_bytes() == originals

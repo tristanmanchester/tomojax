@@ -17,6 +17,7 @@ import msgspec
 import numpy as np
 
 from tomojax import progress
+from tomojax.core.input_files import check_output, publishing as protect_inputs
 from tomojax.errors import InvalidParameter
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
 from tomojax.io._export_formats import FORMATS, Document, Format, format_for, slice_path
@@ -62,7 +63,7 @@ def inspect_export(path: Path) -> Document | None:
         Export record if the destination contains a recognized export.
     """
     fmt = format_for(path)
-    if fmt.layout == "directory" and (path.parent / f".{path.name}.previous").is_dir():
+    if fmt.layout == "directory" and _previous(path).is_dir():
         with publishing([path]):
             recover_directory(fmt, path)
     if fmt.layout == "group":
@@ -80,17 +81,33 @@ def inspect_export(path: Path) -> Document | None:
     return fmt.read_record(path)
 
 
+def _previous(path: Path) -> Path:
+    return path.with_name(f".{path.name}.previous")
+
+
+def _installation_paths(fmt: Format, path: Path) -> tuple[Path, ...]:
+    paths = fmt.paths(path)
+    return (*paths, _previous(path)) if fmt.layout == "directory" else paths
+
+
+def _check_export_paths(fmt: Format, path: Path) -> None:
+    for destination in _installation_paths(fmt, path):
+        check_output(destination)
+
+
 def recover_directory(fmt: Format, path: Path) -> None:
     """Restore a directory interrupted between renames while holding the publication lock."""
-    aside = path.parent / f".{path.name}.previous"
+    aside = _previous(path)
     if not aside.exists():
         return
     if aside.is_symlink() or not aside.is_dir() or not fmt.read_record(aside, original=path):
         raise ValueError(f"unrecognized export backup: {aside}")
     if not path.exists():
-        aside.rename(path)
+        with protect_inputs(aside, path):
+            aside.rename(path)
     elif fmt.read_record(path):
-        shutil.rmtree(aside)
+        with protect_inputs(aside):
+            shutil.rmtree(aside)
     else:
         raise ValueError(f"incomplete export at {path}; previous export at {aside}")
 
@@ -121,6 +138,8 @@ def install_export(
     cleanup : ExitStack
         Work to perform on either commit or rollback.
     """
+    # Cleanup outlives rollback and removes the previous directory after commit.
+    _ = cleanup.enter_context(protect_inputs(*_installation_paths(fmt, path)))
     paths = fmt.paths(path)
     if fmt.layout == "directory":
         recover_directory(fmt, path)
@@ -130,7 +149,7 @@ def install_export(
         if os.path.lexists(p) and not force:
             raise FileExistsError(f"output already exists: {p}")
     if fmt.layout == "directory":
-        aside = path.parent / f".{path.name}.previous"
+        aside = _previous(path)
         if path.exists():
             if path.is_symlink() or not path.is_dir() or not fmt.read_record(path):
                 raise ValueError(
@@ -232,6 +251,7 @@ class ExportPlan:
             Receipt including byte and clipping counts.
         """
         path = self.path
+        _check_export_paths(self.format, path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=f".{path.name}.partial-", dir=path.parent) as tmp:
             staged = Path(tmp) / path.name
@@ -294,6 +314,7 @@ def plan_export(
     if not path.name or path.name == "..":
         raise InvalidParameter("path", "expected an output file or directory name")
     fmt = format_for(path)
+    _check_export_paths(fmt, path)
     selection = Selection.select(source, crop, binning, axis)
     if fmt.spatial_only and any(a.frame != "volume" for a in source.axes):
         choices = ", ".join(f.name for f in FORMATS if not f.spatial_only)

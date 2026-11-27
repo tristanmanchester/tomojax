@@ -49,6 +49,7 @@ import numpy as np
 from tomojax import progress
 from tomojax.core.files import replaced_when_complete
 from tomojax.core.host_volume import mapped_storage
+from tomojax.core.input_files import check_checkpoint, publishing
 from tomojax.errors import Canceled, InvalidParameter
 
 if TYPE_CHECKING:
@@ -132,10 +133,16 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _remove_directory(path: Path) -> None:
+    with publishing(path, field="checkpoint"):
+        shutil.rmtree(path, ignore_errors=True)
+
+
 class Session:
     """One checkpoint directory, locked by this process while the run is open."""
 
     def __init__(self, path: Path, request: JsonValue = None) -> None:
+        check_checkpoint(path)
         manifest = path / _MANIFEST
         if path.is_dir() and not manifest.exists() and any(p.name != _LOCK for p in path.iterdir()):
             raise InvalidParameter(
@@ -161,7 +168,7 @@ class Session:
         referenced = {entry["directory"] for entry in self.manifest["entries"].values()}
         for entry in path.glob(_ENTRY + "*"):
             if entry.name not in referenced:  # written by a save a kill interrupted
-                shutil.rmtree(entry, ignore_errors=True)
+                _remove_directory(entry)
         self.guard = threading.RLock()
         self.kept = False
         self.loops = 0
@@ -250,10 +257,10 @@ class Session:
                     _ = self.manifest["entries"].pop(key, None)
                 else:
                     self.manifest["entries"][key] = previous
-                shutil.rmtree(directory, ignore_errors=True)
+                _remove_directory(directory)
                 raise
             if previous is not None:
-                shutil.rmtree(self.path / previous["directory"], ignore_errors=True)
+                _remove_directory(self.path / previous["directory"])
         self.saved_at = monotonic()
         self.save_seconds = self.saved_at - start
 
@@ -262,7 +269,7 @@ class Session:
         with self.guard:
             entry = self.manifest["entries"].pop(key)
             self._write_manifest()
-            shutil.rmtree(self.path / entry["directory"], ignore_errors=True)
+            _remove_directory(self.path / entry["directory"])
 
     def _write_manifest(self) -> None:
         with replaced_when_complete(self.path / _MANIFEST, "a checkpoint record") as part:
@@ -309,13 +316,16 @@ class Session:
 
     def remove(self) -> None:
         """Delete the checkpoint's files and, when nothing else is in it, the directory."""
-        for entry in self.manifest["entries"].values():
-            shutil.rmtree(self.path / entry["directory"], ignore_errors=True)
-        (self.path / _MANIFEST).unlink(missing_ok=True)
-        (self.path / _LOCK).unlink(missing_ok=True)
-        self.close()
-        with suppress(OSError):
-            self.path.rmdir()
+        try:
+            with publishing(self.path, field="checkpoint"):
+                for entry in self.manifest["entries"].values():
+                    _remove_directory(self.path / entry["directory"])
+                (self.path / _MANIFEST).unlink(missing_ok=True)
+                (self.path / _LOCK).unlink(missing_ok=True)
+                with suppress(OSError):
+                    self.path.rmdir()
+        finally:
+            self.close()
 
 
 @dataclass(frozen=True)

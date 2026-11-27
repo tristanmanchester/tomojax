@@ -318,6 +318,7 @@ def test_the_command_line_chooses_the_blend_and_the_saved_scan_records_it(
     np.testing.assert_allclose(
         np.asarray(saved.projections), _by_position(frames), atol=2e-5, rtol=1e-5
     )
+    del saved
     assert main([*argv, "--force"]) == 0
     assert "The views do not follow the flat sets' positions" in capsys.readouterr().err
     assert tj.load(out).corrections[0].settings["flat_weights"] == "views"

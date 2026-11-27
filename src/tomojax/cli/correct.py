@@ -378,12 +378,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise FileNotFoundError(f"input not found: {path}")
         check_paths(
             parser,
-            inputs=[source, *input_paths(args)],
+            inputs=[source, *input_paths(args), metadata["config_path"]],
             outputs=[None if dry else output, preview],
             force=args.force,
         )
         progress.check_canceled()
         prepared = _prepared(source, args, declared, steps, crop_slices)
+        check_paths(parser, outputs=[None if dry else output, preview], force=args.force)
         band = _preview_band(parser, prepared, rows, args.binning)
         if dry:
             return _dry_run(args, prepared, band, preview)

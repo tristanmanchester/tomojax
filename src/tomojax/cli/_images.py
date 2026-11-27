@@ -186,11 +186,12 @@ def pose_plot(
 
 
 def save_png(image: Image.Image, path: Path) -> Path:
-    """Write ``image`` to ``path`` through ``.<name>.tmp`` beside it, moved on once whole."""
-    temporary = path.with_name(f".{path.name}.tmp")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(temporary, format="PNG")
-    return temporary.replace(path)
+    """Publish a complete PNG beside its destination."""
+    from tomojax.core.files import replaced_when_complete
+
+    with replaced_when_complete(path, "preview image") as temporary:
+        image.save(temporary, format="PNG")
+    return path
 
 
 def save_volume_plane(path: Path, volume: ArrayLike, grid: Grid, axis: str, label: str) -> Path:

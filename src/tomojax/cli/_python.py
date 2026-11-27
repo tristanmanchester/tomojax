@@ -27,6 +27,7 @@ from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits as display_limits, raster
 from tomojax.cli.mcp.ledger import new_reference
 from tomojax.core.array_grid import published, require_same_grid
+from tomojax.core.input_files import expose_to_python, python_workspace
 from tomojax.wire.arrays import Member, Npy
 from tomojax.wire.progress import Info
 
@@ -333,6 +334,11 @@ class HandleInputs(Mapping):
                 if isinstance(ref, Member)
                 else np.load(ref.path, mmap_mode="r", allow_pickle=False)
             )
+        item = value.scan if isinstance(value, tj.Alignment | tj.Simulation) else value
+        if isinstance(item, tj.Scan | tj.Frames | tj.Reconstruction):
+            expose_to_python(item.input_files)
+            if isinstance(item, tj.Reconstruction) and item.scan is not None:
+                expose_to_python(item.scan.input_files)
         if not member:
             return value
         if not hasattr(value, member):
@@ -434,7 +440,7 @@ def error_report(error: BaseException, code: str, *, full: bool) -> str:
 def run_python(cmd: op.Python, context: ex.ExecutionContext) -> ex.Success:
     out, err = StringIO(), StringIO()
     try:
-        with redirect_stdout(out), redirect_stderr(err):
+        with python_workspace(), redirect_stdout(out), redirect_stderr(err):
             registrations, value = execute_in_namespace(cmd, context)
     except BaseException as error:
         message = error_report(error, cmd.code, full=cmd.traceback)

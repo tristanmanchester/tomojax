@@ -20,6 +20,7 @@ from tomojax._parameters import AnnotationModule
 from tomojax._typed_arrays import object_mapping
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import selected_stack
+from tomojax.core.input_files import InputFiles, current_inputs
 from tomojax.core.registration import recorded_length_unit, registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import (
@@ -91,6 +92,8 @@ class Scan:
         Source metadata retained for saving and provenance.
     view_positions : numpy.ndarray or None, optional
         Each view's place in acquisition time, in sample views; None is i + 1/2.
+    input_files : tuple, optional
+        File dependencies retained from loading and combined scans.
 
     Raises
     ------
@@ -114,6 +117,10 @@ class Scan:
     corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, repr=False, compare=False)
     view_positions: np.ndarray | None = field(default=None, repr=False, compare=False)
+
+    input_files: tuple[InputFiles, ...] = field(
+        default_factory=current_inputs, kw_only=True, compare=False, repr=False
+    )
 
     def __repr__(self) -> str:
         views, rows, cols = self.projections.shape
@@ -424,6 +431,7 @@ class Scan:
             name=name or scans[0].name,
             corrections=_combined(scans),
             source=source,
+            input_files=tuple({group for scan in scans for group in scan.input_files}),
             view_positions=positions,
         )
 
@@ -974,6 +982,8 @@ class Reconstruction:
         unit. A standalone volume retains the unit stored in its file.
     source_path : str or None, optional
         File from which the volume was loaded, when present.
+    input_files : tuple, optional
+        File dependencies retained when loading a standalone volume.
     """
 
     volume: np.ndarray | jax.Array
@@ -983,6 +993,9 @@ class Reconstruction:
     scan: Scan | None = None
     length_unit: str | None = field(default=None, kw_only=True)
     source_path: str | None = field(default=None, kw_only=True)
+    input_files: tuple[InputFiles, ...] = field(
+        default_factory=current_inputs, kw_only=True, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         from tomojax.errors import InvalidParameter

@@ -20,6 +20,7 @@ import numpy as np
 from tomojax.core.geometry.base import Detector
 from tomojax.core.geometry.cone import ConeBeam
 from tomojax.core.geometry.transforms import align_u_to_v
+from tomojax.core.input_files import input_path
 
 from ._acquisition import metadata_candidates
 from ._datasets import ProjectionDataset
@@ -68,7 +69,7 @@ def _beam_hardening(file: Path, params: dict[str, str]) -> dict[str, object] | N
     if profile.is_file():
         found = re.search(
             r"<BeamHardeningPreset>\s*(\d+)\s*</BeamHardeningPreset>",
-            profile.read_text(encoding="utf-8-sig", errors="replace"),
+            input_path(profile).read_text(encoding="utf-8-sig", errors="replace"),
         )
         if found:
             record["preset"] = int(found.group(1))
@@ -122,7 +123,7 @@ def _projection_files(directory: Path, params: dict[str, str]) -> tuple[list[Pat
         LOG.warning(
             "%s: excluding closing-turn frame %s after %d declared views",
             directory,
-            files[-1].name,
+            input_path(files[-1]).name,
             declared,
         )
         files = files[:-1]

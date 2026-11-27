@@ -247,7 +247,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     def run() -> Result | None:
         settings = metadata["settings"]
         out = args.out
-        check_paths(parser, outputs=[out], force=args.force)
+        check_paths(parser, inputs=[metadata["config_path"]], outputs=[out], force=args.force)
         artifacts = _validate_args(
             parser, args, {k: v for k, v in settings.items() if k not in _PHANTOM_SETTINGS}
         )

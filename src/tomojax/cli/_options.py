@@ -16,12 +16,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol
 
 from tomojax._typed_arrays import object_list
+from tomojax.core.input_files import check_output, reading
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+    from collections.abc import Callable, Iterable, Mapping, Sequence
 
     from tomojax.cli._progress import ProgressParser
-    from tomojax.cli.products import Provenance
     from tomojax.core.json_values import JsonValue
 
 EXPERT_EPILOG = (
@@ -241,55 +241,32 @@ def check_paths(
                 if parser.json_output:
                     raise FileNotFoundError(f"input not found: {path}")
                 parser.error(f"input not found: {path}")
-            resolved_inputs.add(candidate.resolve())
+            resolved_inputs.add(candidate)
     try:
-        check_destinations(
-            resolved_inputs, (Path(p) for p in outputs if p is not None), force=force
-        )
+        with reading(*resolved_inputs):
+            check_destinations((Path(p) for p in outputs if p is not None), force=force)
     except FileExistsError as exc:
         parser.fail(str(exc), hint="pass --force to replace it")
     except ValueError as exc:
         parser.error(str(exc))
 
 
-def ancestor_paths(ancestors: tuple[Provenance, ...]) -> Iterator[Path]:
-    """Identify caller-owned source files in a durable output's input history."""
-    for node in ancestors:
-        if node.operation == "open":
-            yield Path(node.parameters["path"]).resolve()
-            for field in ("flats", "darks"):
-                if isinstance(path := node.parameters.get(field), str):
-                    yield Path(path).resolve()
-        yield from storage_paths(node.parameters)
-        yield from ancestor_paths(node.inputs)
-
-
-def storage_paths(value: object) -> Iterator[Path]:
-    if isinstance(value, dict):
-        if value.get("type") in {"path", "npy", "hdf5"}:
-            yield Path(value["path"]).resolve()
-        else:
-            for option in value.values():
-                yield from storage_paths(option)
-    elif isinstance(value, tuple | list):
-        for option in value:
-            yield from storage_paths(option)
-
-
-def check_destinations(inputs: set[Path], outputs: Iterable[Path], *, force: bool) -> None:
+def check_destinations(outputs: Iterable[Path], *, force: bool) -> None:
     """Check all caller-owned destinations against their inputs and each other."""
     from tomojax.errors import InvalidParameter
 
+    destinations = tuple(outputs)
     seen: set[Path] = set()
-    for path in outputs:
+    for path in destinations:
         resolved = path.resolve()
         if resolved in seen:
             raise InvalidParameter("path", f"duplicate output destination: {path}")
         seen.add(resolved)
-        if any(src.is_relative_to(resolved) for src in inputs):
-            raise InvalidParameter("path", f"output path must differ from input path: {path}")
-        if not force and (path.exists() or path.is_symlink()):
-            raise FileExistsError(f"output already exists: {path}")
+        check_output(path)
+    if not force:
+        for path in destinations:
+            if path.exists() or path.is_symlink():
+                raise FileExistsError(f"output already exists: {path}")
 
 
 __all__ = [

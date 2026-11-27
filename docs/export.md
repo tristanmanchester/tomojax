@@ -33,6 +33,8 @@ Native ImageJ opens classic TIFF and applies its value calibration. Fiji uses Bi
 
 The complete record is embedded in a TIFF stack. A slice directory holds its record in `<directory-name>.json`. Raw, MetaImage and AmiraMesh keep it beside the primary file as `<filename>.json`. Keep each file group together. CLI and worker exports require `force` to replace an existing destination. Replacing an owned directory replaces all its contents. A directory without its TomoJAX export record is refused.
 
+Every export checks its primary file, payloads, records and any directory it will replace or recover against live inputs in the same process. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A hard link or symlink to an input also conflicts. If the error names an input inside an owned directory, choose another destination for the export. `force` preserves this protection.
+
 ![K11 crop in Fiji showing a 50 µm scale bar and a calibrated voxel value](../images/k11-export.png)
 
 Fiji's native ImageJ reader opened this 640 × 640 crop of K11 scan 52567 as a

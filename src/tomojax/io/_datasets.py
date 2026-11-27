@@ -29,6 +29,7 @@ from tomojax._data import (
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
+from tomojax.core.input_files import InputFiles, current_inputs, reading
 from tomojax.errors import InvalidParameter
 from tomojax.io._tiff import TIFF_SUFFIXES, read_tiff_frames
 
@@ -164,6 +165,8 @@ class ProjectionDataset:
         Original container format.
     sample_name : str or None, optional
         Sample name retained on output.
+    input_files : tuple, optional
+        Files retained by a loaded dataset and its copies.
     """
 
     projections: np.ndarray | None
@@ -181,6 +184,9 @@ class ProjectionDataset:
     source_path: str | None = None
     source_format: str | None = None
     sample_name: str | None = None
+    input_files: tuple[InputFiles, ...] = field(
+        default_factory=current_inputs, kw_only=True, compare=False, repr=False
+    )
     _metadata: NXTomoMetadata | None = field(default=None, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
@@ -461,18 +467,21 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
         If the input cannot be opened.
     """
     input_path = Path(path)
-    suffix = input_path.suffix.lower()
-    if suffix in _HDF5_SUFFIXES:
-        return ProjectionDataset.from_nxtomo(load_nxtomo(str(input_path)), source_path=input_path)
-    if suffix == ".npz":
-        return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
-    if suffix == ".mat":
-        return psi_record(input_path)
-    if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
-        raise ValueError(
-            "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
-        )
-    raise ValueError(f"unsupported dataset format for {input_path}")
+    with reading(input_path, owner="result"):
+        suffix = input_path.suffix.lower()
+        if suffix in _HDF5_SUFFIXES:
+            return ProjectionDataset.from_nxtomo(
+                load_nxtomo(str(input_path)), source_path=input_path
+            )
+        if suffix == ".npz":
+            return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
+        if suffix == ".mat":
+            return psi_record(input_path)
+        if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
+            raise ValueError(
+                "TIFF inputs require angle metadata; use load_tiff_stack(path, angles=...)"
+            )
+        raise ValueError(f"unsupported dataset format for {input_path}")
 
 
 def psi_record(path: Path, *, layout_only: bool = False) -> ProjectionDataset:
@@ -581,19 +590,20 @@ def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
     out_path = Path(output_path)
     input_suffix = in_path.suffix.lower()
     output_suffix = out_path.suffix.lower()
-    if input_suffix == ".npz" and output_suffix in _HDF5_SUFFIXES:
-        data = load_npz(str(in_path))
-        save_nxtomo(
-            str(out_path),
-            np.asarray(data.projections),
-            metadata=data.copy_metadata(),
-        )
-        return
-    if input_suffix in _HDF5_SUFFIXES and output_suffix == ".npz":
-        data = load_nxtomo(str(in_path))
-        save_npz(str(out_path), np.asarray(data.projections), metadata=data.copy_metadata())
-        return
-    raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf/.hdf5")
+    with reading(in_path):
+        if input_suffix == ".npz" and output_suffix in _HDF5_SUFFIXES:
+            data = load_npz(str(in_path))
+            save_nxtomo(
+                str(out_path),
+                np.asarray(data.projections),
+                metadata=data.copy_metadata(),
+            )
+            return
+        if input_suffix in _HDF5_SUFFIXES and output_suffix == ".npz":
+            data = load_nxtomo(str(in_path))
+            save_npz(str(out_path), np.asarray(data.projections), metadata=data.copy_metadata())
+            return
+        raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf/.hdf5")
 
 
 def load_tiff_stack(
@@ -640,23 +650,24 @@ def load_tiff_stack(
         raise ValueError("angles must be one-dimensional")
     if not np.isfinite(angles).all():
         raise ValueError("angles must contain only finite values")
-    projections = read_tiff_frames(input_path).astype(np.float32, copy=False)
-    if angles.shape[0] != projections.shape[0]:
-        raise ValueError(
-            f"angles length {angles.shape[0]} does not match projection count "
-            f"{projections.shape[0]}"
-        )
+    with reading(input_path, owner="result"):
+        projections = read_tiff_frames(input_path).astype(np.float32, copy=False)
+        if angles.shape[0] != projections.shape[0]:
+            raise ValueError(
+                f"angles length {angles.shape[0]} does not match projection count "
+                f"{projections.shape[0]}"
+            )
 
-    return ProjectionDataset(
-        projections=projections,
-        angles=angles,
-        detector=detector,
-        grid=grid,
-        geometry_type=geometry_type,
-        geometry_metadata=dict(geometry_metadata or {}),
-        source_path=str(input_path),
-        source_format="tiff_stack",
-    )
+        return ProjectionDataset(
+            projections=projections,
+            angles=angles,
+            detector=detector,
+            grid=grid,
+            geometry_type=geometry_type,
+            geometry_metadata=dict(geometry_metadata or {}),
+            source_path=str(input_path),
+            source_format="tiff_stack",
+        )
 
 
 def validate_dataset(path: PathLike) -> ValidationReport:

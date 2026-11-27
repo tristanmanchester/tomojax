@@ -16,6 +16,7 @@ import msgspec
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
 from tomojax.cli._staging import Stages
+from tomojax.core.input_files import InputFiles, reading
 from tomojax.errors import Canceled, classify
 from tomojax.wire import progress as w
 from tomojax.wire.arrays import Array, Coordinates, Member, Npy, Record
@@ -26,6 +27,7 @@ class Resource:
     """The registry's initial reference is surrendered by close or release."""
 
     dispose: Callable[[], None]
+    protection: ExitStack = field(default_factory=ExitStack)
     references: int = 1
 
     def pin(self, lifetime: ExitStack) -> None:
@@ -35,7 +37,8 @@ class Resource:
     def drop(self) -> None:
         self.references -= 1
         if not self.references:
-            self.dispose()
+            with self.protection:
+                self.dispose()
 
 
 @dataclass
@@ -43,6 +46,7 @@ class Artifact:
     path: Path
     resource: Resource
     manifest: p.Provenance
+    inputs: InputFiles
     metadata: Array | None = None
     name: str | None = None
 
@@ -54,6 +58,7 @@ class Handle:
     size: int
     resource: Resource
     artifacts: set[str]
+    inputs: InputFiles
 
 
 @dataclass(eq=False)
@@ -65,6 +70,7 @@ class Job:
     stages: Stages
     leases: dict[Member | Npy, ex.Lease]
     lifetime: ExitStack
+    inputs: InputFiles
     published: set[str] = field(default_factory=set)
 
 
@@ -158,6 +164,7 @@ class Session:
     def _pin(self, rid: str, cmd: op.ExecutionInput, channel: e.ChannelRevision | None) -> Job:
         with ExitStack() as pins:
             leases: dict[Member | Npy, ex.Lease] = {}
+            parents: set[InputFiles] = set()
             pending = list(op.input_references(cmd))
             if isinstance(cmd, op.Python):
                 cmd = self.python_inputs(cmd)
@@ -177,6 +184,7 @@ class Session:
                     member = leases[ref].value
                     if isinstance(member, ex.RegisteredArray):
                         metadata = member.metadata
+                    parents.add(handle.inputs)
                     handle.resource.pin(pins)
                     for token in handle.artifacts.intersection(self.artifacts):
                         self.artifacts[token].resource.pin(pins)
@@ -184,6 +192,7 @@ class Session:
                     artifact = self.artifacts[ref.artifact]
                     if str(artifact.path) != ref.path:
                         raise ValueError("artifact path differs from issued path")
+                    parents.add(artifact.inputs)
                     artifact.resource.pin(pins)
                     metadata = artifact.metadata
                     leases[ref] = ex.Lease(ref, artifact.manifest, metadata)
@@ -195,6 +204,8 @@ class Session:
                         if isinstance(ax.coordinates, Coordinates)
                         and isinstance(ax.coordinates.values, Member | Npy)
                     )
+            inputs = InputFiles(parents)
+            pins.enter_context(inputs.pinned())
             return Job(
                 rid,
                 cmd,
@@ -203,6 +214,7 @@ class Session:
                 Stages(self.root),
                 leases,
                 pins.pop_all(),
+                inputs,
             )
 
     def _accept(self, rid: str, channel: e.ChannelRevision | None) -> None:
@@ -307,20 +319,25 @@ class Session:
         )
         success = None
         failure = None
+        stopped = None
         try:
             job.control.boundary()
-            success = self.execute(job.command, context)
+            with reading(
+                *map(Path, op.input_files(job.command)), group=job.inputs, owner="request"
+            ):
+                success = self.execute(job.command, context)
         except Exception as err:
-            failure = err
+            failure = classify(err)
+            if isinstance(err, Canceled):
+                stopped = failure
         with self.changed:
             if self._stale(job):
                 error = w.Error(2, "superseded", "superseded")
             elif job.control.canceled:
                 # A checkpointed run says where its saved state is.
-                stopped = isinstance(failure, Canceled)
-                error = classify(failure) if stopped else w.Error(2, "canceled", "canceled")
+                error = stopped or w.Error(2, "canceled", "canceled")
             elif failure is not None:
-                error = classify(failure)
+                error = failure
             else:
                 assert success is not None
                 try:
@@ -340,11 +357,16 @@ class Session:
     def bind_roots(self, job: Job, success: ex.Success) -> tuple[p.Product, dict[str, Handle]]:
         """Build every handle descriptor before installing the first root or artifact."""
         value = success.value
-        roots = {}
+        roots: dict[str, Handle] = {}
         if isinstance(value, ex.NewHandle):
             bound = value.bind(job.id)
             roots[job.id] = Handle(
-                bound, success.manifest, value.logical_bytes, Resource(value.dispose), job.published
+                bound,
+                success.manifest,
+                value.logical_bytes,
+                Resource(value.dispose),
+                job.published,
+                job.inputs,
             )
             product = bound.product
         else:
@@ -352,7 +374,12 @@ class Session:
         for name, root in success.roots:
             bound = root.bind(name)
             roots[name] = Handle(
-                bound, success.manifest, root.logical_bytes, Resource(root.dispose), set()
+                bound,
+                success.manifest,
+                root.logical_bytes,
+                Resource(root.dispose),
+                set(),
+                job.inputs,
             )
             assert isinstance(product, p.PythonResult)
             product.handles[name] = bound.product
@@ -374,6 +401,9 @@ class Session:
             job.stages.commit()
             self._register_arrays(result)
             self.name_arrays(job.id, product)
+            for root in roots.values():
+                root.resource.protection.enter_context(job.inputs.pinned())
+                _ = undo.callback(root.resource.protection.close)
             self.handles.update(roots)
             undo.pop_all()
         return result
@@ -405,8 +435,9 @@ class Session:
     def _publish(self, job: Job, token: str, manifest: p.Provenance, undo: ExitStack) -> None:
         public = job.stages.publish_array(token)
         self.artifacts[token] = Artifact(
-            public, Resource(partial(public.unlink, missing_ok=True)), manifest
+            public, Resource(partial(public.unlink, missing_ok=True)), manifest, job.inputs
         )
+        self.artifacts[token].resource.protection.enter_context(job.inputs.pinned())
         undo.callback(self.artifacts.pop, token)
         undo.callback(self.artifacts[token].resource.drop)
         job.published.add(token)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import msgspec
 
@@ -16,7 +16,10 @@ from tomojax._parameters import (
     RegionName,
 )
 from tomojax.cli import wire_options as w
-from tomojax.wire.arrays import Count, Id, Member, Npy, Positive, Record, Storage
+from tomojax.wire.arrays import Count, Hdf5, Id, Member, Npy, Positive, Record, Storage
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 type Step = w.BeamHardening | w.Paganin | w.RadialDistortion | w.RejectViews | w.Rings | w.Zingers
 type Config = (
@@ -460,19 +463,34 @@ type ExecutionInput = (
 )
 
 
+def input_values(command: object) -> Iterator[Record]:
+    """Visit typed operation arguments in input order, including nested config records."""
+    if isinstance(command, Record):
+        yield command
+        for field in msgspec.structs.fields(command):
+            yield from input_values(getattr(command, field.name))
+    elif isinstance(command, tuple):
+        for item in command:
+            yield from input_values(item)
+
+
+def input_files(command: ExecutionInput) -> Iterator[str]:
+    """Caller-owned file roots read by this request."""
+    for value in input_values(command):
+        if isinstance(value, Open | Inspect | PathInput | Hdf5) or (
+            isinstance(value, Npy) and value.artifact is None
+        ):
+            yield value.path
+        if isinstance(value, Open):
+            for calibration in (value.flats, value.darks):
+                if isinstance(calibration, str):
+                    yield calibration
+
+
 def input_references(command: ExecutionInput) -> tuple[Member | Npy, ...]:
     """Return pin targets in input order, including nested configs and repeated members."""
-    references: list[Member | Npy] = []
-
-    def collect(value: object) -> None:
-        if isinstance(value, Member) or (isinstance(value, Npy) and value.artifact is not None):
-            references.append(value)
-        elif isinstance(value, Record):
-            for field in msgspec.structs.fields(value):
-                collect(getattr(value, field.name))
-        elif isinstance(value, tuple):
-            for item in value:
-                collect(item)
-
-    collect(command)
-    return tuple(references)
+    return tuple(
+        value
+        for value in input_values(command)
+        if isinstance(value, Member) or (isinstance(value, Npy) and value.artifact is not None)
+    )

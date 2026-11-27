@@ -35,33 +35,38 @@ def arguments(
     layout_only: bool = False,
 ) -> dict[str, Any]:
     """Construct option objects at their enclosing field and resolve bulk inputs."""
-
-    def decode(name: str, value: Any) -> Any:
-        if value is None:
-            return None
-        if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
-            return read_reference(name, value, context, shape_only=layout_only)
-        if isinstance(value, Record):
-            with within(name):
-                return _constructors()[type(value).__name__](
-                    **arguments(value, context, layout_only=layout_only)
-                )
-        if name == "devices":
-            inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
-            if any(d not in inventory for d in value):
-                raise InvalidParameter(
-                    name, f"expected distinct device ids from {tuple(inventory)}"
-                )
-            return as_devices(tuple(inventory[d] for d in value))
-        if isinstance(value, tuple):
-            return tuple(decode(f"{name}[{i}]", item) for i, item in enumerate(value))
-        return value
-
     return {
-        field.name: decode(field.name, getattr(record, field.name))
+        field.name: _decode_argument(
+            field.name, getattr(record, field.name), context, layout_only=layout_only
+        )
         for field in msgspec.structs.fields(record)
         if field.name not in omit and getattr(record, field.name) is not msgspec.UNSET
     }
+
+
+def _decode_argument(
+    name: str, value: Any, context: ex.ExecutionContext, *, layout_only: bool
+) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, Member | Npy | Hdf5 | op.PathInput):
+        return read_reference(name, value, context, shape_only=layout_only)
+    if isinstance(value, Record):
+        with within(name):
+            return _constructors()[type(value).__name__](
+                **arguments(value, context, layout_only=layout_only)
+            )
+    if name == "devices":
+        inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
+        if any(d not in inventory for d in value):
+            raise InvalidParameter(name, f"expected distinct device ids from {tuple(inventory)}")
+        return as_devices(tuple(inventory[d] for d in value))
+    if isinstance(value, tuple):
+        return tuple(
+            _decode_argument(f"{name}[{i}]", item, context, layout_only=layout_only)
+            for i, item in enumerate(value)
+        )
+    return value
 
 
 def handle_member(

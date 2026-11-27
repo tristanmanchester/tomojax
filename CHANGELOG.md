@@ -3,6 +3,10 @@
 ## Unreleased
 
 - Parallel half-acquisition scans use their full-turn overlap for the rotation-center fit, detector-derived volume size and direct reconstruction. Inspection reports the complete field and overlap when the axis is known.
+- File writers protect the files behind live scans, including linked HDF5 detector data,
+  vendor frame files and separate calibration. The worker, MCP, CLI and Python reject
+  output names and checkpoint directories that would replace an input, including aliases.
+  Validation releases its input files on return or error.
 - FDK, parallel FBP and Fourier inversion filter rolled measurements on physical detector lines. A quarter turn exchanges rows and columns exactly.
 - FDK computes angular weights and short-scan coverage from the corrected source trajectory. Fourier inversion accepts per-view axial rotations.
 - Feature bands, overlays, grid comparisons, and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.

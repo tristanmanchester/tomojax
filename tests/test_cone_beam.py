@@ -377,8 +377,9 @@ def test_load_records_a_declared_cone_beam_geometry(tmp_path: Path):
     args += ["--detector-roll", "0.5", "--pixel-size", "1", "--angles"]
     args += [str(tmp_path / "angles.csv"), "--geometry", "cone", "--source-to-axis", "50"]
     assert main([*args, "--source-to-detector", "80"]) == 0
-    loaded = load_dataset(tmp_path / "scan.nxs")
-    _, _, geometry = build_geometry_from_dataset_metadata(loaded.geometry_inputs())
+    _, _, geometry = build_geometry_from_dataset_metadata(
+        load_dataset(tmp_path / "scan.nxs").geometry_inputs()
+    )
     assert isinstance(geometry, ConeGeometry)
     assert geometry.beam == ConeBeam(50.0, 80.0, detector_roll=0.5)
     assert main([*args, "--source-to-detector", "80", "--axis-offset", "1.5"]) == 0

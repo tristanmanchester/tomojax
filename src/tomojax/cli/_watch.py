@@ -15,6 +15,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.cli import _images
+from tomojax.core.input_files import check_output
 
 if TYPE_CHECKING:
     from types import TracebackType
@@ -43,6 +44,12 @@ class WatchDirectory:
         self._stopped = False
         self._error: Exception | None = None
         self._thread = Thread(target=self._write_until_stopped, name="tomojax-watch", daemon=True)
+
+    def check_destinations(self) -> None:
+        """Check all preview files before the first image or solver output is written."""
+        for kind, name in IMAGES.items():
+            if kind != "poses" or self._working:
+                check_output(self.path / name)
 
     def observe(self, event: progress.Event) -> None:
         """Track task labels and keep the newest preview; never blocks on writing."""

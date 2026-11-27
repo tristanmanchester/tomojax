@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from tomojax.cli import _previews as pv
 from tomojax.cli._options import add_force, check_destinations, check_paths, options
 from tomojax.cli._progress import ProgressParser, add_progress, run_command
+from tomojax.core.input_files import reading
 from tomojax.io.api import format_inspection_report
 
 if TYPE_CHECKING:
@@ -179,7 +180,8 @@ def _make_previews(
     has = {"projection": projection is not None, "listing": listing}
     paths = pv.destinations(directory, wanted, centers or (), **has)
     try:
-        check_destinations({path.resolve()}, paths, force=force)
+        with reading(path):
+            check_destinations(paths, force=force)
     except FileExistsError as exc:
         parser.fail(str(exc), hint="pass --force to replace the previews")
     directory.mkdir(parents=True, exist_ok=True)
@@ -274,7 +276,10 @@ def _json_result(
             "sweep": previews.sweep,
             "sweep_apply": previews.apply,
         }
-        listing.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+        from tomojax.core.files import replaced_when_complete
+
+        with replaced_when_complete(listing, "preview listing") as temporary:
+            _ = temporary.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
         summary["preview_count"] = len(previews.files)
         summary["preview_listing"] = str(listing)
         outputs = (*previews.files.values(), str(listing))

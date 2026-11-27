@@ -46,6 +46,7 @@ LOG = logging.getLogger(__name__)
 
 class _Args(argparse.Namespace):
     data: str
+    config: str | None
     out: str | None
     force: bool
     progress: str
@@ -385,8 +386,7 @@ def main() -> int:
     config = _validate_align_args(parser, args, settings)
     watch = watch_directory(args.watch_dir, working=True)
     work = partial(_run, parser, args, metadata, config, watch)
-    operation = partial(checkpointed, None if args.dry_run else args.checkpoint, work)
-    return run_command("align", args.progress, operation, watch=watch)
+    return run_command("align", args.progress, work, watch=watch)
 
 
 def _run(
@@ -401,10 +401,26 @@ def _run(
     if not Path(args.data).exists():
         raise FileNotFoundError(f"input not found: {args.data}")
     outputs = [] if args.dry_run else [args.out, args.manifest]
-    check_paths(parser, inputs=[args.data], outputs=outputs, force=args.force)
+    check_paths(parser, inputs=[args.data, args.config], outputs=outputs, force=args.force)
     progress.check_canceled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
+    if not args.dry_run:
+        check_paths(parser, outputs=[args.out, args.manifest], force=args.force)
+    if watch is not None:
+        watch.check_destinations()
+    work = partial(_solve, args, metadata, config, watch, scan)
+    return checkpointed(None if args.dry_run else args.checkpoint, work)
+
+
+def _solve(
+    args: _Args,
+    metadata: Mapping[str, object],
+    config: AlignConfig | None,
+    watch: WatchDirectory | None,
+    scan: Scan,
+) -> Result | None:
+    import tomojax as tj
     from tomojax._workflow.operations import align_resolved, alignment_task
     from tomojax._workflow.smooth_alignment import JointSelection, resolve_alignment
     from tomojax.cli._plans import announce, dry_run, plan_product

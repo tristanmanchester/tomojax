@@ -45,6 +45,7 @@ from tomojax._scan.model import (
     selected_scan,
 )
 from tomojax.core.host_volume import discard_failed_outputs
+from tomojax.core.input_files import InputFiles, current_inputs, reading
 from tomojax.core.registration import registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
@@ -174,7 +175,7 @@ def load(
 
 
 def load_scan_with_declaration(path: str | PathLike[str], **options: Any) -> Scan:
-    with discard_failed_outputs() as outputs:
+    with reading(owner="result"), discard_failed_outputs() as outputs:
         item = load_native(path, **options)
         scan = _corrected_on_load(item, Path(path)) if isinstance(item, Frames) else item
         outputs.own(scan.projections)
@@ -275,21 +276,22 @@ def resolve_input(
 ) -> Frames | _StoredScan:
     """Resolve the file selection, geometry and measurement domain for all consumers."""
     check_geometry_options(angles_path, angles, overrides)
-    selected = select_storage(
-        file,
-        layout_only=layout_only,
-        data_path=data_path,
-        image_key_path=image_key_path,
-        angles_path=angles_path,
-    )
-    return resolve_measurements(
-        selected,
-        _Calibration(flats, darks, exposure_times, flat_exposure_times),
-        require_raw=require_raw,
-        angles=angles,
-        apply_poses=apply_poses,
-        **overrides,
-    )
+    with reading(file):
+        selected = select_storage(
+            file,
+            layout_only=layout_only,
+            data_path=data_path,
+            image_key_path=image_key_path,
+            angles_path=angles_path,
+        )
+        return resolve_measurements(
+            selected,
+            _Calibration(flats, darks, exposure_times, flat_exposure_times),
+            require_raw=require_raw,
+            angles=angles,
+            apply_poses=apply_poses,
+            **overrides,
+        )
 
 
 def loading_geometry(file: Path) -> tuple[ProjectionDataset | None, ScanGeometry]:
@@ -425,6 +427,8 @@ class Frames:
         corrected scan's records.
     source : ProjectionDataset or None, optional
         Original dataset metadata retained when loading from a file.
+    input_files : tuple, optional
+        File dependencies retained when loading detector and calibration frames.
 
     Raises
     ------
@@ -447,6 +451,10 @@ class Frames:
     name: str = "sample"
     corrections: tuple[Correction, ...] = ()
     source: ProjectionDataset | None = field(default=None, compare=False)
+
+    input_files: tuple[InputFiles, ...] = field(
+        default_factory=current_inputs, kw_only=True, compare=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         check_shape("Frames: counts", self.counts.shape, self.geometry)
@@ -558,6 +566,7 @@ class Frames:
             self.name,
             (*self.corrections, *done.records, *binned),
             self.source,
+            input_files=self.input_files,
             view_positions=positions,
         )
 
@@ -815,7 +824,11 @@ def load_frames(
 
 
 def load_raw_frames_with_declaration(path: str | PathLike[str], **options: Any) -> Frames:
-    with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
+    with (
+        reading(owner="result"),
+        discard_failed_outputs() as outputs,
+        progress.task("metadata", Path(path).name, None, ""),
+    ):
         frames, _ = projection_frames(Path(path), require_raw=True, **options)
         outputs.own(frames.counts)
         return frames

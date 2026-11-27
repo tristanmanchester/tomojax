@@ -185,8 +185,9 @@ def test_posed_multi_orbit_selection_keeps_the_original_forward_and_transpose(tm
     poses = np.arange(36, dtype=np.float32).reshape(6, 6) / 1000
     record.align_params = poses
     record.align_gauge = {"pose_translation_frame": "detector"}
-    save_dataset(path, record)
-    scan = tj.load(path)
+    posed = tmp_path / "posed.npz"
+    save_dataset(posed, record)
+    scan = tj.load(posed)
     kept = np.asarray([1, 3, 5])
     selected = scan.selected(kept)
     np.testing.assert_allclose(selected.poses, scan.poses[kept])

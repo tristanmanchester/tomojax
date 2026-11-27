@@ -303,43 +303,55 @@ def summarize(
     Pointers address the original info tree, including lists. The inline position
     of an externalized array is null. A large numeric sequence is also bulk data.
     """
+    arrays: dict[str, Array] = {}
+    summary = {
+        key: _summary_value(
+            value, "/" + key.replace("~", "~0").replace("/", "~1"), arrays, externalize
+        )
+        for key, value in info.items()
+    }
+    return _bounded_info(summary, arrays)
+
+
+def _summary_value(
+    value: object,
+    pointer: str,
+    arrays: dict[str, Array],
+    externalize: Callable[[str, object], Array],
+) -> object:
     import math
 
     import jax
 
-    arrays: dict[str, Array] = {}
-
-    def visit(value: object, pointer: str) -> object:
-        value = _config_value(value)
-        if pointer.startswith("/disturbed_views/") and isinstance(value, list) and len(value) > 64:
-            # Externalize both interval tables and score vectors with missing measurements.
-            value = np.asarray(value, dtype=float if pointer.endswith("/score") else None)
-        if isinstance(value, np.ndarray | jax.Array):
-            if value.ndim:
-                arrays[pointer] = externalize(pointer, value)
-                return None
-            value = value.item()
-        if isinstance(value, np.generic):
-            value = value.item()
-        if isinstance(value, float) and not math.isfinite(value):
+    value = _config_value(value)
+    if pointer.startswith("/disturbed_views/") and isinstance(value, list) and len(value) > 64:
+        # Externalize both interval tables and score vectors with missing measurements.
+        value = np.asarray(value, dtype=float if pointer.endswith("/score") else None)
+    if isinstance(value, np.ndarray | jax.Array):
+        if value.ndim:
+            arrays[pointer] = externalize(pointer, value)
             return None
-        if isinstance(value, Mapping):
-            return {
-                key: visit(item, pointer + "/" + key.replace("~", "~0").replace("/", "~1"))
-                for key, item in value.items()
-            }
-        if isinstance(value, tuple | list):
-            if len(value) > 64 and all(isinstance(item, int | float | np.number) for item in value):
-                arrays[pointer] = externalize(pointer, np.asarray(value))
-                return None
-            return [visit(item, f"{pointer}/{index}") for index, item in enumerate(value)]
-        return value if value is None or isinstance(value, str | bool | int | float) else str(value)
-
-    summary = {
-        key: visit(value, "/" + key.replace("~", "~0").replace("/", "~1"))
-        for key, value in info.items()
-    }
-    return _bounded_info(summary, arrays)
+        value = value.item()
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, Mapping):
+        return {
+            key: _summary_value(
+                item, pointer + "/" + key.replace("~", "~0").replace("/", "~1"), arrays, externalize
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        if len(value) > 64 and all(isinstance(item, int | float | np.number) for item in value):
+            arrays[pointer] = externalize(pointer, np.asarray(value))
+            return None
+        return [
+            _summary_value(item, f"{pointer}/{index}", arrays, externalize)
+            for index, item in enumerate(value)
+        ]
+    return value if value is None or isinstance(value, str | bool | int | float) else str(value)
 
 
 def _config_value(value: object) -> object:
