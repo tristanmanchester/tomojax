@@ -457,7 +457,7 @@ Flat sets before and after a scan are weighted by what the views show of each ([
 
 ### DIAD scans whose flats were taken with the sample stage in the beam
 
-Three half-turn scans of a Diamond DIAD visit (8,000 views of 2160 × 2560, 10 flats before and 10 after) took their flats with part of the compression rig in the beam: the first set is 15–24% darker than the beam everywhere, the second 12–20% darker over the right third of the detector. Each row gives the RMS difference of a full Fourier slice (8 detector rows, `Rings()` on, one V100S) from the same slice corrected with the flats of the neighboring scan, inside 900 px of the axis, in units of that slice's robust spread, for three bands (rows 536, 1076, 1616):
+Three half-turn scans of a Diamond DIAD visit (8,000 views of 2160 × 2560, 10 flats before and 10 after) took their flats with part of the compression rig in the beam: the first set is darker than the beam everywhere (19% at the median), the second over the right third of the detector (17–20% at its outer edge). Each row gives the RMS difference of a full Fourier slice (8 detector rows, `Rings()` on, one V100S) from the same slice corrected with the flats of the neighboring scan, inside 900 px of the axis, in units of that slice's robust spread, for three bands (rows 536, 1076, 1616):
 
 | Scan | Sets interpolated by position | Sets weighted by the views | `flat_weights_from_views` | `later_flat_weight` | `flat_structure_unmatched` |
 | --- | ---: | ---: | ---: | ---: | ---: |
