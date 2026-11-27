@@ -6,19 +6,15 @@ import numpy as np
 
 _TURN = 2 * np.pi
 # Views within a millionth of a turn are one direction measured again.
-_REPEAT = _TURN * 1e-6
+REPEAT_TOLERANCE = _TURN * 1e-6
 
 
-def group_repeats(
-    angles: np.ndarray, *, tolerance: float = _REPEAT
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def group_repeats(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Distinct directions in ``[0, 2 pi)``, each view's group, and group sizes.
 
     Angles in radians within a millionth of a turn of a neighbor share a
-    group by default, whichever whole turn they are labeled with and whatever
-    their rounding, so a direction measured twice keeps one angular cell.
-    ``tolerance`` is in radians; literal high-precision acquisition angles can
-    request only roundoff-scale grouping instead of fitted-pose tolerance.
+    group whichever whole turn they are labeled with and whatever their
+    rounding, so a direction measured twice keeps one angular cell.
     """
     canonical = np.remainder(np.asarray(angles, np.float64), _TURN)
     order = np.argsort(canonical)
@@ -28,7 +24,7 @@ def group_repeats(
     unwrapped = canonical[order[0]] + np.append(
         0.0, np.cumsum(np.remainder(np.diff(canonical[order]), _TURN))
     )
-    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > tolerance))
+    sorted_groups = np.cumsum(np.append(0, np.diff(unwrapped) > REPEAT_TOLERANCE))
     repeats = np.bincount(sorted_groups)
     representatives = np.bincount(sorted_groups, weights=unwrapped) / repeats
     groups = np.empty_like(sorted_groups)

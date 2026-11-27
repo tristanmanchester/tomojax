@@ -75,3 +75,18 @@ def test_fdk_short_scan_coverage_uses_the_corrected_source_arc(nominal, actual):
     if actual < 180:
         with pytest.raises(ValueError, match="short scans"):
             tj.reconstruct(scan, "fbp")
+
+
+def test_fourier_groups_repeated_exposures_at_the_same_precision_in_both_encodings():
+    panel, grid = tj.Detector(15, 3, 1, 1), tj.Grid(7, 7, 3, 1, 1, 1)
+    angles = np.r_[np.arange(0, 180, 5), 25.00002]
+    delta = np.sin(np.deg2rad(angles)) * 2
+    poses = np.zeros((len(angles), 6))
+    poses[:, 2] = delta
+    data = np.random.default_rng(21).normal(size=(len(angles), 3, 15)).astype(np.float32)
+    direct = tj.Scan(data, tj.ParallelGeometry(grid, panel, angles))
+    fitted = tj.Scan(data, replace(direct.geometry, angles=angles - delta)).with_poses(poses)
+    config = FourierConfig(backend="numpy", exterior="zero")
+    expected = tj.reconstruct(direct, "fourier", config=config)
+    actual = tj.reconstruct(fitted, "fourier", config=config)
+    np.testing.assert_allclose(actual.volume, expected.volume, rtol=1e-5, atol=2e-6)

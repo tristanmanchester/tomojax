@@ -11,7 +11,7 @@ import numpy as np
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
-from ._directions import group_repeats
+from ._directions import REPEAT_TOLERANCE, group_repeats
 
 if TYPE_CHECKING:
     import jax
@@ -39,30 +39,20 @@ def next_fast_len(target: int) -> int:
     return best
 
 
-def sorted_half_turn(
-    angles: np.ndarray, *, fitted: bool = False
-) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
+def sorted_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
     """Sort half-turn directions, retaining redundant exposures and opposing orientations."""
     if angles.ndim != 1 or angles.size < 2 or not np.isfinite(angles).all():
         raise ValueError("fourier_reconstruct: requires at least two finite angles")
     degrees = angles.astype(np.float64)
-    # Adding a half turn and reducing it can perturb the same physical
-    # direction by a few FP64 ulps. Exact uniqueness would give redundant
-    # exposures separate, almost-zero angular cells instead of averaging them.
-    tolerance = np.deg2rad(
-        8 * np.finfo(np.float64).eps * max(180.0, float(np.max(np.abs(degrees))))
-    )
-    if fitted:
-        tolerance = max(tolerance, 2 * np.pi * 1e-6)
-    representatives, inverse, counts = group_repeats(
-        2 * np.deg2rad(degrees), tolerance=2 * tolerance
-    )
+    # Opposing rays share one Fourier direction. Doubling the angle gives the
+    # same rounding tolerance as parallel FBP for recorded and corrected poses.
+    representatives, inverse, counts = group_repeats(2 * np.deg2rad(degrees))
     if representatives.size < 2:
         raise ValueError("fourier_reconstruct: requires at least two distinct half-turn directions")
     reduced = representatives[inverse] / 2
     unique = counts[inverse] == 1
     reduced[unique] = np.deg2rad(np.mod(degrees[unique], 180.0))
-    reduced[np.minimum(reduced, np.pi - reduced) <= tolerance] = 0
+    reduced[np.minimum(reduced, np.pi - reduced) <= REPEAT_TOLERANCE / 2] = 0
     order = np.argsort(reduced, kind="stable")
     flipped = np.cos(np.deg2rad(degrees[order]) - reduced[order]) < 0
     return order, flipped.astype(np.int8), tuple(reduced[order])

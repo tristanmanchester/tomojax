@@ -339,8 +339,8 @@ def _sampling_coordinates(
 ) -> _Sampling:
     """Resolve the physical detector rows, view order and translations shared by plan and run."""
     require_parallel_beam(geometry, "fourier_reconstruct")
-    directions, translations, pose_angles = axial_trajectory(geometry)
-    order, flipped, angles = sorted_half_turn(directions, fitted=pose_angles)
+    directions, translations = axial_trajectory(geometry)
+    order, flipped, angles = sorted_half_turn(directions)
     roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
     layout = DetectorRows(detector, roll) if roll else None
     if layout is not None:
@@ -371,11 +371,11 @@ def _sampling_coordinates(
     )
 
 
-def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | None, bool]:
+def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | None]:
     """Axial rotation and detector translation from the projector's world-from-object poses."""
     degrees = np.asarray(geometry.angles, dtype=np.float64)
     if type(geometry) is ParallelGeometry:
-        return degrees, None, False
+        return degrees, None
     poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))], np.float64)
     measured = poses[:, :2, 0]
     angle = np.arctan2(measured[:, 1], measured[:, 0])
@@ -393,7 +393,7 @@ def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | N
     if fitted:
         degrees = np.rad2deg(angle)
     translations = poses[:, [0, 2], 3]
-    return degrees, translations if np.any(translations) else None, fitted
+    return degrees, translations if np.any(translations) else None
 
 
 def _prepare_slab(

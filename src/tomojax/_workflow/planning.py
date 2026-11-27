@@ -230,7 +230,7 @@ def _parallel_method(scan: Scan, recommendation: str | None) -> tuple[Method, st
         from tomojax.recon.fourier import axial_trajectory
 
         try:
-            _, shifts, _ = axial_trajectory(scan.geometry)
+            _, shifts = axial_trajectory(scan.geometry)
         except ValueError:
             return "fbp", "FBP uses the scan's per-view geometry.", recommendation
         if shifts is not None:
