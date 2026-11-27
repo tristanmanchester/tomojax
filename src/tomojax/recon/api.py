@@ -649,9 +649,16 @@ def reconstruct_arrays(
         If method, configuration, shapes or geometry are incompatible, warm_start
         is requested for a noniterative method, or out is unsupported.
     """
+    from tomojax.core.validation import validate_projection_stack
     from tomojax.recon._truncation import truncation_record
 
     cfg = method_config(method, config=config, warm_start=warm_start or None)
+    _ = validate_projection_stack(
+        projections,
+        detector,
+        geometry=geometry,
+        context="warm_start projections" if warm_start else method,
+    )
     truncation = truncation_record(geometry, detector, projections)
     if cfg.method == "fourier":
         import numpy as np
