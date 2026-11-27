@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax import progress
-from tomojax._typed_arrays import Float32Array
+from tomojax._typed_arrays import Float32Array, numpy_float32_array
 from tomojax.core import backend_policy, checkpoint
 from tomojax.core.cuda_types import CuPyValue
 from tomojax.core.geometry.views import stack_view_poses
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     import jax
+    from numpy.typing import NDArray
 
     from tomojax.geometry import Detector, Geometry, Grid
 
@@ -119,75 +120,122 @@ class ConeOperator:
         return out
 
 
+class _Planes:
+    """Matched projections and independent BLAS inner products on aligned detector rows."""
+
+    def __init__(
+        self, poses: Float32Array, grid: Grid, detector: Detector, config: CGLSConfig
+    ) -> None:
+        from tomojax.core.joseph_cuda import JosephCUDA
+
+        self.cp = array_module()
+        self.ops = JosephCUDA(
+            poses, grid, detector, views_per_batch=config.views_per_batch, z_fast=True
+        )
+        self.rows = grid.nz
+
+    def squared(self, values: CuPyValue, axis: int) -> CuPyValue:
+        planes = self.cp.ascontiguousarray(self.cp.moveaxis(values, axis, 0)).reshape(self.rows, -1)
+        return self.cp.stack([self.cp.dot(plane, plane) for plane in planes])
+
+    def verify(
+        self,
+        data: CuPyValue,
+        x: CuPyValue,
+        residual: CuPyValue,
+        gradient: CuPyValue,
+        check: NDArray[np.bool_],
+    ) -> tuple[CuPyValue, CuPyValue, Float32Array, Float32Array, NDArray[np.bool_]]:
+        """Recompute against the observations for planes near convergence or roundoff."""
+        cp = self.cp
+        fitted = self.ops.forward(x)
+        exact_residual = data - fitted
+        exact = self.ops.adjoint(exact_residual)
+        _ = cp.abs(fitted, out=fitted)
+        fitted += abs(data)
+        bound = self.ops.adjoint(fitted)
+        del fitted
+        bounded = (abs(exact) <= (8 * np.finfo(np.float32).eps) * bound).all(axis=(0, 1))
+        norm, gap, at_precision = numpy_float32_array(
+            cp.stack(
+                (
+                    self.squared(exact, 2),
+                    self.squared(exact - gradient, 2),
+                    bounded,
+                )
+            ).get()
+        )
+        if check.all():
+            residual, gradient = exact_residual, exact
+        else:
+            selected = cp.asarray(check)
+            gradient = cp.where(selected, exact, gradient)
+            residual = cp.where(selected[None, :, None], exact_residual, residual)
+        return residual, gradient, norm, gap, at_precision.astype(bool)
+
+
 def axial_fit(
     poses: Float32Array, grid: Grid, detector: Detector, full: Float32Array, config: CGLSConfig
 ) -> Float32Array:
     """Solve the independent normal equations in parallel, one Krylov direction per row."""
-    from tomojax.core.joseph_cuda import JosephCUDA
-
     cp = array_module()
     with native_device(cp):
-        ops = JosephCUDA(poses, grid, detector, views_per_batch=config.views_per_batch, z_fast=True)
-        residual = cp.array(full, dtype=np.float32, order="C")
-        direction = ops.adjoint(residual)
+        planes = _Planes(poses, grid, detector, config)
+        data = cp.asarray(full, dtype=np.float32, order="C")
+        residual = data.copy()
+        direction = planes.ops.adjoint(residual)
         x = cp.zeros_like(direction)
-
-        # Match the scalar CGLS dot products and fused updates. Summing a
-        # multi-row volume as a single vector would couple its step lengths.
-        def norm2(values: CuPyValue, axis: int) -> CuPyValue:
-            planes = cp.ascontiguousarray(cp.moveaxis(values, axis, 0)).reshape(grid.nz, -1)
-            return cp.stack([cp.dot(plane, plane) for plane in planes])
-
         kernels = update_kernels(cp)
-        gamma = initial = norm2(direction, 2)
+        gamma = initial = numpy_float32_array(planes.squared(direction, 2).get())
         eps = np.finfo(np.float32).eps
-        threshold = (np.float32(1e-6) * cp.sqrt(initial)) ** 2
-        restart = verified = cp.ones(grid.nz, dtype=bool)
+        threshold = (np.float32(1e-6) * np.sqrt(initial)) ** 2
+        restart = verified = np.ones(grid.nz, dtype=bool)
         active = gamma > threshold
-        data = residual.copy()
         assert config.iterations is not None
         for count in range(1, config.iterations + 1):
             progress.check_canceled()
-            prediction = ops.forward(direction)
-            denominator = norm2(prediction, 1)
+            prediction = planes.ops.forward(direction)
+            denominator = numpy_float32_array(planes.squared(prediction, 1).get())
             active &= denominator > 0
-            alpha = cp.where(active, gamma / cp.where(active, denominator, 1), 0)
-            kernels["axpy"](alpha, direction, x)
-            kernels["axpy"](-alpha[None, :, None], prediction, residual)
-            gradient = ops.adjoint(residual)
-            next_gamma = norm2(gradient, 2)
-            # Confirm small updates against the measured residual just as in
-            # scalar CGLS. Each plane keeps its own restart and convergence state.
-            small = alpha**2 * norm2(direction, 2) <= eps**2 * norm2(x, 2)
+            alpha = np.divide(gamma, denominator, out=np.zeros_like(gamma), where=active)
+            step = cp.asarray(alpha)
+            kernels["axpy"](step, direction, x)
+            kernels["axpy"](-step[None, :, None], prediction, residual)
+            del prediction
+            gradient = planes.ops.adjoint(residual)
             tiny = (
-                abs(alpha * direction) <= eps * cp.maximum(abs(x), np.finfo(np.float32).tiny)
+                abs(step * direction) <= eps * cp.maximum(abs(x), np.finfo(np.float32).tiny)
             ).all(axis=(0, 1))
+            # Only vectors with one number per plane cross the bus. Keeping step
+            # decisions on the host avoids dozens of scalar GPU dispatches per step.
+            next_gamma, nd, nx, tiny_value = numpy_float32_array(
+                cp.stack(
+                    (
+                        planes.squared(gradient, 2),
+                        planes.squared(direction, 2),
+                        planes.squared(x, 2),
+                        tiny,
+                    )
+                ).get()
+            )
+            small = alpha**2 * nd <= eps**2 * nx
+            stalled = tiny_value.astype(bool)
             candidate = next_gamma <= threshold
             periodic = ((count % 16 == 0) | restart) & (next_gamma <= eps * initial)
-            check = active & (small | tiny | candidate | periodic)
-            restart = cp.zeros_like(active)
-            if bool(cp.any(check)):
-                fitted = ops.forward(x)
-                exact_residual = data - fitted
-                exact = ops.adjoint(exact_residual)
-                bound = ops.adjoint(abs(data) + abs(fitted))
-                at_precision = (abs(exact) <= 8 * eps * bound).all(axis=(0, 1))
-                exact_gamma = norm2(exact, 2)
-                restart = check & (
-                    candidate
-                    | tiny
-                    | at_precision
-                    | (norm2(exact - gradient, 2) > 0.01 * next_gamma)
+            check = active & (small | stalled | candidate | periodic)
+            restart = np.zeros_like(active)
+            if check.any():
+                residual, gradient, exact, gap, bounded = planes.verify(
+                    data, x, residual, gradient, check
                 )
-                active &= ~(check & (tiny | (at_precision & verified & (exact_gamma >= gamma))))
-                gradient = cp.where(check, exact, gradient)
-                residual = cp.where(check[None, :, None], exact_residual, residual)
-                next_gamma = cp.where(check, exact_gamma, next_gamma)
+                restart = check & (candidate | stalled | bounded | (gap > 0.01 * next_gamma))
+                active &= ~(check & (stalled | (bounded & verified & (exact >= gamma))))
+                next_gamma = np.where(check, exact, next_gamma)
             active &= next_gamma > threshold
-            if not bool(cp.any(active)):
+            if not active.any():
                 break
-            beta = cp.where(active & ~restart, next_gamma / cp.where(active, gamma, 1), 0)
-            kernels["xpay"](gradient, beta, direction)
+            beta = np.divide(next_gamma, gamma, out=np.zeros_like(gamma), where=active & ~restart)
+            kernels["xpay"](gradient, cp.asarray(beta), direction)
             gamma, verified = next_gamma, check
         return np.ascontiguousarray(x.get().transpose(2, 1, 0))
 

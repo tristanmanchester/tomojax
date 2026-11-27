@@ -295,3 +295,23 @@ def test_zero_exterior_fits_measured_rays_from_the_zero_padded_warm_start(method
     assert record["data_model"] == "measured"
     assert record["background_treatment"] == "none"
     assert record["outside_grid"] == 0
+
+
+@pytest.mark.gpu
+def test_binned_detector_has_the_same_exterior_on_host_and_device():
+    import jax
+
+    columns, views = 640, 48
+    pitch = 2.0 / columns
+    grid = tj.Grid(columns, columns, 1, pitch, pitch, pitch)
+    detector = tj.Detector(columns, 1, pitch, pitch)
+    geometry = tj.ParallelGeometry(grid, detector, np.linspace(0, 180, views, endpoint=False))
+    row = 2 * MU * np.sqrt(RADIUS**2 - _columns(columns) ** 2)
+    data = np.broadcast_to(row.astype(np.float32), (views, 1, columns))
+    host = tj.reconstruct(tj.Scan(data, geometry), "sirt", iterations=1)
+    device = tj.reconstruct(tj.Scan(jax.device_put(data), geometry), "sirt", iterations=1)
+    assert host.info["truncation"]["outside_grid"] > 0
+    assert device.info["truncation"]["outside_grid"] == pytest.approx(
+        host.info["truncation"]["outside_grid"], abs=1e-13, rel=0
+    )
+    np.testing.assert_array_equal(device.volume, host.volume)

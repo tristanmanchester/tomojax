@@ -118,15 +118,5 @@ def iterative_slabs[T](
         if diagnostics is not None:
             from ._discrepancy import sirt_slab_report
 
-            measured, removed, applied = 0.0, 0.0, False
-            for report in finished.reports.values():
-                mass, outside = report.pop("measured_sum", 0.0), report.pop("exterior_sum", 0.0)
-                assert isinstance(mass, float)
-                assert isinstance(outside, float)
-                measured += mass
-                removed += outside
-                applied |= bool(report.pop("exterior_applied", False))
-            treatment = Treatment.for_fit(
-                config.method, removed / measured if measured else 0.0, applied=applied
-            )
+            treatment = Treatment.from_slabs(config.method, finished)
             diagnostics.update(sirt_slab_report(finished), **treatment._asdict())

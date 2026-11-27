@@ -47,7 +47,9 @@ def _bin(values: Float32Array | CuPyValue, count: int, axis: int) -> Float32Arra
     source = values.swapaxes(axis, -1)
     if length % count == 0:
         shape = (*map(int, source.shape[:-1]), count, length // count)
-        means = source.reshape(shape).mean(axis=-1, dtype=np.float32)
+        # Round only the pixel average. FP32 reductions use different trees on
+        # NumPy and CuPy, which can change a later coarse Krylov direction.
+        means = source.reshape(shape).mean(axis=-1, dtype=np.float64).astype(np.float32)
     else:
         edges = np.linspace(0, length, count + 1, dtype=np.float64)
         cell = edges.astype(np.intp)
@@ -408,6 +410,19 @@ class Treatment(NamedTuple):
     background_treatment: str
 
     @classmethod
+    def from_slabs(cls, method: str, finished: checkpoint.Slabs) -> Treatment:
+        """Combine additive attenuation totals and remove them from the per-slab reports."""
+        measured, removed, applied = 0.0, 0.0, False
+        for report in finished.reports.values():
+            mass, outside = report.pop("measured_sum", 0.0), report.pop("exterior_sum", 0.0)
+            assert isinstance(mass, float)
+            assert isinstance(outside, float)
+            measured += mass
+            removed += outside
+            applied |= bool(report.pop("exterior_applied", False))
+        return cls.for_fit(method, removed / measured if measured else 0.0, applied=applied)
+
+    @classmethod
     def record(cls, method: str, share: float, *, applied: bool) -> Treatment:
         treatment = cls.for_fit(method, share, applied=applied)
         with checkpoint.loop("projection-model") as model:
@@ -441,7 +456,52 @@ def outside_data(
     # Every fine device fits the same fixed exterior. Consult the first selected
     # allocator before fitting independent rows or the coupled volume.
     with first_device(config) if getattr(config, "devices", None) is not None else nullcontext():
-        return _background(geometry, grid, detector, data, config)
+        room, native = _resources()
+        result, share = _background(
+            geometry, grid, detector, data, config, room=room, native=native
+        )
+        if native and result is not None:
+            # The fine JAX solve cannot reuse CuPy blocks held by the auxiliary
+            # fit. All surviving device samples belong to the input's JAX pool.
+            from ._cgls_cuda import array_module, native_device
+
+            cp = array_module()
+            with native_device(cp):
+                cp.get_default_memory_pool().free_all_blocks()
+        return result, share
+
+
+class _HostRows:
+    """Collect bounded model blocks in a zeroed host stack, allocating only on the first hit."""
+
+    def __init__(self, data: np.ndarray | jax.Array) -> None:
+        self.input = data
+        self.output: Float32Array | None = None
+        self.removed = 0.0
+
+    def write(self, part: slice, rows: slice, block: Float32Array | CuPyValue) -> None:
+        if self.output is None:
+            self.output = host_array(self.input.shape, copies=2)
+        target = self.output[part, rows]
+        if isinstance(block, np.ndarray):
+            target[:] = block
+        elif target.flags.c_contiguous:
+            block.get(out=target)
+        else:
+            target[:] = block.get()
+        self.removed += float(target.sum(dtype=np.float64))
+
+    def result(self) -> tuple[Float32Array | None, float]:
+        if self.output is None:
+            return None, 0.0
+        if isinstance(self.input, np.ndarray):
+            measured = float(self.input.sum(dtype=np.float64))
+        else:
+            import jax
+
+            with jax.enable_x64(True):
+                measured = float(self.input.sum(dtype=np.float64))
+        return self.output, self.removed / measured if measured else 0.0
 
 
 def _background(
@@ -450,12 +510,14 @@ def _background(
     detector: Detector,
     data: np.ndarray | jax.Array,
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
+    *,
+    room: int | None,
+    native: bool,
 ) -> tuple[np.ndarray | jax.Array | None, float]:
     from ._axial_slabs import independent_planes
 
     independent = independent_planes(geometry, grid, detector)
     rows = detector.nv
-    room, native = _resources()
     if independent:
         assert isinstance(geometry, ParallelGeometry)
         origin = grid_volume_origin(grid)
@@ -476,16 +538,12 @@ def _background(
     depth = rows
     if independent:
         depth = sample.depth(geometry, views, rows, room) if native else 1
-    resident = None
-    samples = data
+    result = None
     if not isinstance(data, np.ndarray) and native and len(data.devices()) == 1:
         from ._exterior_cuda import DeviceRows
 
-        resident = DeviceRows.on_selected_device(data)
-        if resident is not None:
-            samples = resident.input
-    source = None
-    removed = 0.0
+        result = DeviceRows.on_selected_device(data)
+    result = result or _HostRows(data)
     for z in range(0, rows, depth):
         section = slice(z, min(z + depth, rows))
         count = section.stop - z
@@ -506,33 +564,14 @@ def _background(
                 geometry,
                 target,
                 measured_detector,
-                samples[:, section],
+                result.input[:, section],
                 config,
                 local,
                 native=native,
                 axial=independent and native,
             ):
-                if resident is not None:
-                    resident.write(part, section, block)
-                else:
-                    if source is None:
-                        source = host_array(data.shape, copies=2)
-                    host = (
-                        block if isinstance(block, np.ndarray) else numpy_float32_array(block.get())
-                    )
-                    removed += float(host.sum(dtype=np.float64))
-                    source[part, section] = host
-    if resident is not None:
-        return resident.result()
-    if source is None:
-        return None, 0.0
-    # A float64 accumulator needs no second stack of double-precision measurements.
-    batch = max(1, (16 << 20) // (4 * data.shape[1] * data.shape[2]))
-    measured = sum(
-        float(np.asarray(data[i : i + batch]).sum(dtype=np.float64))
-        for i in range(0, len(data), batch)
-    )
-    return source, removed / measured if measured else 0.0
+                result.write(part, section, block)
+    return result.result()
 
 
 @dataclass(frozen=True)
@@ -591,7 +630,7 @@ def _model(
     # If both fitted edge windows contain only air on every view, every
     # virtual ray is identically zero. No interior samples enter that result.
     window = math.ceil(min(d.nu, max(2, d.nu // 16)) * nu / d.nu)
-    if not data[..., :window].any() and not data[..., -window:].any():
+    if not (data[..., :window].any() or data[..., -window:].any()):
         return
     complete = replace(d, nu=3 * d.nu)
     poses = _poses(geometry, views)
@@ -628,8 +667,8 @@ def _model(
     predicted: Float64Array = np.zeros(d.nv)
     residual: Float32Array = host_array((views, d.nv, d.nu))
     for part, projected in _project(geometry, complete, wide, poses, volume, coarse, native=native):
-        block = (
-            projected if isinstance(projected, np.ndarray) else numpy_float32_array(projected.get())
+        block = numpy_float32_array(
+            projected if isinstance(projected, np.ndarray) else projected.get()
         )
         predicted += np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
         residual[part] = full[part, :, d.nu : 2 * d.nu] - block[..., d.nu : 2 * d.nu]
@@ -643,27 +682,44 @@ def _model(
     if wide.nz < grid.nz:
         outside = np.concatenate([outside[:1], outside, outside[-1:]])
         wide = replace(wide, nz=wide.nz + 2)
-    row = (np.arange(nv) + 0.5) * d.nv / nv - 0.5
-    amplitude = np.interp(row, np.arange(d.nv), scale).astype(np.float32)[:, None]
-    vertical, horizontal = LinearAxis.cells(d.nv, nv), LinearAxis.cells(d.nu, nu)
     projected = _project(geometry, detector, wide, poses, outside, coarse, native=native)
+    yield from _interpolate(
+        projected, residual, scale, detector, native=native, positive=config.method == "mlem"
+    )
+
+
+def _interpolate(
+    projected: Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]],
+    residual: Float32Array,
+    scale: Float64Array,
+    detector: Detector,
+    *,
+    native: bool,
+    positive: bool,
+) -> Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]]:
+    """Lift the calibrated coarse prediction residual onto the measured rays."""
+    nv, nu = detector.nv, detector.nu
+    _, coarse_rows, coarse_columns = residual.shape
+    row = (np.arange(nv) + 0.5) * coarse_rows / nv - 0.5
+    amplitude = np.interp(row, np.arange(coarse_rows), scale).astype(np.float32)[:, None]
+    vertical, horizontal = LinearAxis.cells(coarse_rows, nv), LinearAxis.cells(coarse_columns, nu)
     if native:
         from ._exterior_cuda import interpolate
 
         yield from interpolate(
-            projected, residual, amplitude, horizontal, vertical, positive=config.method == "mlem"
+            projected, residual, amplitude, horizontal, vertical, positive=positive
         )
         return
     for part, block in projected:
         progress.check_canceled()
         mismatch = residual[part]
-        if d.nu != nu:
+        if coarse_columns != nu:
             mismatch = horizontal.interpolate(mismatch)
-        if d.nv != nv:
+        if coarse_rows != nv:
             mismatch = vertical.interpolate(mismatch.swapaxes(1, 2)).swapaxes(1, 2)
         corrected = (block + mismatch) * amplitude
-        if config.method == "mlem":
-            np.maximum(corrected, 0, out=corrected)
+        if positive:
+            _ = np.maximum(corrected, 0, out=corrected)
         yield part, corrected
 
 
@@ -672,12 +728,16 @@ def subtract_background(
 ) -> np.ndarray | jax.Array:
     """Replace private host scratch with corrected measurements, retaining device placement."""
     if isinstance(data, np.ndarray) and isinstance(background, np.ndarray):
-        np.subtract(data, background, out=background)
+        _ = np.subtract(data, background, out=background)
         return background
     import jax
-    import jax.numpy as jnp
 
     assert isinstance(data, jax.Array)
     private = jax.device_put(background, data.sharding)
     # The fitted background is private and can become the corrected stack.
-    return jax.jit(jnp.subtract, donate_argnums=(1,))(data, private)
+    corrected: jax.Array = jax.jit(_subtract, donate_argnums=(1,))(data, private)
+    return corrected
+
+
+def _subtract(data: jax.Array, private: jax.Array) -> jax.Array:
+    return (data - private).astype(np.float32)
