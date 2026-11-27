@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 def every_boundary(monkeypatch: pytest.MonkeyPatch) -> None:
     """Save at every loop boundary, so a stop at any of them has something to resume."""
     monkeypatch.setattr(checkpoint, "INTERVAL", 0.0)
+    monkeypatch.setattr(checkpoint, "SAVE_SHARE", 0.0)
 
 
 def _terminated_after(advances: int) -> Callable[[progress.Event], None]:
