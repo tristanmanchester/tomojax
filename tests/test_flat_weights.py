@@ -199,7 +199,10 @@ def test_views_sampled_in_several_batches_give_the_weights_of_one_batch(
     monkeypatch.setattr("tomojax.corrections._flat_weights._VIEW_BYTES", 5 * 4 * ROWS * COLS)
     batched = frames.corrected()
     assert batched.corrections[0].found == whole.corrections[0].found
-    np.testing.assert_allclose(np.asarray(batched.projections), np.asarray(whole.projections))
+    # Batches of another size sum in another order: equal to float32 rounding.
+    np.testing.assert_allclose(
+        np.asarray(batched.projections), np.asarray(whole.projections), rtol=1e-5, atol=1e-6
+    )
 
 
 def _warnings(frames: tj.Frames, **options: str) -> tuple[tj.Scan, list[str]]:
