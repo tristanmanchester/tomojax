@@ -92,11 +92,11 @@ Build a scan from arrays with `tj.Scan(projections, geometry)` and simulate proj
 
 | Library | 1 V100S (s) | 4 V100S (s) | 1 Blackwell (s) | 8 Blackwell (s) |
 | --- | ---: | ---: | ---: | ---: |
-| TomoJAX | 74.5 Fourier | 41.3 Fourier | 27.9 Fourier | 29.0 FBP |
-| tomocupy | 109.8 `fourierrec` | 66.3 `fourierrec` | 69.7 `fourierrec` | 45.8 `linerec` |
-| ASTRA FBP | 768.6 | 199.6 | 182.0 | 46.2 |
-| TIGRE FBP | 558.3 | 172.3 | 180.5 | 48.9 |
-| LEAP FBP | 753.3 | 198.2 | 227.7 | 51.3 |
+| TomoJAX | 74.51 Fourier | 41.28 Fourier | 27.87 Fourier | 28.99 FBP |
+| tomocupy | 109.8 `fourierrec` | 66.35 `fourierrec` | 69.71 `fourierrec` | 45.77 `linerec` |
+| ASTRA FBP | 768.6 | 199.6 | 182.0 | 46.21 |
+| TIGRE FBP | 558.3 | 172.3 | 180.5 | 48.91 |
+| LEAP FBP | 753.3 | 198.2 | 227.7 | 51.28 |
 | TomoPy `gridrec` (CPU) | 430.4 | — | 143.9 | — |
 
 Median seconds of three fresh worker launches reconstructing a full Diamond K11 (DIAD) scan (8,000 views of 2,160 × 2,560 pixels into a 56.62 GB volume) from process startup through final output `fsync` on Tesla V100S 32 GB and RTX PRO 6000 Blackwell 96 GB nodes (40 CPU cores; excludes the 96.0 s one-time input rechunking required by the five comparison libraries above). See [measurements](https://tomojax.dev/measurements/#full-volume-speed-on-a-synchrotron-scan) and the [full-volume speed chart](https://github.com/tristanmanchester/tomojax/blob/main/docs/images/speed-comparison.png) for all nine libraries, repeat ranges, and the cases where TomoJAX does not win (a 256-row band on eight Blackwell cards and Fourier scaling beyond one Blackwell card).

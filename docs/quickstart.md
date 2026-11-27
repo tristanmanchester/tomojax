@@ -103,7 +103,7 @@ By default `Rings()` fits on 512 angular bin means, so it adds about 10 s on a
 half turn and 20 s on a full turn of an 8,000-view 2160 × 2560 streamed Fourier
 volume on one V100S, with ~15 MiB extra GPU memory. See
 [ring removal](../src/tomojax/corrections/README.md#ring-removal) and
-[ring measurements](measurements.md#ring-correction).
+[ring measurements](measurements.md#automatic-corrections).
 
 ![A raw detector frame of a sandstone plug with a band of 16 rows marked, the corrected sinogram of one row, its FBP slice and an enlarged region of the slice.](images/i12-first-slice.png)
 
@@ -219,7 +219,7 @@ What the continuation does and does not recover:
 - **Outside the field of view:** voxels outside the inscribed detector field hold the reconstruction of the continued scan (a model, not measured attenuation). Pass `region="cyl"` (`--region cyl`) to zero them.
 - **Iterative solvers:** `cgls`, `sirt`, `fista`, `spdhg`, and `mlem` fit the grid to the measured rays and do not model material outside it. They are accurate when the grid holds the whole object, and keep the bright rim and raised bowl when material extends past the grid (unpenalized CGLS also runs to its 50-update cap). For a truncated scan, use `fourier` or `fbp` (FDK for cone beams) for a flatter interior level, or give an iterative solver a grid large enough to hold the object.
 
-On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#truncated-scans) and [known limitations](known-limitations.md#reconstruction-and-regularization).
+On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
 
 ### Expert settings
 

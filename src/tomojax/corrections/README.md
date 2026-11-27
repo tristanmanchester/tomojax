@@ -215,7 +215,7 @@ bins and applies the fitted inverse to every view. Pass `views=None` to fit
 every view directly when sample structure moves across columns within a bin. On
 an 8,000-view 2160 × 2560 streamed Fourier reconstruction on one V100S, `Rings()`
 adds about 10 s on a half turn and 20 s on a full turn, with ~15 MiB extra GPU
-memory ([ring measurements](../../../docs/measurements.md#ring-correction)).
+memory ([ring measurements](../../../docs/measurements.md#automatic-corrections)).
 Because it acts on whole detector rows, it runs inside `tj.reconstruct_slabs`
 and fused row-slab correction without holding an unbinned stack in host memory.
 
