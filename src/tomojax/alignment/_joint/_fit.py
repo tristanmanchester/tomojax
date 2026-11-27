@@ -171,9 +171,8 @@ def _read(
     noise SD (``estimate_noise``). Each slab of views is converted to FP32 once and gives
     all of them: a block mean uses only its finite pixels and its precision is their
     fraction, None when every pixel is finite; the scale comes from about 16 evenly spaced
-    views; the noise windows in the slab are kept from it. Nothing reads the frames at
-    random or twice: random page faults on a memory map stop the kernel reading ahead on
-    it for its lifetime, and a sweep after them reads a page per fault.
+    views and the noise windows are gathered from the same slab. If every sampled
+    contrast intersects a mask, lower-order windows are sampled after the sweep.
     """
     n, nv, nu = measured.shape
     if window is not None:
@@ -216,6 +215,8 @@ def _read(
     sd = noise.sd()
     if sd is None:  # no first-order window wholly finite: lower orders, gathered directly
         sd = estimate_noise(measured, dtype=np.float32, window=window)
+        if isinstance(measured, np.ndarray):
+            release_planes(measured, 0, n)
     binned = list(zip(means, weights, strict=True))
     return binned, scale, sd
 

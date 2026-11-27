@@ -67,6 +67,25 @@ def test_every_placement_gives_the_same_result_bit_for_bit(fit):
         assert stage == {n: placement[n] for n in ("y", "precision")}
 
 
+@pytest.mark.slow
+def test_shared_devices_read_their_own_batches_of_spilled_pose_columns():
+    from tomojax.core.devices import sharing
+
+    devices = jax.local_devices()[:2]
+    if len(devices) < 2:
+        pytest.skip("two devices required")
+    projections, nominal, grid, detector = _scan()
+    # Five batches leave one padding batch on the second device. Each has
+    # different measured rays, weights and pose columns, including masked pixels.
+    inputs = projections[:35], nominal[:35], grid, detector
+    with jax.default_device(devices[0]):
+        image, _, poses, _ = _fit.fit_poses(*inputs, placement=DEVICE)
+    with sharing(devices):
+        shared_image, _, shared_poses, _ = _fit.fit_poses(*inputs, placement=HOST)
+    np.testing.assert_array_equal(shared_image, image)
+    np.testing.assert_array_equal(shared_poses, poses)
+
+
 def _stacks_under(monkeypatch, *, limit, pool, largest_free, transient):
     """Five small stacks placed under supplied allocator figures, and the allocations tried.
 

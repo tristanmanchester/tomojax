@@ -176,6 +176,8 @@ class SharedViewProducts:
         """Keep volume and pose state whole, sharing ray data and Krylov scratch for this step."""
         q, sw, j, factor, free, d, damping, lm, rhs, invdiag, precision, common, poses = args
 
+        owner = rhs.sharding if rhs.committed else None
+
         def cut(stack: ArrayStack) -> ArrayStack:
             if stack.host:
                 return self.split.everywhere(stack)
@@ -205,11 +207,7 @@ class SharedViewProducts:
         # volume makes XLA recompile the next single-device RHS with sharding:
         # on CPU that changes its rounding and the subsequent Krylov trajectory.
         # Only the completed volume step and four scalars leave the mesh.
-        result = (
-            jax.device_put(result, args[8].sharding)
-            if args[8].committed
-            else jax.device_put(jax.device_get(result))
-        )
+        result = jax.device_put(result if owner is not None else jax.device_get(result), owner)
         _ = result.solution.block_until_ready()
         announce(self.split.mesh.devices.flat)
         return result
