@@ -255,7 +255,7 @@ class Continuation:
                 return _device_radius(self.distance.tobytes(), nu, self.pad)(projections)
         low, high = np.zeros((nv, window)), np.zeros((nv, window))
         for view in map(int, views):
-            frame = projections[view : view + 1]
+            frame = np.asarray(projections[view : view + 1])
             low += np.square(frame[0, :, :window], dtype=np.float64) / len(views)
             high += np.square(frame[0, :, nu - window :], dtype=np.float64) / len(views)
         radius2 = self._radius(np.asarray, low[:, None, :], high[:, None, :])
@@ -275,6 +275,6 @@ def _device_radius(distance: bytes, nu: int, pad: int) -> Callable[[jax.Array], 
         views = radius_views(projections.shape[0])
         low = projections[views, :, : fits.window].swapaxes(0, 1).astype(jnp.float64)
         high = projections[views, :, -fits.window :].swapaxes(0, 1).astype(jnp.float64)
-        return fits.radius(jnp.asarray, low, high)[:, 0].astype(jnp.float32)
+        return jnp.asarray(fits.radius(jnp.asarray, low, high)[:, 0], jnp.float32)
 
     return radius

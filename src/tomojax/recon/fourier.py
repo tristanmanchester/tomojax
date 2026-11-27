@@ -68,9 +68,6 @@ class FourierConfig:
     ----------
     slices_per_batch : int | None, optional
         Positive slab depth, or None to choose automatically as described above.
-    exterior : {"cylinder", "zero"}, optional
-        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
-        the scan contains the object.
     filter : Filter or None, optional
         FBP detector response ("ramp", "hann" or "shepp-logan"), or None
         (default) for the native Fourier response with a detector-Nyquist
@@ -81,6 +78,9 @@ class FourierConfig:
     backend : Literal['auto', 'numpy', 'cupy'], optional
         Execution backend: "auto", "numpy" or "cupy". Explicit choices never change
         backends. Default is 'auto'.
+    exterior : {"cylinder", "zero"}, optional
+        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
+        the scan contains the object.
     """
 
     method: ClassVar[Literal["fourier"]] = "fourier"

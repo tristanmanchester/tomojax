@@ -24,9 +24,7 @@ __device__ __forceinline__ float2 polar_value(
     int nviews, int nsource, const int* groups, int nr, int nfft,
     float qr, float qi, const float* table,
     const signed char* flipped, int replicas
-    #ifdef EXTERIOR
     , const float2* basis, const float2* amplitude
-    #endif
     #ifdef TRANSLATED_VIEWS
     , const float* shifts
     #endif
@@ -45,26 +43,26 @@ __device__ __forceinline__ float2 polar_value(
         float weights[6];
         #pragma unroll
         for (int j = 0; j < 6; j++) weights[j] = radial_weight(r - (ri + j - 2), table);
-        #ifdef EXTERIOR
         // The two profiles of this slice have three times the measured sampling
         // in frequency, and the same Kaiser window and centered-transform parity.
         float2 left = {}, right = {};
-        const int nwide = 3 * nfft, stride = nwide / 2 + 1;
-        const float2* side = basis + 2 * z * stride;
-        float wide_r = 3 * r;
-        int iw = (int)floorf(wide_r);
-        #pragma unroll
-        for (int j = -2; j <= 3; j++) {
-            int k = iw + j;
-            int bin = k < 0 ? -k : (k > nwide / 2 ? nwide - k : k);
-            float w = radial_weight(wide_r - k, table);
-            if (k > nwide / 2) w *= qr;
-            float wi = k < 0 || k > nwide / 2 ? -w : w;
-            float2 l = side[bin], h = side[stride + bin];
-            left.x += w * l.x; left.y += wi * l.y;
-            right.x += w * h.x; right.y += wi * h.y;
+        if (EXTERIOR) {
+            const int nwide = 3 * nfft, stride = nwide / 2 + 1;
+            const float2* side = basis + 2 * z * stride;
+            float wide_r = 3 * r;
+            int iw = (int)floorf(wide_r);
+            #pragma unroll
+            for (int j = -2; j <= 3; j++) {
+                int k = iw + j;
+                int bin = k < 0 ? -k : (k > nwide / 2 ? nwide - k : k);
+                float w = radial_weight(wide_r - k, table);
+                if (k > nwide / 2) w *= qr;
+                float wi = k < 0 || k > nwide / 2 ? -w : w;
+                float2 l = side[bin], h = side[stride + bin];
+                left.x += w * l.x; left.y += wi * l.y;
+                right.x += w * h.x; right.y += wi * h.y;
+            }
         }
-        #endif
         float2 dp = detector_phase[m];
         if (((int)periods & 1) && qr < 0) { dp.x = -dp.x; dp.y = -dp.y; }
         #pragma unroll
@@ -98,11 +96,11 @@ __device__ __forceinline__ float2 polar_value(
                     row.x += weights[j] * value.x;
                     row.y += weights[j] * value.y;
                 }
-                #ifdef EXTERIOR
-                float2 amp = amplitude[z * nsource + source];
-                row.x += amp.x * left.x + amp.y * right.x;
-                row.y += amp.x * left.y + amp.y * right.y;
-                #endif
+                if (EXTERIOR) {
+                    float2 amp = amplitude[z * nsource + source];
+                    row.x += amp.x * left.x + amp.y * right.x;
+                    row.y += amp.x * left.y + amp.y * right.y;
+                }
                 if (signed_r < 0) row.y = -row.y;
                 float2 shifted_dp = dp;
                 #ifdef TRANSLATED_VIEWS
@@ -128,9 +126,7 @@ extern "C" __global__ void polar(
     float qr, float qi, const float* table,
     const float2* detector_phase, const signed char* flipped,
     const double* row_mass, const double* view_weights, double du, int replace_dc, int replicas
-    #ifdef EXTERIOR
     , const float2* basis, const float2* amplitude
-    #endif
     #ifdef TRANSLATED_VIEWS
     , const float* shifts
     #endif
@@ -173,9 +169,7 @@ extern "C" __global__ void polar(
             opposite ? mirror_phase : phase, opposite ? mirror_detector : detector_phase,
             opposite ? x - 1 : m, z, nviews, nsource, groups, nr, nfft, qr, qi,
             table, flipped, replicas
-            #ifdef EXTERIOR
             , basis, amplitude
-            #endif
             #ifdef TRANSLATED_VIEWS
             , shifts
             #endif
@@ -188,9 +182,7 @@ extern "C" __global__ void polar(
     out[i] = polar_value(
         spectrum, angle, radial, phase, detector_phase, m, z,
         nviews, nsource, groups, nr, nfft, qr, qi, table, flipped, replicas
-            #ifdef EXTERIOR
             , basis, amplitude
-            #endif
             #ifdef TRANSLATED_VIEWS
             , shifts
             #endif
@@ -233,9 +225,8 @@ def interpolation_kernel(
     import cupy
 
     options = (
-        ("--fmad=false",)
+        ("--fmad=false", f"-DEXTERIOR={int(exterior)}")
         + (("-DFUSE_Y_BOUNDARY",) if y_boundary else ())
-        + (("-DEXTERIOR",) if exterior else ())
         + (("-DGROUP_REPEATS",) if repeats else ())
         + (("-DTRANSLATED_VIEWS",) if translated else ())
     )

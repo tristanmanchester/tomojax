@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
-from functools import lru_cache, partial
+from functools import lru_cache
 import operator
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -16,7 +16,8 @@ from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
-from ._continuation import continued_width, radius_views, row_fits
+from ._continuation import continued_width
+from ._fourier_exterior import FourierExterior
 from ._fourier_grid import interpolate_numpy, next_fast_len, radial_coefficients, transform_grid
 from ._fourier_rows import ProjectionRows, interpolate_projection_rows
 from ._pinned import PinnedPool
@@ -397,9 +398,6 @@ class FourierPlan:
         self.filter = filter
         self.grid, self.detector = grid, detector
         self.source_views, self.depth = nviews, depth
-        # The views sharing in each row's continuation radius, as the scan numbers its
-        # views; ``order`` gives the scan's view at each position of the sorted half turn.
-        self.sharing = radius_views(nviews, order)
         self.upload = self.compute = self.download = None
         self._pinned = None
         self._upload_slot = None
@@ -422,7 +420,11 @@ class FourierPlan:
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
             self.nfft = geometry.nfft
-            self.fits = row_fits(detector) if exterior == "cylinder" else None
+            self.exterior = (
+                FourierExterior(xp, detector, nviews, order, geometry.flipped, self.nfft)
+                if exterior == "cylinder"
+                else None
+            )
             self.shape, self.crop = geometry.shape, geometry.crop
             self.flipped, self.period_phase = geometry.flipped, geometry.period_phase
             self.view_weights = geometry.view_weights
@@ -438,16 +440,8 @@ class FourierPlan:
                         y_boundary=geometry.y_boundary is not None,
                         repeats=self.groups is not None,
                         translated=True,
-                        exterior=self.fits is not None,
+                        exterior=self.exterior is not None,
                     )
-                if self.fits is not None:
-                    # Each axial slice has just two exterior profiles. Transform them
-                    # once at their full radial sampling and reuse them across views.
-                    phase, taper, _ = radial_coefficients(
-                        3 * detector.nu, 3 * self.nfft, detector.du
-                    )
-                    self.tail_phase = xp.asarray(phase, dtype=xp.complex64)
-                    self.tail_taper = xp.asarray(taper, dtype=xp.float32)
                 self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
             py, px = self.shape
@@ -457,35 +451,6 @@ class FourierPlan:
             self.y_boundary = geometry.y_boundary
             if self.cuda:
                 self.inverse_direction, self.inverse_plan = _inverse_fft_plan(self.shape, depth)
-
-    def _angular_mean(
-        self, low: np.ndarray | CuPyValue, high: np.ndarray | CuPyValue
-    ) -> tuple[np.ndarray | CuPyValue, np.ndarray | CuPyValue]:
-        """Average each edge's continuation amplitudes over a sixteenth of the half turn.
-
-        The Cartesian samples near zero frequency each take two views of the
-        many that cross them, so a continuation whose amplitude scatters from
-        view to view would reach the image as low-frequency error. Averaging
-        over neighbouring views costs the image nothing it resolves in a term
-        this smooth. The +u edge of the sorted half turn runs on into the -u
-        edge at its start, and a view sorted from the opposing half turn has
-        its edges exchanged.
-        """
-        xp: CuPyValue = self.xp
-        views = int(low.shape[-2])
-        reach = views // 32
-        if reach == 0:
-            return low, high
-        flipped: CuPyValue = xp.not_equal(self.flipped, 0)[:, None]
-        ring: CuPyValue = xp.concatenate(
-            [xp.where(flipped, low, high), xp.where(flipped, high, low)], axis=-2
-        ).astype(xp.float64)
-        ring = xp.concatenate([ring[..., -reach - 1 :, :], ring, ring[..., :reach, :]], axis=-2)
-        ring = ring.cumsum(axis=-2)
-        ring = ring[..., 2 * reach + 1 :, :] - ring[..., : -2 * reach - 1, :]
-        ring = xp.multiply(ring, 1 / (2 * reach + 1)).astype(low.dtype)
-        plus, minus = ring[..., :views, :], ring[..., views:, :]
-        return xp.where(flipped, plus, minus), xp.where(flipped, minus, plus)
 
     def _interpolate_cuda(self, spectrum: CuPyValue, tails: tuple[CuPyValue, ...]) -> None:
         output = self.frequencies
@@ -537,38 +502,10 @@ class FourierPlan:
 
     def _compute_volume(self, raw: np.ndarray | CuPyValue, count: int) -> np.ndarray | CuPyValue:
         xp = self.xp
-        tails = ()
+        tails = (np.uint64(0), np.uint64(0))
         exterior_mass = None
-        if self.fits is not None:
-            fits, first, last = (
-                self.fits,
-                raw[..., : self.fits.window],
-                raw[..., -self.fits.window :],
-            )
-            place = partial(xp.asarray, dtype=raw.dtype)
-            radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
-            low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
-            if self.cuda:
-                unit = xp.ones_like(radius2)
-                left, right = fits.tails(place, unit, unit, radius2)
-                nu = self.detector.nu
-                exterior_mass = (
-                    left.sum(axis=-1, dtype=xp.float64) * low[..., 0]
-                    + right.sum(axis=-1, dtype=xp.float64) * high[..., 0]
-                )
-                # Both profiles use the original, three-width centered coordinate.
-                pair = xp.concatenate(
-                    [
-                        xp.pad(left, ((0, 0), (0, 0), (0, 2 * nu))),
-                        xp.pad(right, ((0, 0), (0, 0), (2 * nu, 0))),
-                    ],
-                    axis=1,
-                )
-                basis = xp.fft.rfft(pair * self.tail_taper, n=3 * self.nfft) * self.tail_phase
-                tails = (basis, xp.concatenate([low, high], axis=-1))
-            else:
-                before, after = fits.tails(place, low, high, radius2)
-                raw = xp.concatenate([before, raw, after], axis=-1)
+        if self.exterior is not None:
+            raw, tails, exterior_mass = self.exterior.transform(raw)
         if self.cuda:
             rows = self.depth * self.source_views
             self.mass_kernel(
