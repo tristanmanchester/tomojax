@@ -10,7 +10,7 @@
   at zero continues as zero, so contained objects reconstruct as before. On simulated scans
   (a tube around a contained sample, a wide plate, bodies 1.15 and 3 times the field of
   view) the error of the interior level fell from 4–99% of the body's attenuation to
-  0.2–6%, and the bowl across the field from 18–210% to 0.3–3%. Edges, contrast and fine
+  0.1–6%, and the bowl across the field from 18–210% to 0.3–4%. Edges, contrast and fine
   detail do not depend on the continuation; the absolute level is as good as the cylinder
   model. Voxels outside the field of view hold the reconstruction of the continued scan,
   and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
