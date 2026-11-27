@@ -98,16 +98,17 @@ def metadata_record(meta: NXTomoMetadata) -> dict[str, Any]:
         if data is not None:
             tables[name] = {"values": np.asarray(data).tolist(), "unit": units}
     columns = [{"name": c.name, "unit": c.unit} for c in pose_columns(unit)]
-    if truth is not None:
-        tables["true_poses"] = {
-            "values": truth,
-            "unit": "mixed",
-            "columns": columns,
-            "frame": "detector",
-        }
+    for name, poses in (("true_poses", truth), ("alignment_poses", meta.alignment_poses)):
+        if poses is not None:
+            tables[name] = {
+                "values": np.asarray(poses).tolist(),
+                "unit": "mixed",
+                "columns": columns,
+                "frame": "detector",
+            }
     if "poses" in tables:
         tables["poses"].update(
-            columns=columns,
+            columns=[{**c, "unit": "radian"} for c in columns[:3]] + columns[3:],
             frame=(meta.align_gauge or {}).get(
                 "pose_translation_frame", "detector" if geometry.get("cone_segments") else "object"
             ),

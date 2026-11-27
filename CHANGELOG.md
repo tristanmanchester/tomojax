@@ -8,6 +8,8 @@
   coordinates and sparse bounding box. CLI and worker outputs embed their command,
   resolved settings and provenance. Read a saved record with `tomojax inspect FILE --json`.
   The separate manifest file, `--manifest` option and NPZ dataset container have been removed.
+  Saved alignments include their detector-frame pose result in degrees, including zero rows
+  for center-only fits. Geometry parameters retain their original translation frame and radians.
 
 - Studio Explore lists the available export formats and their options. Choose a destination to preview the file count, payload size and reader calibration before queueing the export.
 

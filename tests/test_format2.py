@@ -472,6 +472,26 @@ def test_alignment_image_without_a_separate_grid_uses_the_scan_voxels(tmp_path):
             assert axis["coordinates"]["spacing"] == pytest.approx(values[1] - values[0])
 
 
+def test_alignment_reports_detector_degrees_and_preserves_geometry_parameters(tmp_path):
+    _, scan = volume_and_scan()
+    degrees = np.array([[2, -3, 4, 0.5, 0, -1]] * len(scan.angles), dtype=np.float64)
+    path = tmp_path / "posed.nxs"
+    tj.save(path, tj.Alignment(scan.with_poses(degrees), {}))
+    with h5py.File(path) as file:
+        tables = json.loads(file["entry/record"][()])["tables"]
+        display = file[tables["alignment_poses"]["path"]]
+        assert list(display.attrs["units"])[:3] == ["degree"] * 3
+        np.testing.assert_allclose(display, degrees, rtol=1e-6)
+        parameters = file[tables["poses"]["path"]]
+        assert list(parameters.attrs["units"])[:3] == ["radian"] * 3
+        np.testing.assert_allclose(parameters[:, :3], np.radians(degrees[:, :3]), rtol=1e-6)
+    restored = tj.load_alignment(path)
+    np.testing.assert_allclose(restored.poses, degrees, rtol=1e-6)
+    scan_path = tmp_path / "scan.nxs"
+    tj.save(scan_path, restored.scan.selected(slice(0, 1)))
+    assert "alignment_poses" not in tj.inspect(scan_path)["record"]["tables"]
+
+
 @pytest.mark.parametrize("vertical_pitch", [None, 0.5])
 def test_nexus_projection_axes_keep_each_recorded_pitch_without_a_detector_center(
     tmp_path, vertical_pitch

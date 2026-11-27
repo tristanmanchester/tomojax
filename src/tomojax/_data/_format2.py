@@ -187,6 +187,7 @@ def write_tables(
         ("angles", meta.angles, sample, "rotation_angle"),
         ("image_key", meta.image_key, det, "image_key"),
         ("poses", meta.align_params, processing, "poses"),
+        ("alignment_poses", meta.alignment_poses, processing, "alignment_poses"),
         ("angle_offset", meta.angle_offset, processing, "angle_offset"),
         ("true_poses", tables.get("true_poses", {}).get("values"), processing, "true_poses"),
     ):
@@ -313,9 +314,13 @@ def write_record(
     n_views = projections.shape[0] if projections is not None else None
     if n_views is None and meta.angles is not None:
         n_views = len(meta.angles)
-    for name, values in (("poses", meta.align_params), ("angle_offset", meta.angle_offset)):
+    for name, values in (
+        ("poses", meta.align_params),
+        ("alignment_poses", meta.alignment_poses),
+        ("angle_offset", meta.angle_offset),
+    ):
         if values is not None:
-            expected = (n_views, 6) if name == "poses" else (n_views,)
+            expected = (n_views,) if name == "angle_offset" else (n_views, 6)
             if values.shape != expected:
                 raise ValueError(f"{name} must have shape {expected}, got {values.shape}")
     record = metadata_record(meta)
@@ -450,7 +455,7 @@ def registered_members(file: h5py.File, path: Path) -> dict[str, Array]:
             description["domain"],
             fixed=msgspec.convert(description.get("fixed", []), type=tuple[Fixed, ...]),
         )
-    poses = record["tables"].get("poses")
+    poses = record["tables"].get("alignment_poses")
     if record["kind"] == "alignment" and poses is not None:
         signal = signal_at(file, poses["path"])
         members["poses"] = Array(
@@ -516,7 +521,7 @@ def read_tables(
     paths = {
         k: d["path"]
         for k, d in descriptions.items()
-        if k in ("angles", "poses", "true_poses", "angle_offset", "image_key")
+        if k in ("angles", "poses", "alignment_poses", "true_poses", "angle_offset", "image_key")
     }
     overrides = {"image_key": image_key_path, "angles": angles_path}
     paths.update({key: path for key, path in overrides.items() if path is not None})
@@ -548,7 +553,7 @@ def read_tables(
             path=f"angles_path {paths['angles']}",
             image_key=tables.get("image_key"),
         )
-    for key in ("poses", "true_poses"):
+    for key in ("poses", "alignment_poses", "true_poses"):
         if key in tables and (
             tables[key].ndim != 2
             or tables[key].shape[1] != 6
@@ -618,6 +623,7 @@ def read_format_2(
         geometry_type=normalize_geometry_type(geom["type"]),
         geometry_meta=meta,
         align_params=tables.get("poses"),
+        alignment_poses=tables.get("alignment_poses"),
         align_gauge=record["alignment"]["gauge"],
         geometry_calibration=record["calibration"],
         angle_offset=tables.get("angle_offset"),

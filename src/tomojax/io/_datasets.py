@@ -318,6 +318,13 @@ class ProjectionDataset:
                 stored,
                 history=copy.deepcopy(stored.history),
                 image_key=None if stored.image_key is None else np.array(stored.image_key),
+                alignment_poses=(
+                    np.array(stored.alignment_poses)
+                    if stored.alignment_poses is not None
+                    and "alignment_info" in self.geometry_metadata
+                    and "reconstruction_method" not in self.geometry_metadata
+                    else None
+                ),
                 geometry_calibration=_copied(stored.geometry_calibration),
                 simulation_artifacts=_copied(stored.simulation_artifacts),
             )

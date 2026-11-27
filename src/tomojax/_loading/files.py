@@ -383,7 +383,11 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
                 disk,
             )
             return
-        if member == "projections" or (member is None and members.keys() == {"projections"}):
+        if member == "projections" or (
+            member is None
+            and "projections" in members
+            and not members.keys() & {"volume", "image", "phantom"}
+        ):
             if "projections" not in members:
                 raise ValueError(f"{path} has no projections member")
             payload = read_format_2(file, include_volume=False, lazy_projections=True)

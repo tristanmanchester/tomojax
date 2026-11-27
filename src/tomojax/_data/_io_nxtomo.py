@@ -111,7 +111,15 @@ def save_nxtomo(
     if meta.volume is not None and meta.volume.ndim != 3:
         raise ValueError("volume must be 3D (nz, ny, nx)")
     with (
-        _reading_pixels(proj, meta.volume),
+        _reading_pixels(
+            proj,
+            meta.volume,
+            meta.angles,
+            meta.image_key,
+            meta.align_params,
+            meta.alignment_poses,
+            meta.angle_offset,
+        ),
         replaced_when_complete(path, sizes_of(proj, meta.volume), overwrite=overwrite) as temporary,
         h5py.File(temporary, "w") as f,
     ):

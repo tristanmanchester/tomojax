@@ -658,7 +658,11 @@ def bind_step_geometry(
 
 
 def record_of(
-    scan: Scan, *, grid: Grid | None = None, include_projections: bool = True
+    scan: Scan,
+    *,
+    grid: Grid | None = None,
+    include_projections: bool = True,
+    alignment_poses: np.ndarray | None = None,
 ) -> ProjectionDataset:
     """A dataset record for ``scan``: its geometry, keeping the source's provenance."""
     from tomojax.io.api import replace_dataset
@@ -676,6 +680,7 @@ def record_of(
     # frame labels. Keep the other provenance without reusing a stale view axis.
     metadata = record.to_nxtomo_metadata()
     metadata.image_key = None
+    metadata.alignment_poses = alignment_poses
     metadata.projection_domain = "line_integrals"
     return replace_dataset(record, metadata=metadata)
 

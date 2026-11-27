@@ -41,7 +41,7 @@ working image, phantom or projection stack stored by the object.
 | `sample/rotation_angle` | Rotation angles in degrees |
 | `data` | Projection NXdata with links to detector data, rotation angles and image keys, plus detector coordinates `v` and `u` |
 | `volume`, `image`, `phantom` | NXdata with a `data` signal and voxel-center coordinates `z`, `y`, `x` |
-| `tomojax` | Per-view poses, simulation truth poses and angle offsets when available |
+| `tomojax` | Effective geometry parameters, reported alignment poses, simulation truth poses and angle offsets when available |
 
 An axis starts at the center of element zero. Recorded spatial units apply to
 grid and detector coordinates. Uncalibrated coordinates use `scan_length`.
@@ -58,6 +58,11 @@ A low-level save of detector counts labels the signal `counts`.
 | `alignment`, `calibration`, `simulation` | Pose gauge, geometry calibration and simulation settings |
 | `sample`, `source`, `frame` | Sample name, radiation source and coordinate frame |
 | `provenance`, `history` | Writer versions and time, available command or worker context and provenance of earlier saves |
+
+`tables.alignment_poses` gives each fitted view's detector-frame result, with
+rotations in degrees. A center-only fit reports zero per-view corrections.
+`tables.poses` holds the parameters applied to the scan geometry, with
+rotations in radians and translations in the recorded frame.
 
 When a reconstruction and its attached scan use different voxel grids,
 `geometry.grid` describes the scan and `geometry.meta.volume_grid` describes

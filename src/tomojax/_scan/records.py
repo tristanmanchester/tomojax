@@ -63,7 +63,7 @@ def result_dataset(
             {**item.info, "source": source}
         )
     elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
-        record = record_of(item.scan, include_projections=True)
+        record = record_of(item.scan, alignment_poses=item.poses)
         record.volume = item.image
         # The alignment made this volume: an earlier reconstruction's method
         # and settings no longer describe it.

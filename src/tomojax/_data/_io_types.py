@@ -129,10 +129,13 @@ class NXTomoMetadata:
         Provenance of saved source generations in chronological order.
     projection_domain : str or None, optional
         Recorded measurement type of the selected detector pixels, counts or line_integrals.
+    alignment_poses : numpy.ndarray or None, optional
+        Reported alignment result in detector coordinates, with rotations in degrees.
     """
 
     history: list[JsonObject] = field(default_factory=list, repr=False, kw_only=True)
     projection_domain: str | None = field(default=None, kw_only=True)
+    alignment_poses: np.ndarray | None = field(default=None, kw_only=True)
     angles: np.ndarray | None = None
     image_key: np.ndarray | None = None
     grid: Grid | GridDict | None = None
@@ -193,6 +196,7 @@ class NXTomoMetadata:
             geometry_meta=_json_object(data, "geometry_meta"),
             volume=_copy_array_metadata(data.get("volume")),
             align_params=_copy_array_metadata(data.get("align_params")),
+            alignment_poses=_copy_array_metadata(data.get("alignment_poses")),
             align_gauge=_json_object(data, "align_gauge"),
             geometry_calibration=_json_object(data, "geometry_calibration"),
             angle_offset=_copy_array_metadata(data.get("angle_offset")),
