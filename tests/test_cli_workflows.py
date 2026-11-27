@@ -338,12 +338,19 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("warm_start", [False, True])
-def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_start: bool) -> None:
+@pytest.mark.parametrize("exterior", ["cylinder", "zero"])
+def test_recon_cli_runs_cgls_like_the_python_solver(
+    tmp_path: Path, exterior: str, *, warm_start: bool
+) -> None:
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
     manifest = tmp_path / "recon-manifest.json"
     write_projection_dataset(scan)
+    config = tmp_path / "cgls.toml"
+    _ = config.write_text(f'exterior = "{exterior}"\n', encoding="utf-8")
     args = [
+        "--config",
+        str(config),
         "--grid",
         "4",
         "4",
@@ -361,13 +368,22 @@ def test_recon_cli_runs_cgls_like_the_python_solver(tmp_path: Path, *, warm_star
     assert resolved["method"] == "cgls"
     assert resolved["reconstruction"]["warm_start"] == warm_start
     assert resolved["reconstruction"]["config"]["iterations"] == 6
+    assert resolved["reconstruction"]["config"]["exterior"] == exterior
     assert 1 <= resolved["reconstruction"]["effective_iterations"] <= 6
     # The saved image is the Python solver's on the same scan, grid and start.
     import tomojax as tj
 
     source = tj.load(scan)
     grid = source.grid.resampled(shape=(2, 4, 4))
-    expected = tj.reconstruct(source, "cgls", grid=grid, iterations=6, warm_start=warm_start)
+    from tomojax.recon import CGLSConfig
+
+    expected = tj.reconstruct(
+        source,
+        "cgls",
+        grid=grid,
+        config=CGLSConfig(exterior=exterior, iterations=6),
+        warm_start=warm_start,
+    )
     np.testing.assert_allclose(loaded.volume, np.asarray(expected.volume), rtol=1e-5, atol=1e-6)
 
 

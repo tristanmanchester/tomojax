@@ -720,7 +720,8 @@ def test_client_cancellation_and_task_progress_scope(tmp_path):
 
 
 @pytest.mark.parametrize("contained", [False, True])
-def test_slab_destination_over_stdio(tmp_path, contained):
+@pytest.mark.parametrize("method", ["fbp", "sirt"])
+def test_slab_destination_over_stdio(tmp_path, contained, method):
     import numpy as np
 
     with h5py.File(tmp_path / "raw.h5", "w") as f:
@@ -743,8 +744,12 @@ def test_slab_destination_over_stdio(tmp_path, contained):
         args = dict(
             source=ref,
             path="slabs.nxs",
-            method="fbp",
-            config={"backend": "jax", "exterior": "zero"},
+            method=method,
+            config={
+                "backend": "jax",
+                "exterior": "zero",
+                **({"iterations": 2} if method == "sirt" else {}),
+            },
         )
         valid = c.call("reconstruct_slabs", dry_run=True, detail="full", **args)
         assert valid["structuredContent"]["type"] == "validated"

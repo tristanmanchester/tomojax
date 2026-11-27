@@ -200,7 +200,15 @@ def test_validate_and_run_return_same_field(worker, simulation, operation, path)
         assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", path)
 
 
-def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
+@pytest.mark.parametrize("method", ["fbp", "sirt"])
+def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path, method):
+    from tomojax.recon import FBPConfig, SIRTConfig
+
+    config = (
+        FBPConfig(backend="jax", exterior="zero")
+        if method == "fbp"
+        else SIRTConfig(backend="jax", exterior="zero", iterations=2)
+    )
     raw = tmp_path / "raw.h5"
     counts = np.random.default_rng(7).integers(430, 980, size=(17, 5, 13), dtype=np.uint16)
     with h5py.File(raw, "w") as f:
@@ -225,9 +233,14 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
         type="reconstruct_slabs",
         path=str(tmp_path / "slabs.nxs"),
         source=root,
-        method="fbp",
+        method=method,
         grid=dict(nx=12, ny=11, nz=5, vx=1, vy=1, vz=1, vol_origin=[-5.0, -5.5, -2.0]),
-        config=dict(type="FBPConfig", backend="jax", exterior="zero"),
+        config=dict(
+            type=type(config).__name__,
+            backend="jax",
+            exterior="zero",
+            **({"iterations": 2} if method == "sirt" else {}),
+        ),
     )
     reply = output(worker("run", operation=recipe))
     result = reply["value"]["paths"]
@@ -242,13 +255,12 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
         assert provenance["lineage"]["operation"] == "reconstruct_slabs"
     actual = saved.volume
     frames = tj.load_frames(raw, detector=tj.Detector(13, 5, 1, 1), flats=1000, darks=10)
-    from tomojax.recon import FBPConfig
 
     expected = tj.reconstruct(
         frames.corrected(),
-        "fbp",
+        method,
         grid=tj.Grid(**recipe["grid"]),
-        config=FBPConfig(backend="jax", exterior="zero"),
+        config=config,
     )
     assert reply["info"]["summary"]["truncation"] == saved.info["truncation"]
     assert tj.inspect(result[0])["volume"]["reconstruction_info"] == saved.info
