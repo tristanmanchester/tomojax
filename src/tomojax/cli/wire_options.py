@@ -114,8 +114,8 @@ class CGLSConfig(Record, tag="CGLSConfig"):
     """Wire fields of CGLSConfig."""
 
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
-    iterations: int = 50
-    tolerance: float = 1e-06
+    iterations: int | None = None
+    tolerance: float | None = None
     absolute_tolerance: float = 0.0
     damping: float = 0.0
     views_per_batch: int = 64
@@ -172,10 +172,10 @@ class SPDHGConfig(Record, tag="SPDHGConfig"):
 class SIRTConfig(Record, tag="SIRTConfig"):
     """Wire fields of SIRTConfig."""
 
-    iterations: int = 50
+    iterations: int | None = None
     subsets: int = 1
     relaxation: float = 1.0
-    acceleration: bool = False
+    acceleration: bool | None = None
     lower_bound: float | None = None
     upper_bound: float | None = None
     support: Storage | None = None

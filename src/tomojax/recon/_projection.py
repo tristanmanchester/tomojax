@@ -7,7 +7,7 @@ measurements remain host resident.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal, Protocol, overload
+from typing import TYPE_CHECKING, Protocol
 
 import jax
 import jax.numpy as jnp
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from .types import DataTerm
 
     class _ResidualAdjoint(Protocol):
-        @overload
         def __call__(
             self,
             volume: jax.Array,
@@ -41,19 +40,8 @@ if TYPE_CHECKING:
             weights: jax.Array | None,
             *,
             row_support: jax.Array | None = None,
-            return_column: Literal[False] = False,
-        ) -> jax.Array: ...
-
-        @overload
-        def __call__(
-            self,
-            volume: jax.Array,
-            data: jax.Array,
-            weights: jax.Array | None,
-            *,
-            row_support: jax.Array | None = None,
-            return_column: Literal[True],
-        ) -> tuple[jax.Array, jax.Array]: ...
+            return_column: bool = False,
+        ) -> tuple[jax.Array, jax.Array | None, jax.Array]: ...
 
 
 type SubsetOperators = tuple[
@@ -253,6 +241,7 @@ def subset_operators(
     subsets: int,
     *,
     stream: bool = False,
+    measure: bool = False,
 ) -> Callable[[jax.Array | int], SubsetOperators]:
     """A factory for interleaved subsets of a matched, nonnegative operator.
 
@@ -287,28 +276,6 @@ def subset_operators(
         def adjoint(images: jax.Array) -> jax.Array:
             return _adjoint_views(selected, (images,), None, selected.zeros_volume())
 
-        if TYPE_CHECKING:
-
-            @overload
-            def residual_adjoint(
-                volume: jax.Array,
-                data: jax.Array,
-                weights: jax.Array | None,
-                *,
-                row_support: jax.Array | None = None,
-                return_column: Literal[False] = False,
-            ) -> jax.Array: ...
-
-            @overload
-            def residual_adjoint(
-                volume: jax.Array,
-                data: jax.Array,
-                weights: jax.Array | None,
-                *,
-                row_support: jax.Array | None = None,
-                return_column: Literal[True],
-            ) -> tuple[jax.Array, jax.Array]: ...
-
         def residual_adjoint(
             volume: jax.Array,
             data: jax.Array,
@@ -316,12 +283,12 @@ def subset_operators(
             *,
             row_support: jax.Array | None = None,
             return_column: bool = False,
-        ) -> jax.Array | tuple[jax.Array, jax.Array]:
+        ) -> tuple[jax.Array, jax.Array | None, jax.Array]:
             project = selected.projector(volume)
 
             def batch_residual(
                 chunk: jax.Array,
-            ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
+            ) -> tuple[jax.Array, ...]:
                 start, batch, counts = selected.select(chunk)
                 view_ids = jax.lax.dynamic_slice_in_dim(indices, start, selected.size)
                 measured = (
@@ -332,6 +299,11 @@ def subset_operators(
                     else data[view_ids]
                 )
                 residual = measured - project(start, batch)
+                energy = (
+                    jnp.sum(jnp.where(counts[:, None, None], residual * residual, 0))
+                    if measure
+                    else jnp.float32(0)
+                )
                 if weights is None:
                     row = (
                         selected.project_ones(start, batch)
@@ -344,30 +316,32 @@ def subset_operators(
                         weights, (start, 0, 0), (selected.size, weights.shape[1], detector.nu)
                     )
                 residual = jnp.where(counts[:, None, None], residual, 0.0)
-                return residual, start, batch, counts
+                return residual, start, batch, counts, energy
 
-            if return_column:
-
-                def pair_body(
-                    chunk: jax.Array, output: tuple[jax.Array, jax.Array]
-                ) -> tuple[jax.Array, jax.Array]:
-                    residual, start, batch, counts = batch_residual(chunk)
+            def body(
+                chunk: jax.Array, carry: tuple[jax.Array | None, jax.Array | None, jax.Array]
+            ) -> tuple[jax.Array, jax.Array | None, jax.Array]:
+                output, columns, energy = carry
+                residual, start, batch, counts, batch_energy = batch_residual(chunk)
+                if return_column:
+                    assert output is not None
+                    assert columns is not None
                     ones = jnp.broadcast_to(
                         counts[:, None, None].astype(jnp.float32), residual.shape
                     )
-                    return selected.backproject_pair((residual, ones), start, batch, output)
+                    output, columns = selected.backproject_pair(
+                        (residual, ones), start, batch, (output, columns)
+                    )
+                else:
+                    output = selected.backproject(residual, start, batch, output)
+                return output, columns, energy + batch_energy
 
-                initial = selected.zeros_volume()
-                return jax.lax.fori_loop(0, selected.count, pair_body, (initial, initial))
-
-            def body(chunk: jax.Array, output: jax.Array | None) -> jax.Array:
-                residual, start, batch, _ = batch_residual(chunk)
-                return selected.backproject(residual, start, batch, output)
-
-            # A single transpose has no previous batch to accumulate.
-            if selected.count == 1:
-                return body(jnp.int32(0), None)
-            return jax.lax.fori_loop(0, selected.count, body, selected.zeros_volume())
+            zero = selected.zeros_volume()
+            if selected.count == 1 and not return_column:
+                return body(jnp.int32(0), (None, None, jnp.float32(0)))
+            return jax.lax.fori_loop(
+                0, selected.count, body, (zero, zero if return_column else None, jnp.float32(0))
+            )
 
         return forward, adjoint, residual_adjoint
 
@@ -533,13 +507,14 @@ def normal_equation_operators(
     det_grid: tuple[jax.Array, jax.Array] | None = None,
 ) -> tuple[
     Callable[[jax.Array], tuple[jax.Array, jax.Array]],
-    Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array]],
+    Callable[[jax.Array | None, jax.Array], tuple[jax.Array, jax.Array, jax.Array]],
 ]:
     """Return ``(normal, gradient)`` streaming data from a :func:`host_source` key.
 
     ``normal(d)`` returns ``(||A d||^2, A^T A d)`` in one pass over view batches,
     touching no measured data. ``gradient(x, key)`` returns ``A^T (y - A x)`` and
-    the cancellation scale ``|A|^T (|y| + |A x|)``, reading each batch of ``y``
+    the cancellation scale ``|A|^T (|y| + |A x|)`` and the squared data-residual
+    norm, reading each batch of ``y``
     from the host. Only volume-sized arrays and one batch are ever on the device.
     ``gradient(None, key)`` skips the forward projection of a known-zero volume.
     Contrast inserts the whole-view centering operator C on each residual and
@@ -591,13 +566,13 @@ def normal_equation_operators(
 
         return jax.lax.fori_loop(0, ops.count, body, (jnp.float32(0), ops.zeros_volume()))
 
-    def gradient(volume: jax.Array | None, key: jax.Array) -> tuple[jax.Array, jax.Array]:
+    def gradient(
+        volume: jax.Array | None, key: jax.Array
+    ) -> tuple[jax.Array, jax.Array, jax.Array]:
         project = None if volume is None else ops.projector(volume)
 
-        def body(
-            chunk: jax.Array, carry: tuple[jax.Array, jax.Array]
-        ) -> tuple[jax.Array, jax.Array]:
-            total, scale = carry
+        def body(chunk: jax.Array, carry: tuple[jax.Array, ...]) -> tuple[jax.Array, ...]:
+            total, scale, energy = carry
             start, batch, valid = ops.select(chunk)
             measured = read_views(key, start, shape)
             predicted = 0.0 if project is None else project(start, batch)
@@ -607,10 +582,11 @@ def normal_equation_operators(
             return (
                 ops.backproject(residual, start, batch, total),
                 magnitude.backproject(size, start, batch, scale),
+                energy + jnp.vdot(residual, residual).real,
             )
 
         zero = ops.zeros_volume()
-        return jax.lax.fori_loop(0, ops.count, body, (zero, zero))
+        return jax.lax.fori_loop(0, ops.count, body, (zero, zero, jnp.float32(0)))
 
     return normal, gradient
 

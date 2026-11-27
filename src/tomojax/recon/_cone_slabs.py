@@ -594,7 +594,7 @@ def needs_volume_sweeps(
 
     volumes = 6 if isinstance(cfg, CGLSConfig) else 5
     if isinstance(cfg, SIRTConfig):
-        volumes += 2 * cfg.acceleration
+        volumes += 2 * cfg.accelerated
     return free is not None and volumes * 4 * grid.nx * grid.ny * grid.nz > 0.85 * free
 
 
@@ -611,7 +611,7 @@ def algebraic_sweep(
         "channels": 1 + (sirt and cfg.support is not None),
         "resident": 0
         if host_output or (warm_start and not sirt)
-        else 1 + (sirt and cfg.acceleration),
+        else 1 + (sirt and cfg.accelerated),
     }
 
 

@@ -28,7 +28,7 @@ from tomojax.core.cone import ConeModel
 from tomojax.core.host_volume import fill, host_volume, scratch_directory
 from tomojax.wire.metrics import Metric
 
-from ._cgls_stopping import precision_stalled, termination
+from ._cgls_stopping import precision_stalled, stopping_record
 from ._cone_slabs import (
     Batch,
     ConeProblem,
@@ -76,6 +76,7 @@ def solve_on_host(
     shared: bool,
     out: np.ndarray | None,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
+    target: float | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve with host volumes when the device can't hold the solver or ``out`` is given.
 
@@ -97,7 +98,7 @@ def solve_on_host(
     start = None if initial is None else np.asanyarray(initial)
     return solve(
         geometry, grid, detector, projections, start, cfg,
-        model=model, backend=backend, poses=poses, out=out,
+        model=model, backend=backend, poses=poses, out=out, target=target,
     )  # fmt: skip
 
 
@@ -113,6 +114,7 @@ def solve(
     backend: str,
     poses: jax.Array,
     out: np.ndarray | None = None,
+    target: float | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Run validated CGLS settings with host volumes, in ``out`` or a C-ordered volume."""
     projections = host_projections(projections, "cgls")
@@ -127,7 +129,7 @@ def solve(
         problem = parallel_problem(
             geometry, grid, detector, projections, poses=poses, batch=cfg.views_per_batch
         )
-    solver = _HostCGLS(problem, cfg, initial, out)
+    solver = _HostCGLS(problem, cfg, initial, out, target)
     with problem.using(out, solver.X, solver.G, solver.D, solver.W):
         info = solver.run()
     volume = problem.result(solver.x)
@@ -142,6 +144,7 @@ class _Scalars(NamedTuple):
     beta: float | None
     count: int
     recomputations: int
+    margin: float | None
     failed: bool
     roundoff: bool
     verified: bool
@@ -156,7 +159,9 @@ class _HostCGLS:
         cfg: CGLSConfig,
         initial: np.ndarray | None,
         out: np.ndarray | None,
+        target: float | None = None,
     ) -> None:
+        self.target, self.margin = target, None
         self.problem, self.cfg = problem, cfg
         self.plan, self.sweep, self.xp = problem.plan, problem.sweep, problem.engine.xp
         grid = self.plan.grid
@@ -212,21 +217,16 @@ class _HostCGLS:
             total += self.total(self.xp.diff(block, axis=0) / grid.vz)
         return total
 
-    def gradient(self) -> tuple[float, float]:
-        """Replace G by ``A^T (y - A x) - damping^2 x``; return its norm² and the change²."""
-        plan, stats = self.plan, {"gamma": 0.0, "gap": 0.0}
-
-        def source(k: int) -> tuple[Any, ...]:
-            if self.zero:
-                return ()
-            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
-
+    def residual_rows(
+        self,
+    ) -> Callable[[Batch, int, int, tuple[CuPyValue | np.ndarray, ...]], None]:
+        """Complete detector rows as measured minus predicted, centered if requested."""
         mean = None
         if self.statistics is not None:
             predicted = (
                 0.0
                 if self.zero
-                else self.statistics.project(lambda k: (self.X.get(*plan.planes(k)),))
+                else self.statistics.project(lambda k: (self.X.get(*self.plan.planes(k)),))
             )
             mean = self.statistics.mean - predicted
 
@@ -234,6 +234,20 @@ class _HostCGLS:
             rows[0][...] = self.problem.measured(batch, first, stop) - rows[0]
             if mean is not None:
                 rows[0][...] -= mean[batch.index, None, None]
+            if self.margin is not None:
+                self.margin += self.total(rows[0])
+
+        return finish
+
+    def gradient(self) -> tuple[float, float]:
+        """Replace G by ``A^T (y - A x) - damping^2 x``; return its norm² and the change²."""
+        self.margin = None if self.target is None else -self.target
+        plan, stats = self.plan, {"gamma": 0.0, "gap": 0.0}
+
+        def source(k: int) -> tuple[Any, ...]:
+            if self.zero:
+                return ()
+            return (self.X.get(*plan.planes(k), retain=not self.keep and self.penalized),)
 
         def sink(k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
             z0, z1 = plan.planes(k)
@@ -253,7 +267,7 @@ class _HostCGLS:
             self.G.put(z0, z1, value)
 
         self.sweep.run(
-            self.views, source=source, finish=finish, sink=sink,
+            self.views, source=source, finish=self.residual_rows(), sink=sink,
             prefetch=None if self.zero else self._prefetch(self.X), keep=self.keep,
         )  # fmt: skip
         self.zero = False
@@ -380,8 +394,10 @@ class _HostCGLS:
 
         return start
 
-    def update(self, alpha: np.float32) -> tuple[float, bool, float]:
+    def update(self, alpha: np.float32, old_gamma: float) -> tuple[float, bool, float]:
         """``x += alpha d``, ``g -= alpha w``; return ``||g||²``, voxel roundoff and ``||x||²``."""
+        if self.margin is not None:
+            self.margin -= float(alpha) * old_gamma
         gamma, roundoff, size = 0.0, True, 0.0
         ahead = self._prefetch(self.D, self.X, self.W, self.G)
         for k in range(self.plan.count):
@@ -412,7 +428,9 @@ class _HostCGLS:
             cfg = self.cfg
             if saves.saved is None:
                 gamma, _ = self.gradient()
-                scalars = _Scalars(gamma, gamma, None, 0, 0, not np.isfinite(gamma), False, True)
+                scalars = _Scalars(
+                    gamma, gamma, None, 0, 0, self.margin, not np.isfinite(gamma), False, True
+                )
             else:
                 for volume, values in zip(
                     (self.X, self.G, self.D), saves.saved.arrays, strict=True
@@ -420,14 +438,17 @@ class _HostCGLS:
                     volume.restore(values)
                 self.zero = False
                 scalars = saves.saved.scalars(_Scalars)
-            gamma, first, beta, count, recomputations, *flags = scalars
+            gamma, first, beta, count, recomputations, self.margin, *flags = scalars
             state: dict[str, bool] = dict(
                 zip(("failed", "roundoff", "verified"), flags, strict=True)
             )
             initial_norm = float(np.sqrt(first))
+            assert cfg.tolerance is not None
+            assert cfg.iterations is not None
             threshold = cfg.absolute_tolerance + cfg.tolerance * initial_norm
             while (
                 count < cfg.iterations
+                and (self.margin is None or self.margin > 0)
                 and gamma > threshold**2
                 and not (state["failed"] or state["roundoff"])
             ):
@@ -442,9 +463,10 @@ class _HostCGLS:
                     state["failed"] = True
                     break
                 alpha = np.float32(gamma / denominator)
-                gamma_new, state["roundoff"], size = self.update(alpha)
+                gamma_new, state["roundoff"], size = self.update(alpha, gamma)
                 verify = (
-                    state["roundoff"]
+                    (self.margin is not None and self.margin <= 0)
+                    or state["roundoff"]
                     or float(alpha) ** 2 * direction_norm2 <= _EPS**2 * size
                     or gamma_new <= threshold**2
                     or (((count + 1) % 16 == 0 or beta is None) and gamma_new <= _EPS * first)
@@ -469,7 +491,9 @@ class _HostCGLS:
                 gamma, state["verified"] = gamma_new, verify
                 if saves.due():
                     flags = (bool(state[name]) for name in ("failed", "roundoff", "verified"))
-                    scalars = _Scalars(gamma, first, beta, count, recomputations, *flags)
+                    scalars = _Scalars(
+                        gamma, first, beta, count, recomputations, self.margin, *flags
+                    )
                     saves.save((self.X.contents(), self.G.contents(), self.D.contents()), scalars)
             if count:
                 progress.preview(lambda: self.X.preview(self.plan.grid), final=True)
@@ -497,18 +521,22 @@ class _HostCGLS:
         state: dict[str, bool],
     ) -> dict[str, object]:
         """The resident solvers' record, plus the slab depth and device traffic."""
-        converged = bool(not state["failed"] and gamma <= threshold**2)
+        assert self.cfg.iterations is not None
         return {
-            "effective_iterations": count,
-            "converged": converged,
-            "termination": termination(
-                failed=state["failed"], converged=converged, roundoff=state["roundoff"]
+            **stopping_record(
+                count=count,
+                budget=self.cfg.iterations,
+                gamma=gamma,
+                first_norm=initial_norm,
+                tolerance=threshold,
+                failed=state["failed"],
+                roundoff=state["roundoff"],
+                verified=state["verified"],
+                recomputations=recomputations,
+                target=self.target,
+                margin=self.margin,
+                samples=int(np.prod(self.problem.data.shape)),
             ),
-            "normal_residual_norm": float(np.sqrt(gamma)),
-            "normal_residual_is_recomputed": bool(state["verified"]),
-            "residual_recomputations": recomputations,
-            "initial_normal_residual_norm": initial_norm,
-            "normal_residual_tolerance": float(threshold),
             "interpolation": "linear",
             "views_per_batch": self.sweep.batch,
             "formulation": "host_normal_equations",

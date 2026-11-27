@@ -6,7 +6,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from functools import partial
 import math
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple
 
 import jax
 import jax.numpy as jnp
@@ -26,6 +26,7 @@ from tomojax.errors import InvalidParameter
 from tomojax.recon._axial_slabs import axial_slabs, independent_planes
 from tomojax.recon._chunks import Chunked, fixed_updates, partial_sweep
 from tomojax.recon._cone_slabs import RowReader, host_volumes
+from tomojax.recon._discrepancy import sirt_slab_report, sirt_stopping
 from tomojax.recon._projection import (
     ConeModel,
     resolve_geometry_projector,
@@ -45,6 +46,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry
+
+    from ._projection import SubsetOperators
+
+    type Select = Callable[[jax.Array | int], SubsetOperators]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -70,8 +75,8 @@ class SIRTConfig:
     Parameters
     ----------
     iterations : int, optional
-        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
-        subset sweep. Default is 50.
+        Number of complete sweeps. None stops a full-data solve at the estimated
+        projection discrepancy or 50 sweeps. Ordered subsets use 50 sweeps.
     subsets : int, optional
         Number of interleaved view subsets visited per sweep; one uses the
         simultaneous method. Default is 1.
@@ -79,7 +84,7 @@ class SIRTConfig:
         Update scale strictly between 0 and 2. Default is 1.0.
     acceleration : bool, optional
         Apply FISTA momentum to full-data SIRT; requires subsets=1 and relaxation <=
-        1. Default is False.
+        1. None enables momentum for an eligible solve with an omitted budget.
     lower_bound : float | None, optional
         Lower voxel-value bound, or None for no explicit lower bound.
     upper_bound : float | None, optional
@@ -96,19 +101,34 @@ class SIRTConfig:
 
     method: ClassVar[Literal["sirt"]] = "sirt"
 
-    iterations: int = 50
+    iterations: int | None = None
     subsets: int = 1
     relaxation: float = 1.0
-    acceleration: bool = False
+    acceleration: bool | None = None
     lower_bound: float | None = None
     upper_bound: float | None = None
     support: jax.Array | np.ndarray | None = None
     views_per_batch: int = 64
     backend: ProjectorBackend = "auto"
 
+    @property
+    def accelerated(self) -> bool:
+        """Whether this solve uses full-data momentum.
+
+        Returns
+        -------
+        bool
+            Effective acceleration for the requested budget, relaxation and subsets.
+        """
+        if self.acceleration is not None:
+            return self.acceleration
+        return self.iterations is None and self.subsets == 1 and self.relaxation <= 1
+
     def __post_init__(self) -> None:
         check_backend(self.backend, "sirt")
-        for name, minimum in (("iterations", 0), ("views_per_batch", 1), ("subsets", 1)):
+        if self.iterations is not None:
+            check_count(self.iterations, "iterations", minimum=0, context="sirt")
+        for name, minimum in (("views_per_batch", 1), ("subsets", 1)):
             check_count(getattr(self, name), name, minimum=minimum, context="sirt")
         if not math.isfinite(self.relaxation) or not 0 < self.relaxation < 2:
             raise InvalidParameter("relaxation", "sirt: relaxation must be finite and in (0, 2)")
@@ -128,7 +148,7 @@ def _inverse(value: jax.Array) -> jax.Array:
 
 
 def _normalization(
-    select: Callable,
+    select: Select,
     poses: jax.Array,
     grid: Grid,
     detector: Detector,
@@ -138,7 +158,7 @@ def _normalization(
     subsets: int,
     *,
     axial: bool,
-) -> tuple[Callable, int, tuple[int, int, int]]:
+) -> tuple[Select, int, tuple[int, int, int]]:
     """Use shared one-plane normalizers only for exactly independent axial rows."""
     if not axial:
         return select, detector.nv, volume_shape(model, grid)
@@ -159,22 +179,8 @@ class _Momentum(NamedTuple):
     momentum: jax.Array
 
 
-def _accelerated_steps(
-    update: Callable[[jax.Array, jax.Array], jax.Array],
-    state: _Momentum,
-    first: int,
-    end: int,
-) -> _Momentum:
-    # The C^-1 metric admits FISTA acceleration. Keep the two iterates: forming
-    # the extrapolate where it is projected avoids a full-volume carry copy.
-    def step(index: jax.Array, state: _Momentum) -> _Momentum:
-        previous, current, time, momentum = state
-        extrapolated = current + momentum * (current - previous)
-        new = update(index, extrapolated)
-        next_time = (1.0 + jnp.sqrt(1.0 + 4.0 * time * time)) / 2.0
-        return _Momentum(current, new, next_time, (time - 1.0) / next_time)
-
-    return jax.lax.fori_loop(first, end, step, state)
+type _Point = jax.Array | _Momentum
+type _Sweep = tuple[jax.Array, jax.Array, _Point]
 
 
 _SIRT_STATIC = (
@@ -221,31 +227,33 @@ def _segment(
     host_columns: jax.Array | None = None,
     column_device: jax.sharding.Sharding | None = None,
     normalizer_device: jax.sharding.Sharding | None = None,
+    target: jax.Array | None = None,
 ) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     select = subset_operators(
-        poses, grid, detector, det_grid, backend, batch, model, subsets, stream=stream
-    )
+        poses, grid, detector, det_grid, backend, batch, model, subsets,
+        stream=stream, measure=target is not None,
+    )  # fmt: skip
     shape = volume_shape(model, grid)
     normalization, normal_rows, normal_shape = _normalization(
         select, poses, grid, detector, backend, batch, model, subsets, axial=axial
     )
-    mask = jnp.ones(shape, jnp.float32) if support is None else (support != 0).astype(jnp.float32)
+    mask = jnp.ones(shape, np.float32) if support is None else (support != 0).astype(jnp.float32)
 
     def constrain(x: jax.Array) -> jax.Array:
         return jnp.where(mask != 0, jnp.clip(x, lower, upper), 0.0)
 
     def row_weights(index: jax.Array) -> jax.Array:
         forward, _, _ = (normalization if support is None else select)(index)
-        return _inverse(forward(jnp.ones(normal_shape, jnp.float32) if support is None else mask))
+        return _inverse(forward(jnp.ones(normal_shape, np.float32) if support is None else mask))
 
     def column_weights(index: jax.Array) -> jax.Array:
         _, adjoint, _ = normalization(index)
         count = (poses.shape[0] + subsets - 1) // subsets
-        return _inverse(adjoint(jnp.ones((count, normal_rows, detector.nu), jnp.float32)))
+        return _inverse(adjoint(jnp.ones((count, normal_rows, detector.nu), np.float32)))
 
     if state is None:
-        initial = constrain(jnp.zeros(shape, jnp.float32) if initial is None else initial)
+        initial = constrain(jnp.zeros(shape, np.float32) if initial is None else initial)
 
         rows = None if stream else jax.lax.map(row_weights, jnp.arange(subsets))
         # Avoid storing a volume for every subset on large scans. The exact subset
@@ -266,15 +274,16 @@ def _segment(
     assert norms is not None
     rows, columns = norms if normalizer_device is None else jax.device_put(norms, normalizer_device)
 
-    def update(step: jax.Array, x: jax.Array) -> jax.Array:
+    def update(step: jax.Array, x: jax.Array) -> tuple[jax.Array, jax.Array]:
         index = step % subsets
         _, _, residual_adjoint = select(index)
         row_weights = None if rows is None else rows[index]
         row_support = None if support is None else mask
         if columns is None and not axial:
-            gradient, norm = residual_adjoint(
+            gradient, norm, energy = residual_adjoint(
                 x, data, row_weights, row_support=row_support, return_column=True
             )
+            assert norm is not None
             column = _inverse(norm)
         else:
             column = (
@@ -284,14 +293,48 @@ def _segment(
                 if columns is None
                 else columns[index]
             )
-            gradient = cast(
-                "jax.Array", residual_adjoint(x, data, row_weights, row_support=row_support)
-            )
-        return constrain(x + relaxation * column * gradient)
+            gradient, _, energy = residual_adjoint(x, data, row_weights, row_support=row_support)
+        return constrain(x + relaxation * column * gradient), energy
 
-    if isinstance(state, _Momentum):
-        return _accelerated_steps(update, state, first, end)
-    return jax.lax.fori_loop(first * subsets, end * subsets, update, state)
+    return _sweeps(update, state, first, end, subsets, target)
+
+
+def _sweeps(
+    update: Callable[[jax.Array, jax.Array], tuple[jax.Array, jax.Array]],
+    state: _Point,
+    first: int,
+    end: int,
+    subsets: int,
+    target: jax.Array | None,
+) -> _Point | _Sweep:
+    """Advance the point to the budget or first measured discrepancy crossing."""
+
+    def sweep(step: jax.Array, point: _Point) -> tuple[_Point, jax.Array]:
+        if not isinstance(point, _Momentum):
+            return update(step, point)
+        previous, current, time, momentum = point
+        extrapolated = current + momentum * (current - previous)
+        new, energy = update(step, extrapolated)
+        next_time = (1.0 + jnp.sqrt(1.0 + 4.0 * time * time)) / 2.0
+        return _Momentum(current, new, next_time, (time - 1.0) / next_time), energy
+
+    if target is None:
+
+        def fixed(index: jax.Array, point: _Point) -> _Point:
+            return sweep(index, point)[0]
+
+        return jax.lax.fori_loop(first * subsets, end * subsets, fixed, state)
+
+    def step(carry: _Sweep) -> _Sweep:
+        k, _, point = carry
+        point, energy = sweep(k, point)
+        return k + 1, energy, point
+
+    return jax.lax.while_loop(
+        lambda s: (s[0] < end) & (s[1] > target),
+        step,
+        (jnp.int32(first), jnp.float32(jnp.inf), state),
+    )
 
 
 def _sirt_program(
@@ -306,10 +349,21 @@ def _sirt_program(
     upper: jax.Array,
     *,
     drive: Callable,
+    target: jax.Array | None = None,
     **options: Any,
-) -> jax.Array:
+) -> tuple[jax.Array, int | jax.Array, jax.Array | None]:
     segment = partial(
-        _segment, poses, data, initial, support, det_grid, relaxation, lower, upper, **options
+        _segment,
+        poses,
+        data,
+        initial,
+        support,
+        det_grid,
+        relaxation,
+        lower,
+        upper,
+        target=target,
+        **options,
     )
     state, norms = segment(None, 0, 0, None)
     if (device := options.get("normalizer_device")) is not None:
@@ -322,8 +376,29 @@ def _sirt_program(
             s.current if isinstance(s, _Momentum) else s, options["model"], options["grid"]
         )
 
-    result = fixed_updates(state, iterations, partial(segment, norms=norms), drive, sample)
-    return result.current if isinstance(result, _Momentum) else result
+    count, energy = iterations, None
+    if target is None:
+        result = fixed_updates(state, iterations, partial(segment, norms=norms), drive, sample)
+    else:
+
+        def advance(carry: _Sweep, end: int) -> _Sweep:
+            first, _, point = carry
+            return segment(point, first, end, norms=norms)
+
+        def completed(carry: _Sweep) -> tuple[int, bool, dict[str, float]]:
+            return int(carry[0]), bool(carry[1] <= target), {}
+
+        def preview(carry: _Sweep) -> dict[str, progress.Sample]:
+            return sample(carry[2])
+
+        count, energy, result = drive(
+            (jnp.int32(0), jnp.float32(jnp.inf), state),
+            iterations,
+            advance,
+            completed,
+            preview,
+        )
+    return result.current if isinstance(result, _Momentum) else result, count, energy
 
 
 _solve = Chunked(_sirt_program, static_argnames=_SIRT_STATIC)
@@ -333,7 +408,7 @@ def _initial_volume(value: jax.Array | np.ndarray | None, *, stream: bool) -> ja
     """Release a streamed solve's pending initialization workspace before dispatch."""
     if value is None:
         return None
-    initial = jnp.asarray(value, jnp.float32)
+    initial = jnp.asarray(value, np.float32)
     # A warm FBP can still own large temporary buffers when XLA allocates the
     # iterative executable's workspace. Its output is a dependency anyway;
     # finish it first rather than requiring both workspaces simultaneously.
@@ -367,7 +442,7 @@ def _storage(
         and backend == "cuda"
         and not axial
         and cfg.support is None
-        and cfg.iterations > 1
+        and (cfg.iterations is None or cfg.iterations > 1)
         and cfg.subsets > 1
         and not isinstance(projections, jax.Array)
     ):
@@ -385,7 +460,7 @@ def _storage(
     return initial, stream, cache
 
 
-@progress.reports_iterations(SIRTConfig.iterations)
+@progress.reports_iterations(50)
 def sirt(
     geometry: Geometry,
     grid: Grid,
@@ -401,7 +476,9 @@ def sirt(
 
     Supports parallel, tilted and cone-beam scans on the existing matched
     projectors. Inputs and updates are FP32. An iteration is a complete sweep,
-    not one subset update. No residual-based stopping or quality claim is made.
+    not one subset update. With an omitted budget, a full-data sweep measures the
+    projection residual at its input point and stops after the first sweep that
+    reaches the estimated measurement and sampling error.
     Large independent axial planes use host slabs and invocation-owned host
     normalizers. Large host projection stacks
     stream with exact row recomputation, also allowing reusable column weights
@@ -492,7 +569,7 @@ def _axial_column(
     select = subset_operators(poses, grid, detector, None, backend, batch, model, subsets)
     _, adjoint, _ = select(index)
     count = (poses.shape[0] + subsets - 1) // subsets
-    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), jnp.float32)))
+    return _inverse(adjoint(jnp.ones((count, 1, detector.nu), np.float32)))
 
 
 class SIRTCall:
@@ -525,8 +602,10 @@ class SIRTCall:
             projections, detector, geometry=geometry, context="sirt"
         )
         validate_detector_grid(det_grid, detector, context="sirt")
-        iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
-        check_subset_count("sirt", subsets, n)
+        automatic = cfg.iterations is None and cfg.subsets == 1
+        acceleration = cfg.accelerated
+        iterations = 50 if cfg.iterations is None else cfg.iterations
+        check_subset_count("sirt", cfg.subsets, n)
         lower = -np.inf if cfg.lower_bound is None else cfg.lower_bound
         upper = np.inf if cfg.upper_bound is None else cfg.upper_bound
         for name, value in (("init_x", init_x), ("support", cfg.support)):
@@ -550,81 +629,77 @@ class SIRTCall:
             result = self._slabs(geometry, grid, detector, projections, init_x, cfg)
             if result is not None:
                 return result
-        elif isinstance(model, ConeModel) and hosted:
+        from ._discrepancy import estimate
+
+        discrepancy = (
+            estimate(projections, geometry, grid, detector, linear=det_grid is None)
+            if automatic
+            else None
+        )
+        target = None if discrepancy is None else discrepancy.target(math.prod(projections.shape))
+        cfg = replace(cfg, iterations=iterations, acceleration=acceleration)
+        if isinstance(model, ConeModel) and hosted:
             from ._sirt_host import solve as solve_host
 
-            return solve_host(
+            volume, info = solve_host(
                 geometry, grid, detector, projections,
                 None if init_x is None else np.asarray(init_x), cfg,
                 model=model, backend=backend, poses=stack_view_poses(geometry, n),
-                bounds=(lower, upper), out=out,
+                bounds=(lower, upper), out=out, target=target,
             )  # fmt: skip
+        else:
+            volume, info = self._resident(
+                grid,
+                detector,
+                projections,
+                init_x,
+                det_grid,
+                cfg,
+                stack_view_poses(geometry, n),
+                (lower, upper),
+                backend=backend,
+                model=model,
+                axial=axial,
+                target=target,
+            )
+        info["measurement_noise_rms"] = None if discrepancy is None else discrepancy.noise
+        return volume, info
+
+    def _resident(
+        self,
+        grid: Grid,
+        detector: Detector,
+        projections: jax.Array | np.ndarray,
+        init_x: jax.Array | np.ndarray | None,
+        det_grid: tuple[jax.Array, jax.Array] | None,
+        cfg: SIRTConfig,
+        poses: jax.Array,
+        bounds: tuple[float, float],
+        *,
+        backend: str,
+        model: Model,
+        axial: bool,
+        target: float | None,
+    ) -> tuple[jax.Array, dict[str, object]]:
+        """Place the normalizers and solve while the iterate fits on the device."""
+        lower, upper = bounds
         model = resident_model(model, backend)
+        iterations, subsets, batch = cfg.iterations, cfg.subsets, cfg.views_per_batch
+        assert iterations is not None
         initial, stream, cache_columns = _storage(
             projections,
             init_x,
             grid=grid,
             detector=detector,
             cfg=cfg,
-            views=n,
+            views=poses.shape[0],
             backend=backend,
             axial=axial,
         )
-        poses = stack_view_poses(geometry, n)
-        host_columns, column_device, normalizer_device = self._normalizer_storage(
-            poses,
-            grid=grid,
-            detector=detector,
-            backend=backend,
-            batch=batch,
-            model=model,
-            subsets=subsets,
-            enabled=axial and cache_columns and iterations > 0,
-        )
-        source = (
-            host_source(np.asarray(projections))
-            if stream
-            else nullcontext(jnp.asarray(projections, jnp.float32))
-        )
-        with source as data:
-            volume = _solve(
-                poses, data, initial,
-                None if cfg.support is None else jnp.asarray(cfg.support),
-                det_grid, iterations, jnp.float32(cfg.relaxation),
-                jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
-                backend=backend, batch=batch, model=model, subsets=subsets,
-                cache_columns=cache_columns,
-                axial=axial, acceleration=cfg.acceleration, stream=stream,
-                host_columns=host_columns, column_device=column_device,
-                normalizer_device=normalizer_device,
-            )  # fmt: skip
-            if stream:
-                volume = volume.block_until_ready()  # Finish callbacks before unregistering.
-        return restore_volume(volume, model), {
-            "effective_iterations": iterations,
-            "subset_updates": iterations * subsets,
-            "termination": "iteration_limit",
-            "stream": stream,
-            "projector_backend": backend,
-        }
-
-    def _normalizer_storage(
-        self,
-        poses: jax.Array,
-        *,
-        grid: Grid,
-        detector: Detector,
-        backend: str,
-        batch: int,
-        model: Model,
-        subsets: int,
-        enabled: bool,
-    ) -> tuple[jax.Array | None, jax.sharding.Sharding | None, jax.sharding.Sharding | None]:
-        """Place cached columns and the normalization maps of memory-limited chunks."""
         host_columns = None
         column_device = None
         column_bytes = subsets * grid.nx * grid.ny * 4
-        if enabled and column_bytes >= _HOST_COLUMN_MIN_BYTES:
+        if axial and cache_columns and iterations and column_bytes >= _HOST_COLUMN_MIN_BYTES:
             device = next(iter(poses.devices()))
             column_device = jax.sharding.SingleDeviceSharding(device)
             if self.columns is None:
@@ -657,7 +732,32 @@ class SIRTCall:
             and next(iter(poses.devices())).platform == "gpu"
         ):
             normalizer_device = poses.sharding
-        return host_columns, column_device, normalizer_device
+        source = (
+            host_source(np.asarray(projections))
+            if stream
+            else nullcontext(jnp.asarray(projections, np.float32))
+        )
+        with source as data:
+            volume, count, energy = _solve(
+                poses, data, initial,
+                None if cfg.support is None else jnp.asarray(cfg.support),
+                det_grid, iterations, jnp.float32(cfg.relaxation),
+                jnp.float32(lower), jnp.float32(upper), grid=grid, detector=detector,
+                backend=backend, batch=batch, model=model, subsets=subsets,
+                cache_columns=cache_columns,
+                axial=axial, acceleration=cfg.acceleration, stream=stream,
+                host_columns=host_columns, column_device=column_device,
+                normalizer_device=normalizer_device, target=target,
+            )  # fmt: skip
+            if stream:
+                volume = volume.block_until_ready()  # Finish callbacks before unregistering.
+        return restore_volume(volume, model), {
+            **sirt_stopping(int(count), energy, target, math.prod(projections.shape)),
+            "acceleration": cfg.acceleration,
+            "subset_updates": int(count) * subsets,
+            "stream": stream,
+            "projector_backend": backend,
+        }
 
     def _slabs(
         self,
@@ -694,4 +794,5 @@ class SIRTCall:
             support=cfg.support,
             config=cfg,
             solve=solve_slab,
+            summarize=sirt_slab_report if cfg.iterations is None and cfg.subsets == 1 else None,
         )

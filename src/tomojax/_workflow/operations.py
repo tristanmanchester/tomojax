@@ -513,7 +513,8 @@ def reconstruct(
         output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
         NumPy or CuPy CUDA.
     ``cgls``
-        Least squares by conjugate gradients, ``iterations`` (default 50).
+        Least squares by conjugate gradients. With no budget, tolerances or penalties,
+        stop at the estimated projection discrepancy, up to 50 updates.
     ``fista``
         Least squares with physical total variation, ``iterations`` (default
         200), optionally ``nonnegative``. Default ``tv_weight=None`` calibrates
@@ -526,6 +527,9 @@ def reconstruct(
         ``iterations``; zero disables TV.
     ``sirt``
         SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.
+        Full-data SIRT uses momentum and discrepancy stopping by default, up to 50
+        sweeps. An explicit budget selects that many plain sweeps unless acceleration
+        is also requested.
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
         ``iterations`` (default 600) each update one block of views, in an
@@ -942,7 +946,7 @@ def _slab_results(
 
     origin = grid_volume_origin(target)
     previews = (
-        SlabPlanes(target) if progress.previewing() and getattr(cfg, "iterations", 0) else None
+        SlabPlanes(target) if progress.previewing() and getattr(cfg, "iterations", 0) != 0 else None
     )
     with registration(frames), progress.outcome():
         progress.check_canceled()

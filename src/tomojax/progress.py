@@ -803,7 +803,12 @@ def reports_iterations[F: Callable[..., Any]](default: int) -> Callable[[F], F]:
         @wraps(solve)
         def run(*args: Any, **kwargs: Any) -> Any:
             iterations = getattr(kwargs.get("config"), "iterations", default)
-            with task("reconstruct", solve.__name__, iterations, "iterations"):
+            with task(
+                "reconstruct",
+                solve.__name__,
+                default if iterations is None else iterations,
+                "iterations",
+            ):
                 return solve(*args, **kwargs)
 
         return cast("F", run)

@@ -1447,14 +1447,28 @@
           ]
         },
         "iterations": {
-          "type": "integer",
-          "default": 50,
-          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum number of updates. None enables statistical stopping on an unpenalized solve with implicit tolerances and caps work at 50 updates."
         },
         "tolerance": {
-          "type": "number",
-          "default": 1e-06,
-          "description": "Nonnegative relative tolerance on the normal-residual norm. Default is 1e-06."
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Relative normal-residual tolerance. None uses 1e-6 and allows statistical stopping. An explicit zero disables the relative test."
         },
         "absolute_tolerance": {
           "type": "number",
@@ -1942,9 +1956,16 @@
           ]
         },
         "iterations": {
-          "type": "integer",
-          "default": 50,
-          "description": "Maximum number of solver updates. For SIRT and MLEM, an update is a complete subset sweep. Default is 50."
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of complete sweeps. None stops a full-data solve at the estimated projection discrepancy or 50 sweeps. Ordered subsets use 50 sweeps."
         },
         "subsets": {
           "type": "integer",
@@ -1957,9 +1978,16 @@
           "description": "Update scale strictly between 0 and 2. Default is 1.0."
         },
         "acceleration": {
-          "type": "boolean",
-          "default": false,
-          "description": "Apply FISTA momentum to full-data SIRT; requires subsets=1 and relaxation <= 1. Default is False."
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Apply FISTA momentum to full-data SIRT; requires subsets=1 and relaxation <= 1. None enables momentum for an eligible solve with an omitted budget."
         },
         "lower_bound": {
           "anyOf": [

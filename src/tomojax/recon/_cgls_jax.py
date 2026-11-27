@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import jax
 import jax.numpy as jnp
@@ -19,7 +19,13 @@ from tomojax.core.validation import (
     validate_volume,
 )
 from tomojax.recon._cgls_host import solve_on_host
-from tomojax.recon._cgls_stopping import cancellation_magnitude, precision_stalled, termination
+from tomojax.recon._cgls_stopping import (
+    CGLSState,
+    cancellation_magnitude,
+    precision_stalled,
+    running,
+    stopping_record,
+)
 from tomojax.recon._chunks import Chunked
 from tomojax.recon._data_term import project_residual
 from tomojax.recon._projection import (
@@ -47,27 +53,46 @@ if TYPE_CHECKING:
     from .types import DataTerm
 
 
-class _State(NamedTuple):
-    iteration: jax.Array
-    x: jax.Array
-    residual: jax.Array
-    direction: jax.Array
-    gamma: jax.Array
-    failed: jax.Array
-    roundoff: jax.Array
-    residual_verified: jax.Array
-    restarted: jax.Array
-    residual_recomputations: jax.Array
-
-
-def _running(state: _State, *, max_iters: jax.Array, threshold: jax.Array) -> jax.Array:
-    """Whether the CGLS loop continues: budget left, tolerance unmet, no breakdown or roundoff."""
-    return (
-        (state.iteration < max_iters)
-        & (state.gamma > threshold * threshold)
-        & ~state.failed
-        & ~state.roundoff
+def _verification(
+    state: CGLSState,
+    x: jax.Array,
+    alpha: jax.Array,
+    direction_norm2: jax.Array,
+    gamma_new: jax.Array,
+    gamma: jax.Array,
+    threshold: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Check small steps, requested convergence and periodically the FP32 floor."""
+    roundoff = jnp.all(
+        jnp.abs(alpha * state.direction)
+        <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
     )
+    small_update = alpha * alpha * direction_norm2 <= jnp.finfo(jnp.float32).eps ** 2 * jnp.sum(
+        x * x
+    )
+    convergence_candidate = gamma_new <= threshold * threshold
+    near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
+    check_due = ((state.iteration + 1) % 16 == 0) | state.restarted
+    verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
+    return roundoff, convergence_candidate, verify
+
+
+def _verified_gradient(
+    exact_gradient: jax.Array,
+    gradient: jax.Array,
+    cancellation: jax.Array,
+    state: CGLSState,
+    gamma_new: jax.Array,
+    candidate: jax.Array,
+    roundoff: jax.Array,
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """Compare the recomputed gradient with its recurrence and cancellation bound."""
+    exact_gamma = jnp.sum(exact_gradient * exact_gradient)
+    bounded = jnp.all(jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation)
+    gap2 = jnp.sum((exact_gradient - gradient) ** 2)
+    restart = candidate | roundoff | bounded | (gap2 > 0.01 * gamma_new)
+    stalled = precision_stalled(exact_gamma, state.gamma, state.residual_verified, bounded)
+    return exact_gamma, restart, stalled
 
 
 @partial(
@@ -103,7 +128,8 @@ def _solve_initial(
     gradient_damping: jax.Array | None = None,
     split: ViewSplit | None = None,
     data_term: DataTerm = "absolute",
-) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
+    target: jax.Array | None = None,
+) -> tuple[CGLSState, jax.Array, jax.Array, jax.Array]:
     # Iteration budgets and changing data/poses are dynamic: budget sweeps and
     # repeated scans reuse the same compiled executable.
     forward, adjoint = _operators(
@@ -130,7 +156,7 @@ def _solve_initial(
     )
     gamma = jnp.sum(gradient * gradient)
     threshold = absolute_tolerance + tolerance * jnp.sqrt(gamma)
-    state = _State(
+    state = CGLSState(
         jnp.int32(0),
         initial,
         residual,
@@ -139,6 +165,7 @@ def _solve_initial(
         ~(inputs_finite & jnp.isfinite(gamma)),
         jnp.bool_(False),
         jnp.bool_(True),
+        None if target is None else jnp.sum(residual * residual) - target,
         jnp.bool_(True),
         jnp.int32(0),
     )
@@ -160,7 +187,7 @@ def _solve_initial(
     ),
 )
 def _solve(
-    state: _State,
+    state: CGLSState,
     gamma: jax.Array,
     threshold: jax.Array,
     poses: jax.Array,
@@ -178,7 +205,8 @@ def _solve(
     gradient_damping: jax.Array | None = None,
     split: ViewSplit | None = None,
     data_term: DataTerm = "absolute",
-) -> _State:
+    target: jax.Array | None = None,
+) -> CGLSState:
     forward, adjoint = _operators(
         poses, grid, detector, det_grid, backend, batch_size, model, interpolation,
         split=split,
@@ -209,9 +237,9 @@ def _solve(
         gradient_damping=gradient_damping,
     )
 
-    condition = partial(_running, max_iters=max_iters, threshold=threshold)
+    condition = partial(running, max_iters=max_iters, threshold=threshold)
 
-    def step(state: _State) -> _State:
+    def step(state: CGLSState) -> CGLSState:
         projected = project_residual(forward(state.direction), data_term)
         direction_norm2 = jnp.sum(state.direction**2)
         denominator = jnp.sum(projected * projected) + damp2 * direction_norm2
@@ -235,21 +263,9 @@ def _solve(
         # Check each voxel: a global volume norm can hide meaningful updates
         # to weak regions when another region contains much larger values.
         # Report this separately, as a roundoff limit.
-        roundoff = jnp.all(
-            jnp.abs(alpha * state.direction)
-            <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
+        roundoff, convergence_candidate, verify = _verification(
+            state, x, alpha, direction_norm2, gamma_new, gamma, threshold
         )
-        small_update = alpha * alpha * direction_norm2 <= jnp.finfo(jnp.float32).eps ** 2 * jnp.sum(
-            x * x
-        )
-        convergence_candidate = gamma_new <= threshold * threshold
-        # Atomic transpose reductions can keep a noisy conjugate recurrence
-        # moving even after it reaches the FP32 cancellation floor. Check the
-        # true residual periodically once its norm is small, before that noise
-        # gets amplified.
-        near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        check_due = ((state.iteration + 1) % 16 == 0) | state.restarted
-        verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
         def recompute(
             _recurrence: jax.Array, gradient: jax.Array
@@ -269,13 +285,15 @@ def _solve(
             exact_gradient = adjoint(
                 exact_residual, lambda r: project_residual(r, data_term)
             ) - penalty_gradient(x)
-            exact_gamma = jnp.sum(exact_gradient * exact_gradient)
-            bounded = jnp.all(
-                jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
+            exact_gamma, restart, stalled = _verified_gradient(
+                exact_gradient,
+                gradient,
+                cancellation,
+                state,
+                gamma_new,
+                convergence_candidate,
+                roundoff,
             )
-            gap2 = jnp.sum((exact_gradient - gradient) ** 2)
-            restart = convergence_candidate | roundoff | bounded | (gap2 > 0.01 * gamma_new)
-            stalled = precision_stalled(exact_gamma, state.gamma, state.residual_verified, bounded)
             return exact_residual, exact_gradient, exact_gamma, restart, roundoff | stalled
 
         residual, gradient, gamma_new, restart, roundoff = jax.lax.cond(
@@ -286,24 +304,11 @@ def _solve(
             gradient,
         )
         valid &= jnp.isfinite(gamma_new)
-        # A large recurrence drift invalidates the conjugate directions. If the
-        # recomputed norm fails the tolerance, continue with a fresh direction.
-        direction = jnp.where(
-            restart, gradient, gradient + (gamma_new / state.gamma) * state.direction
-        )
-        # At breakdown, report the last finite iterate and stop.
-        return _State(
-            state.iteration + stepped.astype(jnp.int32),
-            x,
-            residual,
-            direction,
-            jnp.where(valid, gamma_new, state.gamma),
-            ~valid,
-            jnp.where(valid, roundoff, state.roundoff),
-            jnp.where(valid, verify, state.residual_verified),
-            restart,
-            state.residual_recomputations + verify.astype(jnp.int32),
-        )
+        margin = None if target is None else jnp.sum(residual * residual) - target
+        return state.advanced(
+            x, residual, gradient, gamma_new, margin, valid=valid, stepped=stepped,
+            restart=restart, verified=verify, roundoff=roundoff,
+        )  # fmt: skip
 
     return jax.lax.while_loop(condition, step, state)
 
@@ -336,7 +341,8 @@ def _solve_streamed_initial(
     interpolation: str,
     gradient_damping: jax.Array | None = None,
     data_term: DataTerm = "absolute",
-) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
+    target: jax.Array | None = None,
+) -> tuple[CGLSState, jax.Array, jax.Array, jax.Array]:
     """CG on the normal equations with data streamed from a host source.
 
     In exact arithmetic this is CGLS. The data-space residual is never stored:
@@ -360,12 +366,12 @@ def _solve_streamed_initial(
     penalty = partial(
         regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
     )
-    data_gradient, _ = exact(initial, key)
+    data_gradient, _, energy = exact(initial, key)
     gradient = data_gradient - penalty(x0)
     gamma = jnp.sum(gradient * gradient)
     finite = jnp.all(jnp.isfinite(poses)) & jnp.all(jnp.isfinite(x0))
     threshold = absolute_tolerance + tolerance * jnp.sqrt(gamma)
-    state = _State(
+    state = CGLSState(
         jnp.int32(0),
         x0,
         gradient,
@@ -374,6 +380,7 @@ def _solve_streamed_initial(
         ~(finite & jnp.isfinite(gamma)),
         jnp.bool_(False),
         jnp.bool_(True),
+        None if target is None else energy - target,
         jnp.bool_(True),
         jnp.int32(0),
     )
@@ -394,7 +401,7 @@ def _solve_streamed_initial(
     ),
 )
 def _solve_streamed(
-    state: _State,
+    state: CGLSState,
     gamma: jax.Array,
     threshold: jax.Array,
     poses: jax.Array,
@@ -410,7 +417,8 @@ def _solve_streamed(
     interpolation: str,
     gradient_damping: jax.Array | None = None,
     data_term: DataTerm = "absolute",
-) -> _State:
+    target: jax.Array | None = None,
+) -> CGLSState:
     normal, exact = normal_equation_operators(
         poses,
         grid,
@@ -426,9 +434,9 @@ def _solve_streamed(
     penalty = partial(
         regularization_normal, spacing=spacing, damping=damping, gradient_damping=gradient_damping
     )
-    condition = partial(_running, max_iters=max_iters, threshold=threshold)
+    condition = partial(running, max_iters=max_iters, threshold=threshold)
 
-    def step(state: _State) -> _State:
+    def step(state: CGLSState) -> CGLSState:
         energy, applied = normal(state.direction)
         applied = applied + penalty(state.direction)
         direction_norm2 = jnp.sum(state.direction**2)
@@ -442,57 +450,53 @@ def _solve_streamed(
         x = jnp.where(valid, state.x + alpha * state.direction, state.x)
         gradient = state.residual - alpha * applied
         gamma_new = jnp.sum(gradient * gradient)
-        roundoff = jnp.all(
-            jnp.abs(alpha * state.direction)
-            <= jnp.finfo(jnp.float32).eps * jnp.maximum(jnp.abs(x), jnp.finfo(jnp.float32).tiny)
+        roundoff, convergence_candidate, verify = _verification(
+            state, x, alpha, direction_norm2, gamma_new, gamma, threshold
         )
-        small_update = alpha * alpha * direction_norm2 <= jnp.finfo(jnp.float32).eps ** 2 * jnp.sum(
-            x * x
-        )
-        convergence_candidate = gamma_new <= threshold * threshold
-        near_precision = gamma_new <= jnp.finfo(jnp.float32).eps * gamma
-        check_due = ((state.iteration + 1) % 16 == 0) | state.restarted
-        verify = roundoff | small_update | convergence_candidate | (check_due & near_precision)
 
-        def recompute(recurrence: jax.Array) -> tuple[jax.Array, ...]:
-            data_gradient, cancellation = exact(x, key)
+        margin = state.discrepancy_margin
+        if margin is not None:
+            margin = margin - alpha * state.gamma
+            verify |= margin <= 0
+
+        def recompute(
+            recurrence: jax.Array,
+        ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array | None]:
+            data_gradient, cancellation, energy = exact(x, key)
             exact_gradient = data_gradient - penalty(x)
             cancellation = cancellation + damp2 * jnp.abs(x)
             if gradient_damping is not None:
                 cancellation = cancellation + gradient_damping**2 * gradient_normal(
                     jnp.abs(x), spacing, absolute_weights=True
                 )
-            exact_gamma = jnp.sum(exact_gradient * exact_gradient)
-            bounded = jnp.all(
-                jnp.abs(exact_gradient) <= 8 * jnp.finfo(jnp.float32).eps * cancellation
+            exact_gamma, restart, stalled = _verified_gradient(
+                exact_gradient,
+                recurrence,
+                cancellation,
+                state,
+                gamma_new,
+                convergence_candidate,
+                roundoff,
             )
-            gap2 = jnp.sum((exact_gradient - recurrence) ** 2)
-            restart = convergence_candidate | roundoff | bounded | (gap2 > 0.01 * gamma_new)
-            stalled = precision_stalled(exact_gamma, state.gamma, state.residual_verified, bounded)
-            return exact_gradient, exact_gamma, restart, roundoff | stalled
+            return (
+                exact_gradient,
+                exact_gamma,
+                restart,
+                roundoff | stalled,
+                None if target is None else energy - target,
+            )
 
-        gradient, gamma_new, restart, roundoff = jax.lax.cond(
+        gradient, gamma_new, restart, roundoff, margin = jax.lax.cond(
             verify,
             recompute,
-            lambda recurrence: (recurrence, gamma_new, jnp.bool_(False), roundoff),
+            lambda recurrence: (recurrence, gamma_new, jnp.bool_(False), roundoff, margin),
             gradient,
         )
         valid &= jnp.isfinite(gamma_new)
-        direction = jnp.where(
-            restart, gradient, gradient + (gamma_new / state.gamma) * state.direction
-        )
-        return _State(
-            state.iteration + valid.astype(jnp.int32),
-            x,
-            gradient,
-            direction,
-            jnp.where(valid, gamma_new, state.gamma),
-            ~valid,
-            jnp.where(valid, roundoff, state.roundoff),
-            jnp.where(valid, verify, state.residual_verified),
-            restart,
-            state.residual_recomputations + verify.astype(jnp.int32),
-        )
+        return state.advanced(
+            x, gradient, gradient, gamma_new, margin, valid=valid, stepped=valid,
+            restart=restart, verified=verify, roundoff=roundoff,
+        )  # fmt: skip
 
     return jax.lax.while_loop(condition, step, state)
 
@@ -567,8 +571,9 @@ def _cgls_program(
     gradient_damping: jax.Array | None,
     data_term: DataTerm,
     split: ViewSplit | None,
-    drive: Drive[_State],
-) -> tuple[_State, jax.Array, jax.Array, jax.Array]:
+    drive: Drive[CGLSState],
+    target: jax.Array | None = None,
+) -> tuple[CGLSState, jax.Array, jax.Array, jax.Array]:
     options = {
         "grid": grid,
         "detector": detector,
@@ -578,6 +583,7 @@ def _cgls_program(
         "interpolation": interpolation,
         "gradient_damping": gradient_damping,
         "data_term": data_term,
+        "target": target,
     }
     if streamed:
         state, first_gamma, threshold, finite = _solve_streamed_initial(
@@ -589,7 +595,7 @@ def _cgls_program(
             **options,
         )
 
-        def advance(state: _State, end: int) -> _State:
+        def advance(state: CGLSState, end: int) -> CGLSState:
             return _solve_streamed(
                 state, first_gamma, threshold, poses, data, end, damping, **options
             )
@@ -606,7 +612,7 @@ def _cgls_program(
             **options,
         )
 
-        def advance(state: _State, end: int) -> _State:
+        def advance(state: CGLSState, end: int) -> CGLSState:
             return _solve(
                 state,
                 first_gamma,
@@ -620,13 +626,18 @@ def _cgls_program(
                 **options,
             )
 
-    def completed(state: _State) -> tuple[int, bool, Metrics]:
+    def completed(state: CGLSState) -> tuple[int, bool, Metrics]:
         count, gamma, threshold_host, failed, roundoff = jax.device_get(
             (state.iteration, state.gamma, threshold, state.failed, state.roundoff)
         )
         return (
             int(count),
-            bool(failed or roundoff or gamma <= threshold_host * threshold_host),
+            bool(
+                failed
+                or roundoff
+                or gamma <= threshold_host * threshold_host
+                or (state.discrepancy_margin is not None and state.discrepancy_margin <= 0)
+            ),
             {
                 Metric.normal_residual_norm.name: float(np.sqrt(gamma)),
             },
@@ -656,6 +667,49 @@ _run_cgls = Chunked(
 )
 
 
+def _solver_info(
+    result: CGLSState,
+    initial_gamma: jax.Array,
+    threshold: jax.Array,
+    inputs_finite: jax.Array,
+    iterations: int,
+    target: float | None,
+    samples: int,
+) -> dict[str, object]:
+    """Transfer the final scalar diagnostics together while the volume stays on device."""
+    finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
+        jax.device_get(
+            (
+                inputs_finite,
+                result.iteration,
+                result.gamma,
+                result.failed,
+                result.roundoff,
+                initial_gamma,
+                threshold,
+                result.residual_verified,
+                result.residual_recomputations,
+            )
+        )
+    )
+    if not finite:
+        raise ValueError("cgls: projections, initial volume and poses must be finite")
+    return stopping_record(
+        count=int(count),
+        budget=iterations,
+        gamma=float(gamma),
+        first_norm=float(np.sqrt(first_norm)),
+        tolerance=float(tolerance),
+        failed=bool(failed),
+        roundoff=bool(roundoff),
+        verified=bool(verified),
+        recomputations=int(recomputations),
+        target=target,
+        margin=result.discrepancy_margin,
+        samples=samples,
+    )
+
+
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -663,9 +717,10 @@ def cgls(
     projections: jnp.ndarray | np.ndarray,
     *,
     init_x: jnp.ndarray | np.ndarray | None = None,
-    config: CGLSConfig | None = None,
+    config: CGLSConfig,
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None = None,
     out: np.ndarray | None = None,
+    target: float | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Reconstruct with CGLS and return volume plus convergence diagnostics.
 
@@ -675,7 +730,7 @@ def cgls(
     and sinograms, independent of iteration count. This public solver returns
     host diagnostics and is not a differentiable reconstruction layer.
     """
-    cfg = CGLSConfig() if config is None else config
+    cfg = config
     iterations, batch = cfg.iterations, cfg.views_per_batch
     model, backend = resolve_geometry_projector(
         geometry, cfg.backend,
@@ -692,7 +747,7 @@ def cgls(
     hosted = solve_on_host(
         geometry, grid, detector, projections, init_x, cfg,
         model=model, backend=backend, poses=poses, shared=split is not None, out=out,
-        det_grid=det_grid,
+        det_grid=det_grid, target=target,
     )  # fmt: skip
     if hosted is not None:
         return hosted
@@ -717,6 +772,7 @@ def cgls(
         damping=jnp.float32(cfg.damping),
         streamed=stream,
         split=split,
+        target=target,
     )
     if stream:
         with host_source(np.asarray(projections)) as key:
@@ -725,35 +781,17 @@ def cgls(
     else:
         data, poses, initial = _laid_out(split, projections, poses, initial)
         result, initial_gamma, threshold, inputs_finite = solve(poses, data, initial, det_grid)
-    finite, count, gamma, failed, roundoff, first_norm, tolerance, verified, recomputations = (
-        jax.device_get(
-            (
-                inputs_finite,
-                result.iteration,
-                result.gamma,
-                result.failed,
-                result.roundoff,
-                initial_gamma,
-                threshold,
-                result.residual_verified,
-                result.residual_recomputations,
-            )
-        )
-    )
-    if not finite:
-        raise ValueError("cgls: projections, initial volume and poses must be finite")
-    converged = bool(not failed and gamma <= tolerance * tolerance)
+    assert iterations is not None
     info = {
-        "effective_iterations": int(count),
-        "converged": converged,
-        "termination": termination(
-            failed=bool(failed), converged=converged, roundoff=bool(roundoff)
+        **_solver_info(
+            result,
+            initial_gamma,
+            threshold,
+            inputs_finite,
+            iterations,
+            target,
+            n * detector.nu * detector.nv,
         ),
-        "normal_residual_norm": float(np.sqrt(gamma)),
-        "normal_residual_is_recomputed": bool(verified),
-        "residual_recomputations": int(recomputations),
-        "initial_normal_residual_norm": float(np.sqrt(first_norm)),
-        "normal_residual_tolerance": float(tolerance),
         "projector_backend": backend,
         "interpolation": cfg.interpolation if is_joseph(model) else None,
         "views_per_batch": min(batch, n),

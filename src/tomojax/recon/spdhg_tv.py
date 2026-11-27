@@ -251,6 +251,8 @@ class _SPDHGResult:
         return {
             "loss": np.asarray(self.losses).tolist(),
             "effective_iterations": len(self.losses),
+            "termination": "iteration_limit",
+            "early_stop": False,
             "tau": float(step_sizes.tau),
             "sigma_data": float(step_sizes.sigma_data),
             "sigma_tv": float(step_sizes.sigma_tv),

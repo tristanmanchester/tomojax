@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Generator
+from contextlib import nullcontext
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
@@ -39,19 +40,23 @@ def iterative_slabs[T](
     is split: their regularizer or global step lengths couple the planes.
     """
     from .api import validate_slab_grid
+    from .sirt import SIRTConfig
 
     validate_slab_grid(config, geometry, grid, detector)
     origin = grid_volume_origin(grid)
     free = device_free_memory_bytes()
     per_row = 4 * (
-        grid.nx * grid.ny * (6 + 2 * getattr(config, "acceleration", False))
+        grid.nx * grid.ny * (6 + 2 * (isinstance(config, SIRTConfig) and config.accelerated))
         + len(geometry.angles) * detector.nu * (3 + 2 / config.subsets)
     )
     budget = 512 * 2**20 if free is None else free // 2
     fitting = max(1, int(budget / per_row))
     # Bound CPU output too: the full requested volume may exceed host RAM.
     depth = min(8, 2 ** (fitting.bit_length() - 1))
-    with checkpoint.slabs() as finished:
+    automatic = config.iterations is None and config.subsets == 1
+    track = checkpoint.loop("partition") if automatic else nullcontext(checkpoint.IDLE)
+    with track as partition, checkpoint.slabs() as finished:
+        depth = partition.slab_depth(depth)
         start = finished.prefix
         while start < grid.nz:
             stop = min(start + depth, grid.nz)
@@ -89,6 +94,7 @@ def iterative_slabs[T](
                     raise
                 progress.retried("slab depth")
                 depth = max(1, depth // 2)
+                partition.save((), checkpoint.Completed(depth))
                 continue
             yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
             data = context = volume = result = None

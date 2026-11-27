@@ -80,6 +80,8 @@ What each run saves:
 | `tj.reconstruct_slabs` | Which slabs the caller has finished, plus the solver state of the slab in progress for `sirt` and `mlem`. |
 | `tj.align` (joint fits) | Each finished resolution level (volume, poses, and record), the volume, poses, damping, and step history within a level at Gauss-Newton step boundaries, and the poses during refinement. |
 
+For automatic CGLS and SIRT, the checkpoint includes the stopping statistic alongside the iterate. Each independent axial SIRT slab has its own sampled discrepancy and can stop at a different sweep. The checkpoint retains the partition and finished slabs' diagnostics. The result lists each z range, count and residual in `info["slab_stopping"]`. Its top-level iteration count is the longest slab solve. A coupled cone reconstruction uses one stopping test over all detector rows.
+
 ### Save schedule, time, and disk space
 
 Iterative solvers and alignment save at a loop boundary (an iteration, a ~0.25 s JAX chunk, or an alignment step) once both 10 minutes and 20 times the previous save duration have passed since the previous save. That schedule caps periodic saving overhead at 5% of the run. Finished slabs are saved as each slab completes. Runs without `checkpoint=` take the unmodified code paths with no overhead. See [checkpoint measurements](measurements.md#checkpoint-and-resume) for measured overhead, save times, disk sizes, and host RSS on a synchrotron scan.

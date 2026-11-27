@@ -88,7 +88,7 @@ def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[st
         ]
     if isinstance(work, ResolvedReconstruction):
         rows = [("method", f"{method_name(work)}: {'; '.join(work.reasons)}")]
-        iterations = getattr(work.config, "iterations", None)
+        iterations = work.iteration_budget
         if iterations is not None:
             rows.append(("iterations", str(iterations)))
         rows.append(("grid", grid_text(work.scan.grid, unit)))
@@ -138,7 +138,7 @@ def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -
         what = f"{work.method.replace('-', ' ')}, {_pairs(len(work.samples))}"
     elif isinstance(work, ResolvedReconstruction):
         what = method_name(work)
-        iterations = getattr(work.config, "iterations", None)
+        iterations = work.iteration_budget
         if iterations is not None:
             what += f", {iterations} iterations"
         grid = work.scan.grid

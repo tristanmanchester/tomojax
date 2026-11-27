@@ -135,7 +135,7 @@ def build_parser() -> ProgressParser:
         type=int,
         default=None,
         metavar="N",
-        help="Iterations: cgls/sirt/mlem 50, fista 200, spdhg 600 (one view block each)",
+        help="Updates: cgls/sirt up to 50, mlem 50, fista 200, spdhg 600 (one view block each)",
     )
     _ = p.add_argument(
         "--tv-weight",

@@ -403,6 +403,13 @@ class Loop:
         self.session, self.key = session, key
         self.saved = None if session is None else session.load(key)
 
+    def slab_depth(self, proposed: int) -> int:
+        """Keep the partition of independent statistical solves across interruptions."""
+        if self.saved is not None:
+            return self.saved.scalars(Completed).steps
+        self.save((), Completed(proposed))
+        return proposed
+
     def due(self) -> bool:
         """Whether the loop should save its state at this boundary."""
         return self.session is not None and self.session.due()
@@ -466,6 +473,7 @@ class Slabs:
     def __init__(self, session: Session | None, key: str, output: np.ndarray | None) -> None:
         self.session, self.key, self.output = session, key, output
         self.done: list[tuple[int, int]] = []
+        self.reports: dict[tuple[int, int], dict[str, JsonValue]] = {}
         if session is None:
             return
         for name in session.keys(f"{key}/"):
@@ -480,6 +488,9 @@ class Slabs:
                     session.discard(name)  # the file no longer holds these planes
                     continue
             self.done.append((start, stop))
+            report = saved.record.get("info")
+            if isinstance(report, dict):
+                self.reports[start, stop] = report
 
     @property
     def prefix(self) -> int:
@@ -500,20 +511,30 @@ class Slabs:
                 return True
         return False
 
-    def add(self, start: int, stop: int) -> None:
+    def add(self, start: int, stop: int, *, info: dict[str, object] | None = None) -> None:
         """Record planes ``[start, stop)`` as finished, then stop if SIGTERM arrived."""
+        record: dict[str, JsonValue] = {}
+        if info is not None:
+            # A solve can include its configuration and volume-sized support.
+            # Only scalar diagnostics belong to a finished-slab record.
+            report: dict[str, JsonValue] = {
+                key: value
+                for key, value in info.items()
+                if value is None or isinstance(value, bool | int | float | str)
+            }
+            self.reports[start, stop] = report
+            record["info"] = report
         session = self.session
         if session is None:
             return
         arrays: tuple[np.ndarray, ...] = ()
-        record: dict[str, JsonValue] = {}
         if self.output is not None:
             planes = self.output[start:stop]
             owner = mapped_storage(planes)  # a named file outlives the process; scratch does not
             name = None if owner is None or not owner.flags.writeable else owner.filename
             if name is not None and Path(name).exists():
                 _flush(planes)
-                record = {"fingerprint": _fingerprint(planes)}
+                record["fingerprint"] = _fingerprint(planes)
             else:
                 arrays = (planes,)
         session.save(f"{self.key}/z{start}-{stop}", arrays, record)
@@ -521,15 +542,12 @@ class Slabs:
         session.stop_if_requested()
 
 
-_IDLE_SLABS = Slabs(None, "", None)
-
-
 @contextmanager
 def slabs(output: np.ndarray | None = None) -> Iterator[Slabs]:
     """The finished slabs of the slab loop at this place in the run (none without a checkpoint)."""
     place = _place.get()
     if place is None:
-        yield _IDLE_SLABS
+        yield Slabs(None, "", None)
         return
     session = place.session
     with session.looping():

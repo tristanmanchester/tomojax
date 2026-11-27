@@ -24,7 +24,11 @@ from tomojax.core.validation import (
 )
 from tomojax.wire.metrics import Metric
 
-from ._cgls_stopping import cancellation_magnitude, precision_stalled, termination
+from ._cgls_stopping import (
+    cancellation_magnitude,
+    precision_stalled,
+    stopping_record,
+)
 from ._data_term import project_residual
 from .cgls import CGLSConfig, resident_bytes
 
@@ -100,6 +104,8 @@ def solve(
     projections: jax.Array | np.ndarray,
     initial: jax.Array | np.ndarray | None,
     cfg: CGLSConfig,
+    *,
+    target: float | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Return None only when CUDA is unavailable or the resident data would not fit."""
     import cupy as cp
@@ -139,7 +145,9 @@ def solve(
             else cp.array(initial.transpose(2, 1, 0), dtype=cp.float32, order="C")
         )
         with checkpoint.loop() as saves:
-            result, info = _iterate(cp, ops, data, x, grid, cfg, saves, zero_start=initial is None)
+            result, info = _iterate(
+                cp, ops, data, x, grid, cfg, saves, zero_start=initial is None, target=target
+            )
         volume = np.ascontiguousarray(cp.asnumpy(result).transpose(2, 1, 0))
         del ops, data, x, result
     # The solve returns host arrays, so none of its device memory outlives it:
@@ -218,6 +226,31 @@ class _Scalars(NamedTuple):
     roundoff: bool
     verified: bool
     restart: bool
+    margin: float | None
+
+    def report(
+        self,
+        budget: int,
+        gamma: float,
+        tolerance: float,
+        failed: bool | np.bool_,
+        target: float | None,
+        samples: int,
+    ) -> dict[str, object]:
+        return stopping_record(
+            count=self.count,
+            budget=budget,
+            gamma=gamma,
+            first_norm=self.initial_norm,
+            tolerance=float(tolerance),
+            failed=bool(failed),
+            roundoff=self.roundoff,
+            verified=self.verified,
+            recomputations=self.recomputations,
+            target=target,
+            margin=self.margin,
+            samples=samples,
+        )
 
 
 def _iterate(
@@ -230,21 +263,31 @@ def _iterate(
     saves: checkpoint.Loop,
     *,
     zero_start: bool,
+    target: float | None,
 ) -> tuple[CuPyValue, dict[str, object]]:
     k, damp2 = _kernels(cp), np.float32(cfg.damping) ** 2
     if saves.saved is None:
         residual, gradient, gamma = _initial(cp, ops, data, x, cfg, zero_start=zero_start)
         direction, previous_gamma = cp.empty_like(gradient), gamma
-        scalars = _Scalars(float(cp.sqrt(gamma)), 0, 0, False, True, True)
+        margin = None if target is None else float(_dot(cp, residual, residual)) - target
+        scalars = _Scalars(float(cp.sqrt(gamma)), 0, 0, False, True, True, margin)
     else:
         arrays, scalars = saves.saved.arrays, saves.saved.scalars(_Scalars)
         cp.copyto(x, cp.asarray(arrays[0]))
         direction, gradient, residual, gamma, previous_gamma = map(cp.asarray, arrays[1:])
-    initial_norm, count, recomputations, roundoff, verified, restart = scalars
+    initial_norm, count, recomputations, roundoff, verified, restart, margin = scalars
+    assert cfg.tolerance is not None
+    assert cfg.iterations is not None
     tolerance = np.float32(cfg.absolute_tolerance + cfg.tolerance * initial_norm)
     failed = not np.isfinite(initial_norm)
     norm2, eps = float(gamma), np.finfo(np.float32).eps
-    while count < cfg.iterations and norm2 > tolerance**2 and not failed and not roundoff:
+    while (
+        (margin is None or margin > 0)
+        and count < cfg.iterations
+        and norm2 > tolerance**2
+        and not failed
+        and not roundoff
+    ):
         progress.check_canceled()
         if restart:
             cp.copyto(direction, gradient)
@@ -253,15 +296,13 @@ def _iterate(
         previous = norm2, verified
         gradient = None  # release the previous gradient before the transpose allocates the next
         with progress.preparing("first cgls update", count):
-            step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term)
+            step = _step(cp, ops, x, direction, residual, gamma, damp2, cfg.data_term, target)
         if step is None:
             failed = True
             break
-        gradient, gamma_new, roundoff, small_update = step
+        gradient, gamma_new, norm2, roundoff, small_update, margin = step
         del step  # hold the gradient only through ``gradient``
         count += 1
-        stats = cp.asnumpy(cp.stack((gamma_new, roundoff, small_update)))
-        norm2, roundoff, small_update = float(stats[0]), bool(stats[1]), bool(stats[2])
         failed = not np.isfinite(norm2)
         candidate = bool(norm2 <= tolerance**2)
         # Confirm a restart promptly; an accurate recurrence waits for the next period.
@@ -269,19 +310,11 @@ def _iterate(
         verified = roundoff or small_update or candidate or periodic
         restart = False
         if verified and not failed:
-            residual, gradient, gamma_new, norm2, restart, roundoff = _verify(
-                cp,
-                ops,
-                data,
-                x,
-                gradient,
-                gamma_new,
-                damp2,
-                data_term=cfg.data_term,
-                candidate=candidate,
-                roundoff=roundoff,
-                previous=previous,
-            )
+            residual, gradient, gamma_new, norm2, restart, roundoff, margin = _verify(
+                cp, ops, data, x, gradient, gamma_new, damp2,
+                data_term=cfg.data_term, candidate=candidate, roundoff=roundoff,
+                previous=previous, target=target,
+            )  # fmt: skip
             failed = not np.isfinite(norm2)
             recomputations += 1
         if failed:
@@ -293,18 +326,13 @@ def _iterate(
             progress.preview(lambda: planes(x, grid, reversed_axes=True))
         if not failed and saves.due():
             flags = bool(roundoff), bool(verified), bool(restart)
-            state = _Scalars(initial_norm, count, recomputations, *flags)
+            state = _Scalars(initial_norm, count, recomputations, *flags, margin)
             saves.save((x, direction, gradient, residual, gamma, previous_gamma), state)
-    converged = bool(not failed and norm2 <= tolerance**2)
+    final = _Scalars(
+        initial_norm, count, recomputations, bool(roundoff), bool(verified), restart, margin
+    )
     info = {
-        "effective_iterations": count,
-        "converged": converged,
-        "termination": termination(failed=failed, converged=converged, roundoff=bool(roundoff)),
-        "normal_residual_norm": float(np.sqrt(norm2)),
-        "normal_residual_is_recomputed": bool(verified),
-        "residual_recomputations": recomputations,
-        "initial_normal_residual_norm": initial_norm,
-        "normal_residual_tolerance": float(tolerance),
+        **final.report(cfg.iterations, norm2, float(tolerance), failed, target, data.size),
         "projector_backend": "cuda",
         "execution_backend": "cupy",
         "interpolation": "linear",
@@ -329,11 +357,12 @@ def _step(
     gamma: CuPyValue,
     damp2: np.float32,
     data_term: DataTerm,
-) -> tuple[CuPyValue, CuPyValue, CuPyValue, CuPyValue] | None:
+    target: float | None,
+) -> tuple[CuPyValue, CuPyValue, float, bool, bool, float | None] | None:
     """Advance ``x`` and ``residual`` along ``direction`` in place.
 
-    Returns the new gradient, its squared norm and the two round-off tests as
-    device values, or None when the step length breaks down.
+    Returns the device gradient and its squared norm, the host norm and roundoff
+    tests, and the optional discrepancy margin. None signals a step breakdown.
     """
     k = _kernels(cp)
     eps, tiny = np.finfo(np.float32).eps, np.finfo(np.float32).tiny
@@ -351,7 +380,13 @@ def _step(
     k["negaxpy"](damp2, x, gradient)
     roundoff = _all(cp, k["tiny_step"], alpha, direction, x, eps, tiny)
     small_update = cp.square(alpha) * direction_norm2 <= cp.multiply(eps**2, _dot(cp, x, x))
-    return gradient, _dot(cp, gradient, gradient), roundoff, small_update
+    gamma_new = _dot(cp, gradient, gradient)
+    metrics = (gamma_new, roundoff, small_update)
+    if target is not None:
+        metrics += (_dot(cp, residual, residual),)
+    stats = cp.asnumpy(cp.stack(metrics))
+    margin = None if target is None else float(stats[3]) - target
+    return gradient, gamma_new, float(stats[0]), bool(stats[1]), bool(stats[2]), margin
 
 
 def _verify(
@@ -367,7 +402,8 @@ def _verify(
     candidate: bool,
     roundoff: bool,
     previous: tuple[float, bool | np.bool_],
-) -> tuple[CuPyValue, CuPyValue, CuPyValue, float, bool, bool | np.bool_]:
+    target: float | None,
+) -> tuple[CuPyValue, CuPyValue, CuPyValue, float, bool, bool | np.bool_, float | None]:
     """Replace the recurrence with the measured residual before accepting a stop."""
     k = _kernels(cp)
     prediction = ops.forward(x)
@@ -388,4 +424,5 @@ def _verify(
     norm2, at_precision, gap = float(checks[0]), bool(checks[1]), float(checks[2])
     restart = candidate or roundoff or at_precision or gap > 0.01 * float(gamma)
     stalled = precision_stalled(norm2, previous[0], previous[1], at_precision)
-    return residual, exact, exact_gamma, norm2, restart, roundoff or stalled
+    margin = None if target is None else float(_dot(cp, residual, residual)) - target
+    return residual, exact, exact_gamma, norm2, restart, roundoff or stalled, margin

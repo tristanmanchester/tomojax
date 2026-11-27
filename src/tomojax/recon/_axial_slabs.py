@@ -45,7 +45,7 @@ def axial_workspace(cfg: SIRTConfig | MLEMConfig, volume: int, projections: int)
     from .sirt import SIRTConfig
 
     if isinstance(cfg, SIRTConfig):
-        return (3 + min(cfg.subsets, 16) + 2 * cfg.acceleration) * volume + (
+        return (3 + min(cfg.subsets, 16) + 2 * cfg.accelerated) * volume + (
             2 + 2 / cfg.subsets
         ) * projections
     # EM keeps four volume buffers; axial sensitivities have the shape of one plane.
@@ -80,6 +80,7 @@ def axial_slabs(
     support: Array | None,
     config: SIRTConfig | MLEMConfig,
     solve: Solve,
+    summarize: Callable[[checkpoint.Slabs], dict[str, object]] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve in slabs if storage is large and Joseph planes are independent.
 
@@ -95,6 +96,12 @@ def axial_slabs(
     depth = axial_slab_depth(
         geometry, grid, detector, data.shape[0], config, device_free_memory_bytes()
     )
+    if summarize is not None and checkpoint.active():
+        # Statistical stops depend on the rows solved together. Restore that
+        # partition even if free device memory has changed since interruption.
+        with checkpoint.loop("partition") as partition_save:
+            saved = partition_save.slab_depth(depth or grid.nz)
+            depth = None if saved == grid.nz else saved
     if depth is None:
         return None
     origin = grid_volume_origin(grid)
@@ -130,7 +137,9 @@ def axial_slabs(
             output[start:stop, :, :] = np.asarray(volume)
             # Do not retain the previous device slab while allocating the next.
             del volume
-            finished.add(start, stop)
+            finished.add(start, stop, info=info if summarize is not None else None)
+        if summarize is not None:
+            info = summarize(finished)
     if info.get("effective_iterations") and partial_sweep.get() is None:
         progress.preview(lambda: planes(output, grid), final=True)
     return output, {**info, "host_slabs": True, "slices_per_batch": depth}

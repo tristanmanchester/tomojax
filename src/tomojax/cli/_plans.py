@@ -59,7 +59,7 @@ def plan_product(
     return p.ReconPlan(
         solver_name(work.method, work.scan.geometry),
         work.reasons,
-        getattr(work.config, "iterations", None),
+        work.iteration_budget,
         msgspec.convert(work.scan.grid, type=Grid, from_attributes=True),
         placement,
     )

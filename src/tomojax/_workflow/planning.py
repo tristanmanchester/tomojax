@@ -31,6 +31,14 @@ class ResolvedReconstruction:
     warm_start: bool
 
     @property
+    def iteration_budget(self) -> int | None:
+        """Maximum updates in the resolved plan, including an automatic solver's cap."""
+        iterations = getattr(self.config, "iterations", None)
+        if self.config.method in ("cgls", "sirt") and iterations is None:
+            return 50
+        return iterations
+
+    @property
     def method(self) -> ReconMethod:
         """Reconstruction method, named by the configuration's class."""
         return self.config.method

@@ -9,16 +9,16 @@ per subset; a zero start is neither stored nor projected.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import numpy as np
 
 from tomojax import progress
 from tomojax.core import checkpoint
-from tomojax.core.checkpoint import Completed
 from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import Batch, ConeProblem, algebraic_sweep, cone_problem, host_projections
+from ._discrepancy import sirt_stopping
 
 if TYPE_CHECKING:
     import jax
@@ -27,6 +27,11 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Geometry, Grid
 
     from .sirt import SIRTConfig
+
+
+class _Sweep(NamedTuple):
+    steps: int
+    energy: float | None
 
 
 def solve(
@@ -42,6 +47,7 @@ def solve(
     poses: jax.Array,
     bounds: tuple[float, float],
     out: np.ndarray | None = None,
+    target: float | None = None,
 ) -> tuple[np.ndarray, dict[str, object]]:
     """Run validated SIRT settings with a host volume, in ``out`` or a C-ordered volume."""
     data: np.ndarray = host_projections(projections, "sirt")
@@ -52,12 +58,17 @@ def solve(
     solver = _HostSIRT(problem, cfg, bounds, initial, out)
     volumes = (solver.volume, solver.point) if cfg.acceleration else (solver.volume,)
     with problem.using(out, solver.volume, solver.point), checkpoint.loop() as saves:
-        first = 0
+        step, solver.energy = 0, None
         if saves.saved is not None:
             for volume, values in zip(volumes, saves.saved.arrays, strict=True):
                 volume.restore(values)
-            solver.zero, (first,) = False, saves.saved.scalars(Completed)
-        for step, momentum in enumerate(_momenta(cfg)[first:], first + 1):
+            solver.zero = False
+            step, solver.energy = saves.saved.scalars(_Sweep)
+        for momentum in _momenta(cfg)[step:]:
+            if target is not None and solver.energy is not None and solver.energy <= target:
+                break
+            step += 1
+            solver.energy = None if target is None else 0.0
             progress.check_canceled()
             solver.momentum = momentum
             for subset in range(cfg.subsets):
@@ -65,11 +76,11 @@ def solve(
             if (task := progress.for_unit("iterations")) is not None:
                 problem.completed(task.advance, step, {})
             if saves.due():
-                saves.save([volume.contents() for volume in volumes], Completed(step))
+                saves.save([volume.contents() for volume in volumes], _Sweep(step, solver.energy))
     return problem.result(solver.x), {
-        "effective_iterations": cfg.iterations,
-        "subset_updates": cfg.iterations * cfg.subsets,
-        "termination": "iteration_limit",
+        **sirt_stopping(step, solver.energy, target, int(np.prod(data.shape))),
+        "acceleration": cfg.acceleration,
+        "subset_updates": step * cfg.subsets,
         "projector_backend": backend,
         "host_slabs": not problem.on_device,
         "slices_per_batch": problem.plan.depth,
@@ -82,6 +93,7 @@ def _momenta(cfg: SIRTConfig) -> list[np.float32]:
     """Each iteration's FISTA momentum (zero without acceleration), as the resident solver's."""
     momenta: list[np.float32] = []
     time = np.float32(1)
+    assert cfg.iterations is not None
     for _ in range(cfg.iterations):
         following = (1 + np.sqrt(1 + 4 * time * time, dtype=np.float32)) / 2
         momenta.append((time - 1) / following if cfg.acceleration else np.float32(0))
@@ -135,6 +147,7 @@ class _HostSIRT:
             self.point = problem.volume(work if self.zero else fill(work, self.x))
         self.relaxation, self.momentum = np.float32(cfg.relaxation), np.float32(0)
         self.accelerated = cfg.acceleration
+        self.energy: float | None = None
 
     def update(self, views: np.ndarray) -> None:
         """One subset's update of every slab."""
@@ -170,7 +183,10 @@ class _HostSIRT:
             sums = rows[1]
         positive = sums > 0
         weights = xp.where(positive, 1 / xp.where(positive, sums, 1), 0).astype(xp.float32)
-        rows[0][...] = weights * (problem.measured(batch, first, stop) - rows[0])
+        rows[0][...] = problem.measured(batch, first, stop) - rows[0]
+        if self.energy is not None:
+            self.energy += problem.engine.norm2(rows[0])
+        rows[0][...] *= weights
 
     def sink(self, k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
         """Update slab ``k`` in place, starting from the slab projected in this sweep."""

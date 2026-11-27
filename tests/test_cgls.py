@@ -671,3 +671,33 @@ def test_native_cgls_reports_completed_updates():
         _, info = cgls(geometry, grid, detector, data, config=config)
     assert info["execution_backend"] == "cupy"
     assert updates == [1, 2]
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_discrepancy_crosses_on_the_reported_cgls_update(stream):
+    import tomojax as tj
+
+    fixture = tj.simulate("shepp", size=16, n_views=25, geometry="parallel")
+    y = np.asarray(fixture.scan.projections)
+    rng = np.random.default_rng(23)
+    y = y + np.float32(0.1 * y.std()) * rng.standard_normal(y.shape, dtype=np.float32)
+    scan = tj.Scan(y, fixture.scan.geometry)
+
+    def run(**settings):
+        return tj.reconstruct(
+            scan, "cgls", config=CGLSConfig(backend="jax", stream=stream, **settings)
+        )
+
+    result = run()
+    target = result.info["projection_error_rms"]
+    stop = result.info["effective_iterations"]
+    assert result.info["termination"] == "projection_discrepancy"
+    assert 0 < result.info["measurement_noise_rms"] <= target
+    for k, image in [(stop - 1, run(iterations=stop - 1).volume), (stop, result.volume)]:
+        rms = np.sqrt(np.mean((np.asarray(tj.project(scan.geometry, image)) - y) ** 2))
+        if k < stop:
+            assert rms > target
+        else:
+            assert rms <= target
+            assert result.info["residual_rms"] == pytest.approx(rms, rel=2e-4)
+    assert run(tolerance=0.5).info["projection_error_rms"] is None

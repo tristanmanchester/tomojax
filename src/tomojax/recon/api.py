@@ -581,7 +581,9 @@ def reconstruct_arrays(
         return fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
     from tomojax import progress
 
-    with progress.task("reconstruct", method, cfg.iterations, "iterations"):
+    with progress.task(
+        "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
+    ):
         return _iterative_result(
             geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
         )
@@ -619,11 +621,14 @@ def _iterative_result(
                 # A host broadcast view: each slab uploads only its own rows.
                 support = np.broadcast_to(np.asarray(support, bool), (grid.nz, grid.ny, grid.nx))
 
-            solver = None
+            solver = summary = None
             if algebraic.method == "sirt":
+                from tomojax.recon._discrepancy import sirt_slab_report
                 from tomojax.recon.sirt import SIRTCall
 
                 solver = SIRTCall().solve
+                if algebraic.iterations is None and algebraic.subsets == 1:
+                    summary = sirt_slab_report
 
             def solve(
                 local: ParallelGeometry,
@@ -640,7 +645,7 @@ def _iterative_result(
             result = axial_slabs(
                 geometry, grid, detector, projections, initial=None, support=support,
                 config=algebraic,
-                solve=solve,
+                solve=solve, summarize=summary,
             )  # fmt: skip
             if result is not None:
                 volume, record = result

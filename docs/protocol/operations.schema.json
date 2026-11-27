@@ -1274,12 +1274,26 @@
           "default": "absolute"
         },
         "iterations": {
-          "type": "integer",
-          "default": 50
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tolerance": {
-          "type": "number",
-          "default": 1e-06
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "absolute_tolerance": {
           "type": "number",
@@ -1691,8 +1705,15 @@
           ]
         },
         "iterations": {
-          "type": "integer",
-          "default": 50
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "subsets": {
           "type": "integer",
@@ -1703,8 +1724,15 @@
           "default": 1.0
         },
         "acceleration": {
-          "type": "boolean",
-          "default": false
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "lower_bound": {
           "anyOf": [

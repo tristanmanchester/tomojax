@@ -20,7 +20,7 @@ import tomojax as tj
 from tomojax import progress
 from tomojax.core import checkpoint
 from tomojax.errors import Canceled, InvalidParameter
-from tomojax.recon import FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
+from tomojax.recon import CGLSConfig, FBPConfig, FourierConfig, MLEMConfig, SIRTConfig
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -137,6 +137,52 @@ def test_the_cuda_and_host_solvers_resume_to_the_uninterrupted_volume(
     np.testing.assert_array_equal(resumed, whole)
 
 
+@pytest.mark.usefixtures("every_boundary")
+@pytest.mark.parametrize(
+    ("geometry", "config", "hosted"),
+    [
+        ("parallel", CGLSConfig(backend="jax"), False),
+        ("parallel", CGLSConfig(backend="jax", stream=True), False),
+        ("parallel", SIRTConfig(acceleration=False), False),
+        ("parallel", SIRTConfig(), False),
+        pytest.param("parallel", CGLSConfig(backend="cuda"), False, marks=pytest.mark.gpu),
+        pytest.param("cone", CGLSConfig(), True, marks=pytest.mark.gpu),
+        pytest.param("cone", SIRTConfig(), True, marks=pytest.mark.gpu),
+    ],
+)
+def test_discrepancy_stopping_resumes_at_the_same_sweep(
+    geometry: str, config: CGLSConfig | SIRTConfig, hosted: bool, tmp_path: Path
+) -> None:
+    scan = _scan(geometry)
+    # Independent measurement errors give a positive floor within the budget.
+    values = np.asarray(scan.projections)
+    noise = np.random.default_rng(3).normal(0, 0.08 * np.std(values), values.shape)
+    scan = tj.Scan((values + noise).astype(np.float32), scan.geometry)
+
+    def run(**options: Any) -> tj.Reconstruction:
+        out = np.empty(scan.grid.shape, np.float32) if hosted else None
+        return tj.reconstruct(scan, config.method, config=config, out=out, **options)
+
+    whole = run(checkpoint=tmp_path / "whole")
+    with pytest.raises(Canceled), progress.watch(_terminated_after(1)):
+        run(checkpoint=tmp_path / "run")
+    resumed, first = _first_report(lambda: run(checkpoint=tmp_path / "run"))
+    assert first == 1
+    assert whole.info["termination"] == "projection_discrepancy"
+    assert 1 < whole.info["effective_iterations"] < 50
+    for key in (
+        "effective_iterations",
+        "termination",
+        "early_stop",
+        "projection_error_rms",
+        "measurement_noise_rms",
+        "residual_rms",
+        "pre_update_residual_rms",
+    ):
+        assert resumed.info.get(key) == whole.info.get(key)
+    np.testing.assert_array_equal(resumed.volume, whole.volume)
+
+
 AUTOMATIC_FISTA = [
     pytest.param("parallel", False, id="fista"),
     pytest.param("parallel", True, marks=pytest.mark.gpu, id="host-fista"),
@@ -177,9 +223,9 @@ def test_an_automatic_fista_resumes_to_the_same_weight_and_stopping_update(
 
 
 @pytest.mark.usefixtures("every_boundary")
-@pytest.mark.parametrize("method", ["sirt", "mlem"])
+@pytest.mark.parametrize(("method", "iterations"), [("sirt", 6), ("mlem", 6), ("sirt", None)])
 def test_independent_plane_slabs_resume_from_the_first_unfinished_slab(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str, iterations: int | None
 ) -> None:
     from tomojax.recon import _axial_slabs  # check-public-imports: allow-private
 
@@ -188,17 +234,22 @@ def test_independent_plane_slabs_resume_from_the_first_unfinished_slab(
     )
     scan = _scan()
     path = tmp_path / "run"
-    whole = tj.reconstruct(scan, method, iterations=6, checkpoint=path)
+    whole = tj.reconstruct(scan, method, iterations=iterations, checkpoint=path)
     assert whole.info["host_slabs"]
     with monkeypatch.context() as patched:
         _terminate_after(patched, 2)
         with pytest.raises(Canceled):
-            tj.reconstruct(scan, method, iterations=6, checkpoint=path)
+            tj.reconstruct(scan, method, iterations=iterations, checkpoint=path)
+    if iterations is None:
+        monkeypatch.setattr(_axial_slabs, "axial_slab_depth", lambda *_: None)
     saved = _terminate_after(monkeypatch, -1)
-    resumed = tj.reconstruct(scan, method, iterations=6, checkpoint=path)
+    resumed = tj.reconstruct(scan, method, iterations=iterations, checkpoint=path)
 
     assert [key for key in saved if "/z" in key] == ["slabs-0/z8-12", "slabs-0/z12-16"]
     np.testing.assert_array_equal(np.asarray(resumed.volume), np.asarray(whole.volume))
+
+    if iterations is None:
+        assert resumed.info["slab_stopping"] == whole.info["slab_stopping"]
 
 
 def test_a_checkpoint_of_another_run_is_refused(tmp_path: Path) -> None:
@@ -429,6 +480,7 @@ SLABS = [
         id="fourier-hann",
     ),
     pytest.param("sirt", SIRTConfig(iterations=4), id="sirt"),
+    pytest.param("sirt", SIRTConfig(), id="automatic-sirt"),
     pytest.param("mlem", MLEMConfig(iterations=4), id="mlem"),
 ]
 
@@ -461,6 +513,8 @@ def test_slabs_from_frames_continue_after_the_last_finished_slab(
         with pytest.raises(Canceled):
             run()
     finished = int(np.isfinite(written[:, 0, 0]).sum())
+    if isinstance(config, SIRTConfig) and config.iterations is None:
+        monkeypatch.setattr(_iterative_slabs, "device_free_memory_bytes", lambda: 2**35)
     starts = run()
 
     assert starts[0] == finished > 0  # the first slab after the finished ones

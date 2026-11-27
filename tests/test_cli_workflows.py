@@ -244,7 +244,7 @@ def test_recon_cli_routes_tiny_workflow(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert main([*args, "--grid", "4", "4", "2", "--iterations", "7", "--warm-start"]) == 0
 
     assert calls.pop("method") == "cgls"
-    assert (calls.pop("shape"), calls.pop("config").iterations) == ((2, 4, 4), 50)
+    assert (calls.pop("shape"), calls.pop("config").iterations) == ((2, 4, 4), None)
     # Options not given are left to the configuration.
     assert calls == {
         "region": None,
@@ -805,10 +805,12 @@ def test_reconstruct_help_defaults_config_keys_and_boolean_overrides(
         main(["reconstruct", "--help"])
     assert help_exit.value.code == 0
     help_text = capsys.readouterr().out
-    assert f"cgls/sirt/mlem {CGLSConfig().iterations}" in help_text
-    assert CGLSConfig().iterations == SIRTConfig().iterations == MLEMConfig().iterations
+    assert "cgls/sirt up to 50" in help_text
+    assert f"mlem {MLEMConfig().iterations}" in help_text
+    assert CGLSConfig().iterations is None
+    assert SIRTConfig().iterations is None
     assert f"fista {FISTAConfig().iterations}" in help_text
-    assert f"spdhg {SPDHGConfig().iterations}" in help_text
+    assert f"spdhg {SPDHGConfig().iterations}" in " ".join(help_text.split())
 
     with pytest.raises(SystemExit) as keys_exit:
         main(["reconstruct", "--method", "fista", "--config-keys"])

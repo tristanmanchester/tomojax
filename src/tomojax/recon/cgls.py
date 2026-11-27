@@ -1,7 +1,7 @@
 """Conjugate-gradient least squares using the exact matched projector pair."""
 
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 import operator
 from typing import ClassVar, Literal, get_args
@@ -25,7 +25,10 @@ class CGLSConfig:
     and subtracts each full detector view's mean for per-view contrast.
     Stop when the normal-residual norm falls below
     ``absolute_tolerance + tolerance * initial_normal_residual_norm`` or after
-    ``iterations`` updates.
+    ``iterations`` updates. With the budget and tolerances omitted and no
+    penalties, stop when the projection residual reaches the estimated noise
+    and sampling error, up to 50 updates. An explicit budget or tolerance
+    selects the numerical stopping tests alone.
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
     stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
     Before reporting convergence or roundoff, recompute the data and normal
@@ -75,11 +78,11 @@ class CGLSConfig:
         per detector view. Use it when material lies outside the field of view;
         absolute background density is lost and contained-object accuracy can worsen.
     iterations : int, optional
-        Maximum number of solver updates. For SIRT and MLEM, an update is a complete
-        subset sweep. Default is 50.
+        Maximum number of updates. None enables statistical stopping on an
+        unpenalized solve with implicit tolerances and caps work at 50 updates.
     tolerance : float, optional
-        Nonnegative relative tolerance on the normal-residual norm. Default is
-        1e-06.
+        Relative normal-residual tolerance. None uses 1e-6 and allows
+        statistical stopping. An explicit zero disables the relative test.
     absolute_tolerance : float, optional
         Nonnegative absolute tolerance on the normal-residual norm. Default is 0.0.
     damping : float, optional
@@ -108,8 +111,8 @@ class CGLSConfig:
     method: ClassVar[Literal["cgls"]] = "cgls"
 
     data_term: DataTerm = "absolute"
-    iterations: int = 50
-    tolerance: float = 1e-6
+    iterations: int | None = None
+    tolerance: float | None = None
     absolute_tolerance: float = 0.0
     damping: float = 0.0
     views_per_batch: int = 64
@@ -120,13 +123,18 @@ class CGLSConfig:
     devices: _typed_arrays.Device | Sequence[_typed_arrays.Device] | None = None  # kept as a tuple
 
     def __post_init__(self) -> None:
-        iterations, batch = operator.index(self.iterations), operator.index(self.views_per_batch)
+        iterations, batch = (
+            operator.index(50 if self.iterations is None else self.iterations),
+            operator.index(self.views_per_batch),
+        )
         if iterations < 0 or batch < 1:
             raise InvalidParameter(
                 "iterations" if iterations < 0 else "views_per_batch",
                 "cgls: iterations must be nonnegative and views_per_batch positive",
             )
         for name in ("tolerance", "absolute_tolerance", "damping", "gradient_damping"):
+            if name == "tolerance" and self.tolerance is None:
+                continue
             value = float(getattr(self, name))
             if not math.isfinite(value) or value < 0:
                 raise InvalidParameter(name, f"cgls: {name} must be finite and nonnegative")
@@ -170,7 +178,7 @@ def resident_bytes(grid: Grid, projection_shape: Sequence[int]) -> int:
     return 4 * (6 * volume + 4 * math.prod(projection_shape))
 
 
-@progress.reports_iterations(CGLSConfig.iterations)
+@progress.reports_iterations(50)
 def cgls(
     geometry: Geometry,
     grid: Grid,
@@ -256,8 +264,34 @@ def cgls(
     """
     cfg = CGLSConfig() if config is None else config
     check_cgls_geometry(geometry, cfg.interpolation)
+    discrepancy = None
+    if (
+        cfg.iterations is None
+        and cfg.tolerance is None
+        and not (cfg.absolute_tolerance or cfg.damping or cfg.gradient_damping)
+    ):
+        from tomojax.core.validation import validate_projection_stack
+
+        from ._discrepancy import estimate
+
+        _ = validate_projection_stack(projections, detector, geometry=geometry, context="cgls")
+        discrepancy = estimate(
+            projections,
+            geometry,
+            grid,
+            detector,
+            linear=cfg.interpolation == "linear" and det_grid is None,
+            centered=cfg.data_term == "per_view_contrast",
+        )
+    cfg = replace(
+        cfg,
+        iterations=50 if cfg.iterations is None else cfg.iterations,
+        tolerance=1e-6 if cfg.tolerance is None else cfg.tolerance,
+    )
+    target = None if discrepancy is None else discrepancy.target(math.prod(projections.shape))
     from ._cgls_cuda import available, solve
 
+    result = None
     if out is None and available(
         geometry,
         projections,
@@ -265,12 +299,13 @@ def cgls(
         host_initial=init_x is None or isinstance(init_x, np.ndarray),
         canonical=det_grid is None,
     ):
-        result = solve(geometry, grid, detector, projections, init_x, cfg)
-        if result is not None:
-            return result
-    from ._cgls_jax import cgls as solve_jax
+        result = solve(geometry, grid, detector, projections, init_x, cfg, target=target)
+    if result is None:
+        from ._cgls_jax import cgls as solve_jax
 
-    return solve_jax(
-        geometry, grid, detector, projections, init_x=init_x, config=cfg, det_grid=det_grid,
-        out=out,
-    )  # fmt: skip
+        result = solve_jax(
+            geometry, grid, detector, projections, init_x=init_x, config=cfg, det_grid=det_grid,
+            out=out, target=target,
+        )  # fmt: skip
+    result[1]["measurement_noise_rms"] = None if discrepancy is None else discrepancy.noise
+    return result

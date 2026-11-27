@@ -508,6 +508,7 @@ def run_mlem(
         "effective_iterations": iterations,
         "subset_updates": iterations * subsets,
         "termination": "iteration_limit",
+        "early_stop": False,
         "projector_backend": backend,
         **storage,
     }

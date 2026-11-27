@@ -234,3 +234,34 @@ def test_host_columns_belong_to_the_workflow_not_the_slab_or_next_scan(monkeypat
         result = tj.reconstruct(scan, "sirt", config=cfg, warm_start=warm_start)
         assert result.info["host_slabs"] and result.info["slices_per_batch"] == 2
         np.testing.assert_allclose(result.volume, reference.volume, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.parametrize("accelerated", [False, True])
+def test_discrepancy_reports_the_projected_sirt_point_and_replays(accelerated):
+    sim = tj.simulate("shepp", size=16, n_views=25, geometry="parallel")
+    y = np.asarray(sim.scan.projections)
+    y = y + np.float32(0.1 * y.std()) * np.random.default_rng(31).standard_normal(
+        y.shape, dtype=np.float32
+    )
+    scan = tj.Scan(y, sim.scan.geometry)
+
+    def run(steps=None):
+        return tj.reconstruct(
+            scan, "sirt", config=SIRTConfig(iterations=steps, acceleration=accelerated)
+        )
+
+    result = run()
+    stop = result.info["effective_iterations"]
+    assert 2 < stop < 50
+    previous = np.asarray(run(stop - 1).volume)
+    if accelerated:
+        times = [1.0]
+        for _ in range(stop - 1):
+            times.append((1 + np.sqrt(1 + 4 * times[-1] ** 2)) / 2)
+        previous = previous + (times[-2] - 1) / times[-1] * (
+            previous - np.asarray(run(stop - 2).volume)
+        )
+    rms = np.sqrt(np.mean((np.asarray(tj.project(scan.geometry, previous)) - y) ** 2))
+    assert result.info["pre_update_residual_rms"] == pytest.approx(rms, rel=2e-4)
+    assert rms <= result.info["projection_error_rms"]
+    np.testing.assert_allclose(result.volume, run(stop).volume, rtol=3e-5, atol=3e-6)
