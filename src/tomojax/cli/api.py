@@ -18,7 +18,7 @@ PRODUCT_COMMANDS: tuple[CliCommand, ...] = (
     CliCommand("correct", "Import raw scans or apply corrections, selection, crop and binning."),
     CliCommand("reconstruct", "Reconstruct a volume."),
     CliCommand("align", "Fit a scan's geometry and per-view motion."),
-    CliCommand("export", "Write a reconstruction as TIFF slices or a raw file."),
+    CliCommand("export", "Export a registered volume as TIFF, raw, MetaImage, or AmiraMesh."),
     CliCommand("simulate", "Write a synthetic scan of a phantom."),
     CliCommand("serve", "Serve a GUI session over JSON Lines."),
     CliCommand("mcp", "Serve tomography tools over MCP stdio."),

@@ -41,8 +41,9 @@ WORKFLOW_HELP = {
         "when the full acquisition or volume exceeds memory."
     ),
     op.Align: (
-        "Fit the rotation center, detector geometry or per-view motion. Use the aligned scan"
-        " for reconstruction and inspect the fitted poses."
+        "Fit the rotation center, detector geometry or per-view motion. Use the aligned scan "
+        "for reconstruction, inspect the fitted poses, and check disturbed_views for objects "
+        "crossing the field."
     ),
     op.Evaluate: (
         "Compare reconstruction or alignment settings on held-out projections. Use the "

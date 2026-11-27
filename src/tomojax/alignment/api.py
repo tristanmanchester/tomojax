@@ -46,8 +46,18 @@ def disturbed_views(
     Returns
     -------
     dict
-        Per-view shared power fractions, flagged half-open index ranges, angles
-        of their first and last exposures in degrees, and a review instruction.
+        Report with ``score`` (per-view shared power fraction between the top
+        and bottom detector bands, or None when too few paired measurements
+        exist; values above 0.5 flag a view), ``ranges`` (flagged zero-based
+        half-open ``[start, stop]`` index intervals), ``angles`` (first and last
+        exposure angle in degrees for each range), and ``message`` (review
+        summary).
+
+    Raises
+    ------
+    ValueError
+        If ``projections`` does not match the view count and detector shape of
+        ``geometry``.
     """
     config = AlignConfig(resolution=resolution)
     segments = acquisition_segments(geometry, view_positions)

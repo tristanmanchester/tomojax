@@ -556,7 +556,9 @@ def reconstruct(
         The same objective as ``fista`` by stochastic primal-dual updates:
         one block of views per update, in an order drawn with ``seed``.
         The default runs ``ceil(600 * sqrt(B))`` updates for B blocks
-        (``termination="iteration_limit"``, ``early_stop=False``).
+        (``termination="iteration_limit"``, ``early_stop=False``) and uses the
+        same isolated-voxel noise calibration as ``fista`` when
+        ``tv_weight=None``.
 
     ``mlem`` is linear Poisson MLEM/OSEM (fixed sweep budget, default 50,
     ``termination="iteration_limit"``, ``early_stop=False``), not transmission
@@ -1250,7 +1252,14 @@ def align(
         ``info["diagnostics"]`` (``focus_px``, ``binning``, ``views``, ``pairs``
         for direct fits; per-pair constraints and consistency statistics for
         ``opposite-views``). Joint fits record resolved settings in
-        ``info["config"]`` and convergence diagnostics in ``info["report"]``.
+        ``info["config"]``, convergence diagnostics in ``info["report"]``, and
+        cross-detector column disturbance screening in
+        ``info["disturbed_views"]`` (``score``, ``ranges``, ``angles``, and
+        ``message``; pass confirmed ranges to
+        ``AlignConfig(exclude_views=...)``). When ``exclude_views`` omits views,
+        ``info["fit_views"]`` lists the retained input indices and excluded views
+        remain in ``result.scan`` with pose increments interpolated within each
+        trajectory.
         Each fitted global appears under its name in ``info["calibration"]`` as
         ``{"value": ..., "change": ...}``: the final value, the center in geometry
         length units (u, or u/v for cone beams) and angles in degrees, and the
