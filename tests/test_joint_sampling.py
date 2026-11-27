@@ -168,3 +168,25 @@ def test_masked_column_covariance_has_matched_transpose_and_preserves_flux():
     filtered = column_filter(columns, 0.85, None)
     contrast = columns - columns.mean(axis=-1, keepdims=True)
     np.testing.assert_allclose(filtered, columns - 0.85 * contrast, atol=3e-7)
+
+
+def test_column_calibration_requires_evidence_in_distant_rows():
+    rng = np.random.default_rng(13)
+    n, v, u = 96, 32, 48
+    data = rng.normal(0, 0.01, (n, v, u)).astype(np.float32)
+    t = np.arange(n)[:, None]
+    x = np.linspace(-1, 1, u)
+    signal = (0.2 * np.exp(-(((t - 24) / 3) ** 2)) * np.sin(2 * np.pi * x)).astype(np.float32)
+    localized = data.copy()
+    localized[:, v // 4 : 3 * v // 4] += signal[:, None]
+    common = data + signal[:, None]
+    residual = []
+    for original in (localized, common):
+        levels, _, noise = _fit._read(original, [1])
+        _fit.calibrate_columns(levels, [1], noise)
+        result = levels[0][0]
+        # Score the imposed field at its peak, relative to exposures far from it.
+        difference = (result[24] - result[60:80].mean(axis=0))[v // 4 : 3 * v // 4].mean(axis=0)
+        residual.append(np.vdot(difference, signal[24]) / np.vdot(signal[24], signal[24]))
+    assert residual[0] == pytest.approx(1.0, abs=0.05)
+    assert residual[1] < 0.1

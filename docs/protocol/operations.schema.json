@@ -2162,8 +2162,15 @@
           "default": 0.5
         },
         "image_tv_weight": {
-          "type": "number",
-          "default": 0.0
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "image_tv_huber": {
           "type": "number",

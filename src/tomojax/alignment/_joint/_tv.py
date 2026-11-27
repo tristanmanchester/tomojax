@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 F32 = jnp.float32
 F64 = jnp.float64
@@ -42,11 +43,16 @@ def conductance(
     return (1 / jnp.maximum(jnp.asarray(eps, F64), _magnitude(x, scales))).astype(F32)
 
 
-def energy(x: jax.Array, eps: float | jax.Array, scales: tuple[float, float, float]) -> jax.Array:
+def energy(
+    x: jax.Array,
+    eps: float | jax.Array,
+    scales: tuple[float, float, float],
+    weight: float | jax.Array = 1.0,
+) -> jax.Array:
     """Huber TV with width ``eps``."""
     t = _magnitude(x, scales)
     eps = jnp.asarray(eps, F64)
-    return jnp.sum(jnp.where(t <= eps, t * t / (2 * eps), t - eps / 2), dtype=F64)
+    return jnp.sum(weight * jnp.where(t <= eps, t * t / (2 * eps), t - eps / 2), dtype=F64)
 
 
 def diffusion(x: jax.Array, d: jax.Array, scales: tuple[float, float, float]) -> jax.Array:
@@ -66,6 +72,23 @@ def diagonal(d: jax.Array, scales: tuple[float, float, float]) -> jax.Array:
         positive = jnp.where(last < d.shape[a] - 1, d, 0) * jnp.asarray(scales[a] ** 2, F32)
         tv = tv + positive.astype(F64) + _behind(positive, a).astype(F64)
     return tv.astype(F32)
+
+
+def inverse(
+    _out: jax.Array,
+    d: jax.Array | None,
+    dd: jax.Array,
+    floor: jax.Array,
+    lm: float,
+    *,
+    lam: float,
+    scales: tuple[float, float, float],
+) -> jax.Array:
+    """Inverse diagonal of the damped data and TV normal matrix."""
+    value = dd + jnp.asarray(lm, dtype=np.float32) * jnp.maximum(dd, floor)
+    if d is not None:
+        value = value + np.float32(lam) * diagonal(d, scales)
+    return 1 / jnp.maximum(value, np.float32(1e-8))
 
 
 def dot(a: jax.Array, b: jax.Array) -> jax.Array:

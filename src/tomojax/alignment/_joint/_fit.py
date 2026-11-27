@@ -12,8 +12,8 @@ data-dependent route selection. Each working pixel is one ray through its center
 block with missing input pixels is the mean of its finite ones, weighted by their
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
-right at Nyquist. Low-attenuation rays and row contrasts calibrate fixed and transient
-detector-column offsets and the excess variance shared down a column before either level. Image TV is off by default.
+right at Nyquist. Faint rays and row contrasts calibrate the fixed detector offsets and
+excess column variance. The default image prior weights the unobserved part of each voxel.
 """
 
 from __future__ import annotations
@@ -32,9 +32,9 @@ from tomojax.core.devices import announce
 from tomojax.core.geometry.base import Detector, Grid, grid_volume_origin
 from tomojax.core.registration import scaled_images
 from tomojax.core.validation import validate_physical_poses
-from tomojax.recon.fista_tv import resolve_tv_metric
+from tomojax.recon._tv_metric import resolve_tv_metric, voxel_noise_weight
 
-from ._columns import calibrate_columns
+from ._columns import ColumnNoise, calibrate_columns
 from ._noise import MAX_SAMPLES, Windows, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
@@ -243,7 +243,7 @@ def _level(
     scales: np.ndarray | None = None,
     parameters: Parameters | None = None,
     detector_roll: float = 0.0,
-    column_attenuation: float = 0.0,
+    column_noise: ColumnNoise,
     config: AlignConfig,
 ) -> tuple[np.ndarray, np.ndarray | None, Grid, Operators, _LevelCalibration]:
     """Observations, grid, operators and calibration at one binning.
@@ -264,7 +264,7 @@ def _level(
     for s in range(0, len(y), 16):
         slab = slice(s, s + 16)
         w = None if precision is None else precision[slab]
-        y[slab] = column_filter(residual_filter(y[slab]), column_attenuation, w)
+        y[slab] = column_filter(residual_filter(y[slab]), column_noise.attenuation, w)
     d = Detector(
         y.shape[2],
         y.shape[1],
@@ -278,7 +278,7 @@ def _level(
         d,
         y,
         weights=precision,
-        tv_weight=config.image_tv_weight,
+        tv_weight=1.0 if config.image_tv_weight is None else config.image_tv_weight,
         huber_delta=config.image_tv_huber,
     )
     contrast = _capped_contrast(y, float(metric.contrast_scale), precision)
@@ -298,12 +298,16 @@ def _level(
         parameters=parameters,
         detector_roll=detector_roll,
         detector_pivot=detector.center,
-        column_attenuation=column_attenuation,
+        column_attenuation=column_noise.attenuation,
         masked=precision is not None,
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
+    weight = float(metric.weight_over_contrast) * contrast
+    if config.image_tv_weight is None:
+        rms = column_noise.faint_sd * float(scale) * h**2 * math.sqrt(len(y) / (d.du * d.dv))
+        weight = float(voxel_noise_weight(metric, rms, g.shape).weight)
     calibration: _LevelCalibration = {
-        "tv_weight": float(metric.weight_over_contrast) * contrast,
+        "tv_weight": weight,
         "eps": max(1e-8, config.image_tv_huber * contrast * h / float(metric.length_scale) ** 2),
         "delta": max(config.loss_width * sigma, config.loss_contrast_floor * contrast, 1e-8),
         "sigma": sigma,
@@ -434,6 +438,21 @@ def _fit_inputs(
     return y0, poses
 
 
+def _fit_detector(
+    detector: Detector, bins: Sequence[int], frames: np.ndarray | None
+) -> tuple[int, int, tuple[float, float], np.ndarray | None]:
+    """Trim high-index pixels to whole blocks and locate the centers of the retained detectors."""
+    multiple = math.lcm(*bins)
+    drop_v, drop_u = detector.nv % multiple, detector.nu % multiple
+    center = (
+        detector.center[0] - 0.5 * drop_u * detector.du,
+        detector.center[1] - 0.5 * drop_v * detector.dv,
+    )
+    if frames is not None:
+        frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
+    return drop_v, drop_u, center, frames
+
+
 def fit_poses(
     projections: ArrayLike | jax.Array,
     nominal_poses: ArrayLike | jax.Array,
@@ -498,14 +517,7 @@ def fit_poses(
             schedule = fit_schedule(grid, detector, cone, keep_grid=keep_grid, config=config)
         base, dbin, margin = schedule.base, schedule.detector_binning, schedule.margin
         bins = [level.binning for level in schedule.levels]
-        multiple = math.lcm(*bins)
-        drop_v, drop_u = detector.nv % multiple, detector.nu % multiple
-        center = (
-            detector.center[0] - 0.5 * drop_u * detector.du,
-            detector.center[1] - 0.5 * drop_v * detector.dv,
-        )
-        if frames is not None:
-            frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
+        drop_v, drop_u, center, frames = _fit_detector(detector, bins, frames)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         config = resolve_align_config(config, parameters.fit, cone=frames is not None)
         x = last = p = None
@@ -516,7 +528,7 @@ def fit_poses(
         prior = None
         levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(y0[:, : detector.nv - drop_v, : detector.nu - drop_u], bins)
-        column_attenuation = calibrate_columns(binned, bins, noise)
+        column_noise = calibrate_columns(binned, bins, noise)
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
             with (
@@ -541,7 +553,7 @@ def fit_poses(
                     parameters=parameters,
                     detector_roll=detector_roll,
                     config=config,
-                    column_attenuation=column_attenuation[level.binning],
+                    column_noise=column_noise[level.binning],
                 )
                 # Without angular columns, reuse the translation prior across levels.
                 if prior is None or "rotations" in parameters.fit:
@@ -570,6 +582,7 @@ def fit_poses(
                     p0=p,
                     pose_sigma=cal["sigma"],
                     delta=cal["delta"],
+                    visibility=config.image_tv_weight is None,
                     scales=cal["scales"],
                     placement=placement,
                 )

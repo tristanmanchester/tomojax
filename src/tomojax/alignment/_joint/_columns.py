@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from statistics import NormalDist
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -18,6 +18,13 @@ if TYPE_CHECKING:
 type Float32Array = np.ndarray[tuple[int, ...], np.dtype[np.float32]]
 type Float64Array = np.ndarray[tuple[int, ...], np.dtype[np.float64]]
 type BoolArray = np.ndarray[tuple[int, ...], np.dtype[np.bool_]]
+
+
+class ColumnNoise(NamedTuple):
+    """Attenuation of the column contrasts and independent faint-ray noise at this scale."""
+
+    attenuation: float = 0.0
+    faint_sd: float = 0.0
 
 
 def _air_noise(y: Float32Array, w: Float32Array | None, sigma: float) -> float:
@@ -221,44 +228,86 @@ def _fixed(
     )
 
 
+def _transient(
+    y: Float32Array, w: Float32Array | None, sigma: float
+) -> tuple[Float64Array, BoolArray, Float64Array, float]:
+    """Conditional faint-ray innovations, retaining the measured mean of each exposure."""
+    sd = _air_noise(y, w, sigma)
+    floor, observed, features = _observations(y, w, sd)
+    residual = _innovations(floor, observed, features, sd, y.shape[1])
+    mass = np.maximum(np.asanyarray(observed.sum(axis=1, keepdims=True), dtype=np.intp), 1)
+    mean = np.asanyarray(residual.sum(axis=1, keepdims=True), dtype=np.float64) / mass
+    return np.where(observed, residual - mean, 0), observed, floor, sd
+
+
+def _blocked(
+    field: Float64Array, observed: BoolArray, ratio: int
+) -> tuple[Float64Array, BoolArray]:
+    """Average a column statistic over the observed columns of each coarser block."""
+    n = len(field)
+    count = np.asanyarray(observed.reshape(n, -1, ratio).sum(axis=2), dtype=np.intp)
+    summed = np.asanyarray(field.reshape(n, -1, ratio).sum(axis=2), dtype=np.float64)
+    return summed / np.maximum(count, 1), count > 0
+
+
 def calibrate_columns(
     levels: Sequence[tuple[Float32Array, Float32Array | None]], bins: Sequence[int], noise: float
-) -> dict[int, float]:
+) -> dict[int, ColumnNoise]:
     """Remove recurrent gain errors and estimate each level's column-contrast attenuation."""
     fine = min(bins)
     y, w = levels[bins.index(fine)]
     n, v, u = y.shape
-    attenuation = dict.fromkeys(bins, 0.0)
+    attenuation = dict.fromkeys(bins, ColumnNoise())
     if min(n, v, u) < 2:
         return attenuation
-    sd = _air_noise(y, w, noise / fine)
-    floor, observed, features = _observations(y, w, sd)
-    dynamic = _innovations(floor, observed, features, sd, v)
+    dynamic, observed, floor, sd = _transient(y, w, noise / fine)
     field = _fixed(y, w, *_offset_variance(floor - dynamic, observed))
-    mass = np.maximum(np.asanyarray(observed.sum(axis=1, keepdims=True), dtype=np.intp), 1)
-    dynamic -= np.asanyarray(dynamic.sum(axis=1, keepdims=True), dtype=np.float64) / mass
+    # A random detector gain is common even to distant rows. Independent
+    # estimates in the two outer quartiles distinguish it from variance
+    # confined to the intervening specimen. Their cross-product is unbiased
+    # for the common variance under independent errors in the two estimates.
+    band = max(1, v // 4)
+    ends: list[tuple[Float64Array, BoolArray]] = []
+    for rows in (slice(0, band), slice(-band, None)):
+        edge, seen, _, _ = _transient(y[:, rows], None if w is None else w[:, rows], noise / fine)
+        ends.append((edge, seen))
+    paired_native = ends[0][1] & ends[1][1]
+    covariance_native = np.sum(ends[0][0] * ends[1][0], where=paired_native, dtype=np.float64)
+    power = np.sum(dynamic**2, where=paired_native, dtype=np.float64)
+    gain = (
+        np.asanyarray(np.clip(covariance_native / power, 0, 1), dtype=np.float64).item()
+        if power > 0
+        else 0.0
+    )
     for (data, _), b in zip(levels, bins, strict=True):
         ratio = b // fine
-        columns = field.reshape(data.shape[2], ratio)
-        count = np.asanyarray(observed.reshape(n, -1, ratio).sum(axis=2), dtype=np.intp)
-        changing = np.asanyarray(
-            np.where(observed, dynamic, 0).reshape(n, -1, ratio).sum(axis=2), dtype=np.float64
-        ) / np.maximum(count, 1)
-        variance = np.asanyarray(np.sum(changing**2), dtype=np.float64).item() / max(
-            1, np.count_nonzero(count)
+        left, left_seen = _blocked(*ends[0], ratio)
+        right, right_seen = _blocked(*ends[1], ratio)
+        paired = left_seen & right_seen
+        covariance = np.sum(left * right, where=paired, dtype=np.float64) / max(
+            1, np.count_nonzero(paired)
         )
+        # Conditioning on the full-height estimate gives posterior variance
+        # tau² (1 - gain), as well as the shrunk correction gain * dynamic.
+        variance = (1 - gain) * max(0.0, np.asanyarray(covariance, dtype=np.float64).item())
+        columns = (field + gain * dynamic).reshape(n, data.shape[2], ratio)
         independent = (noise / b) ** 2
         total = independent + data.shape[1] * variance
-        attenuation[b] = 1 - math.sqrt(independent / total) if total else 0.0
+        attenuation[b] = ColumnNoise(
+            1 - math.sqrt(independent / total) if total else 0.0, sd / ratio
+        )
         if w is None:
-            data[:] -= np.mean(columns, axis=1, dtype=np.float64).astype(np.float32)
+            mean = np.asanyarray(columns.mean(axis=2, dtype=np.float64), dtype=np.float32)
+            data[:] -= mean[:, None, :]
         else:
             for first in range(0, n, 16):
                 sl = slice(first, first + 16)
                 weights = w[sl].reshape(-1, data.shape[1], ratio, data.shape[2], ratio)
                 summed = np.asanyarray(weights.sum(axis=2, dtype=np.float64), dtype=np.float64)
                 weight = np.asanyarray(summed.sum(axis=-1), dtype=np.float64)
-                correction = np.asanyarray((summed * columns).sum(axis=-1), dtype=np.float64)
+                correction = np.asanyarray(
+                    (summed * columns[sl, None]).sum(axis=-1), dtype=np.float64
+                )
                 data[sl] -= np.divide(
                     correction, weight, out=np.zeros_like(weight), where=weight > 0
                 )

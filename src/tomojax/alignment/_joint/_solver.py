@@ -32,6 +32,7 @@ from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
 from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
+from ._visibility import unobserved_weight
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -328,28 +329,20 @@ class _Level:
         scales: tuple[float, float, float],
         delta: float,
         inner: int,
+        spatial: jax.Array | float = 1.0,
         image_tolerance: float = 0.03,
     ) -> None:
         self.ops, self.prior, self.lam, self.delta = ops, prior, lam, delta
-        self.image_tolerance = image_tolerance
+        self.image_tolerance, self.spatial = image_tolerance, spatial
         self._made = None
-        self.tv_value = jax.jit(lambda x: tv.energy(x, eps, scales))
-        self.conduct = _into(lambda _out, x: tv.conductance(x, eps, scales))
+        self.tv_value = jax.jit(lambda x, w: tv.energy(x, eps, scales, w))
+        self.conduct = _into(lambda _out, x, w: w * tv.conductance(x, eps, scales))
         self.diffuse = jax.jit(lambda x, d: tv.diffusion(x, d, scales))
         self.gradient = _into(
             lambda _out, gx, x, d: gx + jnp.float32(lam) * tv.diffusion(x, d, scales)
         )
 
-        @_into
-        def inverse(
-            _out: jax.Array, d: jax.Array | None, dd: jax.Array, floor: jax.Array, lm: float
-        ) -> jax.Array:
-            value = dd + jnp.float32(lm) * jnp.maximum(dd, floor)
-            if d is not None:
-                value = value + jnp.float32(lam) * tv.diagonal(d, scales)
-            return 1 / jnp.maximum(value, jnp.float32(1e-8))
-
-        self.inverse = inverse
+        self.inverse = _into(partial(tv.inverse, lam=lam, scales=scales))
 
         # At unchanged poses the prediction is linear in the image: the residual
         # plus a times the step's projection (returned scaled by sw, zero only
@@ -526,7 +519,7 @@ class _Level:
 
     def image_penalty(self, x: jax.Array) -> float:
         """Image-prior objective, with no TV call or temporary when its weight is zero."""
-        return float(self.lam * self.tv_value(x)) if self.lam else 0.0
+        return float(self.lam * self.tv_value(x, self.spatial)) if self.lam else 0.0
 
     def initial_volume(
         self, q: jax.Array, lipschitz: float | jax.Array, iterations: int
@@ -706,7 +699,7 @@ class _Level:
         """What every step from this linearization shares, whatever its damping."""
         ops, prior = self.ops, self.prior
         gx0, dd, sw, j, gr, gram, residual, common = linear
-        d = self._write("d", self.conduct, x) if self.lam else None
+        d = self._write("d", self.conduct, x, self.spatial) if self.lam else None
         gx = self._write("gx", self.gradient, gx0, x, d) if d is not None else gx0
         wpose = prior.weights(c, pose_weight)
         pd = jnp.diagonal(gram, axis1=1, axis2=2)
@@ -956,6 +949,7 @@ def solve(
     pose_sigma: float,
     delta: float,
     scales: tuple[float, float, float],
+    visibility: bool = False,
     placement: Mapping[str, Place] | None = None,
 ) -> tuple[jax.Array, jax.Array, np.ndarray, LevelRecord]:
     """Fit the volume and the per-view pose parameters at one level.
@@ -984,6 +978,7 @@ def solve(
             scales=scales,
             delta=delta,
             inner=budget.image_iterations,
+            spatial=jax.device_put(unobserved_weight(ops)) if weight and visibility else 1.0,
             image_tolerance=budget.image_tolerance,
         )
         stacks = level.place(y, precision, placement, x0=x0)

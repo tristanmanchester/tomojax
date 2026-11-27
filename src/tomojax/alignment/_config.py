@@ -82,7 +82,8 @@ class AlignConfig:
         The least loss width, as a fraction of the data's contrast. Default is 0.5.
     image_tv_weight : float, optional
         Total-variation weight on the fit's image, as a fraction of its contrast;
-        0 leaves the image unregularized. Default is 0.0.
+        0 leaves the image unregularized. The default scales the penalty by measured noise
+        and by the fraction of views in which each voxel leaves the detector.
     image_tv_huber : float, optional
         The total variation's Huber width, as a fraction of the contrast.
         Default is 1.0.
@@ -114,7 +115,7 @@ class AlignConfig:
     rotation_sigma: float = field(default=0.5, metadata={"unit": "degree"})
     loss_width: float = field(default=2.5, metadata={"unit": "noise_sigma"})
     loss_contrast_floor: float = field(default=0.5, metadata={"unit": "1"})
-    image_tv_weight: float = field(default=0.0, metadata={"unit": "1"})
+    image_tv_weight: float | None = field(default=None, metadata={"unit": "1"})
     image_tv_huber: float = field(default=1.0, metadata={"unit": "1"})
     margin: float = field(default=1 / 16, metadata={"unit": "1"})
     refine_smoothing: float = field(default=8.0, metadata={"unit": "native_pixel"})
@@ -143,7 +144,7 @@ class AlignConfig:
             ("margin", self.margin),
             ("image_tolerance", self.image_tolerance),
             ("tolerance", self.tolerance),
-            ("image_tv_weight", self.image_tv_weight),
+            ("image_tv_weight", self.image_tv_weight if self.image_tv_weight is not None else 0.0),
             ("loss_contrast_floor", self.loss_contrast_floor),
             ("refine_smoothing", self.refine_smoothing),
         ):
