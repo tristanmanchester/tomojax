@@ -523,11 +523,21 @@ class FourierPlan:
             raw, tails, exterior_mass = self.exterior.transform(raw)
         if self.cuda:
             rows = self.depth * self.source_views
+            padded = xp.empty((*raw.shape[:-1], self.nfft), dtype=xp.float32)
             self.mass_kernel(
                 ((rows + 7) // 8,),
                 (256,),
-                (raw, self.deapod, self.row_mass, np.int32(raw.shape[-1]), np.int64(rows)),
+                (
+                    raw,
+                    self.deapod,
+                    self.row_mass,
+                    padded,
+                    np.int32(raw.shape[-1]),
+                    np.int32(self.nfft),
+                    np.int64(rows),
+                ),
             )
+            raw = padded
         else:
             mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du
             raw *= self.deapod

@@ -194,7 +194,8 @@ extern "C" __global__ void polar(
 
 _MASS_SOURCE = r"""
 extern "C" __global__ void mass_deapod(
-    float* raw, const float* deapod, double* row_mass, int nu, long long nrows
+    const float* raw, const float* deapod, double* row_mass, float* padded,
+    int nu, int nfft, long long nrows
 ) {
     long long row = (long long)blockIdx.x * 8 + threadIdx.x / 32;
     int lane = threadIdx.x % 32;
@@ -204,8 +205,9 @@ extern "C" __global__ void mass_deapod(
             long long index = row * nu + u;
             float value = raw[index];
             total += (double)value;
-            raw[index] = value * deapod[u];
+            padded[row * nfft + u] = value * deapod[u];
         }
+        for (int u = nu + lane; u < nfft; u += 32) padded[row * nfft + u] = 0.f;
     }
     for (int shift = 16; shift > 0; shift >>= 1)
         total += __shfl_down_sync(0xffffffff, total, shift);
@@ -245,7 +247,7 @@ def all_finite_kernel() -> CuPyValue:
 
 @functools.lru_cache(maxsize=1)
 def mass_deapod_kernel() -> CuPyValue:
-    """Sum each measured profile in FP64 while deapodizing its owned FP32 copy."""
+    """Sum each profile in FP64 while writing its tapered, zero-padded FP32 transform input."""
     import cupy
 
     return cupy.RawKernel(_MASS_SOURCE, "mass_deapod", options=("--fmad=false",))
