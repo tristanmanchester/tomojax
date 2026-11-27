@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 import math
 import operator
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import msgspec
 import numpy as np
@@ -14,6 +14,10 @@ import numpy as np
 from tomojax import progress
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Axis, Uniform
+
+if TYPE_CHECKING:
+    from tomojax.io._export_resume import Journal
+
 
 type Interval = slice | tuple[int | None, int | None] | None
 type Crop = Sequence[Interval]
@@ -43,6 +47,8 @@ class ExportSource:
         Reads a rectangular region of the source.
     record : dict or callable
         Object metadata, or a function that registers the selected detector window and views.
+    identity : callable or None, optional
+        File generation and byte layout for resumable reads.
     """
 
     name: str
@@ -53,6 +59,8 @@ class ExportSource:
     domain: str
     read: Callable[[Region], np.ndarray]
     record: dict[str, object] | Callable[[tuple[tuple[int, int], ...], int], dict[str, object]]
+
+    identity: Callable[[], tuple[int, ...] | None] | None = None
 
     def __post_init__(self) -> None:
         if len(self.shape) != 3 or len(self.axes) != 3:
@@ -208,12 +216,18 @@ class Blocks:
     below: int = 0
     above: int = 0
 
+    journal: Journal | None = None
+
+    @property
+    def first(self) -> int:
+        return self.journal.state.planes if self.journal is not None else 0
+
     def __iter__(self) -> Iterator[tuple[Region, np.ndarray]]:
         selection, values = self.selection, self.values
         depth = selection.stored_shape[0]
         dtype = np.dtype(values.dtype).newbyteorder("<")
         stored_axis = selection.order.index(0)
-        for start in range(0, depth, selection.block_depth):
+        for start in range(self.first, depth, selection.block_depth):
             progress.check_canceled()
             end = min(depth, start + selection.block_depth)
             block = selection.read(start, end)
@@ -239,5 +253,7 @@ class Blocks:
             region = [slice(None)] * 3
             region[stored_axis] = slice(start, end)
             yield tuple(region), block.astype(dtype, copy=False).transpose(selection.order)
+            if self.journal is not None:
+                self.journal.advanced(end, self.below, self.above)
             for _ in range(end - start):
                 progress.step("slices")

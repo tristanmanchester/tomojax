@@ -483,7 +483,14 @@ class Session:
         del self.jobs[job.id]
         try:
             with job.lifetime:
-                job.stages.temporary.close()
+                if isinstance(terminal, e.ErrorReply) and terminal.error.kind in {
+                    "canceled",
+                    "superseded",
+                }:
+                    error = Canceled(terminal.error.message)
+                    job.stages.temporary.__exit__(Canceled, error, None)
+                else:
+                    job.stages.temporary.close()
         except Exception:
             # The commit decision is final. Report cleanup failures to the operator.
             logging.exception("Failed to dispose resources for %s", job.id)

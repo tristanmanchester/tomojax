@@ -109,7 +109,7 @@ class Stages:
         paths = plan.format.paths(plan.path)
         staged = {p: self.output(p, force=force) for p in paths}
         primary = staged[plan.path]
-        receipt = plan.write(primary)
+        receipt = self.temporary.enter_context(plan.staged(primary))
         for final, generated in zip(paths, plan.format.paths(primary), strict=True):
             if generated != staged[final]:
                 generated.replace(staged[final])

@@ -678,14 +678,23 @@ class Admission:
 
         return write
 
-    def durable_paths(self, path: Path, outputs: list[Path], *, force: bool) -> list[Path]:
+    def durable_paths(
+        self,
+        path: Path,
+        outputs: list[Path],
+        *,
+        force: bool,
+        pending: tuple[Path, ...] | None = None,
+    ) -> list[Path]:
         if not path.name or path.name == "..":
             raise InvalidParameter("path", "expected an output file or directory name")
         paths = [*outputs, path.with_name(path.name + ".manifest.json")]
         self.details.update(
             paths=[str(p) for p in paths], destination_exists=any(p.exists() for p in paths)
         )
-        check_destinations(paths, force=force or self.validating)
+        check_destinations(
+            paths if pending is None else [*pending, paths[-1]], force=force or self.validating
+        )
         return paths
 
     def write_manifest(self, paths: list[Path], *, force: bool) -> p.Files:
@@ -737,7 +746,10 @@ class Admission:
             compress=operation.compress,
         )
         paths = self.durable_paths(
-            plan.path, list(plan.format.paths(plan.path)), force=operation.force
+            plan.path,
+            list(plan.format.paths(plan.path)),
+            force=operation.force,
+            pending=plan.pending_paths(),
         )
         self.details.update(plan.details)
 

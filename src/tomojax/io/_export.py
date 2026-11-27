@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from dataclasses import asdict, dataclass
 import errno
 import fcntl
+import hashlib
 import math
 import os
 from pathlib import Path
 import shutil
 import tempfile
 
+import msgspec
 import numpy as np
 
 from tomojax import progress
@@ -22,6 +24,7 @@ from tomojax.errors import InvalidParameter
 from tomojax.io import _export_formats as formats
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
 from tomojax.io._export_formats import Document, Format, format_for, slice_path
+from tomojax.io._export_resume import Journal, continuing, partial_path, prior_state
 
 
 def existing_parent(path: Path) -> Path:
@@ -113,6 +116,16 @@ def recover_directory(fmt: Format, path: Path) -> None:
         raise ValueError(f"incomplete export at {path}; previous export at {aside}")
 
 
+def _published_member(fmt: Format, path: Path, staged: Path) -> bool:
+    """An interrupted installation can already have linked this exact prepared file."""
+    if not fmt.resumable or not path.exists() or path.is_symlink():
+        return False
+    if fmt.layout == "directory":
+        before, after = fmt.record_path(staged), fmt.record_path(path)
+        return before.is_file() and after.is_file() and before.samefile(after)
+    return staged.is_file() and path.samefile(staged)
+
+
 def install_export(
     staged: Mapping[Path, Path],
     fmt: Format,
@@ -147,9 +160,11 @@ def install_export(
     for p in paths:
         if not staged[p].exists():
             raise FileNotFoundError(f"missing staged export {p}")
-        if os.path.lexists(p) and not force:
+        if os.path.lexists(p) and not force and not _published_member(fmt, p, staged[p]):
             raise FileExistsError(f"output already exists: {p}")
     if fmt.layout == "directory":
+        if not force and _published_member(fmt, path, staged[path]):
+            return
         aside = _previous(path)
         if path.exists():
             if path.is_symlink() or not path.is_dir() or not fmt.read_record(path):
@@ -165,7 +180,7 @@ def install_export(
     # Backups of individual files are hard links. A single-file replacement never
     # vacates its public name. A group first withdraws the old commit record.
     for p in reversed(paths):
-        if os.path.lexists(p):
+        if os.path.lexists(p) and force:
             backup = staged[p].parent / (p.name + ".previous")
             os.link(p, backup, follow_symlinks=False)
             cleanup.callback(backup.unlink, missing_ok=True)
@@ -178,7 +193,7 @@ def install_export(
             staged[p].replace(p)
             if new:
                 undo.callback(p.unlink, missing_ok=True)
-        else:
+        elif not _published_member(fmt, p, staged[p]):
             os.link(staged[p], p)
             undo.callback(p.unlink)
 
@@ -201,6 +216,8 @@ class ExportPlan:
         Dry-run report.
     record : dict
         Metadata embedded in or written beside the output.
+    resume_request : dict or None, optional
+        The registered source and options that determine restartable bytes.
     """
 
     path: Path
@@ -209,8 +226,80 @@ class ExportPlan:
     values: Values
     details: Document
     record: Document
+    resume_request: Document | None = None
 
-    def write(self, staged: Path) -> Document:
+    def pending_paths(self) -> tuple[Path, ...]:
+        """Public destinations still to be installed, including all unrelated existing outputs.
+
+        Returns
+        -------
+        tuple of Path
+            Destination names for exclusive creation checks.
+        """
+        paths = self.format.paths(self.path)
+        if self.resume_request is None:
+            return paths
+        state = prior_state(self.path, self.resume_request)
+        if state is None or not state.finished:
+            return paths
+        primary = partial_path(self.path) / "files" / self.path.name
+        return tuple(
+            path
+            for path, staged in zip(paths, self.format.paths(primary), strict=True)
+            if not _published_member(self.format, path, staged)
+        )
+
+    @contextmanager
+    def staged(self, staged: Path) -> Iterator[Document]:
+        """Prepare a receipt and hold the export lock until the caller installs its files.
+
+        Parameters
+        ----------
+        staged : Path
+            Private primary destination with the public basename.
+
+        Yields
+        ------
+        dict
+            Receipt for this generation.
+        """
+        if self.resume_request is None:
+            yield self._write(staged)
+            return
+        with continuing(self.path, self.resume_request, asdict(self.values)) as journal:
+            folder = journal.root / "files"
+            with protect_inputs(folder):
+                folder.mkdir(exist_ok=True)
+            primary = folder / self.path.name
+            receipt = self._write(primary, journal)
+            expected = self.resume_request["source"]
+            identity = self.selection.source.identity
+            if isinstance(expected, list) and (identity is None or tuple(expected) != identity()):
+                raise InvalidParameter(
+                    "source", "the source file changed during export; rerun the export"
+                )
+            if not journal.state.finished:
+                journal.dirty.update(self.format.paths(primary))
+                journal.dirty.add(self.format.record_path(primary))
+                journal.state.finished = True
+                journal.save(force=True)
+            if staged.parent == journal.root / "install":
+                with protect_inputs(staged.parent):
+                    if staged.parent.exists():
+                        shutil.rmtree(staged.parent)
+                    staged.parent.mkdir()
+            # Keep the synced generation until the last public rename and manifest
+            # have committed. Private hard links cost no additional payload storage.
+            for source, target in zip(
+                self.format.paths(primary), self.format.paths(staged), strict=True
+            ):
+                if source.is_dir():
+                    shutil.copytree(source, target, copy_function=os.link)
+                else:
+                    os.link(source, target)
+            yield receipt
+
+    def _write(self, staged: Path, journal: Journal | None = None) -> Document:
         """Write all files into a staging area.
 
         Parameters
@@ -223,9 +312,12 @@ class ExportPlan:
         dict
             Receipt including byte and clipping counts.
         """
-        blocks = Blocks(self.selection, self.values)
+        blocks = Blocks(self.selection, self.values, journal=journal)
+        if journal:
+            blocks.below, blocks.above = journal.state.below, journal.state.above
         with progress.task("export", self.path.name, self.selection.stored_shape[0], "slices"):
-            self.format.writer(staged, blocks, self.record)
+            if journal is None or not journal.state.finished:
+                self.format.writer(staged, blocks, self.record)
             progress.check_canceled()
         size = sum(
             p.stat().st_size
@@ -255,10 +347,22 @@ class ExportPlan:
         path = self.path
         _check_export_paths(self.format, path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=f".{path.name}.partial-", dir=path.parent) as tmp:
+        with (
+            nullcontext(partial_path(path) / "install")
+            if self.resume_request is not None
+            else tempfile.TemporaryDirectory(prefix=f".{path.name}.partial-", dir=path.parent)
+        ) as tmp:
             staged = Path(tmp) / path.name
             try:
-                receipt = self.write(staged)
+                with self.staged(staged) as receipt:
+                    paths = self.format.paths(path)
+                    installs = dict(zip(paths, self.format.paths(staged), strict=True))
+                    with publishing(paths), ExitStack() as cleanup, ExitStack() as undo:
+                        install_export(
+                            installs, self.format, path, force=force, undo=undo, cleanup=cleanup
+                        )
+                        undo.pop_all()
+                    return receipt
             except OSError as exc:
                 if exc.errno != errno.ENOSPC:
                     raise
@@ -266,14 +370,8 @@ class ExportPlan:
                 raise OSError(
                     errno.ENOSPC,
                     f"export {path} stopped after {written} bytes; "
-                    f"{shutil.disk_usage(tmp).free} bytes free",
+                    f"{shutil.disk_usage(path.parent).free} bytes free",
                 ) from exc
-            paths = self.format.paths(path)
-            installs = dict(zip(paths, self.format.paths(staged), strict=True))
-            with publishing(paths), ExitStack() as cleanup, ExitStack() as undo:
-                install_export(installs, self.format, path, force=force, undo=undo, cleanup=cleanup)
-                undo.pop_all()
-            return receipt
 
 
 def plan_export(
@@ -332,7 +430,42 @@ def plan_export(
             raise InvalidParameter(
                 name, f"{fmt.name} does not support {name}; choose from {choices}"
             )
-    values = Values.resolve(selection, dtype, value_range)
+    metadata = (
+        source.record(selection.bounds, binning) if callable(source.record) else source.record
+    )
+    resume_request = None
+    previous = None
+    if fmt.resumable:
+        identity = source.identity() if source.identity else None
+        registration = {
+            "array": array_record(
+                source.shape, source.dtype.str, source.axes, source.unit, source.domain
+            ),
+            "record": {k: v for k, v in metadata.items() if k != "provenance"},
+        }
+        resume_request = {
+            "registration": hashlib.sha256(
+                msgspec.json.encode(registration, order="sorted")
+            ).hexdigest(),
+            "source": list(identity) if identity is not None else None,
+            "member": source.name,
+            "shape": list(source.shape),
+            "input_dtype": source.dtype.str,
+            "domain": source.domain,
+            "format": fmt.name,
+            "dtype": dtype,
+            "bounds": [list(pair) for pair in selection.bounds],
+            "binning": binning,
+            "order": list(selection.order),
+            "range": list(value_range) if value_range is not None else None,
+            "compress": compress,
+        }
+        previous = prior_state(path, resume_request)
+    values = (
+        Values(**previous.values)
+        if previous is not None
+        else Values.resolve(selection, dtype, value_range)
+    )
     array = {
         "name": source.name,
         **array_record(selection.shape, values.dtype, selection.axes, values.unit, source.domain),
@@ -366,7 +499,7 @@ def plan_export(
         "files": files,
     }
     record = {
-        **(source.record(selection.bounds, binning) if callable(source.record) else source.record),
+        **metadata,
         "format": 2,
         "kind": "export",
         "arrays": {source.name: array},
@@ -395,6 +528,6 @@ def plan_export(
             2 * math.prod(source.shape[1:]) * source.dtype.itemsize * selection.factors[0],
         ),
         "carries": fmt.carries,
-        "resumes": False,
+        "resumes": resume_request is not None and resume_request["source"] is not None,
     }
-    return ExportPlan(path, fmt, selection, values, details, record)
+    return ExportPlan(path, fmt, selection, values, details, record, resume_request)

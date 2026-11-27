@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass
 from functools import partial
 import json
@@ -17,6 +18,7 @@ import numpy as np
 import tifffile
 
 from tomojax.core.host_volume import read_at, write_at
+from tomojax.core.input_files import publishing
 from tomojax.errors import InvalidParameter
 from tomojax.io._export_data import Blocks, Selection
 from tomojax.io._export_nexus import nexus_record, nexus_settings, write_nexus
@@ -35,19 +37,23 @@ def binary(stream: IO[bytes], blocks: Blocks) -> None:
     shape = blocks.selection.shape
     dtype = np.dtype(blocks.values.dtype)
     for region, block in blocks:
-        if region[0].start is not None:
-            write_at(
-                stream.fileno(),
-                np.ascontiguousarray(block),
-                offset + region[0].start * math.prod(shape[1:]) * dtype.itemsize,
-            )
-        else:
-            # Moving a spatial axis first puts the source slab on output axis 1.
-            for plane, rows in enumerate(block):
-                index = (plane * shape[1] + region[1].start) * shape[2]
+        file = Path(stream.name) if blocks.journal else None
+        with publishing(file) if file is not None else nullcontext():
+            if region[0].start is not None:
                 write_at(
-                    stream.fileno(), np.ascontiguousarray(rows), offset + index * dtype.itemsize
+                    stream.fileno(),
+                    np.ascontiguousarray(block),
+                    offset + region[0].start * math.prod(shape[1:]) * dtype.itemsize,
                 )
+            else:
+                # Moving a spatial axis first puts the source slab on output axis 1.
+                for plane, rows in enumerate(block):
+                    index = (plane * shape[1] + region[1].start) * shape[2]
+                    write_at(
+                        stream.fileno(), np.ascontiguousarray(rows), offset + index * dtype.itemsize
+                    )
+        if blocks.journal is not None and file is not None:
+            blocks.journal.dirty.add(file)
 
 
 def pages(path: Path, blocks: Blocks) -> Iterator[np.ndarray]:
@@ -55,11 +61,19 @@ def pages(path: Path, blocks: Blocks) -> Iterator[np.ndarray]:
         for _, data in blocks:
             yield from data
         return
-    with tempfile.TemporaryFile(dir=path.parent) as scratch:
+    journal = blocks.journal
+    scratch_path = path.parent.parent / "transpose.raw"
+    with ExitStack() as opened:
+        if journal:
+            with publishing(scratch_path):
+                mode = "r+b" if scratch_path.exists() else "w+b"
+                scratch = opened.enter_context(scratch_path.open(mode, buffering=0))
+        else:
+            scratch = opened.enter_context(tempfile.TemporaryFile(dir=path.parent))
         binary(scratch, blocks)
         shape = blocks.selection.shape
         plane = np.empty(shape[1:], np.dtype(blocks.values.dtype).newbyteorder("<"))
-        for index in range(shape[0]):
+        for index in range(journal.state.pages if journal else 0, shape[0]):
             read_at(scratch.fileno(), plane, index * plane.nbytes)
             yield plane
 
@@ -95,19 +109,31 @@ def tiff(
     text = json.dumps(record, ensure_ascii=True, allow_nan=False)
     stack = pages(path, blocks)
     if dialect == "slices":
-        path.mkdir()
-        for i, plane in enumerate(stack):
-            tifffile.imwrite(
-                slice_path(path, i),
-                plane,
-                photometric="minisblack",
-                metadata=None,
-                compression=compression,
-                resolution=resolution,
-                resolutionunit="CENTIMETER" if physical else "NONE",
-                maxworkers=1,
-            )
-        (path / f"{path.name}.json").write_text(text, encoding="utf-8")
+        journal = blocks.journal
+        with publishing(path) if journal else nullcontext():
+            path.mkdir(exist_ok=journal is not None)
+        transposed = blocks.selection.order[0] != 0
+        first = journal.state.pages if journal and transposed else blocks.first
+        for i, plane in enumerate(stack, first):
+            page = slice_path(path, i)
+            with publishing(page) if journal else nullcontext():
+                tifffile.imwrite(
+                    page,
+                    plane,
+                    photometric="minisblack",
+                    metadata=None,
+                    compression=compression,
+                    resolution=resolution,
+                    resolutionunit="CENTIMETER" if physical else "NONE",
+                    maxworkers=1,
+                )
+            if journal:
+                journal.dirty.add(page)
+                if transposed:
+                    journal.page(i + 1)
+        record_path = path / f"{path.name}.json"
+        with publishing(record_path) if journal else nullcontext():
+            record_path.write_text(text, encoding="utf-8")
         return
     metadata: dict[str, object] = {"axes": "ZYX"}
     if dialect == "imagej":
@@ -159,7 +185,9 @@ def raw(path: Path, blocks: Blocks, record: Document, *, dialect: str) -> None:
     dims = selection.shape[::-1]
     dtype = blocks.values.dtype
     payload = path.with_suffix(".raw") if dialect == "metaimage" else path
-    with payload.open("wb", buffering=0) as stream:
+    with publishing(payload) if blocks.journal else nullcontext():
+        stream = payload.open("r+b" if blocks.journal and payload.exists() else "wb", buffering=0)
+    with stream:
         if dialect == "amira":
             unit = selection.axes[0].unit
             known = unit in _CM
@@ -182,16 +210,19 @@ def raw(path: Path, blocks: Blocks, record: Document, *, dialect: str) -> None:
         directions = np.eye(3, dtype=int)[[2 - i for i in reversed(selection.order)]]
         world = np.asarray(origin)[np.argsort(selection.order)][::-1]
         label = {"uint8": "MET_UCHAR", "uint16": "MET_USHORT", "float32": "MET_FLOAT"}[dtype]
-        path.write_text(
-            "ObjectType = Image\nNDims = 3\nBinaryData = True\nBinaryDataByteOrderMSB = False\n"
-            f"TransformMatrix = {' '.join(map(str, directions.ravel()))}\n"
-            f"Offset = {' '.join(map(str, world))}\n"
-            f"ElementSpacing = {' '.join(map(str, reversed(spacing)))}\n"
-            f"DimSize = {' '.join(map(str, dims))}\nElementType = {label}\n"
-            f"ElementDataFile = {payload.name}\n",
-            encoding="utf-8",
-        )
-    sidecar(path).write_text(json.dumps(record, allow_nan=False), encoding="utf-8")
+        with publishing(path) if blocks.journal else nullcontext():
+            path.write_text(
+                "ObjectType = Image\nNDims = 3\nBinaryData = True\nBinaryDataByteOrderMSB = False\n"
+                f"TransformMatrix = {' '.join(map(str, directions.ravel()))}\n"
+                f"Offset = {' '.join(map(str, world))}\n"
+                f"ElementSpacing = {' '.join(map(str, reversed(spacing)))}\n"
+                f"DimSize = {' '.join(map(str, dims))}\nElementType = {label}\n"
+                f"ElementDataFile = {payload.name}\n",
+                encoding="utf-8",
+            )
+    record_path = sidecar(path)
+    with publishing(record_path) if blocks.journal else nullcontext():
+        record_path.write_text(json.dumps(record, allow_nan=False), encoding="utf-8")
 
 
 def tiff_record(path: Path) -> Document | None:
@@ -213,6 +244,7 @@ class FormatDescription(TypedDict):
     options: list[str]
     carries: str
     spatial_only: bool
+    resumable: bool
 
 
 @dataclass(frozen=True)
@@ -229,6 +261,7 @@ class Format:
     ordered_pages: bool = False
     settings: Callable[[Selection, str | None], Document] | None = None
     compressed_by_default: bool = False
+    resumable: bool = False
 
     def paths(self, path: Path) -> tuple[Path, ...]:
         if self.layout != "group":
@@ -258,6 +291,7 @@ class Format:
             "options": list(self.options),
             "carries": self.carries,
             "spatial_only": self.spatial_only,
+            "resumable": self.resumable,
         }
 
 
@@ -290,6 +324,7 @@ FORMATS = (
         (*_COMMON, "compress"),
         "ImageJ, Bio-Formats and ITK read the in-plane pixel size.",
         partial(tiff, dialect="slices"),
+        resumable=True,
         ordered_pages=True,
     ),
     Format(
@@ -299,6 +334,7 @@ FORMATS = (
         _COMMON,
         "The adjacent JSON record gives axes, units and value scaling.",
         partial(raw, dialect="raw"),
+        resumable=True,
     ),
     Format(
         "MetaImage",
@@ -307,6 +343,7 @@ FORMATS = (
         _COMMON,
         "ITK and VTK read spacing and origin. The header stores lengths without a unit.",
         partial(raw, dialect="metaimage"),
+        resumable=True,
         payload_suffix=".raw",
     ),
     Format(

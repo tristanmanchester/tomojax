@@ -7,7 +7,7 @@ from typing import Any, BinaryIO, Literal, Protocol, overload
 import numpy as np
 from numpy.typing import DTypeLike
 
-from . import h5d as h5d, h5p as h5p
+from . import h5d as h5d, h5o as h5o, h5p as h5p
 
 class AttributeManager(MutableMapping[str, object]):
     @overload

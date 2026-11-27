@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
+import hashlib
 from os import PathLike
 from pathlib import Path
 from typing import cast
 
+import h5py
 import numpy as np
 
 from tomojax import progress
@@ -199,6 +201,7 @@ def export_source(
         dataset = result_dataset(item)
         record = metadata_record(replace_dataset(dataset, volume=None).to_nxtomo_metadata())
     from tomojax.core.host_volume import mapped_storage, release_planes
+    from tomojax.io._export_resume import hdf5_identity, mapped_identity
 
     mapped = mapped_storage(pixels)
     if mapped is not None and mapped.filename is not None:
@@ -220,6 +223,21 @@ def export_source(
             release_planes(pixels, region[0].start, region[0].stop)
         return data
 
+    def identity() -> tuple[int, ...] | None:
+        if isinstance(pixels, PinnedFrames | Hdf5Frames | MatlabFrames):
+            stack = pixels.stored if isinstance(pixels, MatlabFrames) else pixels
+            if isinstance(stack, PinnedFrames):
+                generation = hdf5_identity(stack.signal)
+            else:
+                with open_input_hdf5(Path(stack.path)) as file:
+                    field = file[stack.dataset]
+                    generation = hdf5_identity(field) if isinstance(field, h5py.Dataset) else None
+            if generation is None:
+                return None
+            views = hashlib.blake2b(stack.frames.tobytes(), digest_size=8).digest()
+            return (*generation, stack.first_row, stack.first_col, int.from_bytes(views))
+        return mapped_identity(pixels)
+
     return ExportSource(
         member.name,
         pixels.shape,
@@ -229,6 +247,7 @@ def export_source(
         member.domain,
         read,
         record,
+        identity,
     )
 
 
@@ -299,8 +318,18 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
             selection = tuple(region["zyx".index(a)] for a in order)
             return np.asarray(data[selection]).transpose(*(order.index(a) for a in "zyx"))
 
+        from tomojax.io._export_resume import hdf5_identity
+
         source = ExportSource(
-            name, shape, data.dtype, axes, disk.unit, disk.domain, read, metadata_record(meta)
+            name,
+            shape,
+            data.dtype,
+            axes,
+            disk.unit,
+            disk.domain,
+            read,
+            metadata_record(meta),
+            lambda: hdf5_identity(data),
         )
         yield source, disk
 
