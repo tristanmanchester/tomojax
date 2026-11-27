@@ -79,9 +79,7 @@ def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[st
     if isinstance(work, CenterSelection):
         label = f"opposite views: the center from {_pairs(len(work.samples))}"
         if work.focus is not None:
-            label = (
-                f"Fourier focus from {len(work.focus.views)} views and {_pairs(len(work.samples))}"
-            )
+            label = work.focus_description
         return [
             ("method", label),
             ("placement", placement_text(placement)),

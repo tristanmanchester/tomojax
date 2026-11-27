@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from functools import cached_property
 import math
 from typing import TYPE_CHECKING
 
@@ -377,19 +378,37 @@ class CenterSelection:
     def method(self) -> str:
         return "sinogram-focus" if self.focus is not None else "opposite-views"
 
+    @cached_property
+    def turn_pairs(self) -> int:
+        """Number of angular pairs sampled on a complete turn for the direct fit."""
+        from tomojax.geometry.coverage import full_rotation
+
+        angles = np.asarray(self.geometry.angles, np.float64)
+        if self.focus is None or not full_rotation(angles):
+            return 0
+        return min(self.geometry.detector.nu, np.unique(angles % 360).size // 2)
+
+    @property
+    def focus_description(self) -> str:
+        """Describe the direct measurement for a dry run."""
+        assert self.focus is not None
+        if self.turn_pairs:
+            return f"Match {self.turn_pairs} opposing angular pairs on their shared detector strip."
+        return (
+            f"Estimate Fourier slice focus from {len(self.focus.views)} views "
+            f"at binning {self.focus.binning}."
+        )
+
     def focused(
         self, projections: np.ndarray | jax.Array, positions: np.ndarray | None
     ) -> tuple[float, dict[str, object]]:
         """Score angular focus and native opposing rays over the full detector width."""
         from .center_registration import paired_center
-
-        assert self.focus is not None
-        from tomojax.geometry.coverage import full_rotation
-
         from .center_turn import turn_center
 
-        if full_rotation(np.asarray(self.geometry.angles)):
-            matched = turn_center(projections, np.asarray(self.geometry.angles))
+        assert self.focus is not None
+        if self.turn_pairs:
+            matched = turn_center(projections, np.asarray(self.geometry.angles), self.turn_pairs)
             if matched is not None:
                 return matched
         focus = self.focus.scores(projections, positions)

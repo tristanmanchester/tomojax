@@ -28,13 +28,10 @@ def plan_product(
     if isinstance(work, CenterSelection):
         if work.focus is not None:
             return p.FocusPlan(
-                len(work.focus.views),
-                work.focus.binning,
-                len(work.samples),
-                (
-                    f"Estimate Fourier slice focus from {len(work.focus.views)} views "
-                    f"at binning {work.focus.binning}.",
-                ),
+                2 * work.turn_pairs or len(work.focus.views),
+                1 if work.turn_pairs else work.focus.binning,
+                work.turn_pairs or len(work.samples),
+                (work.focus_description,),
                 placement,
             )
         return p.CenterPlan(

@@ -89,7 +89,13 @@ def _loading_rows(loading: LoadingReport) -> list[tuple[str, str]]:
         text = "full turn"
         near, far = loading.get("axis_to_edge_px"), loading.get("field_of_view_px")
         overlap = loading.get("overlap_px")
-        if near is not None and far is not None and overlap is not None:
+        gap = loading.get("central_gap_px")
+        if gap is not None and near is not None and far is not None:
+            text += (
+                f", axis {-near:.2f} px outside the panel, outer diameter {far:.2f} px, "
+                f"unmeasured central disk {gap:.2f} px across"
+            )
+        elif near is not None and far is not None and overlap is not None:
             text += (
                 f", axis {near:.2f} px from the nearer edge, "
                 f"field {far:.2f} px, overlap {overlap:.2f} px"

@@ -20,11 +20,10 @@ if TYPE_CHECKING:
 
 
 def _angular_samples(
-    angles: Float64Array, width: int
+    angles: Float64Array, count: int
 ) -> tuple[NDArray[np.intp], NDArray[np.intp], Float64Array]:
     """Bracket both halves of the same angular grid, retaining acquisition indices."""
     nodes, order = np.unique(np.remainder(angles, 360.0), return_index=True)
-    count = min(width, len(nodes) // 2)
     targets: Float64Array = np.remainder(
         float(nodes.item(0)) + np.arange(2 * count, dtype=np.float64) * (180 / count), 360.0
     )
@@ -51,7 +50,7 @@ def _covariance(a: Float64Array, b: Float64Array, lags: NDArray[np.intp]) -> Flo
 
 
 def turn_center(
-    projections: np.ndarray | jax.Array, angles: np.ndarray
+    projections: np.ndarray | jax.Array, angles: np.ndarray, pair_count: int
 ) -> tuple[float, dict[str, object]] | None:
     """Match angular contrast across a full turn, marginalizing fixed gain and linear drift.
 
@@ -63,7 +62,7 @@ def turn_center(
     """
     _, height, width = map(int, projections.shape)
     lags = np.arange(1 - width, width, dtype=np.intp)
-    lo, hi, weight = _angular_samples(np.asarray(angles, np.float64), width)
+    lo, hi, weight = _angular_samples(np.asarray(angles, np.float64), pair_count)
     count = len(lo) // 2
     if count < 3:  # Removing a mean and slope leaves no angular contrast.
         return None
@@ -101,6 +100,7 @@ def turn_center(
         delta = 0.5 * (a0 - b0) / (a0 - 2 * mid + b0)
     center = -0.5 * (lags.item(best) + delta)
     return float(center), {
+        "estimator": "opposing-ray correlation",
         "pairs": count,
         "rows": len(rows),
         "overlap_px": float(width - 2 * abs(center)),

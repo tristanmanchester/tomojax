@@ -191,6 +191,14 @@ class LoadingReport(TypedDict):
     frame_records : dict or None
         The lengths of the frames, ``image_key`` and angles when they differ, as
         when a scan stopped early; loading reads the frames all of them cover.
+    full_turn : bool, optional
+        True when an axial parallel orbit closes. With a known axis, distances
+        are in detector pixels measured from pixel edges.
+    axis_to_edge_px, field_of_view_px, overlap_px : float, optional
+        Signed nearest-edge distance (positive inside), outer field diameter,
+        and width sampled by both opposing views.
+    central_gap_px : float, optional
+        Diameter of the unmeasured central disk when the axis lies outside the panel.
     """
 
     message: str | None
@@ -202,6 +210,7 @@ class LoadingReport(TypedDict):
     axis_to_edge_px: NotRequired[float]
     field_of_view_px: NotRequired[float]
     overlap_px: NotRequired[float]
+    central_gap_px: NotRequired[float]
 
 
 class Inspection(InspectionReport):

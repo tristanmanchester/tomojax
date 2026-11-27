@@ -55,7 +55,10 @@ def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(tmp_path)
             d.attrs["units"] = "mm"
     initial = tj.inspect(path)["loading"]
     assert initial["full_turn"] and "axis_to_edge_px" not in initial
-    fit = tj.align(tj.load(path), fit="center").scan
+    aligned = tj.align(tj.load(path), fit="center")
+    assert aligned.info["diagnostics"]["pairs"] == 64
+    assert aligned.info["diagnostics"]["overlap_px"] == pytest.approx(13.5, abs=0.3)
+    fit = aligned.scan
     assert 31.5 - fit.detector.center[0] / 0.7 == pytest.approx(6.25, abs=0.15)
     assert fit.grid.shape == (1, 115, 115)
     assert fit.grid.vol_center == (0, 0, 0)
@@ -123,3 +126,15 @@ def test_resumed_offset_slabs_keep_their_physical_field_and_repeated_exposures(t
     for actual, expected in zip(output, truth, strict=True):
         assert np.linalg.norm(actual - expected) < 0.035 * np.linalg.norm(expected)
     assert info["truncation"]["field_of_view_radius"] == pytest.approx(32.75)
+
+
+def test_off_panel_axis_reports_the_disk_no_view_can_measure(tmp_path):
+    # Axis at column -2.5, outside the panel edges -0.5 and 23.5.
+    detector = tj.Detector(24, 1, 0.7, 1, center=(14 * 0.7, 0))
+    geometry = tj.ParallelGeometry(tj.Grid(52, 52, 1, 0.7, 0.7, 1), detector, np.arange(360))
+    path = tmp_path / "gap.nxs"
+    tj.save(path, tj.Scan(np.zeros((360, 1, 24), np.float32), geometry))
+    record = tj.inspect(path)["loading"]
+    assert record["overlap_px"] == 0
+    assert record["central_gap_px"] == pytest.approx(4)
+    assert record["field_of_view_px"] == pytest.approx(52)

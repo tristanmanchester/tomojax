@@ -106,6 +106,8 @@ def estimate(
             sampled = len(plan.focus.views)
             work += 128 * (2 * n) ** 2 + 8 * cols * (2 * sampled + 48 * min(rows, 64))
             work += 256 * sampled * min(cols, 128)  # Angular spectra and tapered FFT workspace.
+            # The opposing profiles, angular interpolation, and filtered columns of one row.
+            work = max(work, 8 * 8 * plan.turn_pairs * cols)
         return Placement(devices, "resident", hosts + work, 0, snapshot)
     if isinstance(plan, JointSelection):
         # Levels execute in sequence and keep their host observations for the solve.

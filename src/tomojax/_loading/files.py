@@ -163,6 +163,8 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
             coverage.update(
                 axis_to_edge_px=near, field_of_view_px=2 * far, overlap_px=max(0.0, 2 * near)
             )
+            if near < 0:
+                coverage["central_gap_px"] = -2 * near
     return {
         **coverage,
         "message": None,

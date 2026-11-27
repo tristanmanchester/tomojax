@@ -1251,7 +1251,8 @@ def align(
         (``info["method"] == "sinogram-focus"``) and ``method="opposite-views"``
         leave ``image`` and ``grid`` as None and record their diagnostics in
         ``info["diagnostics"]`` (``focus_px``, ``binning``, ``views``, ``pairs``
-        for direct fits; per-pair constraints and consistency statistics for
+        for half-turn focus, or pairs, rows and overlap for full-turn correlation;
+        per-pair constraints and consistency statistics for
         ``opposite-views``). Joint fits record resolved settings in
         ``info["config"]``, convergence diagnostics in ``info["report"]``, and
         cross-detector column disturbance screening in

@@ -116,8 +116,8 @@ def build_parser() -> ProgressParser:
         "--method",
         choices=("joint", "opposite-views"),
         default=None,
-        help="By default --fit center uses sinogram focus on dense axial half-turns. "
-        "Joint fits an image with the parameters. Opposite-views fits the center from paired rays.",
+        help="Axial center fits use focus on half turns and opposing rays on full turns. "
+        "Joint fits an image with the parameters. Opposite-views fits paired rays alone.",
     )
     _ = parser.add_argument(
         "--motion",
