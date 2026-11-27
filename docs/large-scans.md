@@ -6,6 +6,8 @@ TomoJAX automatically streams projections from host memory and reconstructs volu
 
 Importing `tomojax` sets `XLA_PYTHON_CLIENT_PREALLOCATE=false` unless you have set it yourself, so JAX allocates GPU memory on demand instead of reserving 75% up front. This leaves room for cuSolver, CuPy, and CUDA kernel workspaces. The JAX pool still caps at 75% of VRAM and retains freed blocks for reuse. Explicit `XLA_PYTHON_CLIENT_PREALLOCATE`, `XLA_CLIENT_MEM_FRACTION` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`), and `XLA_PYTHON_CLIENT_ALLOCATOR` settings take precedence. Import `tomojax` or set these variables before the first JAX operation.
 
+Several TomoJAX processes can share one GPU on demand; set `XLA_PYTHON_CLIENT_MEM_FRACTION` in each process if you want fixed per-process caps (leaving headroom for CUDA contexts, kernels, cuSolver, and CuPy). If a process loses its CUDA context (for example from an illegal memory access or a cuFFT plan failure with a sticky illegal address), reconstruction stops instead of retrying as out of memory and raises `RuntimeError("The CUDA context is lost. Restart the process.")` with the underlying CUDA error attached as its cause. Restart the Python process (or the worker via `control` with `action="restart"` under `tomojax mcp`).
+
 ## What has to fit in host memory
 
 When a large host array would exceed half of available host RAM, TomoJAX backs it with an unlinked temporary file in `TMPDIR` and returns a NumPy memmap:
@@ -221,12 +223,14 @@ grid = frames.geometry.grid
 volume = np.lib.format.open_memmap(
     "volume.npy", mode="w+", dtype=np.float32, shape=(grid.nz, grid.ny, grid.nx)
 )
+info = {}
 with tj.reconstruct_slabs(
-    frames, "fbp", corrections=[Rings()]
+    frames, "fbp", corrections=[Rings()], info=info
 ) as slabs:
     for z_slice, block in slabs:
         volume[z_slice] = block.volume
 volume.flush()
+print(info["truncation"])
 ```
 
 ![The central axial slice and a vertical slice through the axis of a copper oxide specimen at 1.13 µm, each with an enlarged region.](images/zeiss-full-volume.png)
@@ -237,7 +241,7 @@ The full Zeiss CuO_2 tomo-B scan (3201 views of 2028 × 2028 pixels, 52 GB corre
 uv run python examples/gallery/zeiss_full_volume.py CuO_2_tomo-B.txrm VOLUME.npy OUT.png
 ```
 
-Pass an empty dictionary as `info=info` to `tj.reconstruct_slabs`. After the iterator finishes and the context exits, `info["truncation"]` describes the same sample of the full detector as an in-memory reconstruction. Each sampled detector row counts once, including where slabs overlap. The two fractions use the scan totals, the interior shift is a mean, and the fitted radius is a median. Iterative runs also record stopping diagnostics for each z range in `info["slab_stopping"]` when the solver uses independent planes. The worker and MCP save the record in the volume and return it in the summary.
+Passing a dictionary as `info=info` to `tj.reconstruct_slabs` collects the whole-scan record once the iterator finishes and the context exits: `info["truncation"]` matches an in-memory reconstruction over the full detector (each sampled row counts once, including where slabs overlap; the two fractions use scan totals, the interior shift is a mean, and the fitted radius is a median), alongside `config`, `host_slabs=True`, the resolved `backend` for Fourier, and iterative stopping diagnostics (`termination`, `early_stop`, `effective_iterations`, and per-slab `slab_stopping` for independent planes). Worker and MCP `reconstruct_slabs` save that same record in the output NeXus volume (`volume.reconstruction_info` in `inspect`, and `tj.load_reconstruction(...).info`), return it in the result summary, and append the stopping summary and attenuation beyond the detector (from 1% up) to the MCP text summary. `tj.reconstruct_slabs` also accepts `flat_weights="position"` to blend bracketing flat sets by position alone instead of the default `"views"`.
 
 Only whole-row line-integral corrections (such as `Rings`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
 

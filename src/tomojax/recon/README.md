@@ -201,8 +201,10 @@ shared-cosine FDK precompute the filtered exterior profiles across views. The
 absolute interior level is only as accurate as the cylinder model, and
 non-cylindrical exteriors (such as a square bar) retain partial cupping and rim
 error. `info["truncation"]` records `edge_ratio`, `outside_fraction`,
-`interior_shift`, `radius` and `field_of_view_radius` for every method (and
-each slab of `reconstruct_slabs` carries the record of its own rows).
+`interior_shift`, `radius` and `field_of_view_radius` for every method (each
+slab of `reconstruct_slabs` carries the record of its own rows, and passing
+`info={}` collects the whole-scan record and iterative stopping diagnostics
+once the iterator finishes).
 
 Direct FBP pads, filters and backprojects one view batch at a time. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;

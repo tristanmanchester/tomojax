@@ -33,7 +33,7 @@ tomojax correct raw.nxs -o corrected.nxs
 tomojax inspect corrected.nxs
 ```
 
-`correct` computes `-log((I - D) / (F - D))`, blending the flat sets around each sample view with weights measured from the views ([flat fields](../src/tomojax/corrections/README.md#flat-fields)), and records the processing history in `corrected.nxs`. If a scan's own flats do not show its beam, `correct` warns; pass another scan's file with `--flats other_scan.nxs` to use that file's flat frames, or `--flat-weights position` to blend the sets by position alone. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
+`correct` computes `-log((I - D) / (F - D))`, blending bracketing flat sets with weights measured from a sample of the views while interpolating common row gain by position (`flat_weights="views"`, the default; see [flat fields](../src/tomojax/corrections/README.md#flat-fields)), and records the processing history in `corrected.nxs`. When the views move the flat by more than 1% over more than 1% of the detector, `correct` warns that a flat set does not match the scan's beam; pass another scan's file with `--flats other_scan.nxs` to use that file's flat frames, or `--flat-weights position` (`flat_weights = "position"` in `--config`) to blend the scan's own sets by position alone. Dataset paths are discovered automatically for NXtomo, Data Exchange, and NeXus scan files (following the default plot, its `NXdetector` `image_key`, and its plotted angular coordinate); use `--data-path`, `--image-key-path`, and `--angles-path` for other HDF5 layouts. If a scan stopped early and its key or angles have a different length from the frame stack, TomoJAX reads the frames covered by all records from the start and logs a warning with the counts. Add `--zingers`, `--rings`, or `--reject-views` for artifact removal, and `--views` or `--crop` to subset the scan. Skip `correct` if your data are already line integrals.
 
 When an external file omits metadata:
 
@@ -83,8 +83,9 @@ turns it also compares opposed angular arcs.
 `Rings()` corrects stationary column errors only. Artifacts that vary with angle
 (flux drops or angular swirls) are not detector rings and are not removed, and
 this step does not interpolate dead pixels. Flat sets that disagree are weighted
-from the views during flat-field correction, which leaves `Rings()` an error
-fixed to detector columns. A
+from the views during flat-field correction, leaving `Rings()` a column-fixed
+error for any fine unmatched texture (broad shadows present in both flat sets
+still require clean flats via `flats=`). A
 circular sample feature centered on the rotation axis gives the same
 measurements as a symmetric detector offset, so compare corrected and
 uncorrected slices near the axis.
@@ -200,7 +201,7 @@ To turn continuation off and assume zero beyond the detector, set `exterior="zer
 
 The selected setting is recorded in `recon.info["config"]` (`info["config"].exterior` in memory and `info["config"]["exterior"]` after reloading).
 
-Every reconstruction carries `recon.info["truncation"]`, computed from the projections for both analytic and iterative methods (and per slab for `tj.reconstruct_slabs`), regardless of whether `exterior` is `"cylinder"` or `"zero"`:
+Every reconstruction carries `recon.info["truncation"]`, computed from the projections for both analytic and iterative methods (per slab on yielded blocks of `tj.reconstruct_slabs`, and whole-scan in `info=` once the iterator finishes), regardless of whether `exterior` is `"cylinder"` or `"zero"`:
 
 | Key | Meaning |
 | --- | --- |
@@ -210,7 +211,7 @@ Every reconstruction carries `recon.info["truncation"]`, computed from the proje
 | `radius` | Median radius of the rows' fitted cylinders, in the scan's length unit |
 | `field_of_view_radius` | Distance from the rotation axis to the nearer detector edge, in the scan's length unit |
 
-When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` appends `, N% of attenuation beyond the detector` to its closing line, and MCP `reconstruct` includes the same phrase in its summary text.
+When `outside_fraction` rounds to at least 1% (0.5% or above), `tomojax reconstruct` appends `, N% of attenuation beyond the detector` to its closing line, and MCP `reconstruct` and `reconstruct_slabs` include the same phrase in their summary text.
 
 What the continuation does and does not recover:
 

@@ -57,7 +57,15 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   and cone parameters), and apply optional corrections (`--zingers`, `--paganin`,
   `--rings`, `--reject-views`) and `--views`, `--crop` and `--binning`.
   On raw frames every step runs; on a dataset of line integrals only the steps that
-  act on them do. `--detector-center U V` sets the first detector's center, in the
+  act on them do. `--flats` and `--darks` accept frame stacks, scalar levels, or
+  another scan's HDF5/NeXus file (taking only its flat or dark frames). Bracketing
+  multi-frame flat sets are weighted from a sample of the views by default while
+  interpolating common row gain by position; when views move the flat by more than
+  1% over more than 1% of the detector, `correct` prints a warning naming both
+  remedies (`--flats` from another scan, or the expert `--flat-weights position`
+  flag, also `flat_weights = "position"` in `--config`; see
+  [flat fields](../corrections/README.md#flat-fields)). `--detector-center U V`
+  sets the first detector's center, in the
   pixel size's unit, after everything else has loaded, and moves every segment of a
   segmented scan by the same amount. `--preview PNG` draws a band of output rows as
   sinograms before and after the steps and their difference (the expert

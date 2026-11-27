@@ -1,7 +1,11 @@
 # Tests
 
 Run the CPU suite with `just test`, or the complete local gate with `just ci`.
-Use `just test-cuda` on a CUDA host for real-kernel coverage. Environment setup
+Use `just test-cuda` on a CUDA host for real-kernel coverage. It runs the CUDA
+smoke check, the exclusive `fresh_gpu` tests, and then the rest of the suite on
+shared-GPU workers capped at the smaller of the available CPU count and one
+worker per 1,300 MiB of the first GPU's memory; failed parallel tests retry in
+one process, and a per-user lock serializes concurrent runs. Environment setup
 and the full command list are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Select a focused check

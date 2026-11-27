@@ -65,79 +65,96 @@ for loading frames and choosing steps.
 ## Flat fields
 
 A view recorded between two flat sets takes a blend of them. `flat_weights`
-chooses how it is weighted: `"views"` (the default) measures the weights from the
-views, as described below, and `"position"` interpolates linearly in each view's
-position between the sets. The keyword is on `Frames.corrected`,
-`tj.reconstruct_slabs`, `correct_frames` and `corrected_row_source`; the CLI takes
-`tomojax correct --flat-weights position`, and the worker's and MCP server's
-`correct` and `reconstruct_slabs` take `flat_weights`. The `flat_dark` record's
-`flat_weights` setting says which was used.
+chooses how it is weighted: `"views"` (the default) measures local texture
+weights from a sample of the scan's views while interpolating the common row
+gain by position, and `"position"` interpolates both level and structure
+linearly in each view's position between the sets. Pass `flat_weights` in Python
+on `Frames.corrected`, `tj.reconstruct_slabs`,
+`tomojax.interactive.correction_preview`, `correct_frames`, and
+`corrected_row_source`; on the CLI with `tomojax correct --flat-weights position`
+(or `flat_weights = "position"` in `--config`); and in the worker and MCP server
+on `correct`, `reconstruct_slabs`, and `correction_preview`. The `flat_dark`
+record's `flat_weights` setting records which mode was used.
 
-Two flat sets differ either because the beam or the detector changed between
-them, or because one of them does not show what the views saw (part of the
-sample stage stood in the beam while it was taken, say). In the first case the
-right flat moves from one set to the other through the scan. In the second it
-does not, and blending by position prints the difference into every view with a
-weight that changes through the scan, which no ring correction removes.
+Two flat sets differ either because the beam or detector changed between them,
+or because one set does not show what the views saw (for example, part of the
+sample stage stood in the beam when the flat was taken). In the first case the
+flat moves from one set to the other through the scan. In the second case it
+does not, and blending by position prints the shadow into every view with a
+weight that changes with angle, which ring correction cannot remove.
 
-For each pair of neighboring sets, TomoJAX reads about one view in 64 (at
-least 64) and measures, in cells of 16 detector pixels, how much of the
-difference between the two sets each view contains. The measurement is a
-regression on the difference's structure along detector rows, which is
-unrelated to the sample. A straight line through the interval is fitted to
-those shares in regions 144 pixels across, with linear interpolation in
-position as the prior, and then in windows of 48 pixels, which are held to
-their region's line unless they differ from it by more than their own
-uncertainty.
+For each pair of neighboring multi-frame sets, TomoJAX reads about one view in
+64 (at least 64) and measures, in 16-pixel cells, how much of the difference
+between the two sets each view contains. The fit regresses each high-passed view
+on the high-passed log ratio of the two sets along detector rows, where fine
+structure is unrelated to the sample. A straight line through the interval is
+fitted in 144-pixel regions with linear position interpolation as the prior,
+then refined in 48-pixel windows held to their region unless they differ from it
+by more than their own uncertainty.
 
-- **Sets that differ by noise, by level, or smoothly along a row** tell the
-  views nothing, and are interpolated in position exactly as before. The sets'
-  own noise is subtracted, and a difference counts only as far as it stands
-  three standard errors above that noise.
-- **Structure that changes through the scan** (a detector response that
-  drifts) is followed through it: the views show none of the later set at the
-  start and all of it at the end.
-- **A pattern that does not match the views** is left out where the other set matches.
-- **Where both sets carry different shadows** and the views support a constant blend,
-  the remaining texture stays fixed to detector columns, so `Rings()` can remove its fine part.
-- **Level** is kept continuous along each row where the weights change. An
-  edge that only one set has is not in the views, so the flat carries its level
-  across the edge instead of stepping there.
+To separate beam decay from local speck or stripe changes, TomoJAX estimates the
+gain common to each 16-row cell band as a weighted median of the measured
+columns' log flat ratios, giving the most weight to columns with little evidence
+of changing texture. That shared row gain follows position, while the view
+weights blend the remaining residual differences. When texture changes across an
+entire row, the shared-gain estimate shrinks toward zero log change. Across
+columns where the texture weights change, a continuity term keeps the flat's
+level smooth instead of stepping at an edge present in only one set.
 
-With `"views"`, the `flat_dark` record reports what was found (all but the
-first only when the views set a weight somewhere):
+What the fit produces in each case:
+
+- **Sets that differ by noise, by level, or smoothly along a row:** the sets'
+  own noise is subtracted, and a difference counts only where it stands more
+  than three standard errors above that noise. Views supply no texture evidence,
+  so weights stay linear in position.
+- **Structure that drifts through the scan:** views show none of the later set
+  at the start and all of it at the end, so the flat follows the drift.
+- **One set shadowed:** the shadowed set is left out where the other set matches
+  the views, and the flat carries its level across a one-sided shadow edge.
+- **Both sets shadowed differently:** where the views support a constant blend,
+  the unmatched fine texture stays fixed to detector columns so `Rings()` can
+  remove it.
+
+With `flat_weights="views"`, the `flat_dark` record reports what was found (all
+fields after `flat_weights_from_views` appear only when the views set weights
+somewhere):
 
 | Key | Meaning |
 | --- | --- |
-| `flat_weights_from_views` | Fraction of the detector where the views, not position, set the weights |
-| `later_flat_weight` | The later set's weight at the start and at the end of the interval, averaged where the views set it (`[0, 1]` is linear interpolation) |
-| `flat_structure_unmatched` | RMS of the sets' fine structure that the views show in neither set, in line-integral units |
-| `flat_moved_by_views` | Fraction of the detector where the views' flat differs from the blend by position by more than 1% at the start or end of an interval |
+| `flat_weights_from_views` | Fraction of the detector where the views set the weights |
+| `later_flat_weight` | Later set's weight at the start and end of the interval, averaged where the views set it (`[0, 1]` is linear position interpolation) |
+| `flat_structure_unmatched` | RMS of fine flat structure that the views show in neither set, in line-integral units |
+| `flat_moved_by_views` | Fraction of measured pixels where the view-weighted flat differs from position interpolation by more than 1% in log magnitude at either end of an interval |
 
-When `flat_moved_by_views` is above 1%, a warning gives that share of the
-detector, the later set's weights there, and what to do: one of the flat sets
-does not show the beam the views had, which is news about the acquisition. Python logs it on the `tomojax` logger, the
-CLI prints it, and the worker and MCP server return it as a note with the
-result. Below that, nothing is shown.
+When `flat_moved_by_views` exceeds 1% of the detector, TomoJAX emits a warning
+giving that fraction, the later set's weights at the start and end there, and
+both remedies: one of the flat sets does not match the beam the views saw.
+Python logs the warning on the `tomojax` logger, the CLI prints it, and the
+worker and MCP server return it in `notes`. Below 1%, no warning is emitted.
+When the warning appears (or `flat_structure_unmatched` is large), inspect the
+reconstruction and either borrow clean flats from another scan of the same beam
+with `flats="other_scan.nxs"` (`tomojax correct --flats other_scan.nxs`, or
+`flats` on worker/MCP `open`), or pass `flat_weights="position"`
+(`--flat-weights position`) to blend the scan's own sets by position alone.
+Passing another scan's file to `flats=` or `darks=` reads only that file's flat
+or dark frames as one set.
 
-The views carry no measurement of the beam's broad level where they show no
-unattenuated beam, so a region that both sets cover with something the views
-do not show keeps a broad error beyond what continuity recovers. When
-`flat_structure_unmatched` is large, flats from another scan of the same beam
-are better: `tj.load_frames("scan.nxs", flats="other_scan.nxs")` or
-`tomojax correct scan.nxs --flats other_scan.nxs` takes the other file's flat
-frames (and `darks=` its dark frames) as one set.
+Two effects cannot be recovered from one scan's counts alone:
 
-Columns with little evidence of changing texture provide a reference for the
-gain shared across a detector row. TomoJAX estimates that gain from the flat
-sets' log ratios, giving those columns the most weight. The shared gain follows
-position while the views set the blend of the remaining differences. When
-texture changes across an entire row, the estimate of shared gain shrinks
-toward zero log change. An independent level change confined to the textured
-region can still be confused with attenuation by the object.
+- **A shadow present in both flat sets:** where the views see no open beam, the
+  broad shape of the shadow cannot be separated from the sample beyond what
+  level continuity carries in from a clear region. Fine unmatched texture stays
+  column-fixed for `Rings()`, while broad half rings remain unless you supply
+  clean flats from another scan with `flats=`.
+- **Smooth changes in beam level:** a smooth change in incident flux enters the
+  logged counts with the opposite sign of object attenuation and cannot be
+  distinguished from the object. An independent level change confined to a
+  textured region therefore remains ambiguous without a separate beam
+  measurement.
 
-A set of one frame has no measured noise, and scans with one flat set or a
-white level have nothing to blend: both are corrected as before.
+A flat set of a single frame has no measured noise, so its interval is
+interpolated linearly by position. Scans with one flat set or a scalar white
+level have nothing to blend.
 
 ## Ring removal
 

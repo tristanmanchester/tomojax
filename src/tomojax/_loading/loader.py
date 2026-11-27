@@ -125,11 +125,17 @@ def load(
     Zeiss or ESRF acquisition, or a TIFF stack) is
     corrected with the standard chain, as ``load_frames(path, ...).corrected()``:
     dark subtraction, flat division and ``-log``; :attr:`Scan.corrections`
-    records it. For other corrections, load the frames with :func:`load_frames`.
-    Every other argument has :func:`load_frames`'s meaning and supplies what the
-    file does not record. The scan carries the per-view corrections saved with
-    it (by :func:`align` or ``tomojax align``) unless ``apply_poses`` is False. Frames
-    that ``image_key`` marks as other than sample views are left out.
+    records it. Bracketing multi-frame flat sets are weighted from a sample of
+    the views by default while interpolating common row gain by position, and a
+    warning is logged when views move the flat by more than 1% over more than
+    1% of the detector; pass another scan's file as ``flats=`` to borrow its
+    flat frames, or use ``load_frames(path, ...).corrected(flat_weights="position")``
+    to blend by position alone. For other corrections, load the frames with
+    :func:`load_frames`. Every other argument has :func:`load_frames`'s meaning
+    and supplies what the file does not record. The scan carries the per-view
+    corrections saved with it (by :func:`align` or ``tomojax align``) unless
+    ``apply_poses`` is False. Frames that ``image_key`` marks as other than
+    sample views are left out.
 
     Parameters
     ----------
@@ -550,6 +556,18 @@ class Frames:
         record counts them. Detector-derived output grids follow this resolution;
         grids supplied by the file or caller remain unchanged.
 
+        With ``flat_weights="views"`` (the default), bracketing multi-frame flat
+        sets are weighted for local texture from a sample of views while common
+        row gain is interpolated by position and flat level stays continuous
+        across one-sided edges; single-frame sets interpolate by position. The
+        ``flat_dark`` record stores ``flat_weights`` and, when views set weights,
+        ``flat_weights_from_views``, ``later_flat_weight``,
+        ``flat_structure_unmatched`` and ``flat_moved_by_views``. When views move
+        the flat by more than 1% over more than 1% of the detector, a warning
+        names both remedies: borrowing another scan's flats with ``flats=`` on
+        :func:`load_frames`, or passing ``flat_weights="position"`` to blend by
+        position alone.
+
         Parameters
         ----------
         *steps : Step
@@ -637,7 +655,7 @@ class Frames:
 
         Take a forward slice, increasing integer indices or a nonempty mask.
         Each view keeps its place among the flats (:attr:`view_positions`), so
-        its flat is interpolated as before.
+        its flat is weighted at the same position.
 
         Parameters
         ----------
@@ -769,10 +787,12 @@ def load_frames(
     path : str or path-like
         HDF5, NPZ, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
     flats : array-like, float, str, path-like or None, optional
-        Replacement flat frames, calibration stack path or constant open-beam level.
-        A TIFF path is read in the same panel orientation as TIFF projections.
+        Replacement flat frames, calibration stack path (another scan's file
+        supplies its flat frames) or constant open-beam level. A TIFF path is
+        read in the same panel orientation as TIFF projections.
     darks : array-like, float, str, path-like or None, optional
-        Replacement dark frames, calibration stack path or constant dark level.
+        Replacement dark frames, calibration stack path (another scan's file
+        supplies its dark frames) or constant dark level.
     angles : array-like or None, optional
         Sample-view angles in degrees, replacing file metadata.
     detector : Detector or None, optional

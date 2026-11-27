@@ -11,7 +11,7 @@ TomoJAX streams projections and reconstructs in slabs on its own when a scan or 
 
 ## Volumes larger than memory
 
-- `reconstruct_slabs` reconstructs raw frames slab by slab straight into a NeXus file, for FBP, Fourier, SIRT and MLEM, without holding the volume or the corrected stack. It takes a destination `path` and refuses to replace an existing file unless `force` is set.
+- `reconstruct_slabs` reconstructs raw frames slab by slab straight into a NeXus file, for FBP, Fourier, SIRT and MLEM, without holding the volume or the corrected stack. It takes a destination `path` and refuses to replace an existing file unless `force` is set. The saved volume (`volume.reconstruction_info` in `inspect`) and the tool's summary include whole-scan `truncation` and iterative stopping diagnostics (including `slab_stopping` on independent planes).
 - In Python, passing a writable `float32` memmap as `out=` to `tj.reconstruct` writes the volume to disk slab by slab for the methods that support host slabs. See [python.md](python.md) under "Memory-mapped reconstruction".
 
 ## Several GPUs

@@ -814,7 +814,16 @@ def reconstruct_slabs(
     ``FourierConfig(exterior="zero")`` to assume zero beyond the detector. Each
     yielded slab carries ``info["truncation"]`` (``edge_ratio``,
     ``outside_fraction``, ``interior_shift``, ``radius``, and
-    ``field_of_view_radius``) computed from that slab's detector rows.
+    ``field_of_view_radius``) computed from that slab's detector rows. Passing
+    a dictionary as ``info=`` collects the whole-scan record once the iterator
+    finishes: ``info["truncation"]`` matches an in-memory reconstruction over
+    the full detector (each sampled detector row counted once, including where
+    slabs overlap), alongside ``config``, ``host_slabs=True``, the resolved
+    Fourier ``backend``, and iterative stopping diagnostics (``termination``,
+    ``early_stop``, ``effective_iterations``, and per-slab ``slab_stopping`` on
+    independent planes). Bracketing multi-frame flat sets default to
+    ``flat_weights="views"`` (see :meth:`tomojax.Frames.corrected`); pass
+    ``flat_weights="position"`` to blend by position alone.
     CUDA consumes corrected rows without a corrected-projection host round trip.
     Unfiltered HDF5 stacks use parallel positional reads with cached chunk
     offsets. Raw row blocks target 1 MiB per view (at least 1 GiB per block,

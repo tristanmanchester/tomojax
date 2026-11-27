@@ -2,29 +2,37 @@
 
 ## Unreleased
 
-- Flat sets taken before and after a scan are weighted by what the scan's views show of
-  each, instead of by each view's position between them. A set taken with something in
-  the beam is left out where the other set matches the views, a blend that matches
-  neither stays fixed through the scan (so `Rings()` can remove its fine part), and the
-  flat's level is kept continuous across an edge that only one set has. Sets that differ
-  by noise, by level, or smoothly along a detector row are interpolated in position as
-  before, as are sets of one frame. Columns with stable texture estimate the gain change
-  common to a detector row. That gain follows position even where specks or stripes
-  change early. The step reads about one view in 64 beforehand.
-  `flat_weights="position"` (`--flat-weights position`, `flat_weights` in the worker's and
-  MCP server's `correct` and `reconstruct_slabs`) interpolates by position alone, and the
-  `flat_dark` record's `flat_weights` setting says which was used. The record reports
-  `flat_weights_from_views`, `later_flat_weight`, `flat_structure_unmatched` and
-  `flat_moved_by_views`, the share of the detector where the views move the flat by more
-  than 1%; above 1% of the detector a warning says so and names both remedies
-  ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
-- `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI) use
-  that file's flat or dark frames. Previously every frame in the file was averaged.
-- Raw slab reconstruction saves and reports whole-scan truncation and iterative stopping diagnostics through the worker and MCP. Python callers can collect the same record with `tj.reconstruct_slabs(..., info=info)`.
-- Fourier reconstruction uploads a view-group table only when angles repeat. This removes
-  an empty CUDA transfer associated with context loss during a later FBP on a shared GPU.
-  Reconstruction stops on an unspecified cuFFT plan failure and reports confirmed lost
-  contexts with instructions to restart the process.
+- Bracketing flat sets taken before and after a scan are weighted by what a sample of
+  the scan's views (about 1 in 64, at least 64) shows of each set, separating common
+  row gain (estimated from columns with stable texture and interpolated by position)
+  from local texture weights (`flat_weights="views"`, the default). A set taken with
+  something in the beam is left out where the other set matches the views, a region
+  where both sets carry different shadows keeps a fixed blend so `Rings()` can remove
+  its fine part, and flat level stays continuous across one-sided edges. Sets of one
+  frame and sets that differ only by noise, level, or smooth row variation are
+  interpolated by position. Pass `flat_weights="position"` in Python
+  (`Frames.corrected`, `tj.reconstruct_slabs`, `tomojax.interactive.correction_preview`,
+  `correct_frames`, `corrected_row_source`), `--flat-weights position` (or
+  `flat_weights = "position"` in `--config`) on `tomojax correct`, or
+  `flat_weights: "position"` on worker and MCP `correct`, `reconstruct_slabs`, and
+  `correction_preview` to blend by position alone. The `flat_dark` record stores
+  `flat_weights`, `flat_weights_from_views`, `later_flat_weight`,
+  `flat_structure_unmatched`, and `flat_moved_by_views` (the detector fraction where
+  views move the flat by more than 1%); above 1% of the detector, a warning names both
+  remedies ([flat fields](src/tomojax/corrections/README.md#flat-fields)).
+- `flats=` and `darks=` given another scan's file (`--flats`, `--darks` on the CLI;
+  `flats` and `darks` on worker and MCP `open`) use that file's flat or dark frames.
+  Previously every frame in the file was averaged.
+- Raw slab reconstruction saves whole-scan truncation and iterative stopping
+  diagnostics in the output volume (`volume.reconstruction_info` in `inspect`) and
+  returns them in worker and MCP summaries. Python callers collect the same record
+  with `tj.reconstruct_slabs(..., info=info)`.
+- Fourier reconstruction uploads a view-group table only when angles repeat, removing
+  an empty CUDA upload that preceded context loss during a later FBP on a shared GPU.
+  Reconstruction no longer retries an unspecified cuFFT plan failure as out of memory
+  and raises `RuntimeError("The CUDA context is lost. Restart the process.")` when a
+  lost context is confirmed. `just test-cuda` caps shared-GPU workers at the available
+  CPU count as well as GPU memory.
 
 - Scans of an object larger than the field of view reconstruct without the bright rim and
   bowl: `fourier`, `fbp`, and cone-beam FDK continue each detector row past both detector

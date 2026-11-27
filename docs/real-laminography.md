@@ -10,7 +10,7 @@ tomojax inspect scan.nxs
 
 Confirm view count and order, angles in degrees, detector and voxel pitches, and geometry type, and read the `Loading` section (`loading` in `tj.inspect` and MCP `inspect`) to see whether the file omits pixel size, rotation center, or rotation axis. For laminography, verify `tilt` and `tilt_about` (`tilt` is the angle of the rotation axis away from the perpendicular tomography axis, not the angle to the beam). When laminography tilt or the rotation axis is missing from the file, declare geometry when loading: `geometry=` in Python, `--geometry lamino --tilt ...` on `tomojax correct`, or `geometry` on worker or MCP `open`.
 
-For raw NXtomo, NeXus, or Data Exchange frames with flats and darks, start with [correct raw detector frames](quickstart.md#correct-raw-detector-frames); for other HDF5 layouts, pass `--data-path`, `--angles-path`, and `--image-key-path` (or `data_path=`, `angles_path=`, and `image_key_path=` in `tj.load_frames`).
+For raw NXtomo, NeXus, or Data Exchange frames with flats and darks, start with [correct raw detector frames](quickstart.md#correct-raw-detector-frames); bracketing flat sets default to `flat_weights="views"` (pass `flat_weights="position"` or `--flat-weights position` to blend by position alone, or `flats=` / `--flats` with another scan's file to borrow its flat frames). For other HDF5 layouts, pass `--data-path`, `--angles-path`, and `--image-key-path` (or `data_path=`, `angles_path=`, and `image_key_path=` in `tj.load_frames`).
 
 ## Prepare TIFF data
 

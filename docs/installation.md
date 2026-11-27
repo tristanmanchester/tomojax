@@ -72,7 +72,7 @@ Run a small synthetic reconstruction from the environment directory:
 
 `inspect` prints `Valid: yes` and writes three central slice previews to `previews/`. Commands refuse to overwrite existing files unless you pass `--force`. Prefix with `JAX_PLATFORMS=cpu` or `JAX_PLATFORMS=cuda` to pin the backend.
 
-If `tomojax` is not found, check your virtual environment path or activate it with `source .venv/bin/activate`. If CUDA fails to initialize, verify your NVIDIA driver and JAX GPU installation first.
+If `tomojax` is not found, check your virtual environment path or activate it with `source .venv/bin/activate`. If CUDA fails to initialize, verify your NVIDIA driver and JAX GPU installation first. If a reconstruction fails with `The CUDA context is lost. Restart the process.`, restart the Python process or worker; a lost CUDA context cannot be recovered in place.
 
 ## Maintainer package checks
 

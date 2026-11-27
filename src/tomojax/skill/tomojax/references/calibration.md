@@ -41,6 +41,6 @@ p = np.linspace(0, 2, 50)
 residual = empirical.inverse(physical.curve(p)) - p
 ```
 
-For detector rings on line integrals, apply `corrections.Rings()` (no width parameter; `Frames.corrected` and `Scan.corrected` bind geometry automatically). Inspect the settings and findings recorded by a corrected scan with
+Bracketing multi-frame flat sets default to `flat_weights="views"` (weighting local texture from a sample of the views while interpolating common row gain by position); pass `flat_weights="position"` to blend by position alone, or pass another scan's file as `flats="other_scan.nxs"` to `tj.load_frames` to borrow its flat frames. For detector rings on line integrals, apply `corrections.Rings()` (no width parameter; `Frames.corrected` and `Scan.corrected` bind geometry automatically). Inspect the settings and findings recorded by a corrected scan (including the `flat_dark` record's `flat_weights`, `flat_weights_from_views`, `later_flat_weight`, `flat_structure_unmatched`, and `flat_moved_by_views`) with
 `saved = [step.to_dict() for step in scan.corrections]` and restore a record
 with `corrections.Correction.from_dict(saved[0])`.

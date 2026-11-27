@@ -88,7 +88,13 @@ and structurally discovered NeXus scans. A key or angle dataset
 found only by name is paired by shape and must match the stack length exactly.
 
 `tomojax.load` of a processed file leaves out frames that `image_key` marks as
-other than sample views. Saving a scan retains every pose update, including an
+other than sample views. Passing another scan's HDF5/NeXus file to `flats=` or
+`darks=` (`--flats`, `--darks`) reads only that file's flat (`image_key == 1`)
+or dark (`image_key == 2`) frames lazily as one set; a stack that labels no
+frame kinds contributes every frame. Bracketing multi-frame flat sets are
+weighted from a sample of the views by default (`flat_weights="views"`, or
+`"position"` for linear position interpolation; see
+[flat fields](../corrections/README.md#flat-fields)). Saving a scan retains every pose update, including an
 update around a cone-segmented acquisition whose segments have their own;
 `Scan.poses` is their complete composition in the detector translation frame,
 and loading with `apply_poses=False` removes all of them.

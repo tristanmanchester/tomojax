@@ -28,7 +28,7 @@ tomojax correct projections/ --flats flats/ --darks darks/ \
   --pixel-size 0.2 --detector-center 0.0 0.0 -o scan.nxs
 ```
 
-`--flats` and `--darks` accept either frame directories or scalar levels (`--flats 60000 --darks 0`). `--pixel-size` accepts one value (square pixels) or `du dv`. For already-corrected line-integral TIFFs, read them with `tomojax.io.api.read_tiff_frames` and construct `tj.Scan(projections, geometry)` in Python.
+`--flats` and `--darks` accept frame directories, another scan's HDF5/NeXus file (taking only its flat or dark frames), or scalar levels (`--flats 60000 --darks 0`). `--pixel-size` accepts one value (square pixels) or `du dv`. For already-corrected line-integral TIFFs, read them with `tomojax.io.api.read_tiff_frames` and construct `tj.Scan(projections, geometry)` in Python.
 
 Optional detector orientation flags (`--axis-offset`, `--detector-roll`, `--detector-pitch`, `--detector-yaw`) apply right-handed rotations about the detector normal (pointing towards the source), u, and v in that order: positive roll turns u towards v, positive pitch tilts the +v edge towards the source, and positive yaw swings the +u edge away from it.
 
@@ -50,7 +50,7 @@ Load the **projection acquisition** (`.txrm`), not a reconstructed `.txm` volume
 
 - **Center:** shifts are relative to `AutoRecon/CenterShift`. Without it, loading puts the center at the detector middle (`detector_center_status="not_recorded"`); fit `"center"` with `tj.align` or supply `detector=tj.Detector(nu, nv, pitch, pitch, (u, 0))` (where `pitch` is recorded object-plane pixel size × magnification). Passing a full `geometry=` uses it verbatim and drops embedded shifts with a warning.
 - **Orientation:** a volume comes out in the orientation of Xradia's own reconstruction of the same scan, so its slices compare with the vendor's `.txm` directly.
-- **References and darks:** pass a separate flat with `--flats reference_Front.xrm` (or `flats=` + `flat_exposure_times=` in seconds for raw arrays). Files with `AcquisitionSettings/CameraStaticBackground = 1` need no darks; otherwise supply `--darks` / `darks=`.
+- **References and darks:** pass a separate flat with `--flats reference_Front.xrm` (or `flats=` + `flat_exposure_times=` in seconds for raw arrays). Single-frame timestamped references interpolate linearly by position. Files with `AcquisitionSettings/CameraStaticBackground = 1` need no darks; otherwise supply `--darks` / `darks=`.
 - **Detector saturation:** Zeiss records the camera's linear ceiling in `MaxLinearRange` (45 000 counts on typical scans). Long exposures can push air pixels past that ceiling; `tj.load` warns when counts exceed it and records the affected fraction and `linear_limit_line_integral` in the `flat_dark` record. Saturated air reads as artificial absorption (e.g. ~0.33 instead of 0 on CuO_2) and appears as a bright background around the sample.
 
 For a fast 64³ CPU preview (every 8th view, 16 × 16 binning):

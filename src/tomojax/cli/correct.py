@@ -4,6 +4,10 @@ A thin layer over :func:`tomojax.load_frames` and :meth:`tomojax.Frames.correcte
 for raw frames, and :func:`tomojax.load` and :meth:`tomojax.Scan.corrected` for a
 dataset of line integrals, with :meth:`~tomojax.Scan.selected`,
 :meth:`~tomojax.Scan.cropped` and binning; the scan written records each step.
+Bracketing multi-frame flat sets default to ``--flat-weights views`` (pass
+``--flat-weights position`` or ``flat_weights = "position"`` in ``--config`` to
+blend by position alone); ``--flats`` and ``--darks`` accept another scan's file
+and take its flat or dark frames.
 """
 
 from __future__ import annotations

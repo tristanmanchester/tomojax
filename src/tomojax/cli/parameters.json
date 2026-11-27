@@ -5405,7 +5405,7 @@
             }
           ],
           "default": null,
-          "description": "Replacement flat frames, calibration stack path or constant open-beam level. A TIFF path is read in the same panel orientation as TIFF projections."
+          "description": "Replacement flat frames, calibration stack path (another scan's file supplies its flat frames) or constant open-beam level. A TIFF path is read in the same panel orientation as TIFF projections."
         },
         "darks": {
           "anyOf": [
@@ -5441,7 +5441,7 @@
             }
           ],
           "default": null,
-          "description": "Replacement dark frames, calibration stack path or constant dark level."
+          "description": "Replacement dark frames, calibration stack path (another scan's file supplies its dark frames) or constant dark level."
         },
         "angles": {
           "anyOf": [

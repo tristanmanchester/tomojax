@@ -109,7 +109,7 @@ Pass `include_scan=True` to `tj.save` if you also want the corrected projections
 
 ## Diamond I13 NXtomo acquisition
 
-Diamond I13 scan 159815 (`diamond-i13-mg31912-1/raw/159815.nxs`) links externally to `pco1-159815.hdf`; keep both files in the same directory. TomoJAX discovers its 3001 sample views, 200 flats (before and after), 100 darks, and angles automatically. Because pixel pitch is unrecorded, the scan loads in pixel units unless you pass `pixel_size=` or `detector=`.
+Diamond I13 scan 159815 (`diamond-i13-mg31912-1/raw/159815.nxs`) links externally to `pco1-159815.hdf`; keep both files in the same directory. TomoJAX discovers its 3001 sample views, 200 flats (before and after), 100 darks, and angles automatically. Bracketing multi-frame flat sets are weighted from a sample of the views by default (`flat_weights="views"`), separating common row gain from local texture; pass `flat_weights="position"` to `.corrected(...)` to blend by position alone, or pass a clean neighboring scan's file as `flats="other_scan.nxs"` when a scan's own flats are shadowed ([flat fields](../src/tomojax/corrections/README.md#flat-fields)). Because pixel pitch is unrecorded, the scan loads in pixel units unless you pass `pixel_size=` or `detector=`.
 
 The example below uses pixel units with this scan's Savu crop (`441:1872`) and axis column (`1159.5` on the 2560-column detector, giving offset `120`):
 
