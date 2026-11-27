@@ -513,8 +513,15 @@ def reconstruct(
         output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
         NumPy or CuPy CUDA.
     ``cgls``
-        Least squares by conjugate gradients. With no budget, tolerances or penalties,
-        stop at the estimated projection discrepancy, up to 50 updates.
+        Least squares by conjugate gradients. With no budget, tolerances, or
+        penalties, stops when the projection residual RMS reaches the estimated
+        detector noise and sampling error, capped at 50 updates (numerical
+        convergence, roundoff, and breakdown checks also apply). ``info``
+        reports ``termination``, ``early_stop``, ``effective_iterations``,
+        ``measurement_noise_rms``, ``projection_error_rms``, and
+        ``residual_rms``; on real scans unmodeled errors often reach the
+        50-update cap (``termination="iteration_limit"``). An explicit
+        ``iterations``, tolerance, or penalty selects numerical stopping alone.
     ``fista``
         Least squares with physical total variation, ``iterations`` (default
         200), optionally ``nonnegative``. Default ``tv_weight=None`` calibrates
@@ -526,17 +533,28 @@ def reconstruct(
         explicit positive ``tv_weight`` bypasses calibration and runs to
         ``iterations``; zero disables TV.
     ``sirt``
-        SIRT, OS-SART, bounds and support via :class:`~tomojax.recon.SIRTConfig`.
-        Full-data SIRT uses momentum and discrepancy stopping by default, up to 50
-        sweeps. An explicit budget selects that many plain sweeps unless acceleration
-        is also requested.
+        SIRT, OS-SART, bounds, and support via :class:`~tomojax.recon.SIRTConfig`.
+        With ``iterations=None`` and ``subsets=1``, stops at the estimated
+        projection discrepancy up to 50 sweeps and enables FISTA momentum when
+        ``relaxation <= 1``. Pass ``SIRTConfig(acceleration=False)`` for plain
+        automatic SIRT, or an explicit ``iterations`` for that many plain sweeps
+        (add ``acceleration=True`` for momentum). Ordered subsets
+        (``subsets > 1``) use a fixed budget (default 50 sweeps, no momentum).
+        ``info`` reports ``termination``, ``early_stop``,
+        ``effective_iterations``, ``acceleration``, ``measurement_noise_rms``,
+        ``projection_error_rms``, ``pre_update_residual_rms``, and
+        ``slab_stopping`` for independent axial slabs. Replay an automatic run
+        with both ``iterations`` and ``acceleration`` from ``info``.
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
-        ``iterations`` (default 600) each update one block of views, in an
-        order drawn with ``seed``.
+        fixed budget of ``iterations`` (default 600), each updating one block of
+        views in an order drawn with ``seed`` (``termination="iteration_limit"``,
+        ``early_stop=False``).
 
-    ``mlem`` is linear Poisson MLEM/OSEM, not transmission counts (``MLEMConfig``).
-    ``warm_start`` uses FBP/FDK for least squares; ``grid`` overrides the scan's output grid.
+    ``mlem`` is linear Poisson MLEM/OSEM (fixed sweep budget, default 50,
+    ``termination="iteration_limit"``, ``early_stop=False``), not transmission
+    counts (``MLEMConfig``). ``warm_start`` uses FBP/FDK for iterative methods;
+    ``grid`` overrides the scan's output grid.
 
     ``out`` is a writable float32 array or memmap of shape ``(grid.nz, grid.ny,
     grid.nx)`` for ``fbp``, ``fourier``, ``cgls`` with a supported host-slab

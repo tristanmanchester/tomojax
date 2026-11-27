@@ -23,22 +23,31 @@ class CGLSConfig:
     Minimize ``||C (A x - y)||² + damping² ||x||² + gradient_damping² ||D x||²``
     using the discrete matched adjoint. ``C`` is the identity for absolute data
     and subtracts each full detector view's mean for per-view contrast.
-    Stop when the normal-residual norm falls below
+    With ``iterations=None``, ``tolerance=None``, and zero ``absolute_tolerance``,
+    ``damping``, and ``gradient_damping``, CGLS stops when the projection
+    residual RMS reaches an estimate of detector noise plus sampling error,
+    capped at 50 updates (on a one-pixel detector, only the numerical checks and
+    50-update cap apply). Numerical convergence, roundoff, and breakdown checks
+    still apply. Passing an explicit budget, tolerance, or penalty disables
+    discrepancy stopping and uses numerical stopping alone: stop when the
+    normal-residual norm falls below
     ``absolute_tolerance + tolerance * initial_normal_residual_norm`` or after
-    ``iterations`` updates. With the budget and tolerances omitted and no
-    penalties, stop when the projection residual reaches the estimated noise
-    and sampling error, up to 50 updates. An explicit budget or tolerance
-    selects the numerical stopping tests alone.
+    ``iterations`` updates. On real scans, unmodeled errors such as motion,
+    scatter, or calibration bias often keep the residual above the local
+    estimate at 50 updates (``termination="iteration_limit"``).
     ``roundoff_limit`` indicates voxelwise update stagnation or a normal gradient
-    stagnating within an FP32 cancellation estimate, without claiming the requested tolerance.
-    Before reporting convergence or roundoff, recompute the data and normal
-    residuals. A premature convergence indication from recursive residual drift
-    restarts the conjugate direction. Periodic checks near the FP32 noise floor
-    also catch recurrences kept moving by nondeterministic atomic reductions.
-    This criterion measures stationarity, not reconstruction quality. No
-    positivity clipping or TV regularization is applied. ``auto`` uses CUDA
-    on CUDA with a canonical detector grid, otherwise JAX. An explicit CUDA
-    request must be supported and never silently falls back.
+    stagnating within an FP32 cancellation estimate, without claiming the
+    requested tolerance. Before reporting convergence or roundoff, CGLS
+    recomputes the data and normal residuals and restarts the conjugate
+    direction if recursive drift caused the trigger. Near the FP32 precision
+    floor, periodic checks run every 16 updates: an accurate check resumes that
+    16-update cadence, while a direction restart schedules a follow-up check on
+    the next small residual. Numerical stationarity does not establish
+    reconstruction quality, and running unpenalized CGLS for hundreds of updates
+    fits noise and discretization error. No positivity clipping or TV
+    regularization is applied. ``auto`` uses CUDA on CUDA with a canonical
+    detector grid, otherwise JAX. An explicit CUDA request must be supported and
+    never silently falls back.
 
     When both penalties are zero, updates lie in the range of the matched
     adjoint, up to floating-point error. A converged zero-start solve therefore
@@ -235,8 +244,15 @@ def cgls(
     volume : jax.Array or numpy.ndarray
         Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
-        Solver diagnostics and effective work; a small residual or iteration
-        count does not establish reconstruction accuracy.
+        Solver diagnostics and effective work: ``effective_iterations``,
+        ``termination`` (``"projection_discrepancy"``, ``"iteration_limit"``,
+        ``"converged"``, ``"roundoff_limit"``, or ``"numerical_breakdown"``),
+        ``early_stop``, ``measurement_noise_rms``, ``projection_error_rms``,
+        ``residual_rms`` (for discrepancy-stopped runs), and normal-residual
+        diagnostics (``converged``, ``normal_residual_norm``,
+        ``normal_residual_is_recomputed``, ``residual_recomputations``). A
+        small residual or iteration count does not establish reconstruction
+        accuracy.
 
     Raises
     ------

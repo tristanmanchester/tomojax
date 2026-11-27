@@ -74,11 +74,12 @@ def cgls_multires(
     """Initialize CGLS on coarser grids, then refine against every measured ray.
 
     ``factors`` must decrease strictly to 1. Each level gets its explicit
-    positive iteration budget from ``iterations_per_level``; ``config.iterations`` is
-    overridden. Other CGLS settings apply unchanged at each level, including
-    damping and streaming. Host arrays remain on the host until each level chooses
-    its placement. Supported host-array CUDA solves and their interpolation avoid
-    JAX startup. Tolerances may stop levels early.
+    positive iteration budget from ``iterations_per_level``; ``config.iterations``
+    is overridden, so levels use numerical stopping (tolerance or budget) and
+    not statistical discrepancy stopping. Other CGLS settings apply unchanged at
+    each level, including damping and streaming. Host arrays remain on the host
+    until each level chooses its placement. Supported host-array CUDA solves
+    and their interpolation avoid JAX startup. Tolerances may stop levels early.
 
     Volume faces, world poses and physical density are preserved. Coarse data
     select a uniformly strided subset of measured rays without averaging or

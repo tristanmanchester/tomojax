@@ -63,8 +63,17 @@ class SIRTConfig:
     ``relaxation`` must be in (0, 2); ordered subsets can cycle on inconsistent
     data, so use fewer subsets or lower relaxation for the final refinement.
 
-    ``acceleration=True`` applies fixed FISTA momentum to full-data SIRT
-    (``subsets=1``, ``relaxation <= 1``), reducing the iterations needed for
+    With ``iterations=None`` and ``subsets=1``, full-data SIRT stops when the
+    projection residual RMS at the sweep input reaches an estimate of detector
+    noise plus sampling error, capped at 50 sweeps (a one-pixel detector runs to
+    the 50-sweep cap). With ``acceleration=None`` (the default), full-data SIRT
+    also enables fixed FISTA momentum whenever ``iterations=None`` and
+    ``relaxation <= 1``. Pass ``acceleration=False`` for plain SIRT with the
+    same discrepancy stop. Passing an explicit ``iterations`` disables
+    discrepancy stopping and runs that many plain sweeps unless
+    ``acceleration=True`` is also set (requires ``subsets=1`` and
+    ``relaxation <= 1``). Ordered subsets (``subsets > 1``) run a fixed sweep
+    budget (default 50, no momentum). Momentum reduces the sweeps needed for
     the same weighted least-squares objective without changing the projector.
 
     ``lower_bound`` and ``upper_bound`` clip each update. ``support`` is a volume
@@ -513,7 +522,17 @@ def sirt(
     volume : jax.Array or numpy.ndarray
         Float32 reconstruction of shape ``(nz, ny, nx)``.
     info : dict
-        Solver diagnostics and effective work; a small residual or iteration
+        Solver diagnostics and effective work: ``effective_iterations``,
+        ``subset_updates``, ``termination`` (``"projection_discrepancy"`` or
+        ``"iteration_limit"``), ``early_stop``, resolved ``acceleration``,
+        ``measurement_noise_rms``, ``projection_error_rms``, and
+        ``pre_update_residual_rms`` (measured at the point projected for the
+        last sweep, including momentum when accelerated; the returned volume
+        completes the sweep and respects bounds and support). Independent axial
+        slab solves also record per-slab counts and residuals in
+        ``slab_stopping``. Replay an automatic run by passing both
+        ``iterations=info["effective_iterations"]`` and
+        ``acceleration=info["acceleration"]``. A small residual or iteration
         count does not establish reconstruction accuracy.
 
     Raises
