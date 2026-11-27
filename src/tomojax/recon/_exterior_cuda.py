@@ -89,7 +89,7 @@ class DeviceRows:
         from tomojax.core.host_transfer import allocate_device
 
         (device,) = self.data.devices()
-        stats = device.memory_stats() or {}
+        stats: dict[str, int] = device.memory_stats() or {}
         dtype = np.dtype(np.float32)
         # Reuse a reserved block if it fits. Growing the JAX pool for this
         # short-lived stack can retain several times the slab's size.
