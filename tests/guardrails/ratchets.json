@@ -1,16 +1,16 @@
 {
   "config_fields": {
-    "AlignConfig": 25,
-    "CGLSConfig": 11,
+    "AlignConfig": 23,
+    "CGLSConfig": 12,
     "FBPConfig": 5,
     "FBPHostConfig": 3,
     "FDKConfig": 5,
     "FDKHostConfig": 2,
-    "FISTAConfig": 17,
+    "FISTAConfig": 18,
     "FourierConfig": 4,
-    "MLEMConfig": 5,
-    "SIRTConfig": 9,
-    "SPDHGConfig": 16,
+    "MLEMConfig": 6,
+    "SIRTConfig": 10,
+    "SPDHGConfig": 17,
     "SimConfig": 32
   },
   "exported_names": {
@@ -28,15 +28,15 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 41,
-    "tomojax.alignment.api": 5
+    "tomojax.io.api": 29,
+    "tomojax.alignment.api": 4
   },
   "cli_flags": {
     "inspect": 7,
     "correct": 36,
     "reconstruct": 22,
     "align": 21,
-    "export": 12,
+    "export": 7,
     "simulate": 20,
     "serve": 1,
     "mcp": 1,
@@ -44,38 +44,40 @@
     "skill": 3
   },
   "long_files": {
+    "src/tomojax/_loading/loader.py": 823,
     "src/tomojax/alignment/_joint/_solver.py": 1014,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
-    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 119,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 169,
+    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
     "src/tomojax/cli/align.py::build_parser": 101,
     "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
+    "src/tomojax/core/_cuda_axial.py::transpose_axial_vu_cuda": 110,
     "src/tomojax/corrections/_engine.py::correct_frames": 119,
     "src/tomojax/recon/_cgls_jax.py::_solve": 125,
     "src/tomojax/recon/_projection.py::subset_operators": 104,
-    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
+    "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5529,
-    "reportMissingImports": 66,
+    "reportAny": 5598,
+    "reportMissingImports": 58,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 942,
-    "reportUnknownMemberType": 1766,
-    "reportUnknownVariableType": 1043,
-    "reportUnusedCallResult": 154
+    "reportUnknownArgumentType": 881,
+    "reportUnknownMemberType": 1623,
+    "reportUnknownVariableType": 979,
+    "reportUnusedCallResult": 141
   },
-  "explicit_any": 456,
-  "type_casts": 85,
+  "explicit_any": 429,
+  "type_casts": 86,
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
-    "studio/crates/tomojax-studio/src/app/mod.rs": 987,
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1479,
-    "studio/crates/tomojax-studio/src/ui/inspector.rs": 1053,
+    "studio/crates/tomojax-studio/src/app/mod.rs": 986,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1448,
+    "studio/crates/tomojax-studio/src/ui/inspector.rs": 1105,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 999
   },
   "studio_long_functions": {
@@ -84,25 +86,25 @@
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
     "studio/crates/studio-core/src/project.rs::open": 124,
-    "studio/crates/tomojax-studio/src/app/actions.rs::action": 556,
+    "studio/crates/tomojax-studio/src/app/actions.rs::action": 551,
     "studio/crates/tomojax-studio/src/app/jobs.rs::persist_arrays": 143,
-    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 193,
+    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 199,
     "studio/crates/tomojax-studio/src/app/mod.rs::open_project": 112,
-    "studio/crates/tomojax-studio/src/app/previewing.rs::poll_interactive": 223,
-    "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 144,
-    "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 126,
+    "studio/crates/tomojax-studio/src/app/previewing.rs::poll_interactive": 221,
+    "studio/crates/tomojax-studio/src/app/validation.rs::advance_validation": 102,
+    "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 130,
+    "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 111,
     "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 114,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_images": 121,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 275,
+    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 274,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 163,
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::restore_workspace": 116,
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
     "studio/crates/tomojax-studio/src/imaging/reader.rs::volume": 105,
     "studio/crates/tomojax-studio/src/metadata.rs::projection_arrays": 138,
-    "studio/crates/tomojax-studio/src/metadata.rs::quick_metadata": 165,
+    "studio/crates/tomojax-studio/src/metadata.rs::quick_metadata": 175,
+    "studio/crates/tomojax-studio/src/metadata.rs::stored_volume": 134,
     "studio/crates/tomojax-studio/src/ui/controls.rs::icon": 146,
-    "studio/crates/tomojax-studio/src/ui/export.rs::form": 121,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::display": 107,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::explore": 172,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::processing": 114,
@@ -123,7 +125,7 @@
     "studio/crates/tomojax-studio/src/volume/ray.rs::prepare": 130
   },
   "cuda_kernels": 47,
-  "cuda_switches": 34,
+  "cuda_switches": 37,
   "environment_reads": 22,
   "suppressions": {
     "noqa": 5,
@@ -131,10 +133,13 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
+    "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
     "src/tomojax/alignment/_joint/_solver.py::C901::_descend",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
+    "src/tomojax/cli/_adapters.py::C901::durable",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_python.py::C901::registered",
+    "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/cli/mcp/tools/seeing.py::C901::finish",
     "src/tomojax/cli/mcp/tools/seeing.py::C901::view",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
@@ -143,26 +148,21 @@
     "src/tomojax/corrections/_engine.py::PLR0915::correct_frames",
     "src/tomojax/datasets/_impl/artifacts.py::C901::apply_simulation_artifacts",
     "src/tomojax/datasets/_impl/artifacts.py::PLR0915::apply_simulation_artifacts",
-    "src/tomojax/io/_datasets.py::PLR0911::_dataset_issues",
-    "src/tomojax/io/_export.py::C901::install_export",
-    "src/tomojax/io/_export.py::PLR0912::install_export",
-    "src/tomojax/io/_export_formats.py::C901::tiff",
-    "src/tomojax/io/_hdf5_acquisition.py::C901::read_hdf5_acquisition",
-    "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
+    "src/tomojax/recon/_cgls_cuda.py::PLR0915::iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
     "src/tomojax/recon/cgls_multires.py::C901::cgls_multires",
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
-    "forwarders": 7,
-    "chained": 4
+    "tiny": 69,
+    "forwarders": 8,
+    "chained": 7
   },
   "positional_options": [],
   "params5_mentions": 0,
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 136
+  "test_private_imports": 128
 }

@@ -699,6 +699,7 @@ def tomojax.forward.project_joseph(
 # tomojax.recon
 class tomojax.recon.CGLSConfig(
         *,
+        exterior: Exterior = 'cylinder',
         data_term: Literal['absolute', 'per_view_contrast'] = 'absolute',
         iterations: int | None = None,
         tolerance: float | None = None,
@@ -736,6 +737,7 @@ class tomojax.recon.FDKConfig(
 class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk: 'FDKConfig' = <factory>) -> None
 class tomojax.recon.FISTAConfig(
         *,
+        exterior: Exterior = 'cylinder',
         iterations: int = 200,
         data_term: Literal['absolute', 'per_view_contrast'] = 'absolute',
         tv_weight: float | None = None,
@@ -763,6 +765,7 @@ class tomojax.recon.FourierConfig(
     ) -> None
 class tomojax.recon.MLEMConfig(
         *,
+        exterior: '_parameters.Exterior' = 'cylinder',
         iterations: 'int' = 50,
         subsets: 'int' = 1,
         support: 'jax.Array | np.ndarray | None' = None,
@@ -771,6 +774,7 @@ class tomojax.recon.MLEMConfig(
     ) -> None
 class tomojax.recon.SIRTConfig(
         *,
+        exterior: '_parameters.Exterior' = 'cylinder',
         iterations: 'int | None' = None,
         subsets: 'int' = 1,
         relaxation: 'float' = 1.0,
@@ -784,7 +788,8 @@ class tomojax.recon.SIRTConfig(
     .accelerated
 class tomojax.recon.SPDHGConfig(
         *,
-        iterations: int | None = None,
+        exterior: Exterior = 'cylinder',
+        iterations: int = 600,
         tv_weight: float | None = None,
         data_term: Literal['absolute', 'per_view_contrast'] = 'absolute',
         regularizer: Literal['tv', 'huber_tv'] = 'tv',
