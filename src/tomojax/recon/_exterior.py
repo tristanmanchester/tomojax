@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import math
-from typing import TYPE_CHECKING, NamedTuple, cast
+from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
@@ -315,16 +315,15 @@ def _project(
     model, backend = resolve_geometry_projector(
         geometry, config.backend, detector=detector, det_grid=lattice, context="reconstruct"
     )
-    import jax.numpy as jnp
+    from jax.lax import convert_element_type
 
-    place = cast("Callable[[Float32Array], jax.Array]", jnp.asarray)
-    pose = place(poses)
+    pose = convert_element_type(poses, np.float32)
     coeff = (
         model.coefficients(pose, grid)
         if isinstance(model, ConeModel)
         else plane_coefficients(pose, grid, detector, lattice)
     )
-    device = place(volume)
+    device = convert_element_type(volume, np.float32)
     for first in range(0, len(poses), batch):
         part = slice(first, first + batch)
         if isinstance(model, ConeModel):
