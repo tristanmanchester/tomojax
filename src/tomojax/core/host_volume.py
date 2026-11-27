@@ -26,8 +26,17 @@ from tomojax import progress
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+    from typing import Protocol
 
-    from numpy.typing import DTypeLike
+    from numpy.typing import ArrayLike, DTypeLike
+
+    class _ViewSource(Protocol):
+        @property
+        def shape(self) -> tuple[int, ...]: ...
+        @property
+        def dtype(self) -> np.dtype: ...
+        def __getitem__(self, key: int | np.ndarray, /) -> ArrayLike: ...
+
 
 _DESCRIPTORS: dict[int, int] = {}  # open files of the work volumes alive, by id
 
@@ -182,7 +191,9 @@ def host_array(
     return host_volume(shape, Path(tempfile.gettempdir()) if large else None, dtype=dtype)
 
 
-def selected_stack(source: Any, ids: np.ndarray) -> np.ndarray:
+def selected_stack(
+    source: _ViewSource, ids: np.ndarray[tuple[int, ...], np.dtype[np.int64]]
+) -> np.ndarray:
     """Copy selected frames in acquisition order, bounding resident and temporary memory."""
     target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
     batch = max(1, (32 << 20) // (math.prod(source.shape[1:]) * source.dtype.itemsize))

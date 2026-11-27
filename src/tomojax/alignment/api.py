@@ -1,11 +1,4 @@
-"""Pair-only opposing-view center estimation for acquisition setup.
-
-General alignment and full-sinogram axial center calibration use
-:func:`tomojax.align` (``tj.align(scan, fit="center")``). The helpers below
-implement the pair-only estimator used by ``method="opposite-views"``, which
-estimates an axial detector center from near-opposite projections without
-reconstructing.
-"""
+"""Detector disturbance screening and opposing-view center measurements."""
 
 from __future__ import annotations
 
@@ -20,7 +13,7 @@ from tomojax.alignment._geometry.detector_center import (
     estimate_center,
     estimate_center_report,
 )
-from tomojax.alignment._integration import acquisition_segments
+from tomojax.alignment._integration import acquisition_segments, trajectory_positions
 from tomojax.alignment._joint._disturbance import DisturbedViews, disturbed_report
 from tomojax.alignment._joint._fit import preview_disturbance
 from tomojax.alignment._joint._pose import ViewOrder
@@ -58,7 +51,9 @@ def disturbed_views(
     """
     config = AlignConfig(resolution=resolution)
     segments = acquisition_segments(geometry, view_positions)
-    order = ViewOrder(len(segments), view_positions)
+    if projections.shape != (len(segments), geometry.detector.nv, geometry.detector.nu):
+        raise ValueError("projections must match the view count and detector shape")
+    order = ViewOrder(len(segments), trajectory_positions(view_positions, segments))
     scores = preview_disturbance(projections, geometry.grid, geometry.detector, config, order)
     return disturbed_report(scores, np.asarray(geometry.angles), segments)
 

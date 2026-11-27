@@ -457,6 +457,12 @@ class Tools:
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))
+        if disturbance := summary.get("disturbed_views"):
+            arrays = output["info"]["arrays"]
+            summary["disturbed_views"] = {
+                key: arrays.get(f"/disturbed_views/{key}", item)
+                for key, item in disturbance.items()
+            }
         # Every scalar the solver reports: its stopping status, chosen weights, noise levels.
         for key, item in info.items():
             if key not in summary and (item is None or isinstance(item, str | bool | int | float)):

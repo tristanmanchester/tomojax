@@ -311,6 +311,9 @@ def summarize(
 
     def visit(value: object, pointer: str) -> object:
         value = _config_value(value)
+        if pointer.startswith("/disturbed_views/") and isinstance(value, list) and len(value) > 64:
+            # Externalize both interval tables and score vectors with missing measurements.
+            value = np.asarray(value, dtype=float if pointer.endswith("/score") else None)
         if isinstance(value, np.ndarray | jax.Array):
             if value.ndim:
                 arrays[pointer] = externalize(pointer, value)
@@ -358,7 +361,8 @@ def _bounded_info(summary: dict[str, object], arrays: dict[str, Array]) -> Info:
     kept: dict[str, object] = {}
     references: dict[str, Array] = {}
     omitted = 0
-    for key in sorted(summary, key=lambda k: k not in {"automatic", "placement"}):
+    priority = {"automatic", "placement", "disturbed_views"}
+    for key in sorted(summary, key=lambda k: k not in priority):
         pointer = "/" + key.replace("~", "~0").replace("/", "~1")
         subset = {p: a for p, a in arrays.items() if p == pointer or p.startswith(pointer + "/")}
         record = {

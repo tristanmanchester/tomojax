@@ -135,6 +135,7 @@ class AlignConfig:
     refine_neighbors: int = field(default=5, metadata={"unit": "view"})
 
     def __post_init__(self) -> None:
+        self._validate_weights()
         for name, value in (
             ("iterations", self.iterations),
             ("coarse_iterations", self.coarse_iterations),
@@ -153,19 +154,6 @@ class AlignConfig:
         ):
             if operator.index(value) < 1:
                 raise InvalidParameter(name, f"{name} must be positive")
-        for name, value in (
-            ("margin", self.margin),
-            ("image_tolerance", self.image_tolerance),
-            ("tolerance", self.tolerance),
-            (
-                "image_tv_weight",
-                self.image_tv_weight if self.image_tv_weight != "coverage" else 0.0,
-            ),
-            ("loss_contrast_floor", self.loss_contrast_floor),
-            ("refine_smoothing", self.refine_smoothing),
-        ):
-            if not math.isfinite(value) or value < 0:
-                raise InvalidParameter(name, f"{name} must be finite and nonnegative")
         if self.detector_columns not in ("none", "fixed", "transient", "both"):
             raise InvalidParameter("detector_columns", "choose none, fixed, transient or both")
         if self.motion not in ("independent", "smooth"):
@@ -180,6 +168,22 @@ class AlignConfig:
             raise InvalidParameter(
                 "interpolation", f"interpolation is 'linear' or 'cubic', not {self.interpolation!r}"
             )
+
+    def _validate_weights(self) -> None:
+        """Check nonnegative regularization scales, including the measured coverage option."""
+        for name, value in (
+            ("margin", self.margin),
+            ("image_tolerance", self.image_tolerance),
+            ("tolerance", self.tolerance),
+            (
+                "image_tv_weight",
+                self.image_tv_weight if self.image_tv_weight != "coverage" else 0.0,
+            ),
+            ("loss_contrast_floor", self.loss_contrast_floor),
+            ("refine_smoothing", self.refine_smoothing),
+        ):
+            if not math.isfinite(value) or value < 0:
+                raise InvalidParameter(name, f"{name} must be finite and nonnegative")
 
 
 def resolve_align_config(config: AlignConfig, fit: tuple[str, ...], *, cone: bool) -> AlignConfig:

@@ -109,6 +109,9 @@ def estimate(
         return Placement(devices, "resident", hosts + work, 0, snapshot)
     if isinstance(plan, JointSelection):
         # Levels execute in sequence and keep their host observations for the solve.
+        if plan.kept is not None:
+            views = len(plan.kept)
+            hosts += views * rows * cols * scan.projections.dtype.itemsize
         bins = [level.binning for level in plan.schedule.levels]
         data = [4 * views * (rows // b) * (cols // b) for b in bins]
         hosts += 2 * sum(data)

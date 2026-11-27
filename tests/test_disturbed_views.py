@@ -32,6 +32,8 @@ def test_excluded_views_do_not_affect_fit_and_receive_interpolated_pose():
             fit.poses[held, column], np.interp(position[held], position[keep], ref.poses[:, column])
         )
     np.testing.assert_array_equal(fit.scan.projections, values)
+    assert fit.info["disturbed_views"]["score"][9:14] == [None] * 5
+    assert fit.info["fit_views"] == np.flatnonzero(keep).tolist()
 
 
 def test_row_common_shadow_report_is_distinct_from_specimen_slip():
@@ -55,4 +57,24 @@ def test_row_common_shadow_report_is_distinct_from_specimen_slip():
     report = disturbed_views(data.astype("f4"), geometry)
     assert report["ranges"] == [[61, 70]]
     assert report["angles_deg"] == [[angles[61], angles[69]]]
+    assert "crosses the field of view" in report["message"]
     assert "Inspect" in report["message"]
+
+    # With the entire upper band masked, the lower band alone supplies no evidence.
+    data[:, : rows // 2] = np.nan
+    masked = disturbed_views(data.astype("f4"), geometry)
+    assert masked["ranges"] == [] and masked["score"] == [None] * n
+    assert "Too few" in masked["message"]
+
+
+@pytest.mark.slow
+def test_pose_interpolation_stops_at_trajectory_boundaries():
+    scan = tj.simulate("shepp", size=12, n_views=24, translation_sigma=0.4).scan
+    scan = replace(scan, view_positions=np.tile(np.arange(12), 2))
+    cfg = AlignConfig(exclude_views=((9, 15),), iterations=1, levels=(1,), refine_iterations=0)
+    result = tj.align(scan, config=cfg)
+    # The left trajectory ends at 8. The next starts at 15.
+    np.testing.assert_array_equal(result.poses[9:12], np.repeat(result.poses[8:9], 3, axis=0))
+    np.testing.assert_array_equal(result.poses[12:15], np.repeat(result.poses[15:16], 3, axis=0))
+    with pytest.raises(ValueError, match="one per trajectory"):
+        tj.align(scan, config=replace(cfg, exclude_views=((0, 12),)))

@@ -17,7 +17,7 @@ from tomojax._scan.model import bind_step_geometry, frame_output_grid, selected_
 from tomojax._workflow.operations import reconstruct_resolved
 from tomojax._workflow.planning import resolve_reconstruction
 from tomojax._workflow.smooth_alignment import transfer_alignment
-from tomojax.alignment._integration import acquisition_segments
+from tomojax.alignment._integration import acquisition_segments, trajectory_positions
 from tomojax.core.host_volume import release_planes, resident_limit, selected_stack
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
@@ -250,10 +250,7 @@ def fit_candidate(
             raise ValueError(
                 "alignment evaluation requires acquisition positions in the training partition"
             )
-        positions = scan.view_positions.copy()
-        for group in np.unique(train.segments):
-            members = train.segments == group
-            positions[members] -= positions[members][0]
+        positions = trajectory_positions(scan.view_positions, train.segments)
         fit = tj.align(replace(scan, view_positions=positions), **settings)
         held = transfer_alignment(
             train.scan,

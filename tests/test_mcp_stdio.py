@@ -416,6 +416,26 @@ def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
         assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
 
 
+def test_joint_alignment_reports_disturbances_and_explicit_exclusions(tmp_path):
+    with connection(tmp_path) as c:
+        sim = c.call("simulate", phantom="shepp", size=8, n_views=12)["structuredContent"]
+        config = dict(
+            type="AlignConfig",
+            exclude_views=[[3, 5]],
+            detector_columns="transient",
+            image_tv_weight="coverage",
+            iterations=1,
+            levels=[1],
+            refine_iterations=0,
+        )
+        reply = c.call("align", source=sim["members"]["scan"], config=config)
+        assert not reply["isError"], reply["content"][0]["text"]
+        report = reply["structuredContent"]["disturbed_views"]
+        assert report["message"] in reply["content"][0]["text"]
+        assert report["score"][3:5] == [None, None]
+        assert len(report["score"]) == 12
+
+
 @pytest.mark.parametrize("size", [32, pytest.param(128, marks=pytest.mark.gpu)])
 @pytest.mark.slow
 def test_reconstruction_chain_matches_direct_api(tmp_path, size):

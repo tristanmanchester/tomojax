@@ -937,10 +937,14 @@ def test_align_cli_prints_fitted_motion_and_stop_reason(tmp_path, capsys):
     path, out = tmp_path / "motion.nxs", tmp_path / "aligned.nxs"
     sim = tj.simulate("shepp", size=12, n_views=20, translation_sigma=0.3)
     tj.save(path, sim)
+    config = tmp_path / "alignment.toml"
+    config.write_text('detector_columns = "fixed"\nexclude_views = [[2, 4]]\n')
     assert (
         main(
             [
                 "align",
+                "--config",
+                str(config),
                 str(path),
                 "-o",
                 str(out),
@@ -959,7 +963,11 @@ def test_align_cli_prints_fitted_motion_and_stop_reason(tmp_path, capsys):
     assert "weakly determined" in warning
     assert "relying on them. Review" in warning
     assert "https://tomojax.dev/align-a-scan/#check-the-result" in warning
-    report = tj.load_alignment(out).info["report"]
+    info = tj.load_alignment(out).info
+    assert info["disturbed_views"]["message"] in summary
+    assert info["disturbed_views"]["score"][2:4] == [None, None]
+    assert info["config"]["detector_columns"] == "fixed"
+    report = info["report"]
     dx = report["poses"]["x"]
     assert "Per-view shifts (RMS/max, native px)" in summary
     assert f"x {dx['rms']:.3g}/{dx['max']:.3g}" in summary

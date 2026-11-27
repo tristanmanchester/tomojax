@@ -18,6 +18,7 @@ from tomojax.alignment._integration import (
     fit_poses,
     initial_center_change,
     opposite_samples,
+    trajectory_positions,
 )
 from tomojax.backends.api import is_oom_error
 from tomojax.errors import InvalidParameter
@@ -34,10 +35,13 @@ if TYPE_CHECKING:
     from tomojax.geometry import Grid
 
 
-def retained_views(ranges: tuple[tuple[int, int], ...], segments: np.ndarray) -> np.ndarray:
+def retained_views(scan: Scan, ranges: tuple[tuple[int, int], ...]) -> np.ndarray | None:
     """Input indices entering the fit, with a measured reference in each trajectory."""
     import operator
 
+    if not ranges:
+        return None
+    segments = acquisition_segments(scan.geometry, scan.view_positions)
     keep = np.ones(len(segments), bool)
     for interval in ranges:
         start, stop = map(operator.index, interval)
@@ -75,10 +79,9 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     original = scan
     frames = plan.frames
     segments = acquisition_segments(scan.geometry, scan.view_positions)
-    kept = retained_views(plan.config.exclude_views, segments)
-    if plan.config.exclude_views:
+    kept = plan.kept if plan.kept is not None else np.arange(len(segments))
+    if plan.kept is not None:
         scan = scan.selected(kept)
-        frames = None if frames is None else frames[kept]
     views = len(scan.angles)
     native = (scan.detector.du, scan.detector.dv)
     _, metadata, _, _ = describe(scan.geometry)
@@ -98,7 +101,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             keep_grid=grid is not None,
             frames=frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
-            view_positions=scan.view_positions,
+            view_positions=trajectory_positions(scan.view_positions, segments[kept]),
             schedule=plan.schedule,
             config=plan.config,
         )
@@ -111,7 +114,7 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             "to let the fit bound its own working scale."
         ) from exc
     changes = record["calibration"]
-    if plan.config.exclude_views:
+    if plan.kept is not None:
         if fitted is not None:
             positions = original.view_positions
             at = np.arange(len(original.angles)) if positions is None else positions
@@ -125,8 +128,11 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     scores = np.full(len(segments), np.nan)
     scores[kept] = record["disturbance_score"]
     del info["disturbance_score"]
-    info["disturbed_views"] = disturbed_report(scores, original.angles, segments)
-    if plan.config.exclude_views:
+    disturbance = disturbed_report(scores, original.angles, segments)
+    info["disturbed_views"] = disturbance
+    if disturbance["ranges"]:
+        warn(disturbance["message"], stacklevel=3)
+    if plan.kept is not None:
         info["fit_views"] = kept.tolist()
     _warn_about_views(record["report"])
     source = record_of(corrected)
@@ -168,6 +174,7 @@ class JointSelection:
     info: dict[str, Any]
     schedule: FitSchedule
     frames: np.ndarray | None
+    kept: np.ndarray | None
 
 
 def resolve_alignment(
@@ -235,6 +242,7 @@ def resolve_alignment(
         if focus is not None:
             return opposite_samples(scan.geometry, focus=focus)
     config = replace(AlignConfig() if config is None else config, **supplied)
+    kept = retained_views(scan, config.exclude_views)
     grid, cylinder, info = resolve_grid(scan, grid, region, shape=shape)
     if grid is not None:
         scan = with_grid(scan, grid)
@@ -242,11 +250,13 @@ def resolve_alignment(
     cone = None
     if frames is not None:
         declared = np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
+        if kept is not None:
+            frames, declared = frames[kept], declared[kept]
         cone = (declared, frames)
     schedule = fit_schedule(
         scan.grid, scan.detector, cone, keep_grid=grid is not None, config=config
     )
-    return JointSelection(names, grid, config, cylinder, info, schedule, frames)
+    return JointSelection(names, grid, config, cylinder, info, schedule, frames, kept)
 
 
 def transfer_alignment(

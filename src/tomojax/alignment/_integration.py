@@ -31,6 +31,15 @@ def acquisition_segments(geometry: ScanGeometry, positions: np.ndarray | None) -
     return np.cumsum(starts)
 
 
+def trajectory_positions(positions: np.ndarray | None, segments: np.ndarray) -> np.ndarray | None:
+    """Keep acquisition-time gaps and restart the clock at each trajectory boundary."""
+    if segments[0] == segments[-1]:
+        return positions
+    at = np.arange(len(segments)) if positions is None else positions
+    _, starts, groups = np.unique(segments, return_index=True, return_inverse=True)
+    return at - at[starts][groups]
+
+
 def initial_center_change(
     geometry: ScanGeometry, projections: np.ndarray | jax.Array, positions: np.ndarray | None
 ) -> float:
@@ -75,4 +84,5 @@ __all__ = [
     "initial_center_change",
     "opposite_samples",
     "parse_fit",
+    "trajectory_positions",
 ]

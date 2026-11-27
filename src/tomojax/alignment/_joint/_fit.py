@@ -410,6 +410,23 @@ def fit_schedule(
     return FitSchedule(base, dbin, margin, levels)
 
 
+def _calibrated_levels(
+    measured: np.ndarray, bins: Sequence[int], config: AlignConfig, order: ViewOrder
+) -> tuple[list[_Binned], _DataScale, float, np.ndarray, dict[int, ColumnNoise]]:
+    """Read native pixels once. Measure disturbances before modifying any observations."""
+    binned, scale, noise = _read(measured, bins)
+    coarse = bins.index(max(bins))
+    scores = disturbance_score(*binned[coarse], noise / bins[coarse], order)
+    columns = calibrate_columns(
+        binned,
+        bins,
+        noise,
+        model=config.detector_columns,
+        coverage=config.image_tv_weight == "coverage",
+    )
+    return binned, scale, noise, scores, columns
+
+
 def preview_disturbance(
     projections: np.ndarray, grid: Grid, detector: Detector, config: AlignConfig, order: ViewOrder
 ) -> np.ndarray:
@@ -542,15 +559,9 @@ def fit_poses(
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []
-        binned, scale, noise = _read(y0[:, : detector.nv - drop_v, : detector.nu - drop_u], bins)
-        coarse = bins.index(max(bins))
-        disturbance = disturbance_score(*binned[coarse], noise / bins[coarse], order)
-        column_noise = calibrate_columns(
-            binned,
-            bins,
-            noise,
-            model=config.detector_columns,
-            coverage=config.image_tv_weight == "coverage",
+        measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
+        binned, scale, noise, disturbance, column_noise = _calibrated_levels(
+            measured, bins, config, order
         )
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
