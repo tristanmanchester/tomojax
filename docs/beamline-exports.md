@@ -119,7 +119,7 @@ from tomojax.corrections import Rings
 
 scan = tj.load("full-turn.nxs")
 fit = tj.align(scan, fit="center")
-print(fit.info["diagnostics"])          # overlap_px, pairs, rows
+print(fit.info["diagnostics"])          # the overlap in pixels, opposing pairs and rows used
 aligned = fit.scan
 print(aligned.grid.shape)               # (z, y, x), expanded to the far edge
 recon = tj.reconstruct(aligned.corrected(Rings()))
