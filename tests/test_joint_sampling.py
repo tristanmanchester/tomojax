@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
+from tomojax.alignment import AlignConfig
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint import _fit, _noise, _visibility
@@ -141,7 +142,8 @@ def test_column_shadow_on_a_stationary_object_keeps_pose_and_image():
         shift = 3 * np.sin(i * 0.8) * np.exp(-(((i - 27) / 7) ** 2))
         shadow[i] = np.interp(u - shift, u, row) - row
     measured = replace(sim.scan, projections=data + shadow[:, None, :])
-    result = tj.align(measured, fit="translations", grid=measured.grid)
+    config = AlignConfig(detector_columns="both", image_tv_weight="coverage")
+    result = tj.align(measured, fit="translations", grid=measured.grid, config=config)
     assert np.sqrt(np.mean(result.poses[:, 3] ** 2)) < 0.02
     relative_error = np.linalg.norm(result.image - sim.phantom) / np.linalg.norm(sim.phantom)
     assert relative_error < 0.16

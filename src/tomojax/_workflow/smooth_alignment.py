@@ -98,7 +98,8 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
             keep_grid=grid is not None,
             frames=frames,
             detector_roll=float(cast("float", metadata.get("detector_roll", 0.0))),
-            view_positions=trajectory_positions(scan.view_positions, segments[kept]),
+            view_positions=scan.view_positions,
+            disturbance_positions=trajectory_positions(scan.view_positions, segments[kept]),
             schedule=plan.schedule,
             config=plan.config,
         )

@@ -1,5 +1,6 @@
 """The public fit selection and calibrated scan survive the workflow and files."""
 
+from dataclasses import replace
 import inspect
 import json
 
@@ -99,6 +100,18 @@ def test_a_center_and_roll_fit_keeps_fourier_as_the_automatic_method(monkeypatch
     result = tj.align(scan, fit=("center", "roll"))
     automatic = tj.reconstruct(result.scan).info["automatic"]
     assert automatic["method"] == "fourier" and automatic["status"] == "ok"
+
+
+def test_screening_separate_cone_orbits_preserves_the_acquisition_clock(monkeypatch):
+    one = _scan(cone=True)
+    combined = tj.Scan.combine([one, one])
+    time = np.arange(len(combined.angles), dtype=float) + 0.5
+    scan = replace(combined, view_positions=time)
+    calls = _fitter(monkeypatch)
+    tj.align(scan, motion="smooth")
+    options = calls[0][4]
+    np.testing.assert_array_equal(options["view_positions"], time)
+    np.testing.assert_array_equal(options["disturbance_positions"], np.tile(np.arange(60), 2))
 
 
 def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(monkeypatch):

@@ -411,11 +411,12 @@ def fit_schedule(
 
 
 def _calibrated_levels(
-    measured: np.ndarray, bins: Sequence[int], config: AlignConfig, order: ViewOrder
+    measured: np.ndarray, bins: Sequence[int], config: AlignConfig, positions: ArrayLike | None
 ) -> tuple[list[_Binned], _DataScale, float, np.ndarray, dict[int, ColumnNoise]]:
     """Read native pixels once. Measure disturbances before modifying any observations."""
     binned, scale, noise = _read(measured, bins)
     coarse = bins.index(max(bins))
+    order = ViewOrder(len(measured), positions)
     scores = disturbance_score(*binned[coarse], noise / bins[coarse], order)
     columns = calibrate_columns(
         binned,
@@ -496,6 +497,7 @@ def fit_poses(
     frames: ArrayLike | jax.Array | None = None,
     detector_roll: float = 0.0,
     view_positions: ArrayLike | None = None,
+    disturbance_positions: ArrayLike | None = None,
     declared_poses: np.ndarray | None = None,
     initial_center: float = 0.0,
     schedule: FitSchedule | None = None,
@@ -518,7 +520,9 @@ def fit_poses(
     roll, which is absent from the object pose matrices. Cone frames already
     contain any existing roll. ``view_positions`` place the views in acquisition
     time (see :class:`ViewOrder`); the motion prior and the report's neighbor
-    tests follow them, and None means consecutive. ``declared_poses`` are the
+    tests follow them, and None means consecutive. ``disturbance_positions`` restart
+    at explicit orbit boundaries to compare columns within each detector trajectory.
+    ``declared_poses`` are the
     geometry's poses before any corrections, which set a cone's magnification and so
     the working scale: the problem's size is a property of the scan as declared, so a
     start or restart from a different pose table fits on the same grid. None uses
@@ -560,8 +564,9 @@ def fit_poses(
         prior = None
         levels: list[FitLevelRecord] = []
         measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
+        screen_at = view_positions if disturbance_positions is None else disturbance_positions
         binned, scale, noise, disturbance, column_noise = _calibrated_levels(
-            measured, bins, config, order
+            measured, bins, config, screen_at
         )
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
