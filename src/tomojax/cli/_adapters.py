@@ -29,6 +29,7 @@ from tomojax._workflow.operations import (
     alignment_task,
     reconstruct_resolved,
     reconstruction_from_record,
+    saved_info,
     simulation_from_record,
     validate_save,
 )
@@ -594,10 +595,13 @@ class Admission:
                 record.geometry_metadata.pop("volume_role", None)
                 record.geometry_metadata.update(
                     reconstruction_method=operation.method,
-                    reconstruction_info={
-                        "host_slabs": True,
-                        "source": item.source.source_path if item.source else None,
-                    },
+                    reconstruction_info=saved_info(
+                        {
+                            "config": cfg,
+                            "host_slabs": True,
+                            "source": item.source.source_path if item.source else None,
+                        }
+                    ),
                 )
                 stage = self.context.staging.output(path, force=operation.force)
                 manifest = self.context.staging.output(sidecar, force=operation.force)

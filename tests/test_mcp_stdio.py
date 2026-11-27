@@ -661,7 +661,12 @@ def test_slab_destination_over_stdio(tmp_path):
             geometry=dict(kind="parallel"),
         )
         ref = raw["structuredContent"]["handle"]
-        args = dict(source=ref, path="slabs.nxs", method="fbp", config={"backend": "jax"})
+        args = dict(
+            source=ref,
+            path="slabs.nxs",
+            method="fbp",
+            config={"backend": "jax", "exterior": "zero"},
+        )
         valid = c.call("reconstruct_slabs", dry_run=True, detail="full", **args)
         assert valid["structuredContent"]["type"] == "validated"
         assert not (tmp_path / "slabs.nxs").exists()
@@ -671,6 +676,7 @@ def test_slab_destination_over_stdio(tmp_path):
             str(tmp_path / "slabs.nxs"),
             str(tmp_path / "slabs.nxs.manifest.json"),
         ]
+        assert tj.load_reconstruction(tmp_path / "slabs.nxs").info["config"]["exterior"] == "zero"
         assert list(c.call("status")["structuredContent"]["handles"]) == [ref]
         scan = c.call("correct", source=ref)["structuredContent"]["handle"]
         projected = c.call("project", source=scan, volume="slabs.nxs")

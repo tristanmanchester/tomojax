@@ -291,7 +291,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     manifest = tmp_path / "recon-manifest.json"
     config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
-    _ = config.write_text("scale = 0.5\n", encoding="utf-8")
+    _ = config.write_text('scale = 0.5\nexterior = "zero"\n', encoding="utf-8")
 
     args = [
         "reconstruct",
@@ -320,7 +320,8 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
     assert resolved["method"] == "fbp"
-    assert resolved["settings"] == {"scale": 0.5}
+    assert resolved["settings"] == {"scale": 0.5, "exterior": "zero"}
+    assert loaded.geometry_metadata["reconstruction_info"]["config"]["exterior"] == "zero"
     settings = resolved["reconstruction"]["config"]
     assert (settings["filter"], settings["scale"]) == ("ramp", 0.5)
     assert resolved["reconstruction_grid"]["nx"] == 4

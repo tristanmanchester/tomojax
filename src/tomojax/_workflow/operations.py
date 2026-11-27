@@ -345,10 +345,8 @@ def save(
                 record.geometry_metadata["length_unit"] = item.length_unit
             record.volume = item.volume
             record.geometry_metadata["reconstruction_method"] = item.method
-            # As JSON, which the file's metadata is: a configuration as its fields, and
-            # what else JSON cannot hold as text.
-            record.geometry_metadata["reconstruction_info"] = json.loads(
-                json.dumps({**item.info, "source": source}, default=_json_value)
+            record.geometry_metadata["reconstruction_info"] = saved_info(
+                {**item.info, "source": source}
             )
         elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
             record = record_of(item.scan)
@@ -359,9 +357,7 @@ def save(
             record.geometry_metadata.pop("reconstruction_info", None)
             # The image's grid, which need not be the scan's: load_alignment/export read it back.
             info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
-            record.geometry_metadata["alignment_info"] = json.loads(
-                json.dumps(info, default=_json_value)
-            )
+            record.geometry_metadata["alignment_info"] = saved_info(info)
         else:
             raise TypeError(
                 f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
@@ -369,6 +365,11 @@ def save(
         if not isinstance(item, Simulation):  # a scan loaded from a simulation carries its tag
             _ = record.geometry_metadata.pop("volume_role", None)
         save_dataset(path, record)
+
+
+def saved_info(info: dict[str, object]) -> dict[str, object]:
+    """Convert result metadata to JSON, recording dataclass settings by field."""
+    return cast("dict[str, object]", json.loads(json.dumps(info, default=_json_value)))
 
 
 def _json_value(value: object) -> object:
