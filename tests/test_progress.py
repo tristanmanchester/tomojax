@@ -866,6 +866,9 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
     }
     result = records.pop()
     assert result["event"] == "result" and result["outputs"] == [str(output)]
+    assert result["info"]["summary"]["corrections"] == [
+        c.to_dict() for c in tj.load(source).corrections
+    ]
     events = [kinds[r.pop("event")](**r) for r in records]
     validate_tree(events)
     assert [e.name for e in work_events(events) if isinstance(e, progress.Started)] == [

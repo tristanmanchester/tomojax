@@ -382,6 +382,33 @@ def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
         assert c.terminal(job["taskId"])["status"] == "cancelled"
 
 
+def test_correction_history_matches_python_on_correct_and_open(tmp_path):
+    import numpy as np
+
+    from tests._helpers import write_raw_nxtomo
+
+    raw = tmp_path / "raw.nxs"
+    write_raw_nxtomo(raw)
+    expected = [record.to_dict() for record in tj.load(raw).corrections]
+    assert expected[0]["name"] == "flat_dark"
+    with connection(tmp_path) as c:
+        frames = c.call("open", kind="frames", path="raw.nxs")["structuredContent"]["handle"]
+        corrected = c.call("correct", source=frames, detail="full")["structuredContent"]
+        assert corrected["info"]["summary"]["corrections"] == expected
+        assert corrected["corrections"] == expected
+        c.call("save", source=corrected["handle"], path="scan.nxs")
+        reopened = c.call("open", kind="scan", path="scan.nxs")["structuredContent"]
+        assert reopened["corrections"] == expected
+
+        kept = np.arange(1, 70)
+        selected = tj.simulate("sphere", size=8, n_views=70).scan.selected(kept)
+        tj.save(tmp_path / "selected.nxs", selected)
+        reply = c.call("open", path="selected.nxs")["structuredContent"]
+        assert reply["corrections"][-1]["settings"]["views"] is None
+        ref = reply["info"]["arrays"]["/corrections/0/settings/views"]
+        np.testing.assert_array_equal(np.load(ref["storage"]["path"]), kept)
+
+
 def test_directory_inspection_and_unrecognized_hdf5(tmp_path):
     with h5py.File(tmp_path / "unknown.h5", "w") as file:
         file["a/b::c"] = [1, 2, 3]

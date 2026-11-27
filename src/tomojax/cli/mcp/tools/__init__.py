@@ -431,7 +431,7 @@ class Tools:
         kind: str = value["type"]
         array = value.get(PRIMARY.get(kind, kind)) or value.get("poses") or {}
         info = object_mapping(output["info"]["summary"])
-        summary = {
+        summary: dict[str, object] = {
             "kind": kind,
             "shape": array.get("shape"),
             "unit": array.get("unit"),
@@ -442,6 +442,7 @@ class Tools:
         for key in (
             "method",
             "calibration",
+            "corrections",
             "diagnostics",
             "disturbed_views",
             "geometry",
@@ -457,16 +458,18 @@ class Tools:
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))
+        arrays = object_mapping(output["info"]["arrays"])
         if disturbance := object_mapping(info.get("disturbed_views")):
-            arrays = object_mapping(output["info"]["arrays"])
             summary["disturbed_views"] = {
                 key: arrays.get(f"/disturbed_views/{key}", item)
                 for key, item in disturbance.items()
             }
         # Every scalar the solver reports: its stopping status, chosen weights, noise levels.
-        for key, item in info.items():
-            if key not in summary and (item is None or isinstance(item, str | bool | int | float)):
-                summary[key] = item
+        summary.update(
+            (key, item)
+            for key, item in info.items()
+            if key not in summary and (item is None or isinstance(item, str | bool | int | float))
+        )
         record = {
             "kind": kind,
             "summary": summary,
@@ -496,6 +499,8 @@ class Tools:
             ref, records = reserved
             records[ref] = record
         data = {"handle": ref, **summary}
+        if any(pointer.startswith("/corrections/") for pointer in arrays):
+            data["info"] = output["info"]
         data["members"] = (
             {
                 key: ref + "." + key

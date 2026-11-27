@@ -126,6 +126,19 @@ def disk_volume(
     return Array(storage, shape, dtype, disk_axes, unit, domain)
 
 
+def scan_product_info(
+    item: tj.Scan | tj.Alignment | tj.Reconstruction | tj.Simulation,
+) -> dict[str, object]:
+    """Diagnostics and ordered correction records for a product carrying a scan."""
+    import tomojax as tj
+
+    info = dict(item.info) if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+    scan = item if isinstance(item, tj.Scan) else item.scan
+    if scan is not None:
+        info["corrections"] = [step.to_dict() for step in scan.corrections]
+    return info
+
+
 def saved_result(
     path: str | Path,
     item: tj.Scan | tj.Alignment | tj.Reconstruction | tj.Simulation,
@@ -144,11 +157,8 @@ def saved_result(
         scan = item if isinstance(item, tj.Scan) else item.scan
         unit = unit_of(item if isinstance(item, tj.Reconstruction) else scan)
         arrays: dict[str, Array] = {}
-        info: Mapping[str, object] = {}
         if isinstance(item, tj.Reconstruction):
-            method, info = solver_name(item.method, item.geometry), item.info
-        elif isinstance(item, tj.Alignment):
-            info = item.info
+            method = solver_name(item.method, item.geometry)
         if files.path.suffix.lower() != ".npz":
             with h5py.File(path, "r") as handle:
                 arrays = registered_members(handle, files.path)
@@ -172,7 +182,7 @@ def saved_result(
                 "poses",
                 columns=pose_columns(unit),
             )
-        summary = summarize(info, externalize=files.diagnostic)
+        summary = summarize(scan_product_info(item), externalize=files.diagnostic)
         result = Result(2, (*outputs, *files.paths), method, arrays, summary)
         _ = cleanup.pop_all()
         return result

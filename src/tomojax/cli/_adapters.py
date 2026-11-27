@@ -45,6 +45,7 @@ from tomojax.cli._inputs import check_scan_calibration
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
+from tomojax.cli._results import scan_product_info
 from tomojax.core.array_grid import Grid
 from tomojax.core.array_ops import check_binning
 from tomojax.core.input_files import check_checkpoint, check_output, reading
@@ -166,14 +167,16 @@ def report_event(context: ex.ExecutionContext, record: progress.Event) -> None:
 
 def result_info(item: Root | p.DataProduct | ex.NewHandle) -> Mapping[str, object]:
     """Geometric registration and solver diagnostics for the public product."""
-    info = item.info if isinstance(item, tj.Reconstruction | tj.Alignment) else {}
+    if not isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
+        return {}
+    info = {} if isinstance(item, tj.Frames) else scan_product_info(item)
     if isinstance(item, tj.Alignment):
         poses = np.asarray(item.poses)
-        info = {**info, "pose_rms": np.sqrt(np.mean(np.square(poses), axis=0)).tolist()}
-    if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Alignment | tj.Reconstruction):
-        info = {**info, "geometry": geometry_summary(item)}
-        if calibration := info["geometry"].get("calibration"):
-            info["calibration"] = calibration
+        info["pose_rms"] = np.sqrt(np.mean(np.square(poses), axis=0)).tolist()
+    geometry = geometry_summary(item)
+    info["geometry"] = geometry
+    if calibration := geometry.get("calibration"):
+        info["calibration"] = calibration
     return info
 
 
