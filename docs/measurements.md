@@ -71,6 +71,8 @@ TomoJAX FISTA-TV reaches 0.075 relative L2 error in 0.32 s warm. TIGRE FISTA rea
 
 In laminography, automatic nonnegative FISTA-TV cuts FBP's measured-band error roughly in half (0.17 to 0.074 on rock). It also lowers missing-cone error from 0.32 to 0.18.
 
+With its default settings SPDHG-TV matches FISTA-TV's held-out error on Diamond K11 scan 52567 (ratio 1.000 on 1,000 views and 0.999 on 7,000). On one RTX PRO 6000 Blackwell it takes 6.39 s against 8.43 s for 1,000 views, and 18.38 s against 62.77 s for all 8,000.
+
 ## Scaling and memory
 
 ### Multiple GPUs
