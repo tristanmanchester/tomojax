@@ -99,10 +99,17 @@ def test_view_sharing_uses_the_same_exterior_on_each_device(method) -> None:
     if len(devices) < 2:
         pytest.skip("requires two devices")
     scan = _parallel(rows=1)
-    # Isolate the order of the shared backprojection from automatic stopping.
-    options = {"iterations": 5, "tv_weight": 0.0} if method == "fista" else {"iterations": 5}
-    single = tj.reconstruct(scan, method, devices=devices[:1], **options)
-    shared = tj.reconstruct(scan, method, devices=devices[:2], **options)
+    # Accumulate the same 48-view blocks sequentially on one CPU and in parallel
+    # on two. Regrouping a float32 transpose perturbs the fifth CGLS direction.
+    from tomojax.recon import CGLSConfig, FISTAConfig
+
+    config = (
+        CGLSConfig(iterations=5, views_per_batch=VIEWS // 2)
+        if method == "cgls"
+        else FISTAConfig(iterations=5, tv_weight=0.0)
+    )
+    single = tj.reconstruct(scan, method, devices=devices[:1], config=config)
+    shared = tj.reconstruct(scan, method, devices=devices[:2], config=config)
     assert shared.info["truncation"] == single.info["truncation"]
     assert shared.info["truncation"]["outside_grid"] > 0
     np.testing.assert_allclose(shared.volume, single.volume, rtol=1e-4, atol=1e-5)
