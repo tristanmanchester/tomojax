@@ -132,7 +132,8 @@ def test_oblique_fdk_auto_and_warm_start_follow_the_same_measured_rays(method):
     assert np.linalg.norm(same.volume - direct.volume) < 0.001 * np.linalg.norm(direct.volume)
 
 
-def test_rotating_some_exposures_in_storage_preserves_offset_chord_fits():
+@pytest.mark.parametrize("method", ["fbp", "cgls"])
+def test_rotating_some_exposures_in_storage_preserves_offset_chord_fits(method):
     from tomojax.geometry import ConeSegments
 
     angles = np.arange(0, 360, 6)
@@ -148,9 +149,12 @@ def test_rotating_some_exposures_in_storage_preserves_offset_chord_fits():
         (replace(native, angles=angles[:half]), turned), trajectory_lengths=(len(angles),)
     )
     reindexed = np.concatenate((data[:half], np.rot90(data[half:], axes=(1, 2))))
-    expected = tj.reconstruct(tj.Scan(data, native))
-    actual = tj.reconstruct(tj.Scan(reindexed, same))
-    assert actual.method == expected.method == "fbp"
+    options = {"iterations": 2} if method == "cgls" else {}
+    expected = tj.reconstruct(tj.Scan(data, native), method, **options)
+    actual = tj.reconstruct(tj.Scan(reindexed, same), method, **options)
+    assert actual.method == expected.method == method
+    if method == "cgls":
+        assert expected.info["truncation"]["outside_grid"] > 0
     for name, value in expected.info["truncation"].items():
         assert actual.info["truncation"][name] == pytest.approx(value, rel=2e-5, abs=1e-7)
     assert np.linalg.norm(actual.volume - expected.volume) < 3e-4 * np.linalg.norm(expected.volume)

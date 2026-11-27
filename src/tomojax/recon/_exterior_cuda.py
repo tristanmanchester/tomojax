@@ -141,7 +141,7 @@ def project_cone(
     cp = array_module()
     coefficients = cp.from_dlpack(model.coefficients(convert_element_type(poses, np.float32), grid))
     for first in range(0, len(poses), batch):
-        part = slice(first, first + batch)
+        part = slice(first, min(first + batch, len(poses)))
         coeff = coefficients[part]
         out = cp.empty((len(coeff), detector.nv, detector.nu), dtype=np.float32)
         forward_into(out, coeff, volume, grid=grid, det=detector, z_fast=False)

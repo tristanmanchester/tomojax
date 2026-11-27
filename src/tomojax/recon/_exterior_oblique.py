@@ -13,7 +13,7 @@ from tomojax.core.geometry.cone import ConeGeometry, ConeSegments, cone_parts
 from tomojax.core.host_volume import host_array
 from tomojax.geometry import Detector, Geometry
 
-from ._continuation import Continuation, cone_axis_distance, parallel_axis_distance
+from ._continuation import Continuation, cone_axis_distance, parallel_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
 
 if TYPE_CHECKING:
@@ -77,7 +77,8 @@ class ObliqueExterior:
             )
             layout = DetectorRows(canonical, angle - turns * 90)
             stop = first + (count or views)
-            panels.append(_Panel(first, stop, beam, layout, turns))
+            horizontal_beam = None if beam is None else replace(beam, detector_roll=0.0)
+            panels.append(_Panel(first, stop, horizontal_beam, layout, turns))
             first = stop
         detectors = [p.layout.horizontal for p in panels]
         du, dv = min(d.du for d in detectors), min(d.dv for d in detectors)
@@ -100,8 +101,10 @@ class ObliqueExterior:
         vertical = np.arange(coarse.nv)
         batch = max(1, (16 << 20) // (4 * rows * cols))
         pad = coarse.nu
+        groups: dict[tuple[DetectorRows, ConeBeam | None], list[_Panel]] = {}
         for panel in self.panels:
             layout = panel.layout
+            groups.setdefault((layout, panel.beam), []).append(panel)
             det = replace(coarse, center=layout.measured.center)
             low, high = layout.limits(det, vertical)
             u, v = layout.coordinates(det, vertical)
@@ -117,26 +120,32 @@ class ObliqueExterior:
                 measured = samples.read(np.rot90(host, -panel.turns, axes=(1, 2)), 0)
                 for row, (lo, hi) in enumerate(zip(low, high, strict=True)):
                     full[part, row, pad + lo : pad + hi] = measured[:, row, lo:hi]
-            part = slice(panel.first, panel.stop)
+        for (layout, beam), panels in groups.items():
+            det = replace(coarse, center=layout.measured.center)
+            low, high = layout.limits(det, vertical)
+            indices = np.concatenate([np.arange(p.first, p.stop) for p in panels])
+            selected = indices[radius_views(len(indices))]
             for row, (lo, hi) in enumerate(zip(low, high, strict=True)):
                 width = int(hi - lo)
                 if not width:
                     continue
                 start, stop = pad + lo, pad + hi
-                missing[part, row, start:stop] = False
                 center = (lo + (width - det.nu) / 2) * det.du + det.center[0]
                 chord = replace(det, nu=width, center=(float(center), det.center[1]))
                 distance = (
                     parallel_axis_distance(chord, width, width)
-                    if panel.beam is None
-                    else cone_axis_distance(replace(panel.beam, detector_roll=0.0), chord, width)
+                    if beam is None
+                    else cone_axis_distance(beam, chord, width)
                 )
                 fit = Continuation(distance, width, width)
-                measured = full[part, row : row + 1, start:stop]
-                radius = fit.stack_radius(measured)[None]
-                left, right = fit.continued(np.asarray, measured, radius)
-                full[part, row : row + 1, start - width : start] = left
-                full[part, row : row + 1, stop : stop + width] = right
+                radius = fit.stack_radius(full[selected, row : row + 1, start:stop])[None]
+                for panel in panels:
+                    part = slice(panel.first, panel.stop)
+                    missing[part, row, start:stop] = False
+                    measured = full[part, row : row + 1, start:stop]
+                    left, right = fit.continued(np.asarray, measured, radius)
+                    full[part, row : row + 1, start - width : start] = left
+                    full[part, row : row + 1, stop : stop + width] = right
         return full, missing
 
     def measured_rays(

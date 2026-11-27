@@ -356,7 +356,7 @@ def _project(
             if z_fast:
                 device_volume = cp.ascontiguousarray(device_volume.transpose(2, 1, 0))
             for first in range(0, len(poses), batch):
-                part = slice(first, first + batch)
+                part = slice(first, min(first + batch, len(poses)))
                 operator = JosephCUDA(
                     poses[part], grid, detector, views_per_batch=batch, z_fast=z_fast
                 )
@@ -383,7 +383,7 @@ def _project(
     )
     device = convert_element_type(volume, np.float32)
     for first in range(0, len(poses), batch):
-        part = slice(first, first + batch)
+        part = slice(first, min(first + batch, len(poses)))
         if isinstance(model, ConeModel):
             block = cone_project(device, coeff[part], grid, detector, backend=backend)
         else:
