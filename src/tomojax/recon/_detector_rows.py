@@ -77,9 +77,18 @@ class DetectorRows:
 
     def band(self, horizontal: Detector, first: int, stop: int) -> tuple[int, int]:
         """Native rows needed to interpolate these complete horizontal lines."""
-        _, v = self.coordinates(horizontal, np.array([first, stop - 1]))
-        lo = max(0, min(self.measured.nv - 1, math.floor(v.min().item()) - 1))
-        hi = min(self.measured.nv, max(lo + 1, math.ceil(v.max().item()) + 2))
+        lo, hi = self.native_bounds(horizontal, np.array([first, stop - 1]))
+        return lo.min().item(), hi.max().item()
+
+    def native_bounds(
+        self, horizontal: Detector, rows: NDArray[np.int64]
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
+        """Native interpolation support of each physical filter line."""
+        x = np.array([-0.5, 0.5]) * (horizontal.nu - 1) * horizontal.du
+        z = (rows[:, None].astype(np.float64) - (horizontal.nv - 1) / 2) * horizontal.dv
+        _, v = self.pixel_coordinates(x, z)
+        lo = np.clip(np.floor(v.min(axis=1)).astype(np.int64) - 1, 0, self.measured.nv - 1)
+        hi = np.clip(np.ceil(v.max(axis=1)).astype(np.int64) + 2, lo + 1, self.measured.nv)
         return lo, hi
 
     @property

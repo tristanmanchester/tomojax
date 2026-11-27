@@ -70,8 +70,8 @@ class _Chord:
 class ChordSample:
     """Sample physical chords for the truncation record, including native slab reads."""
 
-    def __init__(self, chords: list[_Chord]) -> None:
-        self.chords = chords
+    def __init__(self, chords: list[_Chord], field_radius: float) -> None:
+        self.chords, self.field_radius = chords, field_radius
 
     @classmethod
     def for_band(
@@ -83,6 +83,7 @@ class ChordSample:
             return None
         chosen, _ = _record_indices(n_views, height)
         chords: list[_Chord] = []
+        field: dict[tuple[float, bytes], float] = {}
         start = 0
         for count, beam, own in parts or ((n_views, None, detector),):
             stop = start + (count or n_views)
@@ -90,16 +91,20 @@ class ChordSample:
             start = stop
             if not len(views):
                 continue
-            roll = parallel_roll if beam is None else beam.detector_roll
-            c, s = DetectorRows(own, roll).axes
-            dz = (first + (height - own.nv) / 2) * own.dv
-            crop = replace(own, nv=height, center=(own.center[0] - s * dz, own.center[1] + c * dz))
-            layout = DetectorRows(crop, roll)
+            layout = DetectorRows(own, parallel_roll if beam is None else beam.detector_roll)
             horizontal = layout.horizontal
-            _, rows = _record_indices(n_views, horizontal.nv)
+            _, global_rows = _record_indices(n_views, horizontal.nv)
+            lower, upper = layout.native_bounds(horizontal, np.arange(horizontal.nv))
+            # A file window does not move the panel or create new cylinder
+            # edges. Sample complete physical chords supported by this window.
+            available = np.flatnonzero((lower >= first) & (upper <= first + height))
+            _, selected = _record_indices(n_views, len(available))
+            local = available[selected]
+            rows = np.union1d(global_rows, local)
             u, v = layout.coordinates(horizontal, rows)
             lo, hi = layout.limits(horizontal, rows)
             for i in range(len(rows)):
+                row = rows.item(i)
                 left, right = lo.item(i), hi.item(i)
                 width = right - left
                 if not width:
@@ -111,14 +116,20 @@ class ChordSample:
                     if beam is None
                     else cone_axis_distance(beam, panel, width)
                 )
-                sample = RowSamples(
-                    np.clip(u[i, left:right], 0, crop.nu - 1),
-                    np.clip(v[i, left:right], 0, crop.nv - 1),
-                )
-                band = layout.band(horizontal, rows.item(i), rows.item(i) + 1)
-                z = horizontal.center[1] + (rows.item(i) - (horizontal.nv - 1) / 2) * horizontal.dv
-                chords.append(_Chord(sample, views, band, distance.tobytes(), z))
-        return cls(chords)
+                z = horizontal.center[1] + (row - (horizontal.nv - 1) / 2) * horizontal.dv
+                coordinates = distance.tobytes()
+                if row in global_rows:
+                    field[z, coordinates] = min(
+                        abs(distance.item(width)), abs(distance.item(2 * width - 1))
+                    )
+                if row in local:
+                    sample = RowSamples(
+                        np.clip(u[i, left:right], 0, own.nu - 1),
+                        np.clip(v[i, left:right], 0, own.nv - 1) - first,
+                    )
+                    band = lower.item(row) - first, upper.item(row) - first
+                    chords.append(_Chord(sample, views, band, coordinates, z))
+        return cls(chords, float(np.median(list(field.values()))) if field else 0.0)
 
     def add(self, first: int, data: np.ndarray | jax.Array) -> None:
         pending: dict[bytes, list[_Chord]] = {}
@@ -143,6 +154,8 @@ class ChordSample:
 
     def values(self) -> np.ndarray:
         # Pool repeats of each physical chord across acquisition segments.
+        if not self.chords:
+            return np.array([0.0, 0.0, 0.0, 0.0, self.field_radius])
         groups: dict[tuple[float, bytes], list[np.ndarray]] = {}
         for chord in self.chords:
             assert chord.values is not None
@@ -161,7 +174,7 @@ class ChordSample:
         rows = np.stack(stats)
         # Only chords containing the axis measure an interior change there.
         rows[:, 4] = np.mean(axial) if axial else 0.0
-        rows[:, 6] = np.median(rows[:, 6])
+        rows[:, 6] = self.field_radius
         with np.errstate(invalid="ignore", divide="ignore"):
             return np.asarray(_combine(rows))
 
