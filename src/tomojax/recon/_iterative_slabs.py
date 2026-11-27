@@ -40,6 +40,7 @@ def iterative_slabs[T](
     retain them, or discard each to keep total storage bounded. No TV/CGLS solve
     is split: their regularizer or global step lengths couple the planes.
     """
+    from ._exterior import Treatment
     from .api import validate_slab_grid
     from .sirt import SIRTConfig
 
@@ -97,11 +98,33 @@ def iterative_slabs[T](
                 depth = max(1, depth // 2)
                 partition.save((), checkpoint.Completed(depth))
                 continue
+            # Keep additive totals across a resume. Rows need their measured mass as
+            # weight even when their own exterior is zero.
+            totals = {}
+            if (diagnostics is not None or checkpoint.active()) and config.exterior == "cylinder":
+                record = info["truncation"]
+                assert isinstance(record, dict)
+                mass = float(np.asarray(data).sum(dtype=np.float64))
+                totals = {
+                    "measured_sum": mass,
+                    "exterior_sum": mass * record["outside_grid"],
+                    "exterior_applied": record["background_treatment"] != "none",
+                }
             yield ReconstructionSlab(start, stop, slice(start, stop), data, volume, context, info)
             data = context = volume = result = None
-            finished.add(start, stop, info=info)
+            finished.add(start, stop, info={**info, **totals})
             start = stop
         if diagnostics is not None:
             from ._discrepancy import sirt_slab_report
 
-            diagnostics.update(sirt_slab_report(finished))
+            measured, removed, applied = 0.0, 0.0, False
+            for report in finished.reports.values():
+                mass, outside = report.pop("measured_sum", 0.0), report.pop("exterior_sum", 0.0)
+                assert isinstance(mass, float) and isinstance(outside, float)
+                measured += mass
+                removed += outside
+                applied |= bool(report.pop("exterior_applied", False))
+            treatment = Treatment.for_fit(
+                config.method, removed / measured if measured else 0.0, applied=applied
+            )
+            diagnostics.update(sirt_slab_report(finished), **treatment._asdict())

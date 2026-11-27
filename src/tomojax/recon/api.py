@@ -443,7 +443,12 @@ def reconstruct_slabs[T](
         geometry, grid, detector, sampled, config, warm_start=warm_start, info=diagnostics
     )
     truncation = sample.record(lambda first, stop: read(first, stop)[0])
-    info.update(truncation=truncation, config=config, host_slabs=True)
+    treatment = {
+        key: diagnostics.pop(key)
+        for key in ("outside_grid", "data_model", "background_treatment")
+        if key in diagnostics
+    }
+    info.update(truncation={**truncation, **treatment}, config=config, host_slabs=True)
     info.update(diagnostics)
 
 
@@ -569,7 +574,14 @@ def _coupled_detector_volume[T](
         yield ReconstructionSlab(
             0, grid.nz, slice(0, detector.nv), data, np.asarray(volume), context, info
         )
-        finished.add(0, grid.nz, info=info)
+        truncation = info["truncation"]
+        assert isinstance(truncation, dict)
+        treatment = {
+            k: truncation[k]
+            for k in ("outside_grid", "data_model", "background_treatment")
+            if k in truncation
+        }
+        finished.add(0, grid.nz, info={**info, **treatment})
         if diagnostics is not None:
             diagnostics.update(finished.reports[0, grid.nz])
 

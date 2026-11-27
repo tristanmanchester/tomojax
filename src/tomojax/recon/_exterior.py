@@ -344,7 +344,15 @@ class Treatment(NamedTuple):
 
     @classmethod
     def record(cls, method: str, share: float, *, applied: bool) -> Treatment:
-        treatment = (
+        treatment = cls.for_fit(method, share, applied=applied)
+        with checkpoint.loop("projection-model") as model:
+            if model.saved is None:
+                model.save((), treatment)
+        return treatment
+
+    @classmethod
+    def for_fit(cls, method: str, share: float, *, applied: bool) -> Treatment:
+        return (
             cls(
                 share,
                 "continued_exterior",
@@ -353,10 +361,6 @@ class Treatment(NamedTuple):
             if applied
             else cls(0.0, "measured", "none")
         )
-        with checkpoint.loop("projection-model") as model:
-            if model.saved is None:
-                model.save((), treatment)
-        return treatment
 
 
 def outside_data(

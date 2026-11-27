@@ -137,8 +137,10 @@ def test_raw_slab_uses_the_same_exterior_as_the_whole_scan(method) -> None:
     config = SIRTConfig(iterations=3) if method == "sirt" else MLEMConfig(iterations=3)
     options = {"warm_start": True, "config": config}
     resident = tj.reconstruct(frames.corrected(), method, **options)
-    with tj.reconstruct_slabs(frames, method, **options) as slabs:
+    whole = {}
+    with tj.reconstruct_slabs(frames, method, info=whole, **options) as slabs:
         sections = list(slabs)
+    assert whole["truncation"] == pytest.approx(resident.info["truncation"])
     assert len(sections) > 1
     for section, result in sections:
         assert result.info["truncation"]["outside_grid"] > 0
@@ -272,3 +274,24 @@ def test_zero_exterior_keeps_the_truncated_cylinders_bright_rim(scan, config) ->
     assert level > 1.2 * MU
     assert bowl > 0.2 * MU
     assert rec.info["config"].exterior == "zero"
+
+
+@pytest.mark.parametrize("method", ["cgls", "sirt", "fista", "spdhg", "mlem"])
+def test_zero_exterior_fits_measured_rays_from_the_zero_padded_warm_start(method) -> None:
+    from tomojax import recon
+
+    scan = _cone()
+    config = recon.api.method_config(method, exterior="zero", iterations=2)
+    actual = tj.reconstruct(scan, method, config=config, warm_start=True)
+    initial = tj.reconstruct(scan, "fbp", config=FBPConfig(exterior="zero")).volume
+    if method == "mlem":
+        initial = np.maximum(initial, 0)
+    expected, _ = getattr(recon, method)(
+        scan.geometry, scan.grid, scan.detector, scan.projections, config=config, init_x=initial
+    )
+    np.testing.assert_array_equal(actual.volume, expected)
+    assert actual.info["config"].exterior == "zero"
+    record = actual.info["truncation"]
+    assert record["data_model"] == "measured"
+    assert record["background_treatment"] == "none"
+    assert record["outside_grid"] == 0
