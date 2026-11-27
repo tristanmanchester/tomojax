@@ -4,7 +4,7 @@ Diamond I12 (Vo et al., Zenodo 3339629): 1801 parallel-beam views of a rock
 sample at 54 keV, full-resolution detector rows. A miscalibrated detector
 column whose response varies with intensity leaves a large ring, and pixels
 near the rotation axis with small constant offsets leave tight rings round it.
-``Rings()`` fits both detector errors. The authors' own
+``Rings()`` removes the tight rings and leaves the large one fainter. The authors' own
 reconstruction (Savu) is shown at the same slice, with each slice's
 correlation with it inside the sample.
 
@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from _common import save, style
+from _common import save, shrunk, style
 import matplotlib.pyplot as plt
 import numpy as np
 import tifffile
@@ -37,7 +37,7 @@ def main() -> None:
     args = parser.parse_args()
 
     frames = tj.load_frames(args.raw)
-    plain = tj.align(frames.corrected(), method="opposite-views").scan
+    plain = tj.align(frames.corrected(), fit="center").scan
     cleaned = plain.corrected(Rings())
     reference = tifffile.imread(args.reference).astype(np.float32)
     n = reference.shape[0]
@@ -63,7 +63,9 @@ def main() -> None:
     fig, axes = plt.subplots(2, 3, figsize=(9.0, 6.5), gridspec_kw={"height_ratios": (1, 1)})
     for (title, image), (top_ax, bottom_ax) in zip(slices.items(), axes.T, strict=True):
         low, high = np.percentile(image[zoom], (1, 99.5))
-        top_ax.imshow(image, origin="lower", vmin=low, vmax=high)
+        top_ax.imshow(
+            shrunk(image, 400), origin="lower", vmin=low, vmax=high, extent=(-0.5, n - 0.5) * 2
+        )
         top_ax.add_patch(
             plt.Rectangle(
                 (zoom[0].start, zoom[1].start),
@@ -80,7 +82,7 @@ def main() -> None:
             ax.set_axis_off()
     fig.suptitle(
         f"Diamond I12, raw counts to slice: {frames.counts.shape[0]} views, "
-        f"{n} x {n} pixels, center found by tj.align(method='opposite-views')",
+        f"{n} x {n} pixels, center measured by tj.align(scan, fit='center')",
         y=0.995,
     )
     fig.tight_layout()

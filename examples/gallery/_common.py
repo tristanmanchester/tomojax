@@ -70,9 +70,36 @@ def style() -> None:
     )
 
 
-def panel(ax: Any, image: np.ndarray, title: str, vmin: float, vmax: float) -> None:
-    """Show a slice ``image`` (rows, columns) without axes."""
-    ax.imshow(np.asarray(image), origin="lower", vmin=vmin, vmax=vmax)
+def shrunk(image: np.ndarray, pixels: int) -> np.ndarray:
+    """Average ``image`` over square blocks so that it is at most ``pixels`` across.
+
+    A slice drawn smaller than its pixel count must be averaged, not decimated:
+    keeping every n-th pixel keeps the per-pixel noise at a fraction of the size.
+    The last rows and columns that do not fill a block are dropped.
+    """
+    image = np.asarray(image, np.float32)
+    k = -(-max(image.shape) // pixels)
+    if k == 1:
+        return image
+    rows, columns = (side // k * k for side in image.shape)
+    return image[:rows, :columns].reshape(rows // k, k, columns // k, k).mean(axis=(1, 3))
+
+
+def panel(
+    ax: Any, image: np.ndarray, title: str, vmin: float, vmax: float, *, pixels: int = 400
+) -> None:
+    """Show a slice ``image`` (rows, columns) without axes, averaged to ``pixels`` across.
+
+    Axis coordinates stay in the pixels of ``image``, so overlays need no scaling.
+    """
+    rows, columns = np.shape(image)
+    ax.imshow(
+        shrunk(image, pixels),
+        origin="lower",
+        vmin=vmin,
+        vmax=vmax,
+        extent=(-0.5, columns - 0.5, -0.5, rows - 0.5),
+    )
     ax.set_title(title)
     ax.set_axis_off()
 

@@ -25,7 +25,7 @@ import argparse
 from pathlib import Path
 import sys
 
-from _common import save, style
+from _common import save, shrunk, style
 from _k11 import load as load_k11, plane
 from lab_cone_slices import central_slice
 import matplotlib.pyplot as plt
@@ -86,7 +86,7 @@ def main() -> None:
     for ax, (title, image) in zip(axes.ravel(), slices(args.data).items(), strict=True):
         crop = object_crop(image)
         low, high = np.percentile(crop, (0.5, 99.7))
-        ax.imshow(crop, origin="lower", vmin=low, vmax=high)
+        ax.imshow(shrunk(crop, 560), origin="lower", vmin=low, vmax=high)
         ax.set_title(f"{title}\n{crop.shape[0]} pixels across")
         ax.set_axis_off()
     fig.tight_layout()

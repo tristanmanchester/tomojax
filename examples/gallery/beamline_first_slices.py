@@ -85,7 +85,7 @@ def slices(data: Path) -> dict[str, np.ndarray]:
 def figure(images: dict[str, np.ndarray], output: Path) -> None:
     """Each slice whole above its enlarged region, sharing that slice's gray range."""
     style()
-    fig, axes = plt.subplots(2, len(images), figsize=(13, 5.6))
+    fig, axes = plt.subplots(2, len(images), figsize=(13, 6.1))
     for (name, image), (whole, zoom) in zip(images.items(), axes.T, strict=True):
         low, high = np.percentile(image, (0.5, 99.5))
         row, column, side = CROPS[name]
