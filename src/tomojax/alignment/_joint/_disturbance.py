@@ -28,7 +28,7 @@ def disturbance_score(
 ) -> Float64Array:
     """Power fraction shared by opposite detector bands above noise and disagreement."""
     n, h, w = data.shape
-    b = max(1, round(max(h, w) / 80))
+    b = max(1, min(h // 2, w // 2, round(max(h, w) / 80)))
     rows, cols = h // b, w // b
     score = np.full(n, np.nan)
     if min(rows, cols) < 2:
@@ -71,14 +71,15 @@ def disturbance_score(
         error = (
             np.asarray(np.sum((ends[0] - ends[1]) ** 2, axis=1, where=paired), dtype=np.float64) / 2
         )
-        variance = np.maximum(error, np.count_nonzero(paired, axis=1) * sd**2)
+        count = np.asarray(np.count_nonzero(paired, axis=1), dtype=np.int64)
+        variance = np.maximum(error, count * sd**2)
         # Perfect agreement with noiseless measurements has unit common-signal
         # fraction. Express the power as a bounded fraction, including that limit.
         power = np.maximum(shared, 0)
         fraction = np.divide(
             power, power + variance, where=power + variance > 0, out=np.zeros_like(power)
         )
-        score[start:stop] = np.where(np.any(paired, axis=1), fraction, np.nan)
+        score[start:stop] = np.where(count >= 2, fraction, np.nan)
     return score
 
 

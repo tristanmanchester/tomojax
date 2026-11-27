@@ -37,15 +37,12 @@ if TYPE_CHECKING:
 
 def retained_views(scan: Scan, ranges: tuple[tuple[int, int], ...]) -> np.ndarray | None:
     """Input indices entering the fit, with a measured reference in each trajectory."""
-    import operator
-
     if not ranges:
         return None
     segments = acquisition_segments(scan.geometry, scan.view_positions)
     keep = np.ones(len(segments), bool)
-    for interval in ranges:
-        start, stop = map(operator.index, interval)
-        if not 0 <= start < stop <= len(keep):
+    for start, stop in ranges:
+        if stop > len(keep):
             raise InvalidParameter("exclude_views", f"expected 0 <= start < stop <= {len(keep)}")
         keep[start:stop] = False
     if keep.sum() < 2 or len(np.unique(segments[keep])) != len(np.unique(segments)):
@@ -250,9 +247,9 @@ def resolve_alignment(
     cone = None
     if frames is not None:
         declared = np.asarray(stack_view_poses(scan.with_poses(None).geometry, len(scan.angles)))
-        if kept is not None:
-            frames, declared = frames[kept], declared[kept]
-        cone = (declared, frames)
+        selection = slice(None) if kept is None else kept
+        frames = frames[selection]
+        cone = (declared[selection], frames)
     schedule = fit_schedule(
         scan.grid, scan.detector, cone, keep_grid=grid is not None, config=config
     )

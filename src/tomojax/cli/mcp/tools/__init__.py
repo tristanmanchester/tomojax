@@ -181,7 +181,7 @@ def summary_text(data: Object) -> str:
         )
         summary.append(f"pose RMS {rms}")
     if disturbed := data.get("disturbed_views"):
-        summary.append(disturbed["message"])
+        summary.append(str(disturbed["message"]))
     summary.extend(data.get("paths", []))
     summary.extend(data.get("devices", []))
     summary.append(f"{data['wall_seconds']:g} s")
@@ -457,8 +457,8 @@ class Tools:
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))
-        if disturbance := summary.get("disturbed_views"):
-            arrays = output["info"]["arrays"]
+        if disturbance := object_mapping(info.get("disturbed_views")):
+            arrays = object_mapping(output["info"]["arrays"])
             summary["disturbed_views"] = {
                 key: arrays.get(f"/disturbed_views/{key}", item)
                 for key, item in disturbance.items()

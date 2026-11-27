@@ -78,3 +78,9 @@ def test_pose_interpolation_stops_at_trajectory_boundaries():
     np.testing.assert_array_equal(result.poses[12:15], np.repeat(result.poses[15:16], 3, axis=0))
     with pytest.raises(ValueError, match="one per trajectory"):
         tj.align(scan, config=replace(cfg, exclude_views=((0, 12),)))
+
+
+@pytest.mark.parametrize("intervals", [None, 0, ((True, 4),), ((2, 2),), ((2.5, 3),), (4,)])
+def test_invalid_exclusion_ranges_fail_at_configuration(intervals):
+    with pytest.raises(ValueError, match="exclude_views"):
+        AlignConfig(exclude_views=intervals)

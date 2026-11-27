@@ -373,7 +373,7 @@ def _fit_summary(result: Alignment) -> list[str]:
         lines.append(f"Stopped  {', '.join(stages)}")
     disturbed = result.info.get("disturbed_views")
     if isinstance(disturbed, dict):
-        lines.append(disturbed["message"])
+        lines.append(str(disturbed["message"]))
     return lines
 
 

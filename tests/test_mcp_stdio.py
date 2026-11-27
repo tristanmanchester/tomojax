@@ -417,8 +417,24 @@ def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
 
 
 def test_joint_alignment_reports_disturbances_and_explicit_exclusions(tmp_path):
+    import numpy as np
+
+    n, rows, cols = 100, 24, 32
+    angles = np.linspace(0, 180, n, endpoint=False)
+    geometry = tj.ParallelGeometry(
+        tj.Grid(24, 24, 16, 1, 1, 1), tj.Detector(cols, rows, 1, 1), angles
+    )
+    u = np.arange(cols)
+    v = np.arange(rows)[:, None]
+    data = np.exp(
+        -((v - 12) ** 2 / 20 + (u - 16 - 3 * np.cos(np.deg2rad(angles))[:, None, None]) ** 2 / 35)
+    )
+    data += np.random.default_rng(19).normal(0, 0.003, data.shape)
+    shadow = 0.35 * np.exp(-((u - np.linspace(8, 20, 8)[:, None]) ** 2 / 10))
+    data[61:69] += shadow[:, None, :]
+    tj.save(tmp_path / "scan.nxs", tj.Scan(data.astype("f4"), geometry))
     with connection(tmp_path) as c:
-        sim = c.call("simulate", phantom="shepp", size=8, n_views=12)["structuredContent"]
+        scan = c.call("open", kind="scan", path="scan.nxs")["structuredContent"]["handle"]
         config = dict(
             type="AlignConfig",
             exclude_views=[[3, 5]],
@@ -428,12 +444,21 @@ def test_joint_alignment_reports_disturbances_and_explicit_exclusions(tmp_path):
             levels=[1],
             refine_iterations=0,
         )
-        reply = c.call("align", source=sim["members"]["scan"], config=config)
+        reply = c.call("align", source=scan, config=config)
         assert not reply["isError"], reply["content"][0]["text"]
         report = reply["structuredContent"]["disturbed_views"]
         assert report["message"] in reply["content"][0]["text"]
-        assert report["score"][3:5] == [None, None]
-        assert len(report["score"]) == 12
+        assert report["ranges"] == [[61, 69]]
+        # NeXus stores encoder angles in float32.
+        np.testing.assert_allclose(
+            report["angles_deg"],
+            [[angles[61], angles[68]]],
+            rtol=0,
+            atol=np.spacing(np.float32(180)),
+        )
+        scores = np.load(report["score"]["storage"]["path"])
+        assert scores.shape == (n,) and np.isnan(scores[3:5]).all()
+        np.testing.assert_array_equal(np.flatnonzero(scores > 0.5), np.arange(61, 69))
 
 
 @pytest.mark.parametrize("size", [32, pytest.param(128, marks=pytest.mark.gpu)])

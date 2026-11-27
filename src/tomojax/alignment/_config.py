@@ -15,6 +15,24 @@ type DetectorColumns = Literal["none", "fixed", "transient", "both"]
 type Motion = Literal["independent", "smooth"]
 
 
+def _view_ranges(ranges: tuple[tuple[int, int], ...]) -> tuple[tuple[int, int], ...]:
+    """Read half-open input indices from Python, TOML or the wire format."""
+    parsed: list[tuple[int, int]] = []
+    try:
+        for start, stop in ranges:
+            if isinstance(start, bool) or isinstance(stop, bool):
+                raise TypeError
+            a, b = operator.index(start), operator.index(stop)
+            if not 0 <= a < b:
+                raise ValueError
+            parsed.append((a, b))
+    except (TypeError, ValueError) as exc:
+        raise InvalidParameter(
+            "exclude_views", "exclude_views needs integer pairs with 0 <= start < stop"
+        ) from exc
+    return tuple(parsed)
+
+
 @dataclass(frozen=True, kw_only=True)
 class AlignConfig:
     """The settings of :func:`tomojax.align`.
@@ -135,6 +153,7 @@ class AlignConfig:
     refine_neighbors: int = field(default=5, metadata={"unit": "view"})
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "exclude_views", _view_ranges(self.exclude_views))
         self._validate_weights()
         for name, value in (
             ("iterations", self.iterations),

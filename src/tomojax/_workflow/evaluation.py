@@ -16,8 +16,11 @@ from tomojax._parameters import method_fit
 from tomojax._scan.model import bind_step_geometry, frame_output_grid, selected_scan, with_grid
 from tomojax._workflow.operations import reconstruct_resolved
 from tomojax._workflow.planning import resolve_reconstruction
-from tomojax._workflow.smooth_alignment import transfer_alignment
-from tomojax.alignment._integration import acquisition_segments, trajectory_positions
+from tomojax._workflow.smooth_alignment import (
+    acquisition_segments,
+    trajectory_positions,
+    transfer_alignment,
+)
 from tomojax.core.host_volume import release_planes, resident_limit, selected_stack
 from tomojax.errors import InvalidParameter
 from tomojax.evaluation import Score, Split
