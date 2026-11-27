@@ -523,7 +523,7 @@ each, with the scanner's recorded geometry and the authors' corrected one.
 - [`walnut_alignment.py`](walnut_alignment.py) aligns one walnut's three orbits
   from the recorded geometry and compares the recovered orbit heights and
   reconstructions with the authors' correction (the figures in
-  [the measurements](../docs/measurements.md#orbit-registration)).
+  [the measurements](../docs/measurements.md#known-pose-twins-and-real-scans)).
 - [`walnut_collection.py`](walnut_collection.py) does that for every walnut
   without storing the 6 GB downloads: it reads only the files it uses (about
   1.6 GB a walnut) from each zip on Zenodo by HTTP range requests, decodes them

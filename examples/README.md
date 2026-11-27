@@ -108,7 +108,7 @@ Download and unzip a walnut from the FIPS collection (Der Sarkissian et al., Sci
 uv run --no-sync python examples/align_walnut_orbits.py ~/data/walnuts/Walnut1 -o walnut.nxs
 ```
 
-[align_walnut_orbits.py](align_walnut_orbits.py) loads all three orbits with their uncorrected scanner geometry via `tj.Scan.from_astra`, bins 2 × 2, aligns every 4th view (900 views) with `tj.align`, prints relative orbit heights, and reconstructs 20 iterations of nonnegative least squares. On Walnut 1, `tj.align` recovers orbit heights of −0.385 and −0.753 mm (against the authors' −0.397 and −0.794 mm) in ~100 s on an 8 GB laptop GPU ([orbit registration](../docs/measurements.md#orbit-registration)).
+[align_walnut_orbits.py](align_walnut_orbits.py) loads all three orbits with their uncorrected scanner geometry via `tj.Scan.from_astra`, bins 2 × 2, aligns every 4th view (900 views) with `tj.align`, prints relative orbit heights, and reconstructs 20 iterations of nonnegative least squares. On Walnut 1, `tj.align` recovers orbit heights of −0.385 and −0.753 mm (against the authors' −0.397 and −0.794 mm) in ~100 s on an 8 GB laptop GPU ([alignment measurements](../docs/measurements.md#known-pose-twins-and-real-scans)).
 
 ## Reconstruct raw laminography from nominal geometry
 

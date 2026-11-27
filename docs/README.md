@@ -10,17 +10,18 @@ Four real scans reconstructed at native detector resolution and cropped to the s
 uv run python examples/gallery/geometry_montage.py DATA geometry-montage.png
 ```
 
-## Speed against ASTRA and TIGRE
+## Speed against other libraries
 
-| Case | TomoJAX | Other tools |
-| --- | --- | --- |
-| Parallel beam, real: Diamond I12, 1801 views of 64 × 2560 pixels | 0.81 s default, 3.35 s FBP | ASTRA FBP 7.64 s, TomoPy gridrec 2.90 s (CPU) |
-| Cone FDK, real: FIPS walnut, 1200 views, 501³ | 1.02 s | ASTRA 1.71 s |
-| Cone CGLS, real: FIPS walnut, 10 iterations | 28.2 s, error 0.184 | ASTRA 26.8 s, error 0.197 |
-| Laminography CGLS to fixed error, 256³ synthetic (smooth / sharp) | 3.29 / 0.435 s | ASTRA 16.5 / 0.452 s |
-| TV reconstruction, 128³ synthetic, 3% noise | 0.32 s, error 0.075 | TIGRE 9.1 s, best error 0.101 |
+| Library | 1 V100S (s) | 4 V100S (s) | 1 Blackwell (s) | 8 Blackwell (s) |
+| --- | ---: | ---: | ---: | ---: |
+| TomoJAX | 74.5 Fourier | 41.3 Fourier | 27.9 Fourier | 29.0 FBP |
+| tomocupy | 109.8 `fourierrec` | 66.3 `fourierrec` | 69.7 `fourierrec` | 45.8 `linerec` |
+| ASTRA FBP | 768.6 | 199.6 | 182.0 | 46.2 |
+| TIGRE FBP | 558.3 | 172.3 | 180.5 | 48.9 |
+| LEAP FBP | 753.3 | 198.2 | 227.7 | 51.3 |
+| TomoPy `gridrec` (CPU) | 430.4 | — | 143.9 | — |
 
-Warm times on one 8 GB laptop GPU (measured 2026-11-21) on identical corrected data, geometry, and output grids. See the [headline comparison](measurements.md#headline-comparison) for protocols, commands, and where each library wins.
+Median seconds of three fresh worker launches reconstructing a full Diamond K11 (DIAD) scan (8,000 views of 2,160 × 2,560 pixels into a 56.62 GB volume) from process startup through final output `fsync` on Tesla V100S 32 GB and RTX PRO 6000 Blackwell 96 GB nodes (40 CPU cores; excludes the 96.0 s one-time input rechunking required by the five comparison libraries above). See [measurements](measurements.md#full-volume-speed-on-a-synchrotron-scan) for all nine libraries, accuracy, scaling, alignment, and where TomoJAX does not win.
 
 ## Guides
 

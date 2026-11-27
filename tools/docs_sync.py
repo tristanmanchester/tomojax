@@ -156,7 +156,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "docs/measurements.md",
                 "measurements",
                 None,
-                "Measured speed, accuracy and memory, against ASTRA and TIGRE.",
+                "Measured speed, accuracy, scaling, and memory across tomography libraries.",
             ),
             (
                 "CONTRIBUTING.md",

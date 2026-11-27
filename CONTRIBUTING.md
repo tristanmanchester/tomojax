@@ -110,7 +110,7 @@ The README watch figures come from [examples/reconstruct_watch.py](examples/reco
 | `reports/`, `research_notes/` | Research notes and literature reviews |
 | `.artifacts/` | Ignored local runs, logs, and build outputs |
 
-Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) records each published result with the commit and date needed to contextualize it (with full runner commands in [bench/README.md](bench/README.md)). When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.
+Keep raw benchmark records out of the repository. Benchmark scripts write under `bench/results/` (gitignored); attach any raw JSON files a reviewer needs to the PR or issue. [Measurements](docs/measurements.md) summarizes published speed, accuracy, scaling, and memory results with their conditions (full runner commands are in [bench/README.md](bench/README.md)). When adding new performance numbers, report reconstruction quality alongside cold time, warm time, and peak GPU memory.
 
 ## Add an export format
 

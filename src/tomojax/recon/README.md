@@ -303,10 +303,10 @@ An explicit integer `slices_per_batch` overrides this choice. Additional buffers
 and FFT workspaces need more memory, so CUDA exhaustion still halves the depth.
 This API is not differentiable and rejects tilted/custom geometry. Large
 missing angular sectors are interpolated, not recovered, and the angular
-interpolation can introduce artifacts on sharp or undersampled scans; the
-[measurements](../../../docs/measurements.md#fourier-inverse) give its memory
-and speed, and the [reconstruction comparison](../../../docs/measurements.md#reconstruction-against-astra)
-its accuracy-gated results.
+interpolation can introduce artifacts on sharp or undersampled scans; see
+[full-volume speed](../../../docs/measurements.md#full-volume-speed-on-a-synchrotron-scan)
+and [Fourier accuracy](../../../docs/measurements.md#fourier-inverse-and-filtered-backprojection)
+for speed, memory, and agreement with FBP and analytic truth.
 
 `cgls` solves unconstrained least squares with a matched discrete adjoint and
 optional scalar damping and quadratic smoothness. It supports JAX and CUDA execution. Iteration

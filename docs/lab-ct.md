@@ -112,7 +112,7 @@ uv run python examples/gallery/lab_cone_slices.py CuO_2_tomo-B.txrm \
   "47209 testscan korn01_recon.xtekct" jyvat.log lab-cone-slices.png
 ```
 
-Iterative solvers model the exact cone-beam geometry and per-view poses, using the exact transpose of the forward projector so CGLS stays stable across iterations (ASTRA's approximate backprojector diverges after ~20 iterations on the same scan; see [cone-beam measurements](measurements.md#cone-beam-projection-and-fdk)):
+Iterative solvers model the exact cone-beam geometry and per-view poses, using the exact transpose of the forward projector so CGLS stays stable across iterations (ASTRA's approximate backprojector diverges on long cone CGLS runs; see [cone-beam measurements](measurements.md#cone-beam-ct-against-astra-and-tigre)):
 
 ```bash
 tomojax reconstruct calibrated.nxs -o cgls.nxs --method cgls --iterations 20
@@ -145,7 +145,7 @@ Fitted poses compose on top of any input poses; pass `--no-apply-poses` to `reco
 
 ## Speed
 
-On a 256³, 360-view cone scan on an RTX 4070 Laptop GPU (host-to-host, measured 2026-11-21), FDK takes 0.10 s (ASTRA 0.29 s, TIGRE 0.54 s) and forward projection 0.14 s (ASTRA 0.17 s); the exact transpose takes 0.12 s versus ASTRA's approximate backprojector at 0.073 s. On small cone volumes in a fresh process (384³ spheres and 501³ walnut, medians of three runs), cylinder exterior continuation adds 0.17 to 0.34 s on an RTX PRO 6000 Blackwell and 0.36 to 0.67 s on a Tesla V100S (cropped-walnut FDK fell from 2.17 to 1.75 s on V100S). See [cone-beam measurements](measurements.md#cone-beam-projection-and-fdk) and [detector exterior continuation](measurements.md#detector-exterior-continuation) for full timings, device-resident numbers, and 1024³ FDK.
+On a 256³, 360-view cone scan on an RTX 4070 Laptop GPU (host-to-host), FDK takes 0.10 s (ASTRA 0.29 s, TIGRE 0.54 s) and forward projection 0.14 s (ASTRA 0.17 s); the exact transpose takes 0.12 s versus ASTRA's approximate backprojector at 0.073 s (device-resident times on the same geometry are 0.096 s forward, 0.082 s exact transpose, and 0.049 s FDK). On small cone volumes in a fresh process (384³ spheres and 501³ walnut, medians of three runs), cylinder exterior continuation adds 0.17 to 0.34 s on an RTX PRO 6000 Blackwell and 0.36 to 0.67 s on a Tesla V100S (cropped-walnut FDK fell from 2.17 to 1.75 s on V100S). See [cone-beam measurements](measurements.md#cone-beam-ct-against-astra-and-tigre) and [truncated-scan measurements](measurements.md#truncated-scans) for 1024³ FDK, real-scan iterative convergence, and continuation accuracy.
 
 ## Python workflow
 
@@ -205,7 +205,7 @@ Pass `--orbit 1` or `--orbit 3` for the other orbits, or reduce `--every` and `-
 
 Scans whose source/detector arrangement changes between orbits or stacked sections use `ConeSegments` (created by `tj.Scan.from_astra` or `tj.Scan.combine([a, b, c])`). Iterative solvers reconstruct all segments jointly; `warm_start=True` averages each segment's FDK volume when every segment covers an arc FDK supports. FDK alone refuses multi-arrangement scans.
 
-Because recorded orbit heights often drift slightly, run `tj.align(scan)` to register all segments jointly (only relative orbit heights are observable, so the combined object can shift slightly in absolute z). [examples/align_walnut_orbits.py](../examples/align_walnut_orbits.py) runs the full three-orbit FIPS walnut workflow at 2 × 2 binning in ~6 minutes on an 8 GB GPU, recovering orbit heights within 0.04 mm of the authors' calibration ([walnut measurements](measurements.md#fips-walnuts-real-lab-cone-beam-ct)).
+Because recorded orbit heights often drift slightly, run `tj.align(scan)` to register all segments jointly (only relative orbit heights are observable, so the combined object can shift slightly in absolute z). [examples/align_walnut_orbits.py](../examples/align_walnut_orbits.py) runs the full three-orbit FIPS walnut workflow at 2 × 2 binning in ~6 minutes on an 8 GB GPU, recovering orbit heights within 0.04 mm of the authors' calibration ([walnut alignment measurements](measurements.md#known-pose-twins-and-real-scans)).
 
 ## Limitations
 
