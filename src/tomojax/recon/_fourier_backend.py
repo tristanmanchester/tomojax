@@ -117,7 +117,11 @@ class _Geometry:
         # Rows are continued past the detector's edges before their transform (see
         # _continuation). The Cartesian grid keeps the measured detector's field: at
         # twice its width, nothing within three field radii wraps into the field.
-        width = continued_width(detector.nu) if exterior == "cylinder" else detector.nu
+        width = (
+            continued_width(detector.nu)
+            if exterior == "cylinder" and not self.cuda
+            else detector.nu
+        )
         self.nfft = max(64, next_fast_len(2 * width))
         self.shape, self.crop = transform_grid(grid, detector)
         self.flipped = xp.asarray(flipped, dtype=xp.int8)
@@ -141,7 +145,9 @@ class _Geometry:
             self.y_boundary = (coordinates, stop)
         if self.cuda:
             self.kernel = interpolation_kernel(
-                y_boundary=self.y_boundary is not None, repeats=self.groups is not None
+                y_boundary=self.y_boundary is not None,
+                repeats=self.groups is not None,
+                exterior=exterior == "cylinder",
             )
 
     def _coordinates(
@@ -432,7 +438,16 @@ class FourierPlan:
                         y_boundary=geometry.y_boundary is not None,
                         repeats=self.groups is not None,
                         translated=True,
+                        exterior=self.fits is not None,
                     )
+                if self.fits is not None:
+                    # Each axial slice has just two exterior profiles. Transform them
+                    # once at their full radial sampling and reuse them across views.
+                    phase, taper, _ = radial_coefficients(
+                        3 * detector.nu, 3 * self.nfft, detector.du
+                    )
+                    self.tail_phase = xp.asarray(phase, dtype=xp.complex64)
+                    self.tail_taper = xp.asarray(taper, dtype=xp.float32)
                 self.mass_kernel = geometry.mass_kernel
                 self.row_mass = xp.empty((depth, nviews), dtype=xp.float64)
             py, px = self.shape
@@ -472,7 +487,7 @@ class FourierPlan:
         plus, minus = ring[..., :views, :], ring[..., views:, :]
         return xp.where(flipped, plus, minus), xp.where(flipped, minus, plus)
 
-    def _interpolate_cuda(self, spectrum: CuPyValue) -> None:
+    def _interpolate_cuda(self, spectrum: CuPyValue, tails: tuple[CuPyValue, ...]) -> None:
         output = self.frequencies
         angle, radial, phase, detector_phase = self.coordinates
         layers = min(self.depth, 65535)
@@ -500,6 +515,7 @@ class FourierPlan:
             np.int32(1),
             np.int32(self.filter is not None),
         )
+        args += tails
         if self.shifts is not None:
             args += (self.shifts,)
         if self.y_boundary is not None:
@@ -521,6 +537,8 @@ class FourierPlan:
 
     def _compute_volume(self, raw: np.ndarray | CuPyValue, count: int) -> np.ndarray | CuPyValue:
         xp = self.xp
+        tails = ()
+        exterior_mass = None
         if self.fits is not None:
             fits, first, last = (
                 self.fits,
@@ -530,8 +548,27 @@ class FourierPlan:
             place = partial(xp.asarray, dtype=raw.dtype)
             radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
             low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
-            before, after = fits.tails(place, low, high, radius2)
-            raw = xp.concatenate([before, raw, after], axis=-1)
+            if self.cuda:
+                unit = xp.ones_like(radius2)
+                left, right = fits.tails(place, unit, unit, radius2)
+                nu = self.detector.nu
+                exterior_mass = (
+                    left.sum(axis=-1, dtype=xp.float64) * low[..., 0]
+                    + right.sum(axis=-1, dtype=xp.float64) * high[..., 0]
+                )
+                # Both profiles use the original, three-width centered coordinate.
+                pair = xp.concatenate(
+                    [
+                        xp.pad(left, ((0, 0), (0, 0), (0, 2 * nu))),
+                        xp.pad(right, ((0, 0), (0, 0), (2 * nu, 0))),
+                    ],
+                    axis=1,
+                )
+                basis = xp.fft.rfft(pair * self.tail_taper, n=3 * self.nfft) * self.tail_phase
+                tails = (basis, xp.concatenate([low, high], axis=-1))
+            else:
+                before, after = fits.tails(place, low, high, radius2)
+                raw = xp.concatenate([before, raw, after], axis=-1)
         if self.cuda:
             rows = self.depth * self.source_views
             self.mass_kernel(
@@ -545,7 +582,9 @@ class FourierPlan:
         spectrum = xp.fft.rfft(raw, n=self.nfft, axis=-1)
         _ = xp.multiply(spectrum, self.projection_phase, out=spectrum)
         if self.cuda:
-            self._interpolate_cuda(spectrum)
+            if exterior_mass is not None:
+                self.row_mass += exterior_mass
+            self._interpolate_cuda(spectrum, tails)
         else:
             self.frequencies = interpolate_numpy(
                 spectrum,

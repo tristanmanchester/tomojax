@@ -122,7 +122,7 @@ def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch
 
     def transform(array, *args, **kwargs):
         assert ordered and all(ref() is None for ref in ordered)
-        checks.append(None)
+        checks.append(array.shape)
         return rfft(array, *args, **kwargs)
 
     monkeypatch.setattr(cp, "ascontiguousarray", remember)
@@ -131,7 +131,7 @@ def test_raw_fourier_releases_ordered_rows_before_allocating_the_fft(monkeypatch
         frames, "fourier", config=FourierConfig(backend="cupy", slices_per_batch=2)
     ) as slabs:
         assert [section.stop for section, _ in slabs] == [2, 4, 6]
-    assert len(checks) == 3
+    assert checks.count((2, 3, 11)) == 3  # one measured transform per slab
 
 
 @pytest.mark.parametrize(
