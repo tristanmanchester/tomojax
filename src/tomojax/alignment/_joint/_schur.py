@@ -289,7 +289,7 @@ class ImageSolve:
         if self.shared is not None:
             try:
                 result = self.shared(*args)
-            except Exception as exc:
+            except (RuntimeError, MemoryError) as exc:
                 if not device_out_of_memory(exc):
                     raise
                 progress.retried("single-device image solve")
