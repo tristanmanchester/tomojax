@@ -200,6 +200,8 @@ class Operators:
         parameters: Parameters | None = None,
         detector_roll: float = 0.0,
         detector_pivot: tuple[float, float] | None = None,
+        column_attenuation: float = 0.0,
+        masked: bool = False,
     ) -> None:
         self.grid, self.detector = grid, detector
         self.shape = (grid.nz, grid.ny, grid.nx)
@@ -215,6 +217,8 @@ class Operators:
             detector,
             cone=frames is not None,
             interpolation=interpolation,
+            column_attenuation=column_attenuation,
+            masked=masked,
         )
         self.z_fast = self.projection.backend == "cuda" and not self.projection.cone
         self.project, self.back = self.projection.project, self.projection.back
@@ -481,13 +485,14 @@ class Operators:
         valid: jax.Array,
         x: jax.Array,
         *,
+        precision: jax.Array | None = None,
         scales: jax.Array | None = None,
         frames: jax.Array | None = None,
     ) -> jax.Array:
         """Projections and pose derivatives, (view, 1 + dofs, v, u)."""
         cf = self.coefficients(nominal, q, valid, scales, frames)
         tangent = self._tangent(nominal, q, valid, scales, frames)
-        return self.projection.columns(cf, x, tangent)
+        return self.projection.columns(cf, x, tangent, precision=precision)
 
     def _zeros(self) -> jax.Array:
         return jnp.zeros(self.shape, jnp.float32)
@@ -531,10 +536,10 @@ class Operators:
             # The start fits the objective the solver then uses: each view's
             # offset and row ramp profiled out. Huber, not redescending: the
             # initialization never discards data.
-            e = profiled_residual(self.project(cf, x) - yb, wb)
+            e = profiled_residual(self.project(cf, x, precision=wb) - yb, wb)
             s0 = jnp.sqrt(wb.astype(jnp.float32))
             clipped = jnp.clip(e, -delta, delta)
-            return self.back(a, cf, s0 * profile(s0 * clipped, s0)), None
+            return self.back(a, cf, s0 * profile(s0 * clipped, s0), precision=wb), None
 
         batches = (jnp.arange(self.nb), self.batches(q))
         return jax.lax.scan(step, self._zeros(), batches)[0]
@@ -575,7 +580,7 @@ class Operators:
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
             tangent = self._tangent(nominal, qb, valid, scales, frames)
-            raw = self.projection.columns(cf, x, tangent)
+            raw = self.projection.columns(cf, x, tangent, precision=wb)
             r = profiled_residual(raw[:, 0] - yb, wb)
             # The step stores the weights and columns in FP16; the score and
             # Gram matrix below use the same rounded values.
@@ -589,7 +594,7 @@ class Operators:
             rounded = partial(jax.lax.reduce_precision, exponent_bits=5, mantissa_bits=10)
             j = rho[:, None] * profile(raw[:, 1:] * s0[:, None], s0)
             j = jax.lax.optimization_barrier(rounded(j) if self._half else j)
-            gx = self.back(gx, cf, self._transpose(res, s0, rho))
+            gx = self.back(gx, cf, self._transpose(res, s0, rho), precision=wb)
             dd = self.projection.diagonal(cf, sw, dd)
             valid_px = jnp.sum(wb > 0, dtype=jnp.int64)
             down = jnp.sum((wb > 0) & (sw.astype(jnp.float64) ** 2 < 0.99 * wb), dtype=jnp.int64)
@@ -695,7 +700,7 @@ class Operators:
             yb, wb = y.read(i), self.batch_of(precision, i)
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
-            raw = jnp.where(wb > 0, self.project(cf, x) - yb, 0)
+            raw = jnp.where(wb > 0, self.project(cf, x, precision=wb) - yb, 0)
             value = robust_value(profiled_residual(raw, wb), wb, delta)
             return (total[0] + value, total[1] + _common.moments(raw, wb)), None
 
@@ -714,9 +719,12 @@ class Operators:
             i, nominal, qb, valid, scales, frames = z
             wb = self.batch_precision(self.batch_of(precision, i), valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
-            wb = _common.shared_weights(wb)
-            ramp = (wb * _common.rows(wb.shape[-2])).astype(jnp.float32)
-            return (self.back(a[0], cf, wb.astype(jnp.float32)), self.back(a[1], cf, ramp)), None
+            shared = _common.shared_weights(wb)
+            ramp = (shared * _common.rows(wb.shape[-2])).astype(jnp.float32)
+            return (
+                self.back(a[0], cf, shared.astype(jnp.float32), precision=wb),
+                self.back(a[1], cf, ramp, precision=wb),
+            ), None
 
         batches = (jnp.arange(self.nb), *self.views(q))
         return jnp.stack(jax.lax.scan(step, (self._zeros(), self._zeros()), batches)[0])
@@ -739,8 +747,8 @@ class Operators:
             wb = self.batch_precision(wb, valid)
             cf = self.coefficients(nominal, qb, valid, scales, frames)
             root = jnp.sqrt(wb.astype(jnp.float64))
-            c0, c1, ss, sv = _offset_and_ramp(root * (yb - self.project(cf, x)), root)
-            whitened = root * (yb - self.project(cf, x)) - ss * c0[:, None, None]
+            c0, c1, ss, sv = _offset_and_ramp(root * (yb - self.project(cf, x, precision=wb)), root)
+            whitened = root * (yb - self.project(cf, x, precision=wb)) - ss * c0[:, None, None]
             whitened = whitened - sv * c1[:, None, None]
             mass = jnp.maximum(jnp.sum(wb, axis=(-2, -1), dtype=jnp.float64), 1e-300)
             energy = jnp.sum(whitened**2, axis=(-2, -1)) / mass
@@ -789,7 +797,7 @@ class Operators:
             i, cf = z
             s, jb, wb = sw.read(i), j.read(i), self.batch_of(precision, i)
             s0, rho = self._split(s, wb, cf.valid)
-            image = self.project(cf, x, z_fast=self.z_fast)
+            image = self.project(cf, x, precision=wb, z_fast=self.z_fast)
             out = jax.lax.optimization_barrier(rho * profile(image * s0, s0))
             return r.write(i, out), column_score(jb, out)
 
@@ -813,7 +821,7 @@ class Operators:
             rb, s, jb, wb = r.read(i), sw.read(i), j.read(i), self.batch_of(precision, i)
             s0, rho = self._split(s, wb, cf.valid)
             image = self._transpose(rb - _apply_columns(jb, pb), s0, rho)
-            return self.projection.back(a, cf, image, active=active), None
+            return self.projection.back(a, cf, image, precision=wb, active=active), None
 
         batches = (jnp.arange(self.nb), self.batches(q), self.batches(self.pad_poses(p)))
         return jax.lax.scan(step, self._zeros(), batches)[0]
@@ -834,7 +842,7 @@ class Operators:
             s, jb, wb = sw.read(i), j.read(i), self.batch_of(precision, i)
             s0, rho = self._split(s, wb, cf.valid)
             image = self._transpose(_apply_columns(jb, pb), s0, rho)
-            return self.projection.back(a, cf, image, active=active), None
+            return self.projection.back(a, cf, image, precision=wb, active=active), None
 
         batches = (jnp.arange(self.nb), self.batches(q), self.batches(self.pad_poses(p)))
         return jax.lax.scan(step, self._zeros(), batches)[0]

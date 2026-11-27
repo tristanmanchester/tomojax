@@ -292,6 +292,47 @@ def residual_filter(images: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
     return along(along(images, images.ndim - 1), images.ndim - 2)
 
 
+@overload
+def column_filter(
+    images: np.ndarray, attenuation: float, precision: np.ndarray | None, *, transpose: bool = False
+) -> np.ndarray: ...
+@overload
+def column_filter(
+    images: jax.Array, attenuation: float, precision: jax.Array | None, *, transpose: bool = False
+) -> jax.Array: ...
+def column_filter(
+    images: np.ndarray | jax.Array,
+    attenuation: float,
+    precision: np.ndarray | jax.Array | None,
+    *,
+    transpose: bool = False,
+) -> np.ndarray | jax.Array:
+    """Whiten a row-common random field while preserving the measured flux.
+
+    The column contrasts are orthogonal in the observed-pixel metric. In that
+    metric the map is I - a(P_column - P_flux). The Euclidean transpose reverses
+    the precision multiplication. Stacks of pose columns use the same filter.
+    """
+    if not attenuation:
+        return images
+    xp = np if isinstance(images, np.ndarray) else jnp
+    if precision is None:
+        profile = xp.mean(images, axis=-2, keepdims=True)
+        return images - np.float32(attenuation) * (
+            profile - xp.mean(profile, axis=-1, keepdims=True)
+        )
+    w = precision[:, None] if images.ndim == 4 else precision
+    valid = w > 0
+    mass = xp.sum(w, axis=-2, keepdims=True)
+    totals = xp.sum(mass, axis=-1, keepdims=True)
+    values = xp.where(valid, images, 0) if transpose else w * images
+    summed = xp.sum(values, axis=-2, keepdims=True)
+    column = summed / xp.where(mass > 0, mass, 1)
+    common = xp.sum(summed, axis=-1, keepdims=True) / xp.where(totals > 0, totals, 1)
+    delta = np.float32(attenuation) * (column - common)
+    return xp.where(valid, images - (w * delta if transpose else delta), 0)
+
+
 def filtered_precision(precision: np.ndarray | None) -> np.ndarray | None:
     """The precision of K-filtered data: zero wherever a tap of K falls on an unmeasured pixel.
 
@@ -329,6 +370,8 @@ class Projection:
         detector: Detector,
         *,
         cone: bool = False,
+        column_attenuation: float = 0.0,
+        masked: bool = False,
         backend: Literal["cuda", "jax"] | None = None,
         interpolation: Interpolation | None = "linear",
     ) -> None:
@@ -337,6 +380,7 @@ class Projection:
         if cone and interpolation != "linear":
             raise ValueError("the cone projector uses linear interpolation")
         self.grid, self.detector = grid, detector
+        self.column_attenuation, self.masked = column_attenuation, masked
         self.cone = bool(cone)
         self.interpolation = interpolation
         self.dofs = 6 if self.cone else 5
@@ -372,7 +416,13 @@ class Projection:
         return jnp.swapaxes(columns, 1, 2)
 
     def project(
-        self, cf: Coefficients, x: jax.Array, *, absolute: bool = False, z_fast: bool = False
+        self,
+        cf: Coefficients,
+        x: jax.Array,
+        *,
+        precision: jax.Array | None = None,
+        absolute: bool = False,
+        z_fast: bool = False,
     ) -> jax.Array:
         """Apply A, or |A| for bounds. A z-fast plane volume has shape (nx, ny, nz)."""
         if self.cone:
@@ -388,7 +438,12 @@ class Projection:
                 absolute_weights=absolute,
                 z_fast=z_fast,
             )
-        return residual_filter(image) * cf.valid[:, None, None]
+        image = residual_filter(image) * cf.valid[:, None, None]
+        return (
+            image
+            if absolute
+            else column_filter(image, self.column_attenuation, precision if self.masked else None)
+        )
 
     def active(self, mask: jax.Array) -> tuple[jax.Array, ...] | None:
         """Work lists for ``back`` when only the nonzero ``mask`` voxels are needed."""
@@ -403,12 +458,17 @@ class Projection:
         y: jax.Array,
         *,
         absolute: bool = False,
+        precision: jax.Array | None = None,
         active: tuple[jax.Array, ...] | None = None,
     ) -> jax.Array:
         """Accumulate A.T y (or |A|.T y) over the valid views.
 
         With ``active`` lists, voxels outside their mask may lack the transpose.
         """
+        if not absolute:
+            y = column_filter(
+                y, self.column_attenuation, precision if self.masked else None, transpose=True
+            )
         y = residual_filter(y * cf.valid[:, None, None])  # K is symmetric: K^T = K
         if self.cone:
             return cone_backproject(
@@ -431,7 +491,14 @@ class Projection:
             active=active,
         )
 
-    def columns(self, cf: Coefficients, x: jax.Array, tangent: jax.Array) -> jax.Array:
+    def columns(
+        self,
+        cf: Coefficients,
+        x: jax.Array,
+        tangent: jax.Array,
+        *,
+        precision: jax.Array | None = None,
+    ) -> jax.Array:
         """Prediction and its pose columns, (views, 1 + dofs, v, u)."""
         if not self.cone:
             images = plane_pose_columns(
@@ -456,7 +523,8 @@ class Projection:
                 lambda dc: jax.jvp(predict, (cf.rays,), (dc,))[1], in_axes=1, out_axes=1
             )(tangent)
             images = jnp.concatenate([predict(cf.rays)[:, None], columns], axis=1)
-        return residual_filter(images) * cf.valid[:, None, None, None]
+        images = residual_filter(images) * cf.valid[:, None, None, None]
+        return column_filter(images, self.column_attenuation, precision if self.masked else None)
 
     def diagonal(
         self, cf: Coefficients, sqrtweights: jax.Array, accumulator: jax.Array

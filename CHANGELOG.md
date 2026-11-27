@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Joint alignment corrects fixed detector stripes and estimates the variance of shadows shared
+  across detector rows. The image and pose fit uses that variance to weight column residuals.
 - Joint alignment estimates fixed detector stripes and transient shadows shared across
   detector rows. It corrects the working projections before fitting the image and geometry.
 - The general cone transpose reuses each detector footprint when all the views

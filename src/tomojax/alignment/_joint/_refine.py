@@ -171,7 +171,10 @@ class _EdgeObjective:
         nominal, qb, valid, scales, frames, yy, w = z
         w = self.ops.batch_precision(w, valid)
         return self.filter.forward(
-            self.ops.project(self.ops.coefficients(nominal, qb, valid, scales, frames), x) - yy,
+            self.ops.project(
+                self.ops.coefficients(nominal, qb, valid, scales, frames), x, precision=w
+            )
+            - yy,
             w,
         )
 
@@ -188,7 +191,7 @@ class _EdgeObjective:
         def step(z: IndexedViewBatch) -> _Stats:
             nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
-            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
+            raw = o.columns(nominal, qb, valid, x, precision=w, scales=scales, frames=frames)
             r = h.forward(raw[:, 0] - yy, w)
             res, _, jw = robust_batch(r, h.forward(raw[:, 1:], w[:, None]), w, delta)
             return column_score(jw, res), column_gram(jw), robust_value(r, w, delta)
@@ -225,7 +228,7 @@ class _EdgeObjective:
         def step(z: IndexedViewBatch) -> jax.Array:
             nominal, qb, valid, scales, frames, yy, w = self._z(z, y, precision)
             w = o.batch_precision(w, valid)
-            raw = o.columns(nominal, qb, valid, x, scales=scales, frames=frames)
+            raw = o.columns(nominal, qb, valid, x, precision=w, scales=scales, frames=frames)
             r, j = raw[:, 0] - yy, raw[:, 1:]
             gram = jnp.einsum("bcvu,bdvu,bvu->bcd", j, j, w, precision=jax.lax.Precision.HIGHEST)
             score = jnp.einsum("bcvu,bvu,bvu->bc", j, r, w, precision=jax.lax.Precision.HIGHEST)

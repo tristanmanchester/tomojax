@@ -149,8 +149,10 @@ def _innovations(
     return residual * (1 - weights[:, None])
 
 
-def _fixed(samples: Float64Array, observed: BoolArray) -> Float64Array:
-    """Wiener estimate of a fixed white column offset against a spatially smooth pedestal."""
+def _offset_variance(
+    samples: Float64Array, observed: BoolArray
+) -> tuple[float, Float64Array, Float64Array]:
+    """Recurrent high-frequency power of the faint rays in an orthonormal cosine basis."""
     profile = _observed_median(samples, observed)
     profile -= np.mean(profile, dtype=np.float64)
     spectrum = np.fft.rfft(np.concatenate([profile, profile[::-1]]))[:-1]
@@ -169,40 +171,95 @@ def _fixed(samples: Float64Array, observed: BoolArray) -> Float64Array:
     padded = np.pad(power, (width // 2, (width - 1) // 2), mode="symmetric")
     total = np.convolve(padded, np.full(width, 1 / width), mode="valid")
     gain = np.divide(variance, total, out=np.zeros_like(total), where=total > 0)
-    return np.fft.irfft(np.append(spectrum * np.minimum(1, gain), 0))[: len(profile)]
+    fixed = np.fft.irfft(np.append(spectrum * np.minimum(1, gain), 0))[: len(profile)]
+    return variance / (2 * len(profile)), profile, fixed
+
+
+def _sine(values: Float64Array) -> Float64Array:
+    """Orthonormal type-I sine transform along the last axis (odd extension at each edge)."""
+    zero = np.zeros_like(values[..., :1])
+    odd = np.concatenate((zero, values, zero, -values[..., ::-1]), axis=-1)
+    return -np.fft.rfft(odd).imag[..., 1:-1] / math.sqrt(2 * (values.shape[-1] + 1))
+
+
+def _fixed(
+    y: Float32Array,
+    w: Float32Array | None,
+    variance: float,
+    floor: Float64Array,
+    reference: Float64Array,
+) -> Float64Array:
+    """Estimate recurrent column curvature across views and rows; its affine part is unobserved."""
+    n, v, u = y.shape
+    if not variance or u < 3:
+        return np.zeros(u)
+    step = (slice(None, None, max(1, n // 64)), slice(None, None, max(1, v // 64)))
+    samples = y[step].reshape(-1, u).astype(float)
+    curvature = np.diff(samples, n=2)
+    # All three pixels must be measured. Isolated missing columns supply no curvature.
+    seen = np.ones_like(curvature, dtype=bool)
+    if w is not None:
+        valid = w[step].reshape(-1, u) > 0
+        seen = valid[:, :-2] & valid[:, 1:-1] & valid[:, 2:]
+    location = _observed_median(curvature, seen)
+    groups = np.array_split(np.arange(len(curvature)), min(len(curvature), 16))
+    locations = np.stack([_observed_median(curvature[g], seen[g]) for g in groups])
+    error = np.mean(_sine(locations - location) ** 2, axis=0, dtype=np.float64) / len(groups)
+    # A stationary specimen edge also recurs in every stratum. Comparing its
+    # curvature across all rows and faint rays cancels the fixed detector error.
+    disagreement = _sine(location - np.diff(floor, n=2)) ** 2
+    width = max(1, round(math.sqrt(u)))
+    padded = np.pad(disagreement, (width // 2, (width - 1) // 2), mode="symmetric")
+    error = np.maximum(error, np.convolve(padded, np.full(width, 1 / width), mode="valid"))
+    eig = -4 * np.sin(np.pi * np.arange(1, u - 1) / (2 * (u - 1))) ** 2
+    total = variance * eig**2 + error
+    remainder = location - np.diff(reference, n=2)
+    field = np.pad(_sine(variance * eig * _sine(remainder) / total), 1)
+    axis = np.arange(u) - (u - 1) / 2
+    return (
+        reference + field - np.mean(field, dtype=np.float64) - axis * (axis @ field) / (axis @ axis)
+    )
 
 
 def calibrate_columns(
     levels: Sequence[tuple[Float32Array, Float32Array | None]], bins: Sequence[int], noise: float
-) -> None:
-    """Subtract the estimated field at each resolution, averaging over its observed rays."""
+) -> dict[int, float]:
+    """Remove recurrent gain errors and estimate each level's column-contrast attenuation."""
     fine = min(bins)
     y, w = levels[bins.index(fine)]
     n, v, u = y.shape
+    attenuation = dict.fromkeys(bins, 0.0)
     if min(n, v, u) < 2:
-        # A common component requires replicated rows and views and a horizontal contrast.
-        return
+        return attenuation
     sd = _air_noise(y, w, noise / fine)
     floor, observed, features = _observations(y, w, sd)
-    field = _innovations(floor, observed, features, sd, v)
-    field += _fixed(floor - field, observed)
-    field -= np.mean(field, axis=1, keepdims=True, dtype=np.float64)  # retain the fitted flux gauge
-    field = field.astype(np.float32)
+    dynamic = _innovations(floor, observed, features, sd, v)
+    field = _fixed(y, w, *_offset_variance(floor - dynamic, observed))
+    mass = np.maximum(np.asanyarray(observed.sum(axis=1, keepdims=True), dtype=np.intp), 1)
+    dynamic -= np.asanyarray(dynamic.sum(axis=1, keepdims=True), dtype=np.float64) / mass
     for (data, _), b in zip(levels, bins, strict=True):
         ratio = b // fine
-        columns = field.reshape(n, data.shape[2], ratio)
+        columns = field.reshape(data.shape[2], ratio)
+        count = np.asanyarray(observed.reshape(n, -1, ratio).sum(axis=2), dtype=np.intp)
+        changing = np.asanyarray(
+            np.where(observed, dynamic, 0).reshape(n, -1, ratio).sum(axis=2), dtype=np.float64
+        ) / np.maximum(count, 1)
+        variance = np.asanyarray(np.sum(changing**2), dtype=np.float64).item() / max(
+            1, np.count_nonzero(count)
+        )
+        independent = (noise / b) ** 2
+        total = independent + data.shape[1] * variance
+        attenuation[b] = 1 - math.sqrt(independent / total) if total else 0.0
         if w is None:
-            mean = np.asanyarray(columns.mean(axis=2, dtype=np.float64), dtype=np.float32)
-            data[:] -= mean[:, None, :]
+            data[:] -= np.mean(columns, axis=1, dtype=np.float64).astype(np.float32)
         else:
             for first in range(0, n, 16):
                 sl = slice(first, first + 16)
-                count = w[sl].reshape(-1, data.shape[1], ratio, data.shape[2], ratio)
-                summed = np.asanyarray(count.sum(axis=2, dtype=np.float64), dtype=np.float64)
+                weights = w[sl].reshape(-1, data.shape[1], ratio, data.shape[2], ratio)
+                summed = np.asanyarray(weights.sum(axis=2, dtype=np.float64), dtype=np.float64)
                 weight = np.asanyarray(summed.sum(axis=-1), dtype=np.float64)
-                correction = np.asanyarray(
-                    (summed * columns[sl, None]).sum(axis=-1), dtype=np.float64
-                )
+                correction = np.asanyarray((summed * columns).sum(axis=-1), dtype=np.float64)
                 data[sl] -= np.divide(
                     correction, weight, out=np.zeros_like(weight), where=weight > 0
                 )
+    return attenuation

@@ -132,7 +132,6 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
-    "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
     "src/tomojax/alignment/_joint/_solver.py::C901::_descend",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
     "src/tomojax/cli/_adapters.py::C901::execute",

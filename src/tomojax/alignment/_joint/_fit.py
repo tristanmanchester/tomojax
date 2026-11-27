@@ -13,7 +13,7 @@ block with missing input pixels is the mean of its finite ones, weighted by thei
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
 right at Nyquist. Low-attenuation rays and row contrasts calibrate fixed and transient
-detector-column offsets before either level. Image TV is off by default.
+detector-column offsets and the excess variance shared down a column before either level. Image TV is off by default.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ from ._operators import Operators
 from ._parameters import Parameters
 from ._pose import MotionPrior, ViewOrder
 from ._projection import (
+    column_filter,
     cone_parameter_scales,
     cropped_frames,
     filtered_precision,
@@ -242,6 +243,7 @@ def _level(
     scales: np.ndarray | None = None,
     parameters: Parameters | None = None,
     detector_roll: float = 0.0,
+    column_attenuation: float = 0.0,
     config: AlignConfig,
 ) -> tuple[np.ndarray, np.ndarray | None, Grid, Operators, _LevelCalibration]:
     """Observations, grid, operators and calibration at one binning.
@@ -258,9 +260,11 @@ def _level(
     # The objective compares K A x with K y (residual_filter); the filtered data are known
     # only where every tap was measured. K acts within each view: filter on the host, a
     # slab of views at a time, as the binning above does.
-    for s in range(0, len(y), 16):
-        y[s : s + 16] = residual_filter(y[s : s + 16])
     precision = filtered_precision(precision)
+    for s in range(0, len(y), 16):
+        slab = slice(s, s + 16)
+        w = None if precision is None else precision[slab]
+        y[slab] = column_filter(residual_filter(y[slab]), column_attenuation, w)
     d = Detector(
         y.shape[2],
         y.shape[1],
@@ -294,6 +298,8 @@ def _level(
         parameters=parameters,
         detector_roll=detector_roll,
         detector_pivot=detector.center,
+        column_attenuation=column_attenuation,
+        masked=precision is not None,
     )
     h = (g.vx * g.vy * g.vz) ** (1 / 3)
     calibration: _LevelCalibration = {
@@ -494,7 +500,6 @@ def fit_poses(
         bins = [level.binning for level in schedule.levels]
         multiple = math.lcm(*bins)
         drop_v, drop_u = detector.nv % multiple, detector.nu % multiple
-        measured = y0[:, : detector.nv - drop_v, : detector.nu - drop_u]
         center = (
             detector.center[0] - 0.5 * drop_u * detector.du,
             detector.center[1] - 0.5 * drop_v * detector.dv,
@@ -510,8 +515,8 @@ def fit_poses(
         order = ViewOrder(len(y0), view_positions)
         prior = None
         levels: list[FitLevelRecord] = []
-        binned, scale, noise = _read(measured, bins)
-        calibrate_columns(binned, bins, noise)
+        binned, scale, noise = _read(y0[:, : detector.nv - drop_v, : detector.nu - drop_u], bins)
+        column_attenuation = calibrate_columns(binned, bins, noise)
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
             with (
@@ -536,6 +541,7 @@ def fit_poses(
                     parameters=parameters,
                     detector_roll=detector_roll,
                     config=config,
+                    column_attenuation=column_attenuation[level.binning],
                 )
                 # Without angular columns, reuse the translation prior across levels.
                 if prior is None or "rotations" in parameters.fit:

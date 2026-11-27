@@ -145,3 +145,26 @@ def test_column_shadow_on_a_stationary_object_keeps_pose_and_image():
     assert np.sqrt(np.mean(result.poses[:, 3] ** 2)) < 0.02
     relative_error = np.linalg.norm(result.image - sim.phantom) / np.linalg.norm(sim.phantom)
     assert relative_error < 0.16
+
+
+def test_masked_column_covariance_has_matched_transpose_and_preserves_flux():
+    import jax.numpy as jnp
+
+    column_filter = _fit.column_filter
+
+    rng = np.random.default_rng(711)
+    x, z = rng.normal(size=(2, 4, 3, 8, 7)).astype(np.float32)
+    w = rng.uniform(0.15, 1, (4, 8, 7)).astype(np.float32)
+    w[0] = 0
+    w[1, :, 3] = 0
+    w[2, 2:5, :4] = 0
+    forward = column_filter(x, 0.85, w)
+    adjoint = column_filter(jnp.asarray(z), 0.85, jnp.asarray(w), transpose=True)
+    np.testing.assert_allclose(np.vdot(forward, z), np.vdot(x, adjoint), rtol=2e-6)
+    np.testing.assert_allclose(
+        (forward * w[:, None]).sum((2, 3)), (x * w[:, None]).sum((2, 3)), atol=2e-6
+    )
+    columns = np.broadcast_to(x[:, :, :1, :], x.shape)
+    filtered = column_filter(columns, 0.85, None)
+    contrast = columns - columns.mean(axis=-1, keepdims=True)
+    np.testing.assert_allclose(filtered, columns - 0.85 * contrast, atol=3e-7)
