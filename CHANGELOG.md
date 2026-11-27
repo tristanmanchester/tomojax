@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- The general cone transpose reuses each detector footprint when all the views
+  in a launch fit in one 32-view tile batch. On the three-orbit FIPS walnut
+  translation fit, the second fine step fell from 26.09 to 25.13 s on V100S
+  and from 7.80 to 7.59 s on RTX PRO 6000 Blackwell. The fitted image and poses
+  matched the previous build bit for bit.
+- Two GPU tests now account for FP32 reduction order across XLA builds. The
+  Joseph projector test checks both sets of ray coordinates against the physical
+  ray matrix and compares the CUDA entry points using identical coordinates.
+  The ring correction test allows two FP32 epsilons at the sinogram's peak
+  when restoring the original view order.
 - SPDHG now takes about 600 × √B updates for B measured-data blocks. Its TV
   penalty uses the same noise calibration as FISTA, and its stochastic step
   sizes scale with the probability of selecting a block. An explicit iteration

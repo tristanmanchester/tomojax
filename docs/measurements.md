@@ -305,6 +305,25 @@ Measured 2026-11-27 on commit `ea6fab6f` (faster host reading and binning, skipp
 
 For the DIAD translation fit on V100S, wall time dropped 25% (24.0 to 17.9 minutes; including 140 / 149 s of native file decoding and flat/dark correction, 26.3 to 20.4 minutes). The native `float32` DIAD stack alone occupies 164.8 GiB in host RAM, accounting for most of the 173.1–174.0 GiB host RSS peak. Alignment runs on one GPU even when multiple GPUs are visible (on two visible 96 GB Blackwell cards, the solve ran on GPU 0 using 9,018 MiB while the second card held a 560 MiB context). In Nsight Systems traces of the second fine step on Blackwell, ray kernels (forward, adjoint, and pose derivatives) accounted for 72.79 s of an 84.04 s trace span (75.83 s GPU busy) on DIAD translations + rotations, and 5.89 s of a 9.47 s span (7.53 s GPU busy) on Walnut translations.
 
+On 2026-11-27 the three-orbit FIPS Walnut 1 translation fit was timed against
+`7034af3b` on one GPU with 10 CPUs. Fine step 2 used 3,600 views at bin 4
+(243 × 192 detector pixels, 283 × 251 × 251 voxels in z, y, x). Its eight-view
+cone transpose now computes each detector footprint once per tile. The accepted
+FP32 image and pose table were bit-identical on each card.
+
+| GPU | Wide cone transpose, 18,900 launches (s) | Complete warm fine step (s) |
+| --- | ---: | ---: |
+| V100S 32 GB | 15.20 → 14.27 | 26.09 → 25.13 |
+| RTX PRO 6000 Blackwell 96 GB | 3.96 → 3.80 | 7.80 → 7.59 |
+
+The kernel column uses Nsight Systems. On V100S both kernel measurements used
+direct CUDA launches because Nsight interrupted native graph capture. The warm
+steps used the default CUDA graphs on both cards. A second Blackwell comparison
+with reversed build order gave 7.92 and 7.72 s (median of two steps per build). With
+an empty CuPy cache, compiling and loading the public cone module took
+5.56 → 6.02 s on V100S and 2.76 → 3.73 s on Blackwell (one build per card).
+The solver-private module took 3.64 → 5.11 s and 1.93 → 2.74 s, respectively.
+
 Accuracy and held-out checks on the same runs:
 
 - **Known-pose native-pitch twins** (analytic Gaussian-mixture line integrals with seeded drift, slips, random translations, 0.1° angular jitter, column offsets of 0.002 SD, and 20,000-photon noise; landmark errors in native detector pixels after removing one rigid gauge):
