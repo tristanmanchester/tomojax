@@ -794,6 +794,7 @@ class SIRTCall:
             data: jax.Array | np.ndarray,
             initial: jax.Array | np.ndarray | None,
             support: jax.Array | np.ndarray | None,
+            _background: np.ndarray | None,
         ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
             return self.solve(
                 geometry,

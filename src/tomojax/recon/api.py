@@ -668,15 +668,39 @@ def reconstruct_arrays(
         volume, record = fbp_volume(geometry, grid, detector, projections, cfg, None, out)
         return volume, {**record, "truncation": truncation}
     from tomojax import progress
+    from tomojax.recon._exterior import outside_data, subtract_background
+    from tomojax.recon._host_arrays import validate_host_arrays
 
     det_grid = _detector_grid(geometry, detector)
+    if out is not None:
+        _ = validate_host_arrays(projections, out, grid.shape, method, device_input=True)
+    background, share = outside_data(geometry, grid, detector, projections, cfg)
+    applied = background is not None
+    if background is not None and cfg.method != "mlem":
+        projections = subtract_background(projections, background)
+        background = None
     with progress.task(
         "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
     ):
         volume, record = _iterative_result(
-            geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
+            geometry,
+            grid,
+            detector,
+            projections,
+            cfg,
+            det_grid,
+            warm_start=warm_start,
+            out=out,
+            background=background,
         )
-        return volume, {**record, "truncation": truncation}
+        return volume, {
+            **record,
+            "truncation": {
+                **truncation,
+                "outside_grid": share,
+                "data_model": "continued_exterior" if applied else "measured",
+            },
+        }
 
 
 def _iterative_result(
@@ -688,6 +712,7 @@ def _iterative_result(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
+    background: np.ndarray | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
     """Plan independent axial slabs before allocating a full warm initializer."""
@@ -725,23 +750,32 @@ def _iterative_result(
                 data: jnp.ndarray | np.ndarray,
                 _initial: jnp.ndarray | np.ndarray | None,
                 local_support: jnp.ndarray | np.ndarray | None,
+                local_background: np.ndarray | None,
             ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
                 return _iterative_incore(
                     local, local.grid, local.detector, data,
                     replace(algebraic, support=local_support), None,
-                    warm_start=warm_start, solver=solver,
+                    warm_start=warm_start, solver=solver, background=local_background,
                 )  # fmt: skip
 
             result = axial_slabs(
                 geometry, grid, detector, projections, initial=None, support=support,
                 config=algebraic,
-                solve=solve, summarize=summary,
+                solve=solve, summarize=summary, background=background,
             )  # fmt: skip
             if result is not None:
                 volume, record = result
                 return volume, {**record, "config": cfg, "warm_start": warm_start}
     return _iterative_incore(
-        geometry, grid, detector, projections, cfg, det_grid, warm_start=warm_start, out=out
+        geometry,
+        grid,
+        detector,
+        projections,
+        cfg,
+        det_grid,
+        warm_start=warm_start,
+        out=out,
+        background=background,
     )
 
 
@@ -754,6 +788,7 @@ def _iterative_incore(
     det_grid: tuple[jnp.ndarray, jnp.ndarray] | None,
     *,
     warm_start: bool,
+    background: np.ndarray | None = None,
     solver: Callable[..., tuple[jnp.ndarray | np.ndarray, dict[str, object]]] | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jnp.ndarray | np.ndarray, dict[str, object]]:
@@ -763,7 +798,7 @@ def _iterative_incore(
 
         volume, record = run_mlem(
             geometry, projections, grid=grid, detector=detector, config=cfg,
-            det_grid=det_grid, warm_start=warm_start, out=out,
+            det_grid=det_grid, warm_start=warm_start, out=out, background=background,
         )  # fmt: skip
         return volume, {"config": cfg, "warm_start": warm_start, **record}
     start = None

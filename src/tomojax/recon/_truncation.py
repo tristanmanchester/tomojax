@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 _RECORD_SAMPLES = 64
 
 
-def _axis_distance(geometry: Geometry, detector: Detector, pad: int) -> Host:
+def axis_distance(geometry: Geometry, detector: Detector, pad: int) -> Host:
     """Distance from the rotation axis of each ray of a row continued by ``pad`` columns a side."""
     parts = cone_parts(geometry, detector)
     if parts is None:
@@ -289,7 +289,7 @@ def truncation_values(
     if sample is not None:
         sample.add(0, projections)
         return sample.values()
-    distance = _axis_distance(geometry, detector, continued_columns(projections.shape[-1]))
+    distance = axis_distance(geometry, detector, continued_columns(projections.shape[-1]))
     host = isinstance(projections, np.ndarray)
     measure = _measure(
         distance.tobytes(),

@@ -44,6 +44,7 @@ def solve(
     cfg: MLEMConfig,
     initial: jax.Array | np.ndarray | None,
     warm_start: bool = False,
+    background: np.ndarray | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[Any, dict[str, object]]:
     """Run validated EM settings; return the volume (``out`` if given) and its storage record.
@@ -73,7 +74,7 @@ def solve(
     xp = np if isinstance(x, np.ndarray) else problem.engine.xp
     _constrain(x, support, problem.plan.depth, nonnegative=warm_start, xp=xp)
     with checkpoint.loop() as saves:
-        em = _HostEM(problem, x, updating=iterations > 0, saved=saves.saved)
+        em = _HostEM(problem, x, background=background, updating=iterations > 0, saved=saves.saved)
         with problem.using(out, em.volume):
             em.run(order, subsets, iterations, saves)
     for z0 in range(0, grid.nz, problem.plan.depth):
@@ -102,8 +103,15 @@ class _HostEM:
     """One host EM volume's subset sweeps, recording which voxels any subset sees."""
 
     def __init__(
-        self, problem: ConeProblem, x: np.ndarray, *, updating: bool, saved: Saved | None
+        self,
+        problem: ConeProblem,
+        x: np.ndarray,
+        *,
+        background: np.ndarray | None,
+        updating: bool,
+        saved: Saved | None,
     ) -> None:
+        self.background = background
         self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
         self.volume, self.updating = problem.volume(x), updating
         grid = self.plan.grid
@@ -139,6 +147,9 @@ class _HostEM:
         if self.updating:
             xp, predicted = self.xp, rows[0]
             measured = self.problem.measured(batch, first, stop)
+            if self.background is not None:
+                additive = self.problem.engine.upload(self.background[batch.views, first:stop])
+                predicted += xp.maximum(additive, 0)
             positive = predicted > 0
             predicted[...] = xp.where(positive, measured / xp.where(positive, predicted, 1), 0)
 

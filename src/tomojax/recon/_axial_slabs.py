@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
     type Array = jax.Array | np.ndarray
     type Solve = Callable[
-        [ParallelGeometry, Array, Array | None, Array | None],
+        [ParallelGeometry, Array, Array | None, Array | None, np.ndarray | None],
         tuple[Array, dict[str, object]],
     ]
 
@@ -80,6 +80,7 @@ def axial_slabs(
     support: Array | None,
     config: SIRTConfig | MLEMConfig,
     solve: Solve,
+    background: np.ndarray | None = None,
     summarize: Callable[[checkpoint.Slabs], dict[str, object]] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve in slabs if storage is large and Joseph planes are independent.
@@ -131,6 +132,7 @@ def axial_slabs(
                         data[:, start:stop, :],
                         None if initial is None else initial[start:stop, :, :],
                         None if support is None else support[start:stop, :, :],
+                        None if background is None else background[:, start:stop],
                     )
             finally:
                 partial_sweep.reset(partition)

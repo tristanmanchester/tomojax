@@ -128,10 +128,12 @@ def test_the_record_of_a_contained_object_is_zero() -> None:
 
 
 def test_every_method_carries_the_record() -> None:
-    # The methods that fit the grid take the data as measured, and say what the rows say.
+    # The original measurements determine all five analytic fields before the solve.
     scan = _parallel()
     expected = tj.reconstruct(scan, "fbp").info["truncation"]
-    assert tj.reconstruct(scan, "cgls", iterations=2).info["truncation"] == expected
+    record = tj.reconstruct(scan, "cgls", iterations=2).info["truncation"]
+    assert {key: record[key] for key in expected} == expected
+    assert record["data_model"] == "continued_exterior" and record["outside_grid"] > 0
     assert tj.reconstruct(_cone(), "fbp").info["truncation"]["radius"] == pytest.approx(
         RADIUS, rel=1e-3
     )

@@ -626,6 +626,7 @@ def poisson_operators(
     valid: jax.Array,
     *,
     stream: bool = False,
+    background: jax.Array | None = None,
 ) -> tuple[
     Callable[[jax.Array], jax.Array], Callable[[jax.Array, jax.Array, jax.Array], jax.Array]
 ]:
@@ -658,6 +659,7 @@ def poisson_operators(
             data,
             indices=indices[i],
             stream=stream,
+            background=background,
         ),
     )
 
@@ -678,13 +680,13 @@ def _correction(
     *,
     indices: jax.Array,
     stream: bool,
+    background: jax.Array | None,
 ) -> jax.Array:
     project = ops.projector(volume)
 
     def batch(k: jax.Array, output: jax.Array) -> jax.Array:
         start, poses, valid = ops.select(k)
         expected = project(start, poses)
-        positive = expected > 0
         view_ids = jax.lax.dynamic_slice_in_dim(indices, start, ops.size)
         measured = (
             read_views(
@@ -696,6 +698,19 @@ def _correction(
             if stream
             else data[view_ids]
         )
+        if background is not None:
+            additive = (
+                read_views(
+                    background,
+                    start,
+                    (ops.size, ops.detector.nv, ops.detector.nu),
+                    indices=view_ids,
+                )
+                if stream
+                else background[view_ids]
+            )
+            expected = expected + jnp.maximum(additive, 0)
+        positive = expected > 0
         ratio = measured / jnp.where(positive, expected, 1.0)
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)
         return ops.backproject(ratio, start, poses, output)

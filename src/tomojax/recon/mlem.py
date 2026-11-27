@@ -196,10 +196,21 @@ def _segment(
     stream: bool,
     axial: bool,
     sensitivities: jax.Array | None = None,
+    background: jax.Array | None = None,
 ) -> Any:
     initial, support = pack_volume(initial, model), pack_volume(support, model)
     sensitivity, correction = poisson_operators(
-        poses, grid, detector, det_grid, backend, batch_size, model, indices, valid, stream=stream
+        poses,
+        grid,
+        detector,
+        det_grid,
+        backend,
+        batch_size,
+        model,
+        indices,
+        valid,
+        stream=stream,
+        background=background,
     )
     normal_grid = grid
     if axial:
@@ -264,11 +275,22 @@ def _mlem_program(
     det_grid: tuple[jax.Array, jax.Array] | None,
     *,
     sensitivities: jax.Array | None = None,
+    background: jax.Array | None = None,
     drive: Callable,
     **options: Any,
 ) -> tuple[jax.Array, jax.Array]:
     segment = partial(
-        _segment, poses, data, initial, support, indices, valid, iterations, det_grid, **options
+        _segment,
+        poses,
+        data,
+        initial,
+        support,
+        indices,
+        valid,
+        iterations,
+        det_grid,
+        background=background,
+        **options,
     )
     state, good, norms = segment(None, 0, 0, sensitivities=sensitivities)
     x, observed = fixed_updates(
@@ -297,6 +319,7 @@ def _run_device(
     projections: jax.Array | np.ndarray,
     *,
     config: MLEMConfig,
+    background: np.ndarray | None = None,
     model: Model,
     backend: str,
     initial: jax.Array | np.ndarray | None,
@@ -325,7 +348,14 @@ def _run_device(
     if stream:
         check_measurements(projections, "mlem")
     context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))
-    with context as data:
+    background_context = (
+        nullcontext(None)
+        if background is None
+        else host_source(background)
+        if stream
+        else nullcontext(_device(background))
+    )
+    with context as data, background_context as additive:
         # Query after these persistent inputs occupy their device storage.
         volume_bytes = int(np.prod(shape)) * 4
         norm_bytes = grid.nx * grid.ny * 4 if axial else volume_bytes
@@ -333,7 +363,9 @@ def _run_device(
         # Four volume buffers cover the iterate, update, current norm and
         # visibility/output workspace. Both resident and streamed data need
         # only the current predicted/measured view batches.
-        workspace = 4 * volume_bytes + 2 * min(batch, count) * image_bytes
+        workspace = (
+            4 * volume_bytes + (2 + int(background is not None)) * min(batch, count) * image_bytes
+        )
         cache = _cache_sensitivities(
             subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )
@@ -351,7 +383,7 @@ def _run_device(
             poses, data, initial, support,
             device_indices, device_valid, iterations, det_grid,
             grid=grid, detector=detector, backend=backend, batch_size=batch, model=model,
-            cache=cache, stream=stream, axial=axial, sensitivities=norms,
+            cache=cache, stream=stream, axial=axial, sensitivities=norms, background=additive,
         )  # fmt: skip
         if stream:
             _ = volume.block_until_ready()  # Host registrations must outlive every callback.
@@ -453,6 +485,7 @@ def run_mlem(
     config: MLEMConfig,
     det_grid: tuple[jax.Array, jax.Array] | None = None,
     warm_start: bool = False,
+    background: np.ndarray | None = None,
     out: np.ndarray | None = None,
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Own workflow initialization inside the solver, never copying a private host start."""
@@ -478,7 +511,7 @@ def run_mlem(
             geometry, grid, detector, projections, model=model, backend=backend,
             poses=stack_view_poses(geometry, n),
             order=np.argsort(np.asarray(getattr(geometry, "angles", np.arange(n))), kind="stable"),
-            cfg=cfg, initial=init_x, warm_start=warm_start, out=out,
+            cfg=cfg, initial=init_x, warm_start=warm_start, out=out, background=background,
         )  # fmt: skip
     elif out is not None or rows:
         raise ValueError("mlem: out and row readers need a cone-beam geometry")
@@ -499,6 +532,7 @@ def run_mlem(
             detector,
             projections,
             config=cfg,
+            background=background,
             model=model,
             backend=backend,
             initial=init_x,

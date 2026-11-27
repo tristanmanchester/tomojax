@@ -45,10 +45,14 @@ def beyond_detector(info: Mapping[str, object]) -> str | None:
     ``info`` is a reconstruction's record or its summary; a scan that ends
     inside the detector has nothing to say.
     """
-    fraction = object_mapping(info.get("truncation")).get("outside_fraction")
+    record = object_mapping(info.get("truncation"))
+    fraction = record.get("outside_fraction")
+    parts = []
     if isinstance(fraction, float) and fraction >= 0.005:
-        return f"{fraction:.0%} of attenuation beyond the detector"
-    return None
+        parts.append(f"{fraction:.0%} of attenuation beyond the detector")
+    if record.get("data_model") == "continued_exterior":
+        parts.append("modeled exterior in the projection fit")
+    return ", ".join(parts) or None
 
 
 def report_automatic(info: Mapping[str, object]) -> None:
