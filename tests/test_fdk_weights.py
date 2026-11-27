@@ -45,19 +45,33 @@ def test_irregular_full_turn_weights_match_circular_midpoint_quadrature():
 
 
 @pytest.mark.parametrize("arc", [220, 360])
-def test_fixed_offset_orbit_has_the_same_measure_when_split_into_segments(arc):
+@pytest.mark.parametrize("axis", [None, (0.08, 0.15, 0.985)])
+def test_fixed_offset_orbit_has_the_same_measure_when_split_into_segments(arc, axis):
     angles = 247 + np.linspace(0, arc, 63, endpoint=False)
     angles += 1.7 * np.sin(np.deg2rad(2 * angles))
     grid, panel = Grid(4, 4, 4, 1, 1, 1), Detector(15, 7, 1, 1, center=(5, 0))
     beam = ConeBeam(80, 120, axis_offset=3, source_height=7)
-    orbit = ConeGeometry(grid, panel, angles, beam)
-    segments = ConeSegments(tuple(ConeGeometry(grid, panel, a, beam) for a in np.split(angles, 3)))
+    orbit = ConeGeometry(grid, panel, angles, beam, axis_unit=axis)
+    segments = ConeSegments(
+        tuple(ConeGeometry(grid, panel, a, beam, axis_unit=axis) for a in np.split(angles, 3))
+    )
     np.testing.assert_allclose(
         view_weights(orbit, panel, len(angles)),
         view_weights(segments, panel, len(angles)),
         rtol=1e-11,
         atol=1e-13,
     )
+
+
+@pytest.mark.parametrize("segmented", [False, True])
+def test_source_on_the_rotation_axis_has_no_angular_coverage(segmented):
+    panel = Detector(9, 7, 1, 1)
+    scan = ConeGeometry(
+        Grid(4, 4, 4, 1, 1, 1), panel, [0, 90, 180, 270], ConeBeam(80, 120), axis_unit=(0, 1, 0)
+    )
+    trajectory = ConeSegments((scan,)) if segmented else scan
+    with pytest.raises(ValueError, match="source orbit"):
+        view_weights(trajectory, panel, len(scan.angles))
 
 
 @pytest.mark.parametrize("arc", [210, 360])

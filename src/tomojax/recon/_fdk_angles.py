@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax.core.geometry.cone import ConeGeometry, cone_parts
-from tomojax.core.geometry.views import host_view_poses
 
 from ._detector_rows import DetectorRows
 from ._directions import group_repeats
@@ -26,6 +25,12 @@ if TYPE_CHECKING:
 _TURN = 2 * np.pi
 
 
+def _require_source_orbit(radius: np.ndarray | float, distance: np.ndarray | float) -> None:
+    # Aligning the spin axis can leave a roundoff-sized transverse component.
+    if np.any(radius <= 1e-10 * np.asarray(distance)):
+        raise ValueError("FDK needs a source orbit around the rotation axis")
+
+
 def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
     """Distinct angles modulo a turn, each view's group, and group sizes.
 
@@ -41,19 +46,22 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
     degrees = degrees[:n_views]
     if not np.isfinite(degrees).all():
         raise ValueError("FDK needs one finite rotation angle per view")
-    if type(geometry) is ConeGeometry and geometry.axis_unit is None and not geometry.tilt:
-        # In this frame the source is Rz(-theta) @ (source - axis_offset).
-        # Its azimuth is theta plus a fixed phase. Angular cells, conjugates
-        # and coverage use only differences, so theta is already their coordinate.
+    if type(geometry) is ConeGeometry:
+        # With a fixed axis alignment S, the object-frame source is
+        # Rz(-theta) @ S.T @ (source - translation). Its azimuth is theta
+        # plus a constant phase, which cancels from every angular difference.
+        if geometry.axis_unit is not None or geometry.tilt:
+            source = geometry.beam.source()
+            source[0] -= geometry.beam.axis_offset
+            radius = float(np.linalg.norm(np.cross(geometry.rotation_axis(), source)))
+            _require_source_orbit(radius, float(np.linalg.norm(source)))
         return group_repeats(np.deg2rad(degrees))
     # The angle of the source around object z defines the quadrature. Inverting
     # world-from-object gives R.T @ (source - translation) in the object.
     parts = cone_parts(geometry)
     if parts is None:
         raise ValueError("FDK needs a cone-beam trajectory")
-    poses = host_view_poses(geometry, n_views, dtype=np.float64)
-    if poses is None:
-        poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], np.float64)
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], np.float64)
     azimuth = np.empty(n_views)
     start = 0
     for count, beam, _ in parts:
@@ -62,6 +70,7 @@ def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
         source: Float64Array = np.einsum(
             "nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3]
         )
+        _require_source_orbit(np.hypot(source[:, 0], source[:, 1]), np.linalg.norm(source, axis=1))
         azimuth[start:stop] = np.arctan2(-source[:, 0], -source[:, 1])
         start = stop
     return group_repeats(azimuth)
