@@ -418,7 +418,6 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
         beam = ConeBeam(
             30 + index,
             45 + 2 * index,
-            detector_roll=2 * index,
             detector_yaw=index,
             detector_pitch=-index,
         )
@@ -436,6 +435,15 @@ def test_per_view_arrangements_use_global_quadrature_and_physical_cosines(backen
         isolated = np.zeros_like(data)
         isolated[index] = data[index] * (weights[index] / local[index])[None, :]
         expected += np.asarray(fdk(full, grid, segment.detector, isolated, config=cfg))
+    # Reindex every other physical panel; the expected sum above uses its
+    # original pitches, orientations, source distances and conjugate weights.
+    segmented = ConeSegments(
+        tuple(
+            replace(part, beam=replace(part.beam, detector_roll=180 * (i % 2)))
+            for i, part in enumerate(parts)
+        )
+    )
+    data[1::2] = data[1::2, ::-1, ::-1].copy()
     actual = np.asarray(
         fdk(segmented, grid, parts[0].detector, data, config=replace(cfg, views_per_batch=1))
     )

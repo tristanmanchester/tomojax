@@ -54,7 +54,10 @@ def _stationary_weights(
             + reliability(-ray[None, :], common[:, None, :]),
             axis=0,
         )
-        weights[first : first + count] = reliability(ray, parameters[first]) / denominator
+        own = reliability(ray, parameters[first])
+        weights[first : first + count] = np.divide(
+            own, denominator, out=np.zeros_like(own), where=denominator > 0
+        )
         first += count
     return weights
 
@@ -81,6 +84,8 @@ def full_turn_weights(
     fans: np.ndarray,
     pixels: np.ndarray,
     counts: tuple[int, ...],
+    *,
+    limits: np.ndarray | None = None,
 ) -> np.ndarray:
     """Angular weights for per-view fans, including changing or repeated panels.
 
@@ -89,7 +94,9 @@ def full_turn_weights(
     to equal weighting as the panel centers; absent conjugates receive none.
     """
     lo, hi = fans.min(axis=1), fans.max(axis=1)
-    parameters = np.column_stack([lo - pixels / 2, hi + pixels / 2, pixels])
+    parameters = (
+        np.column_stack([lo - pixels / 2, hi + pixels / 2, pixels]) if limits is None else limits
+    )
     members = _members(groups, repeats)
     order = np.argsort(angles)
     nodes = angles[order]
@@ -111,5 +118,6 @@ def full_turn_weights(
         opposite = (1 - fraction) * _mean_reliability(
             order[left], -fans, parameters, members, repeats
         ) + fraction * _mean_reliability(order[right], -fans, parameters, members, repeats)
-        weights = own / (current + opposite)
+        total = current + opposite
+        weights = np.divide(own, total, out=np.zeros_like(own), where=total > 0)
     return weights * measure[groups, None] / repeats[groups, None]

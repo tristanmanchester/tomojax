@@ -28,6 +28,7 @@ from tomojax.core.validation import (
 from tomojax.errors import InvalidParameter
 
 from ._backend import reconstruction_backend
+from ._detector_rows import DetectorRows
 from ._fbp_filter import RowFilter, continued_rows, ramp_rows, row_filter
 from ._fbp_weights import fbp_weights
 from ._host_arrays import ProjectionRows
@@ -786,15 +787,11 @@ def _plan(
     cfg: FBPConfig,
     *,
     backend: str,
-    moved: bool = False,
 ) -> _Plan:
-    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan.
-
-    ``moved`` poses carry a detector-plane motion, so the z axis is not the axis.
-    """
+    """The weights, filter and backprojector for :func:`fbp` of a parallel-beam scan."""
     n_views = int(poses.shape[0])
     view_scale, params, arc_length, separable = _view_weights(poses, cfg.scale)
-    parallel = _can_use_direct_parallel_fbp(geometry, None) and not moved
+    parallel = _can_use_direct_parallel_fbp(geometry, None)
     if parallel:
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
@@ -941,9 +938,20 @@ def parallel_fbp(
         T_all = stack_view_poses(geometry, n_views)
         _ = validate_pose_stack(T_all, n_views, context="fbp geometry")
         motion = None if det_grid is None else _lattice_motion(detector, det_grid)
+        roll = float(getattr(geometry, "detector_roll", 0.0)) if det_grid is None else 0.0
         if motion is not None:
-            # The same rays through the canonical lattice: one geometry-aware method.
-            T_all = jnp.matmul(jnp.asarray(motion), T_all, precision=jax.lax.Precision.HIGHEST)
+            inverse = motion[np.ix_([0, 2], [0, 2])].T
+            origin = inverse @ (np.asarray(detector.center) - motion[[0, 2], 3])
+            detector = replace(detector, center=tuple(origin))
+            roll = float(np.rad2deg(np.arctan2(inverse[1, 0], inverse[0, 0])))
+        if roll:
+            layout = DetectorRows(detector, roll)
+            proj = layout.parallel_band(
+                proj, 0, layout.horizontal.nv, native=0, exterior=cfg.exterior
+            )
+            detector = layout.filter_detector(cfg.exterior)
+            if not layout.quarter_turn:
+                cfg = replace(cfg, exterior="zero")
         backend = reconstruction_backend(
             cfg.backend,
             cone=False,
@@ -958,7 +966,6 @@ def parallel_fbp(
             proj,
             cfg,
             backend=backend,
-            moved=motion is not None,
         )
         if row is not None:
             # Original filter, weights, view partition and numerical batch size. The

@@ -163,13 +163,13 @@ class Continuation:
         level or rising towards its edges takes the widest cylinder the added
         columns hold.
         """
-        return self._radius(
+        return self.mean_square_radius(
             place,
             (low * low).mean(axis=-2, keepdims=True),
             (high * high).mean(axis=-2, keepdims=True),
         )
 
-    def _radius(self, place: Place, low: Rows, high: Rows) -> Rows:
+    def mean_square_radius(self, place: Place, low: Rows, high: Rows) -> Rows:
         """:meth:`radius` from the sharing views' mean squared values, ``(..., 1, window)``."""
         first, last = self.sides[0][0] ** 2, self.sides[1][0] ** 2
         count = first.size + last.size
@@ -258,7 +258,7 @@ class Continuation:
             frame = np.asarray(projections[view : view + 1])
             low += np.square(frame[0, :, :window], dtype=np.float64) / len(views)
             high += np.square(frame[0, :, nu - window :], dtype=np.float64) / len(views)
-        radius2 = self._radius(np.asarray, low[:, None, :], high[:, None, :])
+        radius2 = self.mean_square_radius(np.asarray, low[:, None, :], high[:, None, :])
         return np.asarray(radius2[:, 0], np.float32)
 
 

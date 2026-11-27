@@ -14,6 +14,7 @@ from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
 
+from ._detector_rows import DetectorRows
 from ._fourier_backend import (
     FourierPlan,
     PendingSlab,
@@ -22,9 +23,7 @@ from ._fourier_backend import (
 )
 from ._fourier_grid import (
     check_samples,
-    rolled_row_window,
     sample_projection_rows,
-    sample_rolled_rows,
     sorted_half_turn,
 )
 from .fourier import FourierConfig
@@ -102,6 +101,9 @@ def fourier_slabs[T](
     backend = resolve_fourier_backend(config.backend)
     if info is not None:
         info["backend"] = backend
+    layout = DetectorRows(detector, geometry.detector_roll) if geometry.detector_roll else None
+    if layout is not None:
+        detector = layout.filter_detector(config.exterior)
     depth = fourier_slab_depth(grid, detector, config.slices_per_batch, backend)
     origin = grid_volume_origin(grid)
     order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
@@ -122,12 +124,12 @@ def fourier_slabs[T](
                     depth,
                     backend,
                     filter=config.filter,
-                    exterior=config.exterior,
+                    exterior=config.exterior if layout is None or layout.quarter_turn else "zero",
                     async_transfers=backend == "cupy",
                     order=order,
                 )
                 with closing(
-                    _run_plan(plan, read, order, positions, start, geometry.detector_roll)
+                    _run_plan(plan, read, order, positions, start, layout, config.exterior)
                 ) as completed:
                     for slab in completed:
                         start = slab.stop
@@ -150,7 +152,8 @@ def _run_plan[T](
     order: np.ndarray,
     positions: np.ndarray,
     start: int,
-    roll: float,
+    layout: DetectorRows | None,
+    exterior: str,
 ) -> Generator[ReconstructionSlab[T], None, None]:
     pending: list[tuple[ReconstructionSlab[T], PendingSlab]] = []
     device_order: Any = order
@@ -163,36 +166,27 @@ def _run_plan[T](
             stop = min(at + plan.depth, plan.grid.nz)
             requested = positions[at:stop]
             det = plan.detector
-            ratio = det.dv / det.du
-            first, last = (
-                rolled_row_window(requested, det.nv, det.nu, roll, ratio)
-                if roll
-                else _source_rows(requested, det.nv)
-            )
-            if first == last:  # Keep a real acquisition interval for the zero-extended slab.
-                first = min(first, det.nv - 1)
-                last = first + 1
+            if layout is not None:
+                low, high = layout.row_range(requested)
+                first, last = layout.band(layout.horizontal, low, high)
+            else:
+                first, last = _source_rows(requested, det.nv)
             data, context = read(first, last)
             slab = ReconstructionSlab(at, stop, slice(first, last), data, np.empty(0), context)
-            if plan.cuda and not roll:
+            if plan.cuda and layout is None:
                 job = plan.enqueue_rows(data, device_order, requested - first)
                 pending.append((slab, job))
                 if len(pending) >= 2:
                     yield _finish(pending.pop(0))
             else:
-                raw = (
-                    sample_rolled_rows(
-                        np.asarray(data),
-                        order,
-                        requested,
-                        roll,
-                        ratio,
-                        native_rows=det.nv,
-                        row_offset=first,
+                if layout is not None:
+                    low, high = layout.row_range(requested)
+                    rows = layout.parallel_band(
+                        np.asarray(data), low, high, native=first, exterior=exterior
                     )
-                    if roll
-                    else sample_projection_rows(np.asarray(data), order, requested - first)
-                )
+                    raw = sample_projection_rows(rows, order, requested - low)
+                else:
+                    raw = sample_projection_rows(np.asarray(data), order, requested - first)
                 check_samples(raw)
                 if stop - at < plan.depth:
                     raw = np.pad(raw, ((0, plan.depth - (stop - at)), (0, 0), (0, 0)))

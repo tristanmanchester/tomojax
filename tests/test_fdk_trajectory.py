@@ -41,7 +41,7 @@ def test_pose_carried_angles_reconstruct_the_same_measurements(method, magnitude
     assert np.linalg.norm(actual - expected) < 5e-6 * np.linalg.norm(expected)
 
 
-@pytest.mark.parametrize("nominal,actual", [(170, 215), (215, 170)])
+@pytest.mark.parametrize(("nominal", "actual"), [(170, 215), (215, 170)])
 def test_fdk_short_scan_coverage_uses_the_corrected_source_arc(nominal, actual):
     from tomojax._workflow.planning import resolve_reconstruction
 

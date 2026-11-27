@@ -28,6 +28,7 @@ from tomojax.core.validation import (
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
 
 from ._backend import reconstruction_backend
+from ._detector_rows import DetectorRows
 from ._host_arrays import ProjectionRows, validate_host_arrays
 from .fbp import (
     FBPConfig,
@@ -303,6 +304,18 @@ def fbp_host(
         projections, detector, geometry=geometry, context="fbp_host projections"
     )
 
+    roll = float(getattr(geometry, "detector_roll", 0.0))
+    if roll:
+        # Validate caller-owned storage while the original input is available.
+        out = validate_host_arrays(projections, out, shape, device_input=True)
+        layout = DetectorRows(detector, roll)
+        projections = layout.parallel_band(
+            projections, 0, layout.horizontal.nv, native=0, exterior=fbp_cfg.exterior
+        )
+        detector = layout.filter_detector(fbp_cfg.exterior)
+        if not layout.quarter_turn:
+            fbp_cfg = replace(fbp_cfg, exterior="zero")
+            cfg = replace(cfg, fbp=fbp_cfg)
     announce()
     poses = stack_view_poses(geometry, n_views)
     view_scale = _view_weights(poses, fbp_cfg.scale)[0]

@@ -41,8 +41,12 @@ from tomojax.core.host_transfer import copy_to_host, upload_host
 from tomojax.core.validation import validate_projection_stack
 from tomojax.recon._backend import reconstruction_backend
 from tomojax.recon._continuation import Continuation, cone_axis_distance, continued_columns
-from tomojax.recon._fdk_angles import grouped_angles, ordered_arc
-from tomojax.recon._fdk_coverage import full_turn_weights, reliability
+from tomojax.recon._fdk_angles import (
+    check_angular_coverage,
+    column_weights,
+    fan_angles,
+    grouped_angles,
+)
 from tomojax.recon._fdk_cuda import backproject_cuda
 from tomojax.recon._fdk_filter import (
     batch_cosines,
@@ -52,6 +56,7 @@ from tomojax.recon._fdk_filter import (
     grid_columns,
     measured_and_exterior,
 )
+from tomojax.recon._fdk_oblique import FanRows, FilteredChords, PermutedRows
 from tomojax.recon._host_arrays import validate_host_arrays
 from tomojax.recon._row_filter import filter_rows, filtered_profiles
 from tomojax.recon.filters import get_fbp_filter_np
@@ -64,6 +69,8 @@ if TYPE_CHECKING:
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
     from tomojax.recon.types import ReconstructionSlab
+
+    from ._fdk_oblique import Parts
 
 
 # The CUDA path filters rows up to this wide by matrix product (see filter_operator):
@@ -119,12 +126,30 @@ class FDKConfig:
         object.__setattr__(self, "devices", as_devices(self.devices))
 
 
-def _fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
-    """Fan angle of each detector column from the ray through the rotation axis."""
-    u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
-    return np.arctan(u / float(beam.source_to_detector)) - np.arctan(
-        float(beam.axis_offset) / float(beam.source_to_axis)
-    )
+def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
+    """FDK angular weights on physical horizontal detector lines.
+
+    On a row-aligned panel the result is (views, nu). A rolled panel has a
+    different measured fan on each rectified row, giving (views, nv, nu) on
+    the horizontal filter lattice.
+    """
+    parts = cone_parts(geometry, detector)
+    if parts is None:
+        raise ValueError("view_weights needs a cone-beam geometry")
+    fan = FanRows.for_scan(geometry, parts, n_views)
+    if fan is None:
+        return column_weights(parts, grouped_angles(geometry, n_views))
+    check_angular_coverage(geometry, detector, n_views)
+    result, first = [], 0
+    for index, count in enumerate(fan.counts):
+        views = slice(first, first + count)
+        result.append(
+            np.stack(
+                [fan.weights(index, row, views) for row in range(fan.parts[index][2].nv)], axis=1
+            )
+        )
+        first += count
+    return np.concatenate(result)
 
 
 def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
@@ -134,12 +159,12 @@ def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
     full turn or a short scan; voxels on the short side then project past the
     detector, where the filtered rows (zero data, nonzero ramp tail) must still
     be read. A column's conjugate has the opposite fan angle (see
-    :func:`_fan_angles`), which a laterally offset axis maps nonlinearly to u.
+    :func:`fan_angles`), which a laterally offset axis maps nonlinearly to u.
     """
     if not _windowable(beam):
         return 0, 0
     sdd, du = float(beam.source_to_detector), float(detector.du)
-    gamma = _fan_angles(beam, detector)
+    gamma = fan_angles(beam, detector)
     tilt = np.arctan(float(beam.axis_offset) / float(beam.source_to_axis))
     # Column of fan angle g: u = SDD tan(g + tilt), clipped short of the 90-degree pole.
     reach = sdd * np.tan(np.clip(-gamma[[-1, 0]] + tilt, -1.5, 1.5))
@@ -147,115 +172,6 @@ def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
     low, high = (reach - float(detector.center[0])) / du + (detector.nu - 1) / 2
     pad = (max(0, math.ceil(-low - 1e-6)), max(0, math.ceil(high - (detector.nu - 1) - 1e-6)))
     return (0, 0) if max(pad) <= 1 else pad
-
-
-def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.ndarray:
-    """Return ``(views, nu)`` FDK angular weights.
-
-    Full turns share each ray's angular measure with its conjugate view's
-    detector coverage; short scans use Parker weights, normalized over the
-    conjugate rays the panel actually measured. Views repeating
-    an angle (several turns, at several heights say) share its measure, so a
-    scan of several turns averages their reconstructions. Angle labels may
-    wrap at 360 degrees or differ by whole turns without changing the weights.
-    """
-    parts = cone_parts(geometry, detector)
-    if parts is None:
-        raise ValueError("view_weights needs a cone-beam geometry")
-    angles, view_angle, repeats = grouped_angles(geometry, n_views)
-    ordering = ordered_arc(angles)
-    if ordering[2]:
-        fans, pixels, counts = [], [], []
-        for count, beam, own in parts:
-            size = n_views if count is None else count
-            counts.append(size)
-            fan, pixel = full_turn_fan(beam, own)
-            fans.append(np.broadcast_to(fan, (size, own.nu)))
-            pixels.append(np.full(size, pixel))
-        return full_turn_weights(
-            angles, view_angle, repeats, np.concatenate(fans), np.concatenate(pixels), tuple(counts)
-        )
-    weights, first = [], 0
-    for count, beam, own in parts:
-        stop = n_views if count is None else first + count
-        selected = view_angle[first:stop]
-        weights.append(_distinct_view_weights(beam, own, selected, ordering))
-        first = stop
-    return np.concatenate(weights) / repeats[view_angle][:, None]
-
-
-def check_angular_coverage(geometry: Geometry, detector: Detector, n_views: int) -> None:
-    """Check the arc of each calibrated fan before allocating weights or reading frames."""
-    _, angles, full = ordered_arc(grouped_angles(geometry, n_views)[0])
-    for _, beam, own in cone_parts(geometry, detector) or ():
-        _ = full_turn_fan(beam, own) if full else short_scan_fan(beam, own, angles)
-
-
-def full_turn_fan(beam: ConeBeam, detector: Detector) -> tuple[np.ndarray, float]:
-    """Check that this panel measures the rotation axis before forming conjugate weights."""
-    fan = _fan_angles(beam, detector)
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    if fan.min() > pixel or fan.max() < -pixel:
-        raise ValueError("FDK needs the rotation axis to project onto the detector")
-    return fan, pixel
-
-
-def short_scan_fan(
-    beam: ConeBeam, detector: Detector, angles: np.ndarray
-) -> tuple[float, np.ndarray, float]:
-    """Resolve the virtual fan used for Parker weighting and validate the acquired arc."""
-    gaps = np.diff(angles)
-    step = float(np.median(gaps))
-    arc = float(angles[-1] - angles[0]) + step
-    gamma = _fan_angles(beam, detector)
-    delta = float(np.max(np.abs(gamma)))
-    if arc < np.pi + 2 * delta - 1e-6:
-        raise ValueError(
-            f"FDK short scans need at least 180 degrees plus the fan angle "
-            f"({np.rad2deg(np.pi + 2 * delta):.1f} degrees); got {np.rad2deg(arc):.1f}"
-        )
-    # Treat the extra acquisition angle as a virtual fan. Otherwise the
-    # minimum-scan window assigns zero to valid later views of an overscan.
-    return step, gamma, max(delta, (arc - np.pi) / 2)
-
-
-def _distinct_view_weights(
-    beam: ConeBeam,
-    detector: Detector,
-    selected: np.ndarray,
-    ordering: tuple[np.ndarray, np.ndarray, bool],
-) -> np.ndarray:
-    """:func:`view_weights` for views at distinct ``angles`` (radians)."""
-    order, sorted_angles, _ = ordering
-    n_views = len(order)
-    step, gamma, delta = short_scan_fan(beam, detector, sorted_angles)
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    # Angular measure of each view: half the gap to each neighbor.
-    measure = np.empty(n_views)
-    padded = np.concatenate([[sorted_angles[0] - step], sorted_angles, [sorted_angles[-1] + step]])
-    measure[order] = 0.5 * (padded[2:] - padded[:-2])
-    end = np.pi + 2 * delta
-
-    def parker(beta: np.ndarray, g: np.ndarray) -> np.ndarray:
-        rise = np.sin(np.pi / 4 * beta / np.maximum(delta - g, 1e-12)) ** 2
-        fall = np.sin(np.pi / 4 * (end - beta) / np.maximum(delta + g, 1e-12)) ** 2
-        weight = np.where(beta < 2 * (delta - g), rise, 1.0)
-        weight = np.where(beta > np.pi - 2 * g, fall, weight)
-        return np.where((beta < 0) | (beta > end), 0.0, weight)
-
-    beta = np.empty((n_views, 1))
-    beta[order, 0] = sorted_angles - sorted_angles[0]
-    beta = beta[selected]
-    g = gamma[None, :]
-    # Parker's pair sums to one only where the conjugate ray was measured. An
-    # offset panel misses some conjugates: share each line's weight between the
-    # rays that measured it, by panel-edge reliability as in a full turn.
-    panel = np.array([gamma.min() - pixel / 2, gamma.max() + pixel / 2, pixel])
-    own = parker(beta, g) * reliability(g, panel)
-    conjugates = parker(beta + np.pi + 2 * g, -g) + parker(beta - np.pi + 2 * g, -g)
-    total = own + conjugates * reliability(-g, panel)
-    weight = np.divide(own, total, out=np.ones_like(own), where=total > 0)
-    return weight * measure[selected, None]
 
 
 def _backproject_jax(
@@ -338,6 +254,21 @@ def _fdk_batch(
     return backproject(filtered, coeff, grid, detector, scale, out)
 
 
+@partial(jax.jit, static_argnames=("grid", "detector", "scale", "cuda"), donate_argnames=("out",))
+def _backproject_chords(
+    filtered: jax.Array,
+    coeff: jax.Array,
+    out: jax.Array,
+    *,
+    grid: Grid,
+    detector: Detector,
+    scale: float,
+    cuda: bool,
+) -> jax.Array:
+    backproject = backproject_cuda if cuda else _backproject_jax
+    return backproject(filtered, coeff, grid, detector, scale, out)
+
+
 @jax.jit
 def _virtual_coefficients(coeff: jax.Array, pad_lo: int) -> jax.Array:
     """Translate a detector corner and its projected column origin together."""
@@ -363,6 +294,10 @@ class _Prepared:
     # Distance from the rotation axis of each ray of a continued row.
     distance: tuple[float, ...] = ()
 
+    fan: FanRows | None = None
+    first_row: int = 0
+    config: FDKConfig = field(default_factory=FDKConfig)
+
     @property
     def batch(self) -> int:
         """Bound transfers for the current row window, up to the configured view cap."""
@@ -374,7 +309,7 @@ class _Prepared:
     def coefficients(
         self, geometry: Geometry, grid: Grid, detector: Detector, poses: jax.Array
     ) -> jax.Array:
-        parts = cone_parts(geometry, detector)
+        parts = self.fan.parts if self.fan is not None else cone_parts(geometry, detector)
         assert parts is not None
         coeff = ConeModel(parts).coefficients(poses, grid)
         # Virtual columns translate the detector origin in its own plane, even
@@ -394,6 +329,7 @@ class _Prepared:
         return replace(
             self,
             detector=replace(self.detector, nv=stop - first),
+            first_row=self.first_row + first,
             cosine=cosine,
         )
 
@@ -422,31 +358,42 @@ def _prepare(
     detector: Detector,
     poses: np.ndarray,
     cfg: FDKConfig,
-    columns: Detector | None = None,
 ) -> _Prepared:
-    """FDK weights, filter and virtual columns for ``detector`` and the voxels of ``grid``.
-
-    ``columns``, a detector with the same columns (the full detector of a band
-    of rows), sets the per-column angular weights and virtual columns, so every
-    band of a rolled detector gets the same ones.
-    """
+    """FDK weights, filter and virtual columns for the complete scan."""
     n_views = len(poses)
-    columns = detector if columns is None else columns
     parts = cone_parts(geometry, detector)
     if parts is None:
         raise ValueError("fdk needs a cone-beam geometry; use fbp for parallel beams")
     cuda = reconstruction_backend(cfg.backend, cone=True, context="fdk") == "cuda"
+    fan = FanRows.for_scan(geometry, parts, n_views)
+    if fan is not None:
+        check_angular_coverage(geometry, detector, n_views)
+        parts = fan.parts
+        detector = parts[0][2]
     magnification = parts[0][1].magnification
     du_iso = float(detector.du) / magnification
-    column_parts = cone_parts(geometry, columns)
-    assert column_parts is not None
-    padding = [_virtual_columns(beam, own) for _, beam, own in column_parts]
+    padding = [_virtual_columns(beam, own) for _, beam, own in parts]
     if cfg.exterior == "cylinder":
-        padding.append(grid_columns(column_parts, grid, poses))
+        padding.append(grid_columns(parts, grid, poses))
     pad_lo, pad_hi = np.max(padding, axis=0).tolist()
+    if fan is not None and not fan.permuted:
+        empty = jnp.empty((0, 0), jnp.float32)
+        return _Prepared(
+            cuda,
+            detector,
+            empty,
+            empty,
+            empty,
+            1 / magnification,
+            cfg.views_per_batch,
+            pad_lo,
+            pad_hi,
+            fan=fan,
+            config=cfg,
+        )
     # A shared detector-pitch ramp is linear in magnification. Fold each
     # view's remaining inverse magnification into its angular weight.
-    weights = view_weights(geometry, columns, n_views)
+    weights = column_weights(parts, fan.angles if fan else grouped_angles(geometry, n_views))
     weights *= magnification / ConeModel(parts).magnification(n_views)[:, None]
     # The kernel spans the continued and the virtual row, so no column the
     # backprojection reads sees either wrap around.
@@ -466,6 +413,7 @@ def _prepare(
     )
     return _Prepared(
         cuda=cuda,
+        fan=fan,
         detector=detector,
         # device_put, unlike jnp.asarray, compiles nothing for a new shape.
         weights=jax.device_put(np.asarray(weights, np.float32)),
@@ -481,7 +429,7 @@ def _prepare(
 
 
 def _device_views(
-    projections: jax.Array | np.ndarray | _RowView,
+    projections: jax.Array | np.ndarray | _RowView | PermutedRows,
     start: int,
     stop: int,
     device: Device,
@@ -557,14 +505,34 @@ def fdk(
 
 def _accumulate(
     grid: Grid,
-    projections: jax.Array | np.ndarray | _RowView,
+    projections: jax.Array | np.ndarray | _RowView | PermutedRows,
     prep: _Prepared,
     coeff: jax.Array,
     devices: Device | Sequence[Device] | None,
+    native_row: int = 0,
 ) -> jax.Array:
     """Filter and sum validated views using coefficients in this volume's voxel frame."""
     n_views = int(coeff.shape[0])
     virtual = prep.virtual(prep.detector)
+    if prep.fan is not None and prep.fan.permuted:
+        projections = PermutedRows(
+            prep.fan, projections, native_row, prep.first_row, prep.detector.nv
+        )
+    chords = (
+        FilteredChords(
+            prep.fan,
+            projections,
+            native_row,
+            prep.first_row,
+            prep.first_row + prep.detector.nv,
+            prep.pad_lo,
+            prep.pad_hi,
+            prep.config.filter,
+            cylinder=prep.config.exterior == "cylinder",
+        )
+        if prep.fan is not None and not prep.fan.permuted
+        else None
+    )
     pad = continued_columns(prep.detector.nu)
     radius2 = (
         Continuation(np.asarray(prep.distance), prep.detector.nu, pad).stack_radius(projections)
@@ -595,7 +563,10 @@ def _accumulate(
 
         def read(start: int) -> jax.Array:
             first = views.start + start
-            return _device_views(projections, first, min(first + prep.batch, views.stop), target)
+            stop = min(first + prep.batch, views.stop)
+            if chords is not None:
+                return upload_host(chords[first:stop], target)
+            return _device_views(projections, first, stop, target)
 
         # Copy the next batch to the device while the current one is filtered
         # and backprojected.
@@ -608,25 +579,36 @@ def _accumulate(
                     if index + 1 < len(starts):
                         pending = copier.submit(read, starts[index + 1])
                     with progress.preparing("dispatch cone backprojection", index):
-                        out = _fdk_batch(
-                            batch,
-                            start,
-                            share,
-                            here.cosine,
-                            here.weights,
-                            here.kernel,
-                            here.operator,
-                            radius,
-                            profiles,
-                            out,
-                            grid=kernel_grid,
-                            detector=virtual,
-                            scale=prep.scale,
-                            cuda=prep.cuda,
-                            pad_lo=prep.pad_lo,
-                            pad_hi=prep.pad_hi,
-                            distance=prep.distance,
-                        )
+                        if chords is not None:
+                            out = _backproject_chords(
+                                batch,
+                                share[start : start + batch.shape[0]],
+                                out,
+                                grid=kernel_grid,
+                                detector=virtual,
+                                scale=prep.scale,
+                                cuda=prep.cuda,
+                            )
+                        else:
+                            out = _fdk_batch(
+                                batch,
+                                start,
+                                share,
+                                here.cosine,
+                                here.weights,
+                                here.kernel,
+                                here.operator,
+                                radius,
+                                profiles,
+                                out,
+                                grid=kernel_grid,
+                                detector=virtual,
+                                scale=prep.scale,
+                                cuda=prep.cuda,
+                                pad_lo=prep.pad_lo,
+                                pad_hi=prep.pad_hi,
+                                distance=prep.distance,
+                            )
                     # Keep only this batch and its prefetched successor live.
                     out.block_until_ready()
                 yield out
@@ -658,11 +640,9 @@ class FDKHostConfig:
 
 
 def _slab_rows(
-    geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
+    parts: Parts, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
 ) -> tuple[int, int]:
     """Detector rows that the z-slab ``[z0, z1)`` projects onto in any view."""
-    parts = cone_parts(geometry, detector)
-    assert parts is not None
     origin = np.asarray(grid_volume_origin(grid))
     spacing = np.asarray([grid.vx, grid.vy, grid.vz])
     lo = origin - spacing / 2
@@ -711,7 +691,18 @@ def storage_rows(
     geometry: Geometry, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
 ) -> tuple[int, int]:
     """Bucket a slab's measured rows without changing any physical coordinates."""
-    r0, r1 = _slab_rows(geometry, grid, detector, poses, z0, z1)
+    parts = cone_parts(geometry, detector)
+    assert parts is not None
+    fan = FanRows.for_scan(geometry, parts, len(poses))
+    if fan is not None:
+        return fan.band(*filter_band(fan.parts, grid, fan.parts[0][2], poses, z0, z1))
+    return filter_band(parts, grid, detector, poses, z0, z1)
+
+
+def filter_band(
+    parts: Parts, grid: Grid, detector: Detector, poses: np.ndarray, z0: int, z1: int
+) -> tuple[int, int]:
+    r0, r1 = _slab_rows(parts, grid, detector, poses, z0, z1)
     quantum = min(64, max(1, detector.nv // 8))
     rows = min(detector.nv, -(-(r1 - r0) // quantum) * quantum)
     r0 = min(r0, detector.nv - rows)
@@ -769,13 +760,19 @@ def fdk_slabs[T](
                 stop = min(start + depth, grid.nz)
                 r0, r1 = storage_rows(geometry, grid, detector, poses, start, stop)
                 projections, context = read(r0, r1)
+                f0, f1 = (
+                    (r0, r1)
+                    if prep.fan is None
+                    else filter_band(prep.fan.parts, grid, prep.detector, poses, start, stop)
+                )
                 slab = _slab_grid(grid, start, stop)
                 volume = _accumulate(
                     slab,
                     projections,
-                    prep.window(r0, r1),
-                    _window_coefficients(coeff, r0, start),
+                    prep.window(f0, f1),
+                    _window_coefficients(coeff, f0, start),
                     None,
+                    native_row=r0,
                 )
                 owned = np.empty((stop - start, grid.ny, grid.nx), np.float32, order="C")
                 copy_to_host(volume, owned)
@@ -907,9 +904,19 @@ class _Slabs:
         """Slices ``[z0, z1)``, filtering only their physical detector-row window."""
         slab = _slab_grid(self.grid, z0, z1)
         r0, r1 = storage_rows(self.geometry, self.grid, self.detector, self.poses, z0, z1)
+        f0, f1 = (
+            (r0, r1)
+            if prep.fan is None
+            else filter_band(prep.fan.parts, self.grid, prep.detector, self.poses, z0, z1)
+        )
         views = _RowView(self.projections, r0, r1)
         return _accumulate(
-            slab, views, prep.window(r0, r1), _window_coefficients(coeff, r0, z0), None
+            slab,
+            views,
+            prep.window(f0, f1),
+            _window_coefficients(coeff, f0, z0),
+            None,
+            native_row=r0,
         )
 
     def write_all(

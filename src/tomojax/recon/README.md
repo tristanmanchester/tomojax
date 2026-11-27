@@ -281,8 +281,8 @@ CLI) to match default FBP's detector response at the same speed and GPU memory.
 The filter applies FBP's linear detector-interpolation response
 (`sinc²(f) * |s| / f`, where `s` is the folded detector frequency) and folds
 radial replicas inside the Cartesian frequency grid. `hann` and `shepp-logan`
-add the corresponding FBP windows. On a rolled detector, Fourier resamples onto
-axial rows before inversion whereas FBP filters the rolled data in 2D. Fourier
+add the corresponding FBP windows. On a rolled detector, FBP and Fourier inversion use horizontal detector lines.
+Quarter turns exchange array axes exactly. Other angles require interpolation. Fourier
 also interpolates linearly in angle and retains only the Cartesian frequency
 rectangle, so noisy or sparsely sampled scans still differ from discrete
 backprojection.

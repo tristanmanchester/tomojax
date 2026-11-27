@@ -17,11 +17,11 @@ from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import ParallelGeometry, grid_volume_origin
 
+from ._detector_rows import DetectorRows
 from ._fourier_backend import FourierPlan, fourier_slab_depth, resolve_fourier_backend
 from ._fourier_grid import (
     check_samples,
     sample_projection_rows,
-    sample_rolled_rows,
     sorted_half_turn,
 )
 from ._fourier_rows import ProjectionRows, prepare_projection_rows
@@ -124,7 +124,7 @@ def fourier(
     with uniform or nonuniform spacing. Redundant half-turn directions are
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
-    A parallel detector roll (``detector_roll``) is resampled bilinearly onto the
+    A parallel detector roll (``detector_roll``) is resampled cubically onto the
     unrolled detector lattice. Axial pose rotations enter the view angles. Out-of-plane
     rotations do not preserve the independent axial slices required here.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
@@ -201,7 +201,7 @@ def fourier(
     nviews, _, _ = validate_projection_stack(
         projections, detector, geometry=geometry, context="fourier_reconstruct projections"
     )
-    sampling = _sampling_coordinates(geometry, grid, detector)
+    sampling = _sampling_coordinates(geometry, grid, detector, cfg.exterior)
     depth = fourier_slab_depth(grid, sampling.detector, cfg.slices_per_batch, backend)
     output = validate_host_arrays(projections, out, shape, "fourier_reconstruct")
     host_bytes = 4 * (grid.nx * grid.ny * grid.nz + nviews * detector.nu * grid.nz)
@@ -241,7 +241,9 @@ def fourier(
                     async_transfers=overlap,
                     shifts=sampling.shifts,
                     filter=cfg.filter,
-                    exterior=cfg.exterior,
+                    exterior=sampling.exterior
+                    if sampling.layout is None or sampling.layout.quarter_turn
+                    else "zero",
                     order=sampling.order,
                 )
                 if overlap:
@@ -274,7 +276,8 @@ class _Sampling:
     shifts: np.ndarray | None
     rows: np.ndarray
     vertical: np.ndarray | None
-    rolled: tuple[float, float] | None
+    layout: DetectorRows | None
+    exterior: _parameters.Exterior
 
     def sample(
         self,
@@ -287,7 +290,20 @@ class _Sampling:
         positions = self.rows[slabs]
         if self.vertical is not None:
             positions = positions[:, None] + self.vertical[None, views]
-        return _prepare_slab(projections, self.order[views], positions, depth, backend, self.rolled)
+        order = self.order[views]
+        if self.layout is not None:
+            first, stop = self.layout.row_range(positions)
+            lo, hi = self.layout.band(self.layout.horizontal, first, stop)
+            projections = self.layout.parallel_band(
+                np.asarray(projections[order, lo:hi]),
+                first,
+                stop,
+                native=lo,
+                exterior=self.exterior,
+            )
+            positions = positions - first
+            order = np.arange(len(order))
+        return _prepare_slab(projections, order, positions, depth, backend)
 
 
 def check_fourier_inputs(
@@ -318,11 +334,17 @@ def check_fourier_inputs(
             del _
 
 
-def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector) -> _Sampling:
+def _sampling_coordinates(
+    geometry: ScanGeometry, grid: Grid, detector: Detector, exterior: _parameters.Exterior = "zero"
+) -> _Sampling:
     """Resolve the physical detector rows, view order and translations shared by plan and run."""
     require_parallel_beam(geometry, "fourier_reconstruct")
     directions, translations, pose_angles = axial_trajectory(geometry)
     order, flipped, angles = sorted_half_turn(directions, fitted=pose_angles)
+    roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
+    layout = DetectorRows(detector, roll) if roll else None
+    if layout is not None:
+        detector = layout.filter_detector(exterior)
     plan_detector, shifts, vertical = detector, None, None
     origin = grid_volume_origin(grid)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
@@ -344,9 +366,9 @@ def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector
         vertical is not None and not np.isfinite(vertical).all()
     ):
         raise ValueError("fourier_reconstruct: detector-row coordinates must be finite")
-    roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
-    rolled = (roll, detector.dv / detector.du) if roll else None
-    return _Sampling(plan_detector, order, flipped, angles, shifts, positions, vertical, rolled)
+    return _Sampling(
+        plan_detector, order, flipped, angles, shifts, positions, vertical, layout, exterior
+    )
 
 
 def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | None, bool]:
@@ -375,18 +397,11 @@ def _prepare_slab(
     positions: np.ndarray,
     depth: int,
     backend: Literal["numpy", "cupy"],
-    rolled: tuple[float, float] | None = None,
 ) -> np.ndarray | ProjectionRows:
-    """Finite measured rows for a fixed-depth FFT, padded only after row sampling.
-
-    ``rolled`` (roll in degrees, dv / du) resamples a rolled detector's rows.
-    """
-    if rolled is not None:
-        data = sample_rolled_rows(projections, order, positions, *rolled)
-    else:
-        data = (prepare_projection_rows if backend == "cupy" else sample_projection_rows)(
-            projections, order, positions
-        )
+    """Finite measured rows for a fixed-depth FFT, padded only after row sampling."""
+    data = (prepare_projection_rows if backend == "cupy" else sample_projection_rows)(
+        projections, order, positions
+    )
     if isinstance(data, ProjectionRows):
         return data
     check_samples(data)

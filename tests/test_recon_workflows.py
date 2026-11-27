@@ -152,7 +152,14 @@ def test_public_warm_start_retains_arrangements_then_applies_the_solver_constrai
 
 @pytest.mark.parametrize("frame", ["object", "detector"])
 def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkeypatch, frame):
-    segments = _segments((12, 12))
+    template = _segments((12, 12))
+    first, second = template.segments
+    segments = tj.geometry.ConeSegments(
+        (first, replace(second, beam=replace(second.beam, detector_roll=0)))
+    )
+    indexed = tj.geometry.ConeSegments(
+        (first, replace(second, beam=replace(second.beam, detector_roll=180)))
+    )
     rng = np.random.default_rng(5)
     poses = rng.normal(0, 0.03, (24, 6)).astype(np.float32)
     geometry = _CorrectedGeometry(segments, poses, frame)
@@ -167,7 +174,13 @@ def test_segmented_start_matches_individual_fdk_with_all_pose_corrections(monkey
     monkeypatch.setattr(importlib.import_module("tomojax.recon.fdk"), "fdk", initialize)
     config = FISTAConfig(iterations=0, lipschitz=1.0, tv_weight=0.0, lower_bound=None)
     actual, _ = api.reconstruct_arrays(
-        "fista", geometry, segments.grid, segments.detector, data, config=config, warm_start=True
+        "fista",
+        _CorrectedGeometry(indexed, poses, frame),
+        segments.grid,
+        segments.detector,
+        np.concatenate((data[:12], data[12:, ::-1, ::-1])),
+        config=config,
+        warm_start=True,
     )
     weights = view_weights(geometry, segments.detector, len(data))
     offset = 0

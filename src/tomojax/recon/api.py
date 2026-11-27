@@ -662,12 +662,12 @@ def reconstruct_arrays(
 
         if not is_cone_beam(geometry):
             raise ValueError(f"method {method!r} takes out for cone-beam geometry only")
-    det_grid = _detector_grid(geometry, detector)
     if cfg.method == "fbp":
-        volume, record = fbp_volume(geometry, grid, detector, projections, cfg, det_grid, out)
+        volume, record = fbp_volume(geometry, grid, detector, projections, cfg, None, out)
         return volume, {**record, "truncation": truncation}
     from tomojax import progress
 
+    det_grid = _detector_grid(geometry, detector)
     with progress.task(
         "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
     ):
