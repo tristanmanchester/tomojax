@@ -278,7 +278,9 @@ slabs, including a padded final batch. The same storage lifetime, nonoverlap and
 partial-output rules as `fbp_host` apply. No amplitude fitting or clipping is
 performed. Large CUDA jobs overlap bounded host work and transfers on reused
 device queues and check each slab for non-finite values on the GPU compute
-stream before download. Default CUDA slab depth targets a 256 MiB padded FP32 plane stack (at least one and at most sixteen slices); NumPy defaults to sixteen.
+stream before download. CUDA chooses one to sixteen slices per slab. Its budget for padded FP32 planes
+is the smaller of 512 MiB and one thirty-second of free device memory. NumPy
+defaults to sixteen slices.
 An explicit integer `slices_per_batch` overrides this choice. Additional buffers
 and FFT workspaces need more memory, so CUDA exhaustion still halves the depth.
 This API is not differentiable and rejects tilted/custom geometry. Large

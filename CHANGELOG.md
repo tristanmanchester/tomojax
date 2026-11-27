@@ -15,6 +15,10 @@
   model. Voxels outside the field of view hold the reconstruction of the continued scan,
   and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
   Set `exterior="zero"` in the analytic method config to use zero beyond the detector.
+  On an 8,000-view DIAD scan, full-volume Fourier took 31.8 s on a V100S and 12.4 s on
+  Blackwell, compared with 33.1 s and 12.0 s before continuation. FBP took 322.2 s and
+  55.9 s, compared with 338.4 s and 56.0 s. On a contained 1,024² × 512 cylinder, the
+  extra time was 0.62 s and 0.47 s for Fourier and 2.63 s and 0.75 s for FBP.
   Every reconstruction's `info["truncation"]` records `edge_ratio`, `outside_fraction`,
   `interior_shift`, `radius`, and `field_of_view_radius`; each slab of
   `tj.reconstruct_slabs` has the record of its own rows, and `tomojax reconstruct` and the
