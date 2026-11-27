@@ -44,7 +44,7 @@
     "skill": 3
   },
   "long_files": {
-    "src/tomojax/_loading/loader.py": 821,
+    "src/tomojax/_loading/loader.py": 820,
     "src/tomojax/alignment/_joint/_solver.py": 1014,
     "src/tomojax/core/cone.py": 826
   },
@@ -60,7 +60,7 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5333,
+    "reportAny": 5332,
     "reportMissingImports": 57,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 860,

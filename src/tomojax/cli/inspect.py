@@ -48,7 +48,9 @@ def _build_parser() -> ProgressParser:
         ),
     )
     _ = parser.add_argument(
-        "data", metavar="INPUT", help="NXtomo/HDF5 dataset or vendor acquisition file/folder"
+        "data",
+        metavar="INPUT",
+        help="NXtomo/HDF5 dataset, vendor acquisition file/folder, or checkpoint directory",
     )
     _ = parser.add_argument(
         "--json", action="store_true", help="Print the report as JSON instead of text"

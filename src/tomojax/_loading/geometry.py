@@ -86,12 +86,12 @@ class DeclaredGeometry:
                 "tilt_about", f"tilt_about must be x or z, got {self.tilt_about!r}"
             )
         if self.kind == "lamino" and self.tilt is None:
-            raise InvalidParameter("tilt", "--geometry lamino needs --tilt")
+            raise InvalidParameter("tilt", "lamino geometry needs tilt")
         if self.kind == "cone":
             if self.source_to_axis is None or self.source_to_detector is None:
                 field = "source_to_axis" if self.source_to_axis is None else "source_to_detector"
                 raise InvalidParameter(
-                    field, "--geometry cone needs --source-to-axis and --source-to-detector"
+                    field, "cone geometry needs source_to_axis and source_to_detector"
                 )
             ConeBeam(self.source_to_axis, self.source_to_detector)
 

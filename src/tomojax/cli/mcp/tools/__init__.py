@@ -46,9 +46,10 @@ class Status(Record):
 
 
 class Inspect(Record):
-    """Identify scan files in a directory or inspect an acquisition before opening it.
+    """List the scan files and checkpoints in a directory, or inspect one of them.
 
-    Check shapes, geometry, angles and flat/dark metadata. Set preview for a central image.
+    For an acquisition, check shapes, geometry, angles and flat/dark metadata before opening
+    it; set preview for a central image. For a checkpoint, read the run it resumes.
     """
 
     path: Id
