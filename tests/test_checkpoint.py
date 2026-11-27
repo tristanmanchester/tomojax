@@ -141,8 +141,8 @@ def test_the_cuda_and_host_solvers_resume_to_the_uninterrupted_volume(
 @pytest.mark.parametrize(
     ("geometry", "config", "hosted"),
     [
-        ("parallel", CGLSConfig(backend="jax"), False),
-        ("parallel", CGLSConfig(backend="jax", stream=True), False),
+        ("parallel", CGLSConfig(stream=False), False),
+        ("parallel", CGLSConfig(stream=True), False),
         ("parallel", SIRTConfig(acceleration=False), False),
         ("parallel", SIRTConfig(), False),
         pytest.param("parallel", CGLSConfig(backend="cuda"), False, marks=pytest.mark.gpu),
@@ -157,19 +157,28 @@ def test_discrepancy_stopping_resumes_at_the_same_sweep(
     # Independent measurement errors give a positive floor within the budget.
     values = np.asarray(scan.projections)
     noise = np.random.default_rng(3).normal(0, 0.08 * np.std(values), values.shape)
-    scan = tj.Scan((values + noise).astype(np.float32), scan.geometry)
+    data = (values + noise).astype(np.float32)
+    if isinstance(config, CGLSConfig) and config.stream is False:
+        # Device input exercises the resident JAX loop with the matched CUDA
+        # gather on GPU. The reference JAX scatter uses unordered atomic sums.
+        import jax
+
+        data = jax.device_put(data)
+    scan = tj.Scan(data, scan.geometry)
 
     def run(**options: Any) -> tj.Reconstruction:
         out = np.empty(scan.grid.shape, np.float32) if hosted else None
         return tj.reconstruct(scan, config.method, config=config, out=out, **options)
 
     whole = run(checkpoint=tmp_path / "whole")
-    with pytest.raises(Canceled), progress.watch(_terminated_after(1)):
+    with pytest.raises(Canceled), progress.watch(_terminated_after(2)):
         run(checkpoint=tmp_path / "run")
     resumed, first = _first_report(lambda: run(checkpoint=tmp_path / "run"))
-    assert first == 1
+    # The chunked loop reports its restored count. The host solvers report
+    # after completing the next update.
+    assert first in (2, 3)
     assert whole.info["termination"] == "projection_discrepancy"
-    assert 1 < whole.info["effective_iterations"] < 50
+    assert 2 < whole.info["effective_iterations"] < 50
     for key in (
         "effective_iterations",
         "termination",
