@@ -134,11 +134,10 @@ class SharedViewProducts:
             def contribute(source: jax.Array, accumulator: jax.Array) -> jax.Array:
                 accumulator = jax.lax.cond(
                     rank == source,
-                    lambda a: ops.back_rows(
-                        q, r, sw, j, share_rows, active, precision, a, rank * count
+                    lambda: ops.back_rows(
+                        q, r, sw, j, share_rows, active, precision, accumulator, rank * count
                     ),
-                    lambda a: a,
-                    accumulator,
+                    lambda: accumulator,
                 )
                 return jax.lax.ppermute(accumulator, VIEWS, ring)
 
