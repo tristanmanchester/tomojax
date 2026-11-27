@@ -8,7 +8,9 @@
   neither stays fixed through the scan (so `Rings()` can remove its fine part), and the
   flat's level is kept continuous across an edge that only one set has. Sets that differ
   by noise, by level, or smoothly along a detector row are interpolated in position as
-  before, as are sets of one frame. The step reads about one view in 64 beforehand.
+  before, as are sets of one frame. Columns with stable texture estimate the gain change
+  common to a detector row. That gain follows position even where specks or stripes
+  change early. The step reads about one view in 64 beforehand.
   `flat_weights="position"` (`--flat-weights position`, `flat_weights` in the worker's and
   MCP server's `correct` and `reconstruct_slabs`) interpolates by position alone, and the
   `flat_dark` record's `flat_weights` setting says which was used. The record reports

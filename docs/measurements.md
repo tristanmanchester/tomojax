@@ -453,7 +453,7 @@ Reconstructed image-domain checks across seven facilities (`a3bef73d`, same anal
 
 ## Flat sets weighted by the views
 
-Flat sets before and after a scan are weighted by what the views show of each ([flat fields](../src/tomojax/corrections/README.md#flat-fields)). Measured at `13adca9f` on 2026-11-27.
+Flat sets before and after a scan are weighted by what the views show of each ([flat fields](../src/tomojax/corrections/README.md#flat-fields)). Flat levels use the common row gain at `e3071b00` (2026-11-27).
 
 ### DIAD scans whose flats were taken with the sample stage in the beam
 
@@ -461,17 +461,17 @@ Three half-turn scans of a Diamond DIAD visit (8,000 views of 2160 × 2560, 10 f
 
 | Scan | Sets interpolated by position | Sets weighted by the views | `flat_weights_from_views` | `later_flat_weight` | `flat_structure_unmatched` |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| k11-52557 | 0.224 / 0.361 / 0.251 | 0.103 / 0.197 / 0.135 | 0.9996 | 0.74, 0.74 | 0.0044 |
+| k11-52557 | 0.224 / 0.361 / 0.251 | 0.103 / 0.197 / 0.134 | 0.9996 | 0.74, 0.74 | 0.0044 |
 | k11-52583 | 1.190 / 1.345 / 1.260 | 0.532 / 0.596 / 0.473 | 1.0 | 0.78, 0.78 | 0.0044 |
-| k11-52615 | 0.251 / 0.375 / 0.243 | 0.117 / 0.156 / 0.073 | 0.9996 | 0.76, 0.76 | 0.0042 |
+| k11-52615 | 0.251 / 0.375 / 0.243 | 0.116 / 0.156 / 0.073 | 0.9996 | 0.76, 0.76 | 0.0042 |
 
 What remains is broad half rings outside the radius where one set is clear (320–480 px), where both sets are shadowed. On k11-52583, a featureless sample, the direct axial center fit on rows 1076–1084 returns −19.98 px with the sets interpolated by position, −13.67 px with the weights, and −13.75 px with the neighbor's flats.
 
-On the middle band of all 51 rotation scans of the same visit, the 31 with clean flats give slices equal to the fourth decimal of the slice's spread and identical center fits with and without the weights (the views set at most 0.65% of them). Seven scans whose flat sets differ by a 0.02% structure move by 0.003–0.016 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
+On the middle band of all 51 rotation scans of the same visit, the slice change rounds to 0.0000 for 30 clean scans and 0.0002 for the remaining clean scan (52516). The clean center fits agree to 0.01 px. Seven scans whose flat sets differ by a 0.02% structure move by 0.0025–0.0114 of the spread. Seven setup scans with both flat sets shadowed by different patches of the stage come out as a fixed blend (later-set weight 0.29–0.71, equal at both ends of the scan), which leaves `Rings()` a column-fixed error.
 
 ### Scans from Diamond I13 and the ESRF
 
-The same comparison on every scan on the test laptop with two multi-frame flat sets around its views, from other beamlines (RTX 4070, branch `t3/flat-weights-switch`, 2026-11-27): eleven 1801–3001-view I13 scans of an in-situ series spread from 159802 to 159975 (2160 × 2560, 40 or 100 flats per set, the beam decaying about 10% between the sets) and the ESRF `bamboo` NXtomo example (1000 views of 540 × 640, 25 flats per set). Three 8-row bands at a quarter, half and three quarters of the detector, `Rings()` on, Fourier slices at one center; change is the RMS difference between `flat_weights="position"` and `"views"` inside 0.35 of the slice width from the axis, in units of the slice's robust spread.
+Eleven Diamond I13 scans (159802–159975, 1801–3001 views of 2160 × 2560, 40 or 100 flats per set) have about 10% beam decay between the flat sets. The ESRF bamboo example has 1000 views of 540 × 640 and 25 flats per set. The table gives the original view weighting before separating row gain (`369bd23a`, RTX 4070). Three 8-row bands at a quarter, half and three quarters of the detector were reconstructed with `Rings()` and Fourier at a common center. Change is the RMS difference from position weighting inside 0.35 of the slice width from the axis, in units of the position slice's robust spread.
 
 | Scans | `flat_weights_from_views` | `flat_moved_by_views` | Change in the slices | Center fit |
 | --- | ---: | ---: | ---: | --- |
@@ -479,7 +479,7 @@ The same comparison on every scan on the test laptop with two multi-frame flat s
 | I13 159975 | 0.106 | 0.075 | 0–0.0064; 0.17–0.18 in rows 2100–2148 | equal to 0.01 px |
 | ESRF bamboo | 0.020 | 0.0094 | 0.0053–0.0059 | equal to 0.01 px |
 
-On I13 159975 the weights make the slices worse where they cross the bottom 70 detector rows: the first views there show the later set's fine structure (specks and stripes) but still the earlier set's beam level, and the weights give them the later set's level too, 7.5% lower. The slice gains a spot on the axis and a one-sided shading of about one spread. 159910 has the same fault over 0.74% of the detector. The warning fires on 159975 and not on 159910.
+On 159975 the original weights transferred the later flat's level to early views wherever its specks already matched, putting the starting flat about 7.5% below the earlier set. With the row gain separated, the RMS difference from position weighting falls from 0.181 to 0.085 at row 2104 and from 0.165 to 0.042 at row 2144. The central spot and one-sided shading disappear. Narrow differences remain at ring radii. On 159910 the starting flat in the affected region moves from −0.0574 to −0.00003 log units relative to the earlier set. At row 2060 the RMS difference falls from 0.0252 to 0.0066. The area moved by more than 1% falls to 0.17% on 159975 and below 0.005% on 159910. On ESRF bamboo the three slice differences are 0.0051, 0.0051 and 0.0056 of the spread. None of these three scans reaches the acquisition warning's 1% area threshold.
 
 ### Simulated flat-field faults
 
@@ -489,14 +489,15 @@ A 512 px slice of a particle-packed disc, 768 views over a half turn, 64 detecto
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Beam rows brighten 1%, level falls 0.5% | 100 | 0.012 | 0.012 | 0.008 | 0.008 |
 | First set shadowed over 60% of the width | 10 | 0.252 | 0.051 | 0.237 | 0.034 |
-| First set shadowed everywhere, second beyond an edge | 10 | 0.342 | 0.149 | 0.303 | 0.107 |
+| First set shadowed everywhere, second beyond an edge | 10 | 0.342 | 0.149 | 0.303 | 0.108 |
 | Both sets behind different textured walls | 20 | 0.307 | 0.264 | 0.237 | 0.176 |
 | Detector response drifts 2% in fine structure | 100 | 0.013 | 0.014 | 0.008 | 0.009 |
 | Opaque holder over 15% of the second set | 100 | 0.932 | 0.018 | 0.867 | 0.011 |
+| Beam decays 10%, specks change early in one third of the detector | 100 | 0.031 | 0.014 | 0.027 | 0.008 |
 
 ### Cost
 
-On an 8,000-view 2160 × 2560 DIAD scan with 200 flats and 200 darks (one V100S, 10 CPUs), the flat and dark means take 5.0 s, and 6.6 s with the weights (7.4 s on the first call): the step reads 125 extra views and adds about 2 s. File to full Fourier volume with `Rings()` took 65.8 s and 45.6 s in two runs, a spread larger than the step.
+On an 8,000-view 2160 × 2560 DIAD scan with 200 flats and 200 darks (one V100S, 10 CPUs), the flat and dark means take 5.0 s, and 6.6 s with the weights (7.4 s on the first call): the step reads 125 extra views and adds about 2 s. File to full Fourier volume with `Rings()` took 65.8 s and 45.6 s in two runs, a spread larger than the step. On the I13 laptop runs, separating row gain added 0.013–0.020 s to the level solve on identical inputs and required no extra frames.
 
 ## Memory
 

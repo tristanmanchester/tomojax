@@ -97,9 +97,9 @@ uncertainty.
 - **Structure that changes through the scan** (a detector response that
   drifts) is followed through it: the views show none of the later set at the
   start and all of it at the end.
-- **A set that does not match the views** is left out where it does not match.
-- **Where neither set matches**, the blend is fixed through the scan. What is
-  left is then fixed to detector columns, so `Rings()` can remove its fine part.
+- **A pattern that does not match the views** is left out where the other set matches.
+- **Where both sets carry different shadows** and the views support a constant blend,
+  the remaining texture stays fixed to detector columns, so `Rings()` can remove its fine part.
 - **Level** is kept continuous along each row where the weights change. An
   edge that only one set has is not in the views, so the flat carries its level
   across the edge instead of stepping there.
@@ -128,11 +128,13 @@ are better: `tj.load_frames("scan.nxs", flats="other_scan.nxs")` or
 `tomojax correct scan.nxs --flats other_scan.nxs` takes the other file's flat
 frames (and `darks=` its dark frames) as one set.
 
-The weights describe fine structure and carry the level with it. When the sets
-also differ in level for another reason, such as a beam that decays between
-them while a speck or stripe changes early, a region whose views match the
-later set's structure takes the later set's level from the start, and the flat
-steps where the region begins. `flat_weights="position"` avoids that.
+Columns with little evidence of changing texture provide a reference for the
+gain shared across a detector row. TomoJAX estimates that gain from the flat
+sets' log ratios, giving those columns the most weight. The shared gain follows
+position while the views set the blend of the remaining differences. When
+texture changes across an entire row, the estimate of shared gain shrinks
+toward zero log change. An independent level change confined to the textured
+region can still be confused with attenuation by the object.
 
 A set of one frame has no measured noise, and scans with one flat set or a
 white level have nothing to blend: both are corrected as before.
