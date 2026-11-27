@@ -84,17 +84,15 @@ class SPDHGConfig:
     Supplying overrides makes the caller responsible for the combined step
     sizes' stability.
 
-    The iteration budget counts sampled blocks, not full data passes. Increasing
-    the number of views or reducing the block size can therefore require more
-    iterations; 600 updates are not a convergence guarantee. In particular, many
-    narrow-angle blocks can leave detail blurred even when the objective falls.
-    Check the image as well as the residual, or use FISTA for full-data updates.
+    Each update samples one data block. For a full-data solve the default budget
+    is 200. For B equal-probability blocks it grows as the square root of B.
+    The effective count and step sizes are recorded with the reconstruction.
 
     Parameters
     ----------
-    iterations : int, optional
-        Number of sampled data-block updates, each with a TV update (not full
-        sweeps through the data). Default is 600.
+    iterations : int or None, optional
+        Number of sampled data-block updates, each with a TV update. None uses
+        ceil(200 * sqrt(number of blocks)). An explicit count fixes the budget.
     tv_weight : float | None, optional
         Dimensionless physical-TV strength. None estimates the score of detector
         noise from the measured pixels and calibrates the penalty per isolated
@@ -141,7 +139,7 @@ class SPDHGConfig:
 
     method: ClassVar[Literal["spdhg"]] = "spdhg"
 
-    iterations: int = 600
+    iterations: int | None = None
     tv_weight: float | None = None
     data_term: DataTerm = "absolute"
     regularizer: Regularizer = "tv"
@@ -328,7 +326,12 @@ def _build_spdhg_schedule(n_views: int, config: SPDHGConfig) -> _SPDHGSchedule:
     rng = np.random.default_rng(config.seed)
     # SPDHG's inverse-probability extrapolation assumes independent draws,
     # not a permutation whose remaining blocks depend on earlier draws.
-    block_ids = rng.integers(0, num_blocks, size=config.iterations, dtype=np.int32)
+    count = (
+        config.iterations
+        if config.iterations is not None
+        else math.ceil(200 * math.sqrt(num_blocks))
+    )
+    block_ids = rng.integers(0, num_blocks, size=count, dtype=np.int32)
 
     return _SPDHGSchedule(
         views_per_batch=views_per_batch,
@@ -354,7 +357,7 @@ def _initial_spdhg_state(runtime: _SPDHGRuntime, shape: tuple[int, int, int]) ->
         ),
         p=tuple(jnp.zeros(shape if cfg.tv_weight != 0 else (0,), jnp.float32) for _ in range(3)),
         s_data=zeros,
-        losses=jnp.zeros((cfg.iterations,), dtype=jnp.float32),
+        losses=jnp.zeros((runtime.schedule.block_ids.shape[0],), dtype=jnp.float32),
     )
 
 
@@ -632,7 +635,7 @@ def _sweep(
             )
             below_old, below_new = old[2][-1:], new[2][-1:]
         candidate = u - runtime.step_sizes.tau * gradient_bar
-        kept = jnp.where(iteration < cfg.iterations, candidate, u)
+        kept = jnp.where(iteration < runtime.schedule.block_ids.size, candidate, u)
         return p, jax.lax.dynamic_update_slice_in_dim(x, kept, start, 0), below_old, below_new
 
     def slab(i: jax.Array, carry: tuple) -> tuple:
@@ -759,7 +762,7 @@ def _advance_spdhg(
             runtime.support,
             lower_bound=cfg.lower_bound,
         )
-        x_new = jnp.where(iteration < cfg.iterations, candidate, partial)
+        x_new = jnp.where(iteration < runtime.schedule.block_ids.size, candidate, partial)
         return _SPDHGScanState(
             x=x_new,
             y_data=y_data_new,
@@ -778,6 +781,7 @@ def _spdhg_program(
 ) -> tuple[jax.Array, jax.Array, tuple[jax.Array, ...], jax.Array]:
     cfg = runtime.config
     initial = _initial_spdhg_state(runtime, volume_shape(runtime.projector[0], grid))
+    count = runtime.schedule.block_ids.size
 
     def metrics(state: _SPDHGScanState, done: int) -> dict[str, float | None]:
         if cfg.log_every and done and done % cfg.log_every == 0:
@@ -788,13 +792,13 @@ def _spdhg_program(
     final = (
         fixed_updates(
             initial,
-            cfg.iterations,
+            count,
             advance,
             drive,
             lambda s: preview_planes(s.x, runtime.projector[0], grid),
             metrics,
         )
-        if cfg.iterations
+        if count
         else initial
     )
     # Return every large carry: a carry left out of the outputs becomes a temporary that
@@ -805,7 +809,7 @@ def _spdhg_program(
 _run_spdhg_scan = Chunked(_spdhg_program, static_argnames=("grid", "detector"))
 
 
-@progress.reports_iterations(SPDHGConfig.iterations)
+@progress.reports_iterations(200)
 def spdhg(
     geometry: Geometry,
     grid: Grid,
@@ -894,6 +898,7 @@ def spdhg(
         config=config,
         det_grid=det_grid,
     )
+    progress.remaining("iterations", runtime.schedule.block_ids.size)
     with contextlib.ExitStack() as stack:
         if runtime.y_meas is None:
             y_host = np.asarray(projections)
@@ -905,7 +910,7 @@ def spdhg(
                 stack.enter_context(host_source(w_host)) if w_host is not None else jnp.int32(-1),
             ]
             runtime = replace(runtime, host_keys=jnp.stack(keys))
-        if runtime.config.iterations and progress.for_unit("iterations") is not None:
+        if runtime.schedule.block_ids.size and progress.for_unit("iterations") is not None:
             progress.check_canceled()
             # XLA can use a volume of scratch during compilation. Release it
             # before materializing the watched primal and dual arrays.

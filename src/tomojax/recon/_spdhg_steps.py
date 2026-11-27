@@ -119,7 +119,6 @@ def resolve_spdhg_step_sizes(
     grad_norm = grad_norm if config.tv_weight != 0 else 0.0
     length = metric.length_scale
     ratio = float(metric.weight_over_contrast)
-    sigma_tv = rho * length * ratio / (2 * max(c))
     data_norm = None
     if config.tau is None or config.sigma_data is None:
         row, column = _block_row_column_bounds(
@@ -135,14 +134,25 @@ def resolve_spdhg_step_sizes(
         blocks = (poses.shape[0] + batch - 1) // batch
         observed = float(metric.observed_count)
         mean_weight = float(metric.weight_sum) / observed if observed else 1.0
+        # For an axial ray crossing R/h cells, the column sensitivity among
+        # the resolved modes is about h/R times the full spectral radius.
+        # A uniform block update visits each primal datum with probability p.
+        # The block time scale is sqrt(1/p) and the sampled dual moves only
+        # with probability p. This gives sigma/w ~ sqrt((h/R)/p).
+        # Use the same reciprocal rescaling for the data and TV steps, so it
+        # preserves their Schur stability products even at nonunit spacing.
+        h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
+        path = row or h
+        length = blocks * np.sqrt(blocks * path * h)
         # Schur: ||A_i||² <= R*B. Together with ||G||² <=4*max(c)*sum(c),
         # tau*(sigma_data/p*A_i.T*A_i + sigma_tv*G.T*G) <= rho² I.
-        sigma_data = rho * length * mean_weight / (blocks * (row or length))
+        sigma_data = rho * length * mean_weight / (blocks * path)
         denominator = length * (mean_weight * column + 2 * sum(c) * ratio)
         tau = rho / (denominator or length**2)
         data_norm = float(np.sqrt(blocks * row * column))
     else:
         tau, sigma_data = config.tau, config.sigma_data
+    sigma_tv = rho * length * ratio / (2 * max(c))
     tau = tau if config.tau is None else float(config.tau)
     sigma_data = sigma_data if config.sigma_data is None else float(config.sigma_data)
     sigma_tv = sigma_tv if config.sigma_tv is None else float(config.sigma_tv)

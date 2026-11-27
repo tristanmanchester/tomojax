@@ -29,7 +29,7 @@ def test_sweep_matches_whole_volume_update(regularizer):
     scales, sigma, weight, delta = (0.7, 1.3, 0.9), 0.37, 0.05, 0.11
     runtime = SimpleNamespace(
         config=SPDHGConfig(iterations=2, tv_weight=weight, theta=0.8),
-        schedule=SimpleNamespace(selection_prob=0.25),
+        schedule=SimpleNamespace(selection_prob=0.25, block_ids=jnp.arange(2)),
         step_sizes=SimpleNamespace(sigma_tv=sigma, tau=0.3),
         storage_scales=scales,
         metric=SimpleNamespace(gradient_scale_xyz=scales, weight=weight),

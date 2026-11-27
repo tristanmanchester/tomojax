@@ -94,7 +94,9 @@ def validate_spdhg_config(cfg: SPDHGConfig) -> None:
         raise InvalidParameter(
             "data_term", f"{context}: data_term must be absolute or per_view_contrast"
         )
-    for name in ("iterations", "log_every", "seed"):
+    if cfg.iterations is not None:
+        check_count(cfg.iterations, "iterations", minimum=0, context=context)
+    for name in ("log_every", "seed"):
         check_count(getattr(cfg, name), name, minimum=0, context=context)
     check_count(cfg.views_per_block, "views_per_block", minimum=1, context=context)
     if cfg.tv_weight is not None:
