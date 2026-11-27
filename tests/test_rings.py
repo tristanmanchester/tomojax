@@ -211,7 +211,10 @@ def test_full_turn_fit_preserves_view_order_including_closing_phase(
     permuted = tj.ParallelGeometry(base.grid, base.detector, angles[order])
     fixed = np.asarray(Rings(geometry, views=views).apply(jnp.asarray(q[:, None])))
     shuffled = np.asarray(Rings(permuted, views=views).apply(jnp.asarray(q[order, None])))
-    np.testing.assert_array_equal(shuffled[np.argsort(order)], fixed)
+    # The static permutations compile separately. Allow float32 fit roundoff
+    # at the scale of the sinogram, including where the corrected ray is near zero.
+    atol = 2 * np.finfo(q.dtype).eps * np.max(np.abs(q))
+    np.testing.assert_allclose(shuffled[np.argsort(order)], fixed, rtol=0, atol=atol)
 
 
 @pytest.mark.parametrize("origin", [-40.0, 0.0, 20.0])

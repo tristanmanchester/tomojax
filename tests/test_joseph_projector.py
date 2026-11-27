@@ -199,14 +199,7 @@ def test_plane_operators_match_independent_physical_ray_matrix(
     adjoint = jax.jit(lambda y: bp(coefficients, y, grid, detector, interpolation=interpolation))
     projected = np.asarray(forward(volume))
     backprojected = np.asarray(adjoint(images))
-    for actual, reference in [
-        (projected.ravel(), expected @ np.asarray(volume).ravel()),
-        (backprojected.ravel(), expected.T @ np.asarray(images).ravel()),
-    ]:
-        assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 8e-6
-    assert abs(np.vdot(projected, images) - np.vdot(volume, backprojected)) < 2e-6 * np.linalg.norm(
-        projected
-    ) * np.linalg.norm(images)
+    pairs = [(projected, backprojected)]
     if backend == "cuda":
         # The gather transpose has no floating-point atomics or scheduling-dependent sum.
         np.testing.assert_array_equal(adjoint(images), backprojected)
@@ -216,13 +209,28 @@ def test_plane_operators_match_independent_physical_ray_matrix(
             from tomojax.core.joseph_cuda import JosephCUDA
 
             plan = JosephCUDA(poses, grid, detector, views_per_batch=4)
-            # DLPack waits for JAX to finish the array; cp.asarray would read it early.
-            np.testing.assert_allclose(
-                plan.forward(cp.from_dlpack(volume)).get(), projected, atol=2e-6
+            # NumPy and device reductions can round the ray origins differently.
+            # Check the host-prepared geometry against the same physical rays.
+            native_forward = plan.forward(cp.from_dlpack(volume)).get()
+            native_adjoint = plan.adjoint(cp.from_dlpack(images)).get()
+            pairs.append((native_forward, native_adjoint))
+            # With identical coordinates the CUDA forward kernels sum identical taps.
+            shared = jnp.from_dlpack(plan.coeff)
+            np.testing.assert_array_equal(
+                native_forward, forward_cuda(shared, volume, grid, detector)
             )
             np.testing.assert_allclose(
-                plan.adjoint(cp.from_dlpack(images)).get(), backprojected, rtol=2e-5, atol=2e-6
+                native_adjoint, adjoint_cuda(shared, images, grid, detector), rtol=2e-5, atol=2e-6
             )
+    for projected, backprojected in pairs:
+        for actual, reference in [
+            (projected.ravel(), expected @ np.asarray(volume).ravel()),
+            (backprojected.ravel(), expected.T @ np.asarray(images).ravel()),
+        ]:
+            assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 8e-6
+        assert abs(
+            np.vdot(projected, images) - np.vdot(volume, backprojected)
+        ) < 2e-6 * np.linalg.norm(projected) * np.linalg.norm(images)
 
 
 @pytest.mark.gpu
