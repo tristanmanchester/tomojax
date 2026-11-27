@@ -223,7 +223,7 @@ def _sampled_sums(
     later = jnp.maximum(jax.device_put(fields.flats[earlier + 1]), limits.tiny)
     ratio = jnp.where(usable, jnp.log(later / jnp.maximum(flat, limits.tiny)), 0.0)
     # A float32 mean is known no better than its rounding, whatever its frames' scatter.
-    noise = tuple(jax.device_put(fields.noise[k]) + limits.eps**2 for k in (earlier, earlier + 1))
+    noise = jax.device_put(fields.noise[earlier : earlier + 2]) + limits.eps**2
     batch = max(1, _VIEW_BYTES // (4 * rows * cols))
     sums: list[np.ndarray] = []
     with (
@@ -233,8 +233,8 @@ def _sampled_sums(
         for start, stop, raw in batches:
             progress.check_canceled()
             done = _view_sums(
-                jnp.asarray(raw), jax.device_put(scales[start:stop]), dark, flat, ratio, *noise,
-                usable, counts_steps=counts_steps,
+                jnp.asarray(raw), jax.device_put(scales[start:stop]), dark, flat, ratio,
+                noise[0], noise[1], usable, counts_steps=counts_steps,
             )  # fmt: skip
             sums.append(np.asarray(done))
             progress.step("view batches")
