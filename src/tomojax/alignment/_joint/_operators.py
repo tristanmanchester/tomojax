@@ -307,6 +307,8 @@ class Operators:
     def pad_images(self, y: np.ndarray | jax.Array) -> np.ndarray:
         """Pad on the host with zero images, which carry zero precision."""
         y = np.asarray(y, np.float32)
+        if self.n == self.padded_n:
+            return y
         return np.pad(y, ((0, self.padded_n - self.n), (0, 0), (0, 0)))
 
     def pad_precision(self, precision: np.ndarray | jax.Array | None) -> np.ndarray | None:
