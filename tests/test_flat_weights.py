@@ -179,3 +179,15 @@ def test_rows_corrected_alone_and_in_slabs_equal_the_whole_detector(middle_set: 
     with_rings = np.asarray(frames.corrected(Rings()).projections)  # corrected in slabs of rows
     staged = np.asarray(frames.corrected().corrected(Rings()).projections)
     np.testing.assert_allclose(with_rings, staged, atol=2e-4)
+
+
+def test_views_sampled_in_several_batches_give_the_weights_of_one_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frames, _, _ = _frames("first set shadowed")
+    whole = frames.corrected()
+    # Real detectors fill a batch with a few views; here 5 views make one.
+    monkeypatch.setattr("tomojax.corrections._flat_weights._VIEW_BYTES", 5 * 4 * ROWS * COLS)
+    batched = frames.corrected()
+    assert batched.corrections[0].found == whole.corrections[0].found
+    np.testing.assert_allclose(np.asarray(batched.projections), np.asarray(whole.projections))

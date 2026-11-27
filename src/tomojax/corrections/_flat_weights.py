@@ -179,7 +179,7 @@ def _sampled_sums(
     later = jnp.maximum(jax.device_put(fields.flats[earlier + 1]), limits.tiny)
     ratio = jnp.where(usable, jnp.log(later / jnp.maximum(flat, limits.tiny)), 0.0)
     # A float32 mean is known no better than its rounding, whatever its frames' scatter.
-    noise = (jax.device_put(fields.noise[k]) + limits.eps**2 for k in (earlier, earlier + 1))
+    noise = tuple(jax.device_put(fields.noise[k]) + limits.eps**2 for k in (earlier, earlier + 1))
     batch = max(1, _VIEW_BYTES // (4 * rows * cols))
     sums: list[np.ndarray] = []
     with (
