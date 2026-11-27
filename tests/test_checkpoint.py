@@ -283,7 +283,7 @@ def test_independent_plane_slabs_resume_from_the_first_unfinished_slab(
     from tomojax.recon import _axial_slabs  # check-public-imports: allow-private
 
     monkeypatch.setattr(
-        _axial_slabs, "axial_slab_depth", lambda _g, grid, *_: 4 if grid.nz > 4 else None
+        _axial_slabs, "axial_slab_depth", lambda _g, grid, *_, **_kw: 4 if grid.nz > 4 else None
     )
     scan = _scan()
     path = tmp_path / "run"
@@ -294,7 +294,7 @@ def test_independent_plane_slabs_resume_from_the_first_unfinished_slab(
         with pytest.raises(Canceled):
             tj.reconstruct(scan, method, iterations=iterations, checkpoint=path)
     if iterations is None:
-        monkeypatch.setattr(_axial_slabs, "axial_slab_depth", lambda *_: None)
+        monkeypatch.setattr(_axial_slabs, "axial_slab_depth", lambda *_, **_kw: None)
     saved = _terminate_after(monkeypatch, -1)
     resumed = tj.reconstruct(scan, method, iterations=iterations, checkpoint=path)
 
