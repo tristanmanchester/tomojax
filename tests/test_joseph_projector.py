@@ -976,3 +976,23 @@ def test_explicit_detector_grid_gives_the_canonical_lattice_on_a_wide_detector()
     explicit = coefficients(poses, grid, detector, grid_values, xp=np)
     canonical = coefficients(poses, grid, detector, xp=np)
     np.testing.assert_allclose(explicit, canonical, rtol=2e-6, atol=2e-6)
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("nz", [8, 37])
+def test_two_axial_transposes_match_both_separate_accumulations(nz):
+    grid = Grid(11, 7, nz, 1, 0.8, 0.9)
+    detector = Detector(13, 19, 0.7, 1.1, (0.4, -0.23))
+    angles = np.linspace(0, 180, 7, endpoint=False)
+    geometry = ParallelGeometry(grid, detector, angles)
+    poses = np.stack([geometry.pose_matrix(i) for i in range(len(angles))])
+    coeff = plane_coefficients(jnp.asarray(poses, jnp.float32), grid, detector)
+    rng = np.random.default_rng(7)
+    images = tuple(jnp.asarray(rng.normal(size=(7, 19, 13)), jnp.float32) for _ in range(2))
+    initial = tuple(jnp.asarray(rng.normal(size=(11, 7, nz)), jnp.float32) for _ in range(2))
+    pair = axial.transpose_axial_pair_cuda(coeff, images, initial, grid)
+    for result, image, start in zip(pair, images, initial, strict=True):
+        separate = axial.transpose_axial_vu_cuda(
+            coeff, image, start, grid=grid, interpolation="linear", z_fast=True
+        )
+        np.testing.assert_array_equal(result, separate)

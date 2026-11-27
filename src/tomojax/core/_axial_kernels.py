@@ -207,7 +207,11 @@ extern "C" __global__ void joseph_vertical(
 
 extern "C" __global__ void joseph_axial(
     const float* __restrict__ coeff, const float* __restrict__ weighted,
-    float* __restrict__ out, int nviews, int nx, int ny, int nz, int nu, int fresh, int out_depth)
+    float* __restrict__ out,
+#if PAIRED
+    const float* __restrict__ second_image, float* __restrict__ second_out,
+#endif
+    int nviews, int nx, int ny, int nz, int nu, int fresh, int out_depth)
 {
     const int R = RUN, VB = 32;
     long run=(long)blockIdx.x*blockDim.x+threadIdx.x;
@@ -222,7 +226,8 @@ extern "C" __global__ void joseph_axial(
         if(coeff[(nviews/2)*14]==0.f) { ix=(int)(column%nx); iy=(int)(column/nx); }
         else { iy=(int)(column%ny); ix=(int)(column/ny); }
     }
-    float total[R]={};
+    const int channels = PAIRED ? 2 : 1;
+    float total[channels][R]={};
     __shared__ float cf[VB*14];
     for(int first=0;first<nviews;first+=VB) {
         __syncthreads();
@@ -236,21 +241,30 @@ extern "C" __global__ void joseph_axial(
             float inv=a==0?c[10]:c[11];
             float h=__fadd_rn(__fmul_rn(kh,k),ch);
             int2 support=axial_support(inv,row,h,nu);
-            const float* image=weighted+(long)(first+w)*nu*nz;
+            long offset=(long)(first+w)*nu*nz;
             for(int u=support.x;u<support.y;++u) {
                 float q=__fadd_rn(__fmul_rn(uh,(float)u),h);
                 float wh=axial_weight(q-row);
-#if VECTOR
                 #pragma unroll
-                for(int j=0;j<R;j+=4) {
-                    float4 value=reinterpret_cast<const float4*>(image+(long)u*nz+z+j)[0];
-                    total[j]+=value.x*wh; total[j+1]+=value.y*wh;
-                    total[j+2]+=value.z*wh; total[j+3]+=value.w*wh;
-                }
-#else
-                #pragma unroll
-                for(int j=0;j<R;++j) if(z+j<nz) total[j]+=image[(long)u*nz+z+j]*wh;
+                for(int channel=0;channel<channels;++channel) {
+                    const float* image=weighted;
+#if PAIRED
+                    if(channel) image=second_image;
 #endif
+                    image+=offset+(long)u*nz+z;
+                    float* sum=total[channel];
+#if VECTOR
+                    #pragma unroll
+                    for(int j=0;j<R;j+=4) {
+                        float4 value=reinterpret_cast<const float4*>(image+j)[0];
+                        sum[j]+=value.x*wh; sum[j+1]+=value.y*wh;
+                        sum[j+2]+=value.z*wh; sum[j+3]+=value.w*wh;
+                    }
+#else
+                    #pragma unroll
+                    for(int j=0;j<R;++j) if(z+j<nz) sum[j]+=image[j]*wh;
+#endif
+                }
             }
         }
     }
@@ -258,8 +272,13 @@ extern "C" __global__ void joseph_axial(
         long base=Z_FAST ? ((long)ix*ny+iy)*out_depth+z : VOXEL(long,ix,iy,z);
         // Keep the same +0 addition as a zero-initialized output.
         #pragma unroll
-        for(int j=0;j<R;++j) if(z+j<nz)
-            out[base+j*Z_STRIDE]=(fresh ? 0.f : out[base+j*Z_STRIDE])+total[j];
+        for(int j=0;j<R;++j) if(z+j<nz) {
+            long index=base+j*Z_STRIDE;
+            out[index]=(fresh ? 0.f : out[index])+total[0][j];
+#if PAIRED
+            second_out[index]+=total[1][j];
+#endif
+        }
     }
 }
 """
@@ -330,10 +349,12 @@ def aligned_axial(coeff: jax.Array | NDArray[np.float32]) -> jax.Array | np.bool
 
 
 @cache
-def transpose_source(*, vector: bool, cubic: bool, z_fast: bool, vu: bool) -> str:
+def transpose_source(
+    *, vector: bool, cubic: bool, z_fast: bool, vu: bool, paired: bool = False
+) -> str:
     text = _TRANSPOSE.replace("RUN", "8" if vector else "4")
     text = text.replace("VECTOR", str(int(vector))).replace("CUBIC", str(int(cubic)))
-    text = storage_source(z_fast=z_fast) + text
+    text = storage_source(z_fast=z_fast) + text.replace("PAIRED", str(int(paired)))
     if not vu:
         return text
     return text.replace("images[((long)view*nu+u)*nv+v]", "images[((long)view*nv+v)*nu+u]")

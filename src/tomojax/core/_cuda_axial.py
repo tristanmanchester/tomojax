@@ -414,3 +414,78 @@ def transpose_axial_vu_cuda(
         vmap_method="sequential",
     )(coeff, images, *(() if initial is None else (initial,)))
     return result.reshape(shape)
+
+
+def transpose_axial_pair_cuda(
+    coeff: jax.Array,
+    images: tuple[jax.Array, jax.Array],
+    initial: tuple[jax.Array, jax.Array],
+    grid: Grid,
+) -> tuple[jax.Array, jax.Array]:
+    """Accumulate two linear transposes in z-fast storage with one horizontal ray walk."""
+    views, nv, nu = images[0].shape
+    nx, ny, nz = grid.nx, grid.ny, grid.nz
+    size, chunks = view_chunks(views, nu, nz)
+    # Use two vertical rows per RHS pair and keep the same view reductions.
+    depth = min(nz, 32)
+    output = jax.ShapeDtypeStruct((nx, ny, nz), jnp.float32)
+    scratch = jax.ShapeDtypeStruct((size, nu, depth), jnp.float32)
+
+    def launch(
+        ctx: CallbackContext,
+        buffers: tuple[CallbackBuffer, CallbackBuffer, CallbackBuffer, CallbackBuffer],
+        c: CallbackBuffer,
+        y: CallbackBuffer,
+        h: CallbackBuffer,
+        score: CallbackBuffer,
+        curvature: CallbackBuffer,
+    ) -> None:
+        dst, other, weighted, weights_other = buffers
+        initialize_buffer(dst, stream=ctx.stream, source=score)
+        initialize_buffer(other, stream=ctx.stream, source=curvature)
+        for z0 in range(0, nz, depth):
+            planes = min(depth, nz - z0)
+            vector = planes % 8 == 0
+            run, threads = (8, 256) if vector else (4, 128)
+            text = transpose_source(vector=vector, cubic=False, z_fast=True, vu=True, paired=True)
+            runs = nx * ny * -(-planes // run)
+            for first, count in chunks:
+                part = Offset(c, 14 * first)
+                for source, work in ((y, weighted), (h, weights_other)):
+                    launch_kernel(
+                        text,
+                        "joseph_vertical",
+                        stream=ctx.stream,
+                        grid=(-(-(count * nu * planes) // 256),),
+                        block=(256,),
+                        arguments=(
+                            part,
+                            Offset(source, first * nv * nu),
+                            work,
+                            *map(np.int32, (count, planes, nu, nv, z0)),
+                        ),
+                    )
+                launch_kernel(
+                    text,
+                    "joseph_axial",
+                    stream=ctx.stream,
+                    grid=(-(-runs // threads),),
+                    block=(threads,),
+                    arguments=(
+                        part,
+                        weighted,
+                        Offset(dst, z0),
+                        weights_other,
+                        Offset(other, z0),
+                        *map(np.int32, (count, nx, ny, planes, nu, 0, nz)),
+                    ),
+                )
+
+    score, curvature, *_ = buffer_callback(
+        launch,
+        (output, output, scratch, scratch),
+        input_output_aliases={3: 0, 4: 1},
+        command_buffer_compatible=True,
+        vmap_method="sequential",
+    )(coeff, *images, *initial)
+    return score, curvature

@@ -187,10 +187,27 @@ class ViewBatches:
                 backend=self.cone_backend,
                 accumulate=outputs,
             )
-        return (
-            self.backproject(images[0], start, batch, outputs[0]),
-            self.backproject(images[1], start, batch, outputs[1]),
-        )
+
+        def separate(_: None) -> tuple[jax.Array, jax.Array]:
+            return (
+                self.backproject(images[0], start, batch, outputs[0]),
+                self.backproject(images[1], start, batch, outputs[1]),
+            )
+
+        if self.z_fast and self.interpolation == "linear" and not self.absolute_weights:
+            from tomojax.core._cuda_joseph import use_cuda_gather
+
+            if use_cuda_gather(self.grid, axial=True):
+                from tomojax.core._cuda_axial import axial_coefficients, transpose_axial_pair_cuda
+
+                coeff = self._coefficients(start)
+                return jax.lax.cond(
+                    axial_coefficients(coeff),
+                    lambda _: transpose_axial_pair_cuda(coeff, images, outputs, self.grid),
+                    separate,
+                    operand=None,
+                )
+        return separate(None)
 
     def zeros_volume(self) -> jax.Array:
         return jnp.zeros(volume_shape(self.storage, self.grid), dtype=jnp.float32)
