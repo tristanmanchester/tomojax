@@ -1,8 +1,8 @@
 """Score a reconstruction on an agreed feature, without ground truth.
 
 Every score compares a volume with itself inside a feature mask and a surrounding
-mask, both boolean arrays of the volume's shape (for example the .mask of TomoJAX
-feature handles made with the seeded and band recipes). Higher contrast-to-noise,
+mask. Pass a reconstruction and its feature objects to check their physical grids,
+or supply bare arrays already sampled on the same grid. Higher contrast-to-noise,
 lower noise and a narrower edge are better; compare candidates on the same masks.
 
 Run it on saved arrays::
@@ -17,9 +17,14 @@ from __future__ import annotations
 
 import json
 import sys
+from typing import TYPE_CHECKING
 
 import numpy as np
 from scipy import ndimage
+
+if TYPE_CHECKING:
+    from tomojax import Reconstruction
+    from tomojax.cli.execution import Feature
 
 
 def contrast_to_noise(volume: np.ndarray, feature: np.ndarray, surround: np.ndarray) -> float:
@@ -51,7 +56,8 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
     edges = np.arange(-reach, reach + 0.5, 0.5)
     which = np.digitize(distance[near], edges)
     values, distances = volume[near], distance[near]
-    centers, profile = [], []
+    centers: list[float] = []
+    profile: list[float] = []
     for b in range(1, len(edges)):
         selected = which == b
         if selected.any():
@@ -70,7 +76,10 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
 
 
 def scores(
-    volume: np.ndarray, feature: np.ndarray, surround: np.ndarray, margin: int = 2
+    volume: np.ndarray | Reconstruction,
+    feature: np.ndarray | Feature,
+    surround: np.ndarray | Feature,
+    margin: int = 2,
 ) -> dict[str, float]:
     """All three scores for one candidate.
 
@@ -78,7 +87,28 @@ def scores(
     boundary, so blurred edges do not count as noise. Use ``margin=0`` for a feature
     too thin to have an interior.
     """
-    volume = np.asarray(volume, dtype=np.float64)
+    # The copied script also runs on .npy files with only NumPy and SciPy installed.
+    if (
+        isinstance(volume, np.ndarray)
+        and isinstance(feature, np.ndarray)
+        and isinstance(surround, np.ndarray)
+    ):
+        samples = volume
+    else:
+        from tomojax import Reconstruction
+        from tomojax.cli.execution import Feature
+        from tomojax.core.array_grid import Grid, require_same_grid
+
+        for name, mask in (("feature", feature), ("surround", surround)):
+            if isinstance(mask, Feature):
+                if not isinstance(volume, Reconstruction):
+                    raise ValueError(
+                        f"Pass the reconstruction with its grid to score a registered {name}."
+                    )
+                grid = Grid.volume(volume.grid, volume.length_unit or "scan_length")
+                require_same_grid(grid, mask.registration, field=name)
+        samples = volume.volume if isinstance(volume, Reconstruction) else volume
+    volume = np.asarray(samples, dtype=np.float64)
     feature, surround = np.asarray(feature, dtype=bool), np.asarray(surround, dtype=bool)
     interior = ndimage.binary_erosion(feature, iterations=margin) if margin else feature
     if not interior.any():

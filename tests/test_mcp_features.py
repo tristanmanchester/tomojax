@@ -271,3 +271,139 @@ def test_save_names_the_suffixes_it_writes(session, tmp_path):
     assert reply["structuredContent"]["message"] == (
         "cannot save to volume.tj: give a path ending in .h5, .hdf, .hdf5, .npz, .nx, .nxs"
     )
+
+
+def test_equal_shapes_need_registered_coordinates(tmp_path):
+    with connection(tmp_path) as c:
+        made = python(
+            c,
+            """
+import runpy
+from importlib.resources import files
+scores = runpy.run_path(str(files("tomojax") / "skill/tomojax/scripts/feature_scores.py"))["scores"]
+def make(x=0., pitch=1., unit="mm"):
+    grid = tj.Grid(7, 7, 7, pitch, 1., 1., vol_origin=(x, 0, 0))
+    geometry = tj.ParallelGeometry(grid, tj.Detector(7, 7, 1., 1.), [0, 90])
+    pixels = np.indices(grid.shape).sum(0).astype("f4")
+    return register(tj.Reconstruction(pixels, geometry, "fbp", {}, length_unit=unit))
+[make(), make(x=100.), make(pitch=2.), make(unit="um"), make(x=0.5e-6)]
+""",
+        )["value"]
+        volume, shifted, stretched, microns, rounded = made
+        box = feature(c, source=volume, recipe={"type": "box", "corners": [[3, 3, 3]] * 2})
+        band = {"type": "band", "feature": box["handle"], "outer": 1}
+        assert feature(c, source=rounded, recipe=band)["mean"] == 9
+        for target, reason in [(shifted, "origin"), (stretched, "pitch"), (microns, "units")]:
+            replies = [
+                c.call("feature", source=target, recipe=band),
+                c.call("view", source=target, features=[box["handle"]]),
+                c.call("view", source=[volume, target], features=[box["handle"]]),
+                c.call("view", source=volume, mode="difference", other=target),
+                c.call("python", code=f"view({volume!r}, other={target!r})"),
+                c.call(
+                    "python",
+                    code=f"scores(handles[{target!r}], handles[{box['handle']!r}], handles[{box['handle']!r}])",
+                ),
+                c.call("python", code=f"view({target!r}, features=[{box['handle']!r}])"),
+                c.call(
+                    "python", code=f"register_feature(handles[{box['handle']!r}], like={target!r})"
+                ),
+            ]
+            for reply in replies:
+                message = reply["content"][0]["text"]
+                assert reply["isError"] and reason in message and "resample" in message, reply
+
+
+def test_feature_checks_all_view_angles_even_on_a_single_plane(tmp_path):
+    with connection(tmp_path) as c:
+        first, equal, changed = python(
+            c,
+            """
+def scan(angles):
+    geom = tj.ParallelGeometry(tj.Grid(7,7,7,1,1,1), tj.Detector(7,7,1,1), angles)
+    return tj.Scan(np.ones((3,7,7), np.float32), geom)
+s = scan([0, 13, 80])
+mask = register_feature(np.ones(s.projections.shape, bool), like=s)
+view(s, features=[mask])
+[register(s), register(scan([0,13,80])), register(scan([0,17,80]))]
+""",
+        )["value"]
+        box = feature(c, source=first, recipe={"type": "box", "corners": [[1, 3, 3]] * 2})
+        band = {"type": "band", "feature": box["handle"], "outer": 1}
+        assert feature(c, source=equal, recipe=band)["voxels"] == 6
+        assert not c.call("view", source=equal, index=0, features=[box["handle"]])["isError"]
+        for result in (
+            c.call("feature", source=changed, recipe=band),
+            c.call("view", source=changed, index=0, features=[box["handle"]]),
+            c.call("python", code=f"view({changed!r}, features=[{box['handle']!r}])"),
+        ):
+            assert result["isError"] and "view coordinate[1]" in result["content"][0]["text"]
+
+
+def test_band_refuses_reordered_axes_and_difference_transposes(tmp_path):
+    import h5py
+
+    with connection(tmp_path) as c:
+        source = python(
+            c,
+            """
+g = tj.ParallelGeometry(tj.Grid(7,7,7,1,1,1), tj.Detector(7,7,1,1), [0,90])
+register(tj.Reconstruction(np.arange(7**3, dtype="f4").reshape(7,7,7), g, "fbp", {}))
+""",
+        )["value"]
+        path = tmp_path / "permuted.h5"
+        assert not c.call("save", source=source, path=str(path))["isError"]
+        with h5py.File(path, "r+") as f:
+            tomo = f["/entry/processing/tomojax"]
+            data = tomo["volume"]
+            order = tomo.attrs["volume_axes_order"]
+            if isinstance(order, bytes):
+                order = order.decode()
+            data[...] = data[...].transpose(tuple(order.index(axis) for axis in "xyz"))
+            tomo.attrs["volume_axes_order"] = "xyz"
+        dataset = str(path) + "::/entry/processing/tomojax/volume"
+        box = feature(c, source=source, recipe={"type": "box", "corners": [[1, 2, 3]] * 2})
+        band = c.call(
+            "feature", source=dataset, recipe={"type": "band", "feature": box["handle"], "outer": 1}
+        )
+        assert band["isError"] and "axes in storage order" in band["content"][0]["text"]
+        diff = c.call(
+            "view", source=source, other=dataset, mode="difference", roi=[[1, 6], [2, 5], [4, 7]]
+        )
+        assert not diff["isError"] and diff["structuredContent"]["intensity_limits"] == [0, 0]
+
+
+def test_fixed_plane_and_saved_mask_keep_their_registration(tmp_path):
+    import h5py
+
+    with connection(tmp_path) as c:
+        scan, volume = python(
+            c,
+            """
+grid = tj.Grid(5,5,5,1,1,1,vol_origin=(0,0,0))
+geom = tj.ParallelGeometry(grid,tj.Detector(5,5,1,1), [0,90])
+s = tj.Scan(np.ones((2,5,5), np.float32), geom)
+[register(s), register(tj.Reconstruction(np.ones(grid.shape,np.float32), geom, 'fbp', {}, scan=s))]
+""",
+        )["value"]
+        box = feature(c, source=volume, recipe={"type": "box", "corners": [[1, 2, 3]] * 2})
+        path = tmp_path / "mask.h5"
+        assert not c.call("save", source=box["handle"], path=str(path))["isError"]
+        grid = dict(nx=5, ny=5, nz=5, vx=1, vy=1, vz=1, vol_origin=[100, 0, 0])
+        config = {"type": "SIRTConfig", "support": str(path) + "::/entry/feature/mask"}
+        result = c.call(
+            "reconstruct", source=scan, method="sirt", config=config, grid=grid, dry_run=True
+        )
+        assert result["isError"] and "x origin" in result["content"][0]["text"]
+
+        # A snapshot from one fixed time carries that extra physical coordinate.
+        with h5py.File(path, "r+") as f:
+            import json
+
+            group = f["/entry/feature"]
+            a = json.loads(group.attrs["registration"])
+            a["fixed"] = [dict(name="time", frame="acquisition", unit="s", index=1, coordinate=0.5)]
+            group.attrs["registration"] = json.dumps(a)
+        fixed = c.call("open", path=str(path), kind="feature")["structuredContent"]["handle"]
+        result = c.call("view", source=volume, features=[fixed])
+        assert result["isError"] and "fixed axes" in result["content"][0]["text"]

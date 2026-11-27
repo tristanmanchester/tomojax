@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 import math
 from typing import Any
 
+import msgspec
 import numpy as np
 
 import tomojax as tj
@@ -32,6 +34,19 @@ def stage_array(context: ex.ExecutionContext, data: object) -> Npy:
     with stage.path.open("wb") as f:
         np.save(f, np.asarray(data), allow_pickle=False)
     return stage.reference
+
+
+def owned(
+    registration: Array, values: Callable[[Storage], np.ndarray], context: ex.ExecutionContext
+) -> Array:
+    """Copy axis vectors into this result's artifacts so it can outlive the source."""
+    axes = []
+    for axis in registration.axes:
+        c = axis.coordinates
+        if isinstance(c, Coordinates):
+            c = Coordinates(stage_array(context, values(c.values)))
+        axes.append(msgspec.structs.replace(axis, coordinates=c))
+    return msgspec.structs.replace(registration, axes=tuple(axes))
 
 
 def handle(item: Root, *, volume_storage: Storage | None = None) -> ex.NewHandle:

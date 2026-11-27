@@ -139,6 +139,8 @@ An agent can show you exactly what it means instead of describing it. `view` tak
 
 Once you agree on a structure, the `feature` tool turns it into a named mask held by the server: a box, sphere, cylinder or extruded polygon from the mark, a region grown from a seed point through voxels of similar value, or a band of chosen width around another feature. `view` with `features` outlines up to five features on any volume on the same grid, which is how an agent shows what it will optimize for, and the Skill's `feature_scores.py` scores candidate reconstructions on a feature and its surroundings without ground truth.
 
+Bands, feature outlines and side-by-side views require the same physical sampling at every array index. The tools compare shape, axis order, frames, axis units, fixed planes, origins, signed pitches and complete coordinate vectors. The absolute tolerance is `1e-6` in each axis's unit. Use a feature made on the target grid or resample the mask explicitly before measuring it. Volume differences also require matching value units. The MCP `view` difference can transpose a saved volume by its axis names to compare the same voxels.
+
 ## Files
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.

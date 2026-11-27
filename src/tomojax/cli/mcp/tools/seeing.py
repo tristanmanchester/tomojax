@@ -9,6 +9,7 @@ from io import BytesIO
 from typing import TYPE_CHECKING, Any, Literal
 
 from mcp_types import ImageContent, TextContent
+import msgspec
 import numpy as np
 from PIL import Image
 
@@ -27,6 +28,7 @@ from tomojax.cli.images import (
     thumbnail,
 )
 from tomojax.cli.mcp.tools.references import resolve
+from tomojax.core.array_grid import Grid, require_same_grid
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Iterator
@@ -259,11 +261,12 @@ def flat(item: Object) -> np.ndarray:
     return pixels if item["dimension"] is None else np.take(pixels, 0, axis=item["dimension"])
 
 
-async def metadata(g: Generation, source: Object) -> Object:
-    """The registration of a whole source array, without reading pixels."""
-    return (await g.request({"type": "read", "source": source, "metadata_only": True}))["value"][
-        "array"
-    ]
+async def metadata(g: Generation, stack: AsyncExitStack, source: Object) -> Grid:
+    """Hold the complete axis vectors without reading the source pixels."""
+    value = await stack.enter_async_context(
+        temporary(g, {"type": "read", "source": source, "metadata_only": True})
+    )
+    return msgspec.convert(value["array"], type=Grid)
 
 
 async def outlines(
@@ -271,7 +274,7 @@ async def outlines(
     g: Generation,
     stack: AsyncExitStack,
     reads: list[tuple[Object, int | None]],
-    shape: list[int],
+    grid: Grid,
     names: tuple[str, ...],
 ) -> list[list[tuple[np.ndarray, _marks.Color]]]:
     """Read each feature's mask on the same planes as the source, in palette order.
@@ -287,9 +290,7 @@ async def outlines(
             raise ValueError(f"{name} is not a feature handle")
         ref = resolve(name, base=tools.supervisor.base, ledger=tools.ledger)
         assert isinstance(ref, dict)
-        grid = (await metadata(g, ref))["shape"]
-        if grid != shape:
-            raise ValueError(f"{name} covers a {grid} grid; the source is {shape}")
+        require_same_grid(grid, await metadata(g, stack, ref), field=name)
         planes = []
         for read, dim in reads:
             value = await stack.enter_async_context(temporary(g, {**read, "source": ref}))
@@ -337,35 +338,39 @@ async def view(tools: Tools, args: View) -> CallToolResult:
     async with AsyncExitStack() as stack:
         panels: list[Panel] = []
         frames: list[_marks.Frame] = []
-        first: tuple[list[tuple[Object, int | None]], list[int]] | None = None
+        grid = None
+        first_reads = []
         for name in names:
             src = reference(tools, name, args.mode)
+            if len(names) > 1 or args.features or args.mode == "difference":
+                current = await metadata(g, stack, src)
+                if grid is None:
+                    grid = current
+                else:
+                    require_same_grid(grid, current, field=f"{primary} and {name}")
             if args.mode == "difference":
-                found = await difference_planes(tools, g, stack, args, name, src)
+                assert grid is not None
+                found = await difference_planes(tools, g, stack, args, name, src, grid)
             else:
-                found = await mode_planes(g, stack, args, name, src, compare=len(names) > 1)
-            new_panels, new_frames, reads, shape = found
-            if first is None:
-                first = (reads, shape)
-            elif shape != first[1]:
-                raise ValueError(f"{name} has shape {shape}; {primary} has {first[1]}")
+                found = await mode_planes(g, stack, args, name, src)
+            new_panels, new_frames, reads = found
+            first_reads = first_reads or reads
             panels += new_panels
             frames += new_frames
-        assert first is not None
         masks: list[list[tuple[np.ndarray, _marks.Color]]] = [[] for _ in frames]
         if args.features:
-            planes = await outlines(tools, g, stack, first[0], first[1], args.features)
+            assert grid is not None
+            planes = await outlines(tools, g, stack, first_reads, grid, args.features)
             masks = planes * len(names)
         return await asyncio.to_thread(finish, tools, args, panels, frames, masks)
 
 
 async def mode_planes(
-    g: Generation, stack: AsyncExitStack, args: View, name: str, src: Object, *, compare: bool
-) -> tuple[list[Panel], list[_marks.Frame], list[tuple[Object, int | None]], list[int]]:
+    g: Generation, stack: AsyncExitStack, args: View, name: str, src: Object
+) -> tuple[list[Panel], list[_marks.Frame], list[tuple[Object, int | None]]]:
     """Read one source's planes in the requested mode, with where each sits in it."""
     request = {"type": "read", "source": src, "roi": args.roi, "stride": args.stride}
     request |= {"mode": args.mode, "axis": args.axis, "index": args.index}
-    shape = (await metadata(g, src))["shape"] if compare or args.features else []
     v = await stack.enter_async_context(temporary(g, request))
     title = ("Alignment working image " if name.endswith(".image") else "") + name
     panels = [
@@ -385,7 +390,7 @@ async def mode_planes(
         )
         for item in v["planes"]
     ]
-    return panels, frames, [(request, None)], shape
+    return panels, frames, [(request, None)]
 
 
 def finish(
@@ -473,33 +478,39 @@ def finish(
 
 
 async def difference_planes(
-    tools: Tools, g: Generation, stack: AsyncExitStack, args: View, name: str, src: Object
-) -> tuple[list[Panel], list[_marks.Frame], list[tuple[Object, int | None]], list[int]]:
+    tools: Tools,
+    g: Generation,
+    stack: AsyncExitStack,
+    args: View,
+    name: str,
+    src: Object,
+    meta: Grid,
+) -> tuple[list[Panel], list[_marks.Frame], list[tuple[Object, int | None]]]:
     """Read matching planes of the source and ``other`` and subtract them."""
-    meta = await metadata(g, src)
-    axes = [a["name"] for a in meta["axes"]]
+    axes = [a.name for a in meta.axes]
     if not args.other:
         raise ValueError("difference requires other")
     source_b = reference(tools, args.other, args.mode)
-    second = await metadata(g, source_b)
-
-    def grid(m: Object) -> Object:
-        return {
-            "unit": m["unit"],
-            "axes": {a["name"]: (n, a) for n, a in zip(m["shape"], m["axes"], strict=True)},
-        }
-
-    if (
-        set(axes) != set("zyx")
-        or any(a["frame"] != "volume" for a in meta["axes"])
-        or grid(meta) != grid(second)
-    ):
+    second = await metadata(g, stack, source_b)
+    other_axes = [a.name for a in second.axes]
+    field = f"{name} and {args.other}"
+    if set(axes) != set("zyx") or any(a.frame != "volume" for a in meta.axes):
+        raise ValueError(f"{field}: difference requires volume axes x, y, z.")
+    if len(other_axes) != 3 or set(other_axes) != set(axes):
+        raise ValueError(f"{field}: axes {axes} vs {other_axes}. Choose matching volumes.")
+    # Saved datasets can use another storage order. Read their same named voxels.
+    order = [axes.index(a) for a in other_axes]
+    normalized = msgspec.structs.replace(
+        second,
+        axes=tuple(second.axes[other_axes.index(a)] for a in axes),
+        shape=tuple(second.shape[other_axes.index(a)] for a in axes),
+    )
+    require_same_grid(meta, normalized, field=field)
+    if meta.unit != second.unit:
         raise ValueError(
-            f"Difference requires equal volume grids. {name}: {grid(meta)}. "
-            f"{args.other}: {grid(second)}"
+            f"{field}: difference needs matching value units ({meta.unit} vs {second.unit})."
         )
-    order = [axes.index(a["name"]) for a in second["axes"]]
-    roi = args.roi if args.roi is not None else tuple((0, n) for n in meta["shape"])
+    roi = args.roi if args.roi is not None else tuple((0, n) for n in meta.shape)
     strides = args.stride if args.stride is not None else (1,) * len(axes)
     if len(roi) != 3 or len(strides) != 3 or min(strides) < 1:
         raise ValueError("roi and stride need three dimensions and positive strides")
@@ -507,7 +518,7 @@ async def difference_planes(
     panels, frames = [], []
     reads: list[tuple[Object, int | None]] = []
     for d, index, selected, stride, sampling in plane_windows(
-        axes, meta["shape"], args.mode, args.axis, args.index, roi, strides
+        axes, meta.shape, args.mode, args.axis, args.index, roi, strides
     ):
         read = {**command, "roi": selected, "stride": stride}
         reads.append((read, d))
@@ -526,7 +537,7 @@ async def difference_planes(
             )
         title = f"{name} minus {args.other}"
         panels.append(plane(a, pixels, title, dim=d, source_index=index, sampling=sampling))
-    return panels, frames, reads, meta["shape"]
+    return panels, frames, reads
 
 
 async def series(g: Generation, command: Object, mode: str) -> CallToolResult:

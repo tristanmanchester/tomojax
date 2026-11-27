@@ -904,21 +904,23 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
     source = dict(type="path", path=str(tmp_path / "scan.nxs"))
     tj.save(source["path"], sim.scan)
     disk_pixels = x.transpose(tuple("zyx".index(a) for a in axes))
-    for volume, pixels in ((ref, disk_pixels), (dict(type="path", path=str(path)), x)):
-        projected = output(
-            worker("run", operation=dict(type="project", source=source, volume=volume))
+    # A volume path requests logical zyx order. A registered dataset retains its disk axes.
+    projected = output(
+        worker(
+            "run",
+            operation=dict(type="project", source=source, volume=dict(type="path", path=str(path))),
         )
-        np.testing.assert_allclose(
-            np.load(projected["value"]["projections"]["storage"]["path"]),
-            tj.project(sim.scan.geometry, pixels),
-            atol=1e-5,
-        )
-    back = output(worker("run", operation=dict(type="backproject", source=source, projections=ref)))
+    )
     np.testing.assert_allclose(
-        np.load(back["value"]["volume"]["storage"]["path"]),
-        tj.backproject(sim.scan.geometry, disk_pixels),
+        np.load(projected["value"]["projections"]["storage"]["path"]),
+        tj.project(sim.scan.geometry, x),
         atol=1e-5,
     )
+    for operation, field in (("project", "volume"), ("backproject", "projections")):
+        reply = worker("run", operation={"type": operation, "source": source, field: ref})
+        assert (
+            reply["error"]["path"] == field and "axes in storage order" in reply["error"]["message"]
+        )
     args = dict(
         source=dict(type="path", path=str(path)), roi=[[2, 4], [0, 7], [3, 4]], stride=[1, 2, 1]
     )
@@ -1318,3 +1320,69 @@ def test_correction_preview_of_a_scan_labels_its_input_as_line_integrals(
     assert (before["domain"], before["unit"]) == ("line_integrals", "1")
     expected = tj.Scan(data, geometry).corrected(Rings()).binned(binning).projections[:, 1:2]
     np.testing.assert_allclose(np.load(after["storage"]["path"]), expected, rtol=1e-6, atol=1e-6)
+
+
+def test_registered_inputs_use_the_resolved_grid(worker):
+    made = output(
+        worker(
+            "python",
+            code="""
+def scan(dx, angles):
+    grid = tj.Grid(7, 7, 7, 1., 1., 1., vol_origin=(dx, 0., 0.))
+    geom = tj.ParallelGeometry(grid, tj.Detector(7,7,1,1), angles)
+    return tj.Scan(np.ones((len(angles),7,7), np.float32), geom)
+
+angles = np.arange(12) * 15
+first = scan(0, angles)
+other = scan(100, angles + (np.arange(12) == 1))
+volume = tj.Reconstruction(np.ones((7,7,7), np.float32), first.geometry, "fbp", {})
+[register(first), register(other), register_feature(np.ones((7,7,7), bool), like=volume)]
+""",
+        )
+    )["value"]
+    first, other, feature = made["value"]
+
+    def ref(handle, member):
+        return dict(type="member", handle=handle, member=member)
+
+    for target, valid in ((first, True), (other, False)):
+        operations = [
+            (dict(type="project", volume=ref(feature, "mask")), "origin"),
+            (dict(type="backproject", projections=ref(first, "projections")), "coordinate[1]"),
+            (
+                dict(
+                    type="reconstruct",
+                    method="sirt",
+                    config=dict(type="SIRTConfig", support=ref(feature, "mask")),
+                ),
+                "origin",
+            ),
+            (
+                dict(
+                    type="evaluate",
+                    candidates=[
+                        dict(
+                            type="reconstruct",
+                            method="sirt",
+                            config=dict(type="SIRTConfig", support=ref(feature, "mask")),
+                        )
+                    ],
+                ),
+                "origin",
+            ),
+            (
+                dict(
+                    type="feature",
+                    source=ref(target, "projections"),
+                    recipe=dict(type="band", feature=ref(feature, "self"), outer=1),
+                ),
+                "axes",
+            ),
+        ]
+        for params, reason in operations:
+            reply = worker("validate", operation={"source": ref(target, "self"), **params})
+            if valid and params["type"] != "feature":
+                assert reply["type"] == "result", reply
+            else:
+                err = reply["error"]
+                assert err["kind"] == "invalid_parameter" and reason in err["message"], err

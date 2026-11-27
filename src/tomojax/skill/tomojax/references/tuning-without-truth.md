@@ -22,13 +22,12 @@ from importlib.resources import files
 script = files("tomojax") / "skill" / "tomojax" / "scripts" / "feature_scores.py"
 scores = runpy.run_path(str(script))["scores"]
 scan = handles[scan_id]
-feature, surround = handles[feature_id].mask, handles[surround_id].mask
+feature, surround = handles[feature_id], handles[surround_id]
 rows = []
 for weight in (None, 1e-5, 1e-4, 1e-3):
     recon = tj.reconstruct(scan, "fista", tv_weight=weight, nonnegative=True)
-    volume = np.asarray(recon.volume)
     weight = recon.info["resolved_tv_weight"]
-    rows.append({"tv_weight": weight, "handle": register(recon), **scores(volume, feature, surround)})
+    rows.append({"tv_weight": weight, "handle": register(recon), **scores(recon, feature, surround)})
 rows
 ```
 

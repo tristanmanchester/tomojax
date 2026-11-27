@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from functools import partial
 from itertools import product
 import math
 from pathlib import Path
@@ -17,10 +18,12 @@ import numpy as np
 from tomojax._loading.files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
+from tomojax.cli._features import FEATURE_GROUP, saved_mask_metadata
 from tomojax.cli._frame_reads import frame_pixels, windowed
-from tomojax.cli._handles import stage_array
+from tomojax.cli._handles import owned, stage_array
 from tomojax.cli._planes import plane_windows
 from tomojax.cli._results import disk_volume, stored_grid
+from tomojax.core.array_grid import Grid, published, require_same_grid
 from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
 from tomojax.io.projection_layout import saved_npz_layout
@@ -50,35 +53,67 @@ class SavedVolume:
 
 @contextmanager
 def source_array(
-    source: Storage | op.PathInput, context: ex.ExecutionContext
+    source: Storage | op.PathInput, context: ex.ExecutionContext, *, field: str = "source"
 ) -> Iterator[tuple[Any, Array]]:
     """Keep HDF5 open only while its selected datasets are in use."""
     if isinstance(source, Member):
         registered = context.leases[source].value
         if not isinstance(registered, ex.RegisteredArray):
-            raise InvalidParameter("source", "choose a registered array member")
+            raise InvalidParameter(field, "choose a registered array member")
         yield registered.data, registered.metadata
         return
     path = Path(source.path)
     if isinstance(source, op.PathInput):
-        with saved_volume(path, "source") as volume:
+        with saved_volume(path, field) as volume:
             yield volume
         return
     if isinstance(source, Hdf5):
         with h5py.File(path, "r") as file:
-            data = explicit_dataset(file, source, "source")
+            data = explicit_dataset(file, source, field)
             if (
                 "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET
                 and "volume_axes_order" in file["/entry/processing/tomojax"].attrs
             ):
                 grid, _, geom_meta, axes = stored_grid(file, path)
                 yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta)
+            elif (
+                data.name == f"{FEATURE_GROUP}/mask" and "registration" in file[FEATURE_GROUP].attrs
+            ):
+                group = file[FEATURE_GROUP]
+                assert isinstance(group, h5py.Group)
+                yield data, saved_mask_metadata(group, source)
             else:
                 yield data, indexed(source, data)
         return
     data = np.load(path, mmap_mode="r", allow_pickle=False)
     lease = context.leases.get(source)
     yield data, (lease and lease.metadata) or indexed(source, data)
+
+
+def coordinate_vector(ref: Storage, *, context: ex.ExecutionContext) -> np.ndarray:
+    """Read an axis vector without touching its source pixels."""
+    with source_array(ref, context) as (values, _):
+        return np.asarray(values[:])
+
+
+def check_input_grid(
+    meta: Array,
+    grid: Grid,
+    context: ex.ExecutionContext,
+    *,
+    field: str,
+    read_grid: Callable[[Storage], np.ndarray] = published,
+) -> None:
+    """Bare numerical samples take their grid from the operator; registered inputs must agree."""
+    if meta.domain == "samples" and all(a.frame == "array" for a in meta.axes):
+        return
+    require_same_grid(
+        grid,
+        meta,
+        field=field,
+        read_left=read_grid,
+        read_right=partial(coordinate_vector, context=context),
+    )
 
 
 @contextmanager
@@ -111,11 +146,24 @@ def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
     raise InvalidParameter(field, op.ACQUISITION_ARRAY_ERROR)
 
 
-def project_volume(path: Path, context: ex.ExecutionContext, *, shape_only: bool) -> np.ndarray:
-    """Read the registered volume in bounded tiles, or just its shape for preflight."""
-    with saved_volume(path, "volume") as (data, meta):
+def operator_input(
+    ref: Storage | op.PathInput,
+    grid: Grid,
+    context: ex.ExecutionContext,
+    *,
+    field: str,
+    shape_only: bool,
+    read_grid: Callable[[Storage], np.ndarray] = published,
+) -> Any:
+    """Resolve and check the registration before reading input samples."""
+    if isinstance(ref, op.PathInput) and field != "volume":
+        raise InvalidParameter(field, op.ACQUISITION_ARRAY_ERROR)
+    with source_array(ref, context, field=field) as (data, meta):
+        check_input_grid(meta, grid, context, field=field, read_grid=read_grid)
         if shape_only:
             return np.broadcast_to(np.zeros((), meta.dtype), meta.shape)
+        if not isinstance(ref, op.PathInput):
+            return np.asarray(data) if isinstance(data, h5py.Dataset) else data
         # The projector consumes the full array. Stage it in bounded reads,
         # using the library's file-backed allocation for volumes larger than RAM.
         volume = host_array(meta.shape, dtype=meta.dtype)
@@ -162,10 +210,10 @@ def browse(
         if isinstance(request, op.Statistics):
             return statistics(request, context, data, meta, ranges)
         if request.metadata_only:
-            layout = msgspec.to_builtins(meta)
+            layout = msgspec.to_builtins(
+                owned(meta, partial(coordinate_vector, context=context), context)
+            )
             del layout["storage"]
-            for axis in layout["axes"]:
-                axis["coordinates"].pop("values", None)
             return p.Layout(layout)
         if request.mode is None:
             return p.ArrayResult(read_window(context, data, meta, ranges))

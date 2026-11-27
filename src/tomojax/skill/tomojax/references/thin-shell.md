@@ -69,8 +69,8 @@ around &= ~ndimage.binary_dilation(shell_mask)
 core_side = around & (volume > (air + core) / 2)
 air_side = around & ~core_side
 {
-    "against_core": scores(volume, shell_mask, core_side, margin=0),
-    "against_air": scores(volume, shell_mask, air_side, margin=0),
+    "against_core": scores(handles[recon_id], handles[shell_id], core_side, margin=0),
+    "against_air": scores(handles[recon_id], handles[shell_id], air_side, margin=0),
 }
 ```
 

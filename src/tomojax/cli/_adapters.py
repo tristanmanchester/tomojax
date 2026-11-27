@@ -34,21 +34,23 @@ from tomojax._workflow.operations import (
     simulation_from_record,
     validate_save,
 )
-from tomojax._workflow.planning import resolve_reconstruction
+from tomojax._workflow.planning import ResolvedReconstruction, resolve_reconstruction
 from tomojax._workflow.resources import sample
 from tomojax._workflow.smooth_alignment import resolve_alignment
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, scan_layout, source
+from tomojax.cli._browse import check_input_grid, source_array
 from tomojax.cli._handles import Root, handle, stage_array
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import ancestor_paths, check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
 from tomojax.cli._results import unit_of
 from tomojax.cli.products import VOLUME_DATASET
+from tomojax.core.array_grid import Grid
 from tomojax.core.array_ops import check_binning
 from tomojax.core.registration import scan_axes
 from tomojax.errors import InvalidParameter
-from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Record, Uniform
+from tomojax.wire.arrays import Array, Axis, Hdf5, Record, Uniform
 from tomojax.wire.progress import Event, Preview
 
 if TYPE_CHECKING:
@@ -236,9 +238,12 @@ class Admission:
 
     @prepare.register
     def feature(self, operation: op.Feature) -> Work:
-        from tomojax.cli._features import feature_work
+        from tomojax.cli._features import make_feature
 
-        return feature_work(operation, self.context)
+        work = partial(make_feature, operation, self.context, validate_only=self.validating)
+        if self.validating:
+            _ = work()
+        return work
 
     @prepare.register
     def browse(self, operation: op.Read | op.Statistics) -> Work:
@@ -341,6 +346,13 @@ class Admission:
             raise InvalidParameter("sources", str(err)) from err
         return lambda: tj.Scan.combine(scans, name=operation.name)
 
+    def check_support(self, config: object, grid: tj.Grid, unit: str) -> None:
+        if (ref := getattr(config, "support", None)) is not None:
+            with source_array(ref, self.context, field="config.support") as (_, meta):
+                check_input_grid(
+                    meta, Grid.volume(grid, unit), self.context, field="config.support"
+                )
+
     @prepare.register
     def evaluate(self, operation: op.Evaluate) -> Work:
         from tomojax._workflow.evaluation import (
@@ -392,12 +404,15 @@ class Admission:
         reference = partial(arguments, operation.reference, self.context)
         train = domain[1].scan
         for setting in operation.candidates:
+            config = setting.config
             settings = arguments(setting, self.context, layout_only=True)
             if isinstance(setting, op.AlignSettings):
                 local_motion(settings)
                 resolve_alignment(train, **settings)
+                config = operation.reference.config
                 settings = reference(layout_only=True)
-            resolve_reconstruction(train, metadata_only=self.validating, **settings)
+            resolved = resolve_reconstruction(train, metadata_only=self.validating, **settings)
+            self.check_support(config, resolved.scan.grid, unit_of(train))
         self.details.update(
             split_fingerprint=domain[0].fingerprint,
             training_views=len(domain[1].indices),
@@ -456,6 +471,8 @@ class Admission:
         else:
             work = resolve_reconstruction(scan, **options)
             compute = partial(reconstruct_resolved, work, checkpoint=checkpoint)
+        if isinstance(work, ResolvedReconstruction):
+            self.check_support(operation.config, work.scan.grid, unit_of(scan))
         snapshots = sample(work)
         for snapshot in snapshots:
             self.context.snapshot(snapshot)
@@ -479,50 +496,9 @@ class Admission:
 
     @prepare.register
     def project(self, operation: op.Project | op.Backproject) -> Work:
-        """Apply an operator in the source's geometry; a path source never loads its pixels."""
-        options = arguments(operation, self.context, omit=("source",), layout_only=self.validating)
-        scan = source(operation.source, self.context, kinds=(tj.Scan,), layout_only=True)
-        grid = options["grid"] or scan.grid
-        forward = isinstance(operation, op.Project)
-        name = "volume" if forward else "projections"
-        data = options.pop(name)
-        expected = grid.shape if forward else scan.projections.shape
-        if grid.nz == scan.detector.nv == 1 and data.ndim == 2:
-            data = data[None, :, :] if forward else data[:, None, :]
-        if tuple(data.shape) != expected:
-            raise InvalidParameter(name, f"{name} shape {data.shape} does not match {expected}")
+        from tomojax.cli._operators import project_work
 
-        def apply() -> p.Projections | p.Volume:
-            unit = unit_of(scan)
-            if forward:
-                pixels = np.asarray(tj.project(scan.geometry, data, **options))
-                view = Axis(
-                    "view",
-                    "acquisition",
-                    "degree",
-                    Coordinates(stage_array(self.context, scan.angles)),
-                )
-                return p.Projections(
-                    Array(
-                        stage_array(self.context, pixels),
-                        pixels.shape,
-                        pixels.dtype.str,
-                        scan_axes(scan.detector, view, unit),
-                        "1",
-                        "line_integrals",
-                    )
-                )
-            pixels = np.asarray(tj.backproject(scan.geometry, data, **options))
-            return p.Volume(
-                ex.volume_metadata(
-                    grid,
-                    storage=stage_array(self.context, pixels),
-                    dtype=pixels.dtype.str,
-                    length_unit=unit,
-                )
-            )
-
-        return apply
+        return project_work(operation, self.context, validating=self.validating)
 
     @prepare.register
     def edit(self, operation: op.Select | op.Crop | op.Bin | op.Poses) -> Work:
@@ -579,6 +555,7 @@ class Admission:
             layout_only=self.validating,
         )
         grid, cfg, _ = slab_settings(item, **settings)
+        self.check_support(operation.config, grid, unit_of(item))
         validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
         path = Path(operation.path)
         if dataset_output_format(path) != "hdf5":

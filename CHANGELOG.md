@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Feature bands, overlays, grid comparisons and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.
 - Reloading a saved scan with its stored detector preserves its fitted poses and rays,
   including after selecting views or binning. A detector override on a segmented cone
   scan changes the common sampling and moves each panel by the same physical offset.

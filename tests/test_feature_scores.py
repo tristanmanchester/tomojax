@@ -1,6 +1,7 @@
 """The Skill's feature scores measure known contrast, noise and edge blur."""
 
 import json
+import os
 from pathlib import Path
 import runpy
 import subprocess
@@ -57,8 +58,11 @@ def test_a_sharp_step_measures_under_a_voxel_and_the_command_line_agrees(tmp_pat
     assert direct["edge_width"] < 1
     for name, array in (("v", volume), ("f", feature), ("s", surround)):
         np.save(tmp_path / f"{name}.npy", array)
+    # A copied skill can score bare .npy files in a NumPy/SciPy environment.
+    (tmp_path / "tomojax.py").write_text('raise ImportError("standalone scoring")\n')
     printed = subprocess.run(
         [sys.executable, str(SCRIPT), *(str(tmp_path / f"{n}.npy") for n in "vfs")],
+        env={**os.environ, "PYTHONPATH": str(tmp_path)},
         capture_output=True,
         check=True,
         text=True,

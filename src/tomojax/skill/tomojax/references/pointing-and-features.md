@@ -62,6 +62,8 @@ Name features after what they are (`name="shell"`). The result gives the voxel c
 
 ## Use a feature
 
+Keep the feature on its registered grid when measuring another source. Bands and views check the shape, named axes in storage order, frames, axis units and sample centers (absolute tolerance `1e-6` in each axis's unit). A mismatch identifies the differing coordinate or grid property. Rebuild the feature on the target grid or explicitly resample it there. A bare NumPy mask has only indices. When you pass one to `register_feature(mask, like=source)`, `like` declares the grid on which you computed those indices.
+
 - `view` with `features=["@feature-…"]` outlines up to five features, in cyan, magenta, green, orange and red, on any source with the same grid: the volume it was made on, another reconstruction of the same scan, or a difference.
 - In `python`, `handles["@feature-…"].mask` is the whole boolean mask. A feature stores only its bounding box: `.box` (a slice per axis) and `.inside` (the mask over that box). On a large volume use those, for example `volume[f.box][f.inside]`, instead of building `.mask`, which takes one byte per voxel of the grid. `register_feature(mask, like="@recon-…", name="…")` registers a mask you computed yourself on that object's grid; `like` also takes a member such as `"@recon-….volume"`.
 - `save` writes a feature to an HDF5 file (`.h5`, `.hdf5` or `.nxs`) with its grid, name and recipe; `open` with `kind="feature"` reloads it, and `export` writes the mask as 0/1 TIFF slices or a raw file for other software.

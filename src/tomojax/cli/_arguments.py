@@ -100,11 +100,7 @@ def read_reference(
         with h5py.File(value.path, "r") as file:
             data = explicit_dataset(file, value, name)
             return hdf5_values(data, name, shape_only=shape_only)
-    if name != "volume":
-        raise InvalidParameter(name, op.ACQUISITION_ARRAY_ERROR)
-    from tomojax.cli._browse import project_volume
-
-    return project_volume(Path(value.path), context, shape_only=shape_only)
+    raise InvalidParameter(name, op.ACQUISITION_ARRAY_ERROR)
 
 
 def explicit_dataset(file: h5py.File, ref: Hdf5, field: str) -> h5py.Dataset:

@@ -18,13 +18,16 @@ from PIL import Image, ImageDraw
 from scipy import ndimage
 
 from tomojax.cli import execution as ex, operations as op, products as p
-from tomojax.cli._handles import stage_array
+from tomojax.cli._handles import owned
+from tomojax.core.array_grid import published, require_same_grid
 from tomojax.errors import InvalidParameter
-from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member, Npy
+from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Sequence
     from pathlib import Path
+
+    import h5py
 
     from tomojax.wire.arrays import Storage
 
@@ -74,7 +77,7 @@ def grids(window: Window) -> list[np.ndarray]:
     return list(np.ogrid[window])
 
 
-def read(data: Any, window: Window) -> np.ndarray:
+def read(data: ex.Readable, window: Window) -> np.ndarray:
     """Source values over a window as float32, read without loading the rest."""
     from tomojax.cli._browse import pixels
 
@@ -210,21 +213,17 @@ def seeded(recipe: op.Seeded, data: Any) -> tuple[np.ndarray, Window, dict[str, 
         half *= 2
 
 
-def band(recipe: op.Band, base: ex.Feature, shape: Sequence[int]) -> tuple[np.ndarray, Window]:
+def band(recipe: op.Band, base: ex.Feature) -> tuple[np.ndarray, Window]:
     """Voxels whose signed distance from the base feature lies in (inner, outer].
 
     The feature's boundary voxels are at 0 and their outside neighbors at 1. The
     distances are computed over the feature's box widened by the band.
     """
-    if base.shape != tuple(shape):
-        raise InvalidParameter(
-            "recipe.feature", f"the feature covers {base.shape}; the source is {tuple(shape)}"
-        )
     if not base.inside.any():
         raise InvalidParameter("recipe.feature", "the feature is empty")
     reach = ceil(max(recipe.outer, -recipe.inner, 0)) + 1
     window = clipped(
-        [b.start - reach for b in base.box], [b.stop - 1 + reach for b in base.box], shape
+        [b.start - reach for b in base.box], [b.stop - 1 + reach for b in base.box], base.shape
     )
     mask = base[window]
     result = np.zeros(mask.shape, dtype=bool)
@@ -238,21 +237,10 @@ def band(recipe: op.Band, base: ex.Feature, shape: Sequence[int]) -> tuple[np.nd
     return result, window
 
 
-def owned(
-    registration: Array, values: Callable[[Storage], np.ndarray], context: ex.ExecutionContext
-) -> Array:
-    """The registration with coordinate vectors copied into the feature's own arrays.
-
-    A feature then keeps its coordinates after the handle it was made from closes,
-    and never refers to a binding that was not published.
-    """
-    axes = []
-    for axis in registration.axes:
-        c = axis.coordinates
-        if isinstance(c, Coordinates):
-            c = Coordinates(stage_array(context, values(c.values)))
-        axes.append(msgspec.structs.replace(axis, coordinates=c))
-    return msgspec.structs.replace(registration, axes=tuple(axes))
+def mask_metadata(registration: Array, storage: Storage) -> Array:
+    return msgspec.structs.replace(
+        registration, storage=storage, dtype="|b1", unit="1", domain="mask", columns=()
+    )
 
 
 def feature_handle(feature: ex.Feature, data: Any | None) -> ex.NewHandle:
@@ -271,14 +259,7 @@ def feature_handle(feature: ex.Feature, data: Any | None) -> ex.NewHandle:
             mean, std = float(inside.mean(dtype=np.float64)), float(inside.std(dtype=np.float64))
 
     def bind(identifier: str) -> ex.BoundHandle:
-        metadata = msgspec.structs.replace(
-            feature.registration,
-            storage=Member(identifier, "mask"),
-            dtype="|b1",
-            unit="1",
-            domain="mask",
-            columns=(),
-        )
+        metadata = mask_metadata(feature.registration, Member(identifier, "mask"))
         product = p.Feature(
             identifier, feature.name, metadata, voxels, bounds, mean, std, feature.recipe
         )
@@ -289,47 +270,46 @@ def feature_handle(feature: ex.Feature, data: Any | None) -> ex.NewHandle:
     return ex.NewHandle(feature.inside.nbytes, bind, lambda: None)
 
 
-def feature_work(operation: op.Feature, context: ex.ExecutionContext) -> Callable[[], ex.NewHandle]:
-    """Check the recipe against the source's axes, then build the mask on demand."""
-    from tomojax.cli._browse import source_array
+def make_feature(
+    operation: op.Feature, context: ex.ExecutionContext, *, validate_only: bool
+) -> ex.NewHandle | p.Validated:
+    """Check and measure against the same open source and its coordinates."""
+    from functools import partial
+
+    from tomojax.cli._browse import coordinate_vector, source_array
 
     recipe = operation.recipe
     name = operation.name or str(recipe.__struct_config__.tag)
-    with source_array(operation.source, context) as (_, meta):
-        registration: Array = meta
-    axes = [a.name for a in registration.axes]
-    shape = tuple(registration.shape)
-    check(recipe, axes)
-    base = None
-    if isinstance(recipe, op.Band):
-        base = context.leases[recipe.feature].value
-        if not isinstance(base, ex.Feature):
-            raise InvalidParameter("recipe.feature", "choose a feature handle")
-
-    def coordinate(ref: Storage) -> np.ndarray:
-        with source_array(ref, context) as (values, _):
-            return np.asarray(values[:])
-
-    def make() -> ex.NewHandle:
+    coordinate = partial(coordinate_vector, context=context)
+    with source_array(operation.source, context) as (data, registration):
+        axes = [a.name for a in registration.axes]
+        check(recipe, axes)
+        base = None
+        if isinstance(recipe, op.Band):
+            base = context.leases[recipe.feature].value
+            if not isinstance(base, ex.Feature):
+                raise InvalidParameter("recipe.feature", "choose a feature handle")
+            require_same_grid(
+                base.registration, registration, field="recipe.feature", read_right=coordinate
+            )
+        if validate_only:
+            return p.Validated()
         resolved = msgspec.to_builtins(recipe)
-        with source_array(operation.source, context) as (data, _):
-            context.control.boundary()
-            if isinstance(recipe, op.Seeded):
-                mask, window, found = seeded(recipe, data)
-                resolved.update(found)
-            elif isinstance(recipe, op.Band):
-                assert base is not None
-                mask, window = band(recipe, base, shape)
-                resolved["feature"] = base.name
-            else:
-                mask, window = shape_mask(recipe, shape, axes)
-            context.control.boundary()
-            inside, box = tight(mask, window)
-            del mask
-            grid = owned(registration, coordinate, context)
-            return feature_handle(ex.Feature(name, inside, box, grid, resolved), data)
-
-    return make
+        context.control.boundary()
+        if isinstance(recipe, op.Seeded):
+            mask, window, found = seeded(recipe, data)
+            resolved.update(found)
+        elif isinstance(recipe, op.Band):
+            assert base is not None
+            mask, window = band(recipe, base)
+            resolved["feature"] = base.name
+        else:
+            mask, window = shape_mask(recipe, registration.shape, axes)
+        context.control.boundary()
+        inside, box = tight(mask, window)
+        del mask
+        grid = owned(registration, coordinate, context)
+        return feature_handle(ex.Feature(name, inside, box, grid, resolved), data)
 
 
 FEATURE_GROUP = "/entry/feature"
@@ -355,7 +335,7 @@ def save_feature(path: Path, feature: ex.Feature) -> None:
             c = axis.coordinates
             if isinstance(c, Coordinates):
                 name = f"coordinates/{axis.name}"
-                group[name] = _load_storage(c.values)
+                group[name] = published(c.values)
                 c = Coordinates(Hdf5(str(path), f"{FEATURE_GROUP}/{name}"))
             axes.append(msgspec.structs.replace(axis, coordinates=c))
         registration = msgspec.structs.replace(feature.registration, axes=tuple(axes))
@@ -365,10 +345,20 @@ def save_feature(path: Path, feature: ex.Feature) -> None:
         group.attrs["recipe"] = msgspec.json.encode(feature.recipe).decode()
 
 
-def _load_storage(ref: Storage) -> np.ndarray:
-    if not isinstance(ref, Npy):
-        raise InvalidParameter("source", f"coordinate vector {ref} is not a published array")
-    return np.load(ref.path, allow_pickle=False)
+def saved_mask_metadata(group: h5py.Group, ref: Hdf5) -> Array:
+    """Resolve a saved mask's coordinate datasets relative to its current file."""
+    registration = msgspec.json.decode(str(group.attrs["registration"]), type=Array)
+    axes = []
+    for axis in registration.axes:
+        c = axis.coordinates
+        if isinstance(c, Coordinates):
+            if not isinstance(c.values, Hdf5):
+                raise InvalidParameter(
+                    "source", "saved feature coordinates require an HDF5 dataset"
+                )
+            c = Coordinates(Hdf5(ref.path, c.values.dataset))
+        axes.append(msgspec.structs.replace(axis, coordinates=c))
+    return msgspec.structs.replace(mask_metadata(registration, ref), axes=tuple(axes), dtype="|u1")
 
 
 def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
@@ -379,7 +369,7 @@ def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
         group = file.get(FEATURE_GROUP)
         if not isinstance(group, h5py.Group) or "mask" not in group:
             raise InvalidParameter("path", f"{path} holds no saved TomoJAX feature")
-        registration = msgspec.json.decode(str(group.attrs["registration"]), type=Array)
+        registration = saved_mask_metadata(group, Hdf5(path, f"{FEATURE_GROUP}/mask"))
         box = tuple(slice(a, b) for a, b in msgspec.json.decode(str(group.attrs["box"])))
         mask = group["mask"]
         assert isinstance(mask, h5py.Dataset)

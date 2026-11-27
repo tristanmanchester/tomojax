@@ -19,13 +19,14 @@ from PIL import Image
 import tomojax as tj
 from tomojax.cli import execution as ex, products as p
 from tomojax.cli._browse import indexed, pixels as pixels_of
-from tomojax.cli._features import feature_handle, owned, tight
-from tomojax.cli._handles import handle, stage_array
+from tomojax.cli._features import feature_handle, mask_metadata, tight
+from tomojax.cli._handles import handle, owned, stage_array
 from tomojax.cli._marks import Overlay, annotate, check, frame_of, parse
 from tomojax.cli._planes import plane_windows
 from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits as display_limits, raster
 from tomojax.cli.mcp.ledger import new_reference
+from tomojax.core.array_grid import published, require_same_grid
 from tomojax.wire.arrays import Member, Npy
 from tomojax.wire.progress import Info
 
@@ -91,6 +92,7 @@ class Registrations:
         self.images = []
         # What this call registered, usable by name before the call publishes it.
         self.made = made
+        self.feature_grids: dict[int, tuple[Array, Callable[[Storage], np.ndarray]]] = {}
 
     def register(self, item: Root | jax.Array | np.ndarray) -> str:
         if isinstance(item, np.ndarray | jax.Array):
@@ -124,12 +126,13 @@ class Registrations:
                 if member:
                     raise KeyError(f"{base} is an array and has no member {member}")
                 data = np.load(ref.path, mmap_mode="r", allow_pickle=False)
-                return data, self.context.leases[ref].metadata or indexed(ref, data), _load
+                return data, self.context.leases[ref].metadata or indexed(ref, data), published
             identifier, item = ref.handle, self.context.leases[ref].value
         if isinstance(item, ex.Feature):
-            return item, item.registration, _load
+            grid, read = self.feature_grids.get(id(item), (item.registration, published))
+            return item, mask_metadata(grid, grid.storage), read
         if isinstance(item, ex.RegisteredArray):
-            return item.data, item.metadata, _load
+            return item.data, item.metadata, published
         if isinstance(item, tj.Scan | tj.Frames | tj.Simulation | tj.Reconstruction | tj.Alignment):
             key = member or next(key for cls, key in _PRIMARY.items() if isinstance(item, cls))
             bound = handle(item).bind(identifier)
@@ -141,7 +144,7 @@ class Registrations:
                         return np.asarray(
                             cast("ex.RegisteredArray", bound.members[ref.member]).data
                         )
-                    return _load(ref)
+                    return published(ref)
 
                 return value.data, value.metadata, coordinate
             if value is None or value is item:
@@ -150,12 +153,17 @@ class Registrations:
         if member:
             raise KeyError(f"{type(item).__name__} has no member {member}")
         data = np.asarray(item)
-        return data, indexed(Member("python", "array"), data), _load
+        return data, indexed(Member("python", "array"), data), published
 
     def register_feature(
         self, mask: ArrayLike | jax.Array, *, like: object, name: str = "python"
     ) -> str:
         values, registration, coordinate = self.registered(like)
+        if isinstance(mask, ex.Feature):
+            _, mask_grid, read_mask = self.registered(mask)
+            require_same_grid(
+                mask_grid, registration, field="mask", read_left=read_mask, read_right=coordinate
+            )
         whole = np.asarray(mask, dtype=bool)
         if whole.shape != tuple(registration.shape):
             raise ValueError(f"mask shape {whole.shape} differs from the grid {registration.shape}")
@@ -165,6 +173,8 @@ class Registrations:
         named = new_reference("feature")
         self.roots.append((named, feature_handle(feature, values)))
         self.made[named] = feature
+        # The copy in grid is private until this call publishes. Read the original in this call.
+        self.feature_grids[id(feature)] = registration, coordinate
         return named
 
     def show(
@@ -201,17 +211,30 @@ class Registrations:
         grid: bool = False,
     ) -> list[dict[str, object]]:
         """Render planes like the view tool; with ``other``, the difference from it."""
-        data, meta, _ = self.registered(source)
+        data, meta, read_source = self.registered(source)
         names = [a.name for a in meta.axes]
         shape = tuple(meta.shape)
-        second = self.registered(other)[0] if other is not None else None
+        second = None
+        if other is not None:
+            second, other_meta, read_other = self.registered(other)
+            require_same_grid(
+                meta, other_meta, field="other", read_left=read_source, read_right=read_other
+            )
+            if meta.unit != other_meta.unit:
+                raise ValueError(
+                    f"Difference needs matching value units ({meta.unit} vs {other_meta.unit})."
+                )
         masks = []
         for f in features:
             feature = f
             if isinstance(f, str):
                 feature = self.made[f] if f in self.made else self.inputs[f]
-            if not isinstance(feature, ex.Feature) or feature.shape != shape:
-                raise ValueError(f"{f!r} is not a feature on a {shape} grid")
+            if not isinstance(feature, ex.Feature):
+                raise ValueError(f"{f!r} is not a feature")
+            _, mask_meta, read_mask = self.registered(feature)
+            require_same_grid(
+                meta, mask_meta, field="features", read_left=read_source, read_right=read_mask
+            )
             masks.append(feature)
         panels, frames, outlines = [], [], []
         for d, at, selected, step, sampling in plane_windows(
@@ -360,13 +383,6 @@ def execute_in_namespace(
             namespace.pop(key, None)
         kept = {k: v for k, v in namespace.items() if k != "__builtins__"}
         context.measure(array_bytes(kept, set()))
-
-
-def _load(ref: Storage) -> np.ndarray:
-    """A coordinate vector stored in a NumPy file."""
-    if not isinstance(ref, Npy):
-        raise ValueError(f"coordinate vector {ref} is not a published array")
-    return np.load(ref.path, mmap_mode="r", allow_pickle=False)
 
 
 def summarize(value: object) -> object:
