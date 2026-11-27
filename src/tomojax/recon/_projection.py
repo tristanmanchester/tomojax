@@ -719,8 +719,10 @@ def _correction(
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)
         if curvature is not None:
             fraction = interior / jnp.where(positive, expected, 1.0)
-            curvature = ops.backproject(ratio * fraction, start, poses, curvature)
-        return ops.backproject(ratio, start, poses, output), curvature
+            return ops.backproject_pair(
+                (ratio, ratio * fraction), start, poses, (output, curvature)
+            )
+        return ops.backproject(ratio, start, poses, output), None
 
     zero = ops.zeros_volume()
     return jax.lax.fori_loop(0, ops.count, batch, (zero, None if background is None else zero))
