@@ -28,7 +28,7 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 38,
+    "tomojax.io.api": 41,
     "tomojax.alignment.api": 5
   },
   "cli_flags": {
@@ -60,20 +60,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5583,
-    "reportMissingImports": 61,
+    "reportAny": 5606,
+    "reportMissingImports": 63,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 875,
-    "reportUnknownMemberType": 1681,
-    "reportUnknownVariableType": 990,
-    "reportUnusedCallResult": 154
+    "reportUnknownArgumentType": 920,
+    "reportUnknownMemberType": 1732,
+    "reportUnknownVariableType": 1024,
+    "reportUnusedCallResult": 148
   },
-  "explicit_any": 425,
-  "type_casts": 84,
+  "explicit_any": 429,
+  "type_casts": 85,
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
+    "studio/crates/tomojax-studio/src/app/jobs.rs": 1047,
     "studio/crates/tomojax-studio/src/app/mod.rs": 986,
     "studio/crates/tomojax-studio/src/app/viewing.rs": 1448,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 1105,
@@ -87,7 +87,7 @@
     "studio/crates/studio-core/src/project.rs::open": 124,
     "studio/crates/tomojax-studio/src/app/actions.rs::action": 551,
     "studio/crates/tomojax-studio/src/app/jobs.rs::persist_arrays": 143,
-    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 199,
+    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 191,
     "studio/crates/tomojax-studio/src/app/mod.rs::open_project": 112,
     "studio/crates/tomojax-studio/src/app/previewing.rs::poll_interactive": 221,
     "studio/crates/tomojax-studio/src/app/validation.rs::advance_validation": 102,
@@ -101,8 +101,7 @@
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
     "studio/crates/tomojax-studio/src/imaging/reader.rs::volume": 105,
     "studio/crates/tomojax-studio/src/metadata.rs::projection_arrays": 138,
-    "studio/crates/tomojax-studio/src/metadata.rs::quick_metadata": 175,
-    "studio/crates/tomojax-studio/src/metadata.rs::stored_volume": 134,
+    "studio/crates/tomojax-studio/src/metadata.rs::quick_metadata": 165,
     "studio/crates/tomojax-studio/src/ui/controls.rs::icon": 146,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::display": 107,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::explore": 172,
@@ -144,9 +143,11 @@
     "src/tomojax/corrections/_engine.py::PLR0915::correct_frames",
     "src/tomojax/datasets/_impl/artifacts.py::C901::apply_simulation_artifacts",
     "src/tomojax/datasets/_impl/artifacts.py::PLR0915::apply_simulation_artifacts",
+    "src/tomojax/io/_datasets.py::PLR0911::_dataset_issues",
     "src/tomojax/io/_export.py::C901::install_export",
     "src/tomojax/io/_export.py::PLR0912::install_export",
     "src/tomojax/io/_export_formats.py::C901::tiff",
+    "src/tomojax/io/_hdf5_acquisition.py::C901::read_hdf5_acquisition",
     "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
@@ -154,7 +155,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 66,
     "forwarders": 9,
     "chained": 7
   },
@@ -163,5 +164,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 132
+  "test_private_imports": 133
 }
