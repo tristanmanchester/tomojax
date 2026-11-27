@@ -128,9 +128,10 @@ Keep raw benchmark records out of the repository. Benchmark scripts write under 
    stale client metadata, schemas or the format table in `docs/export.md`.
 4. Run `uv run pytest tests/test_export.py`, `just interop` and
    `just fast-check`. The temporary-format test exercises dispatch, inspection,
-   CLI and generated wire and MCP field descriptions with a format defined only
-   inside the test. Run `just studio-check` for Studio's
-   `additional_export_format_drives_fields_and_operation` check. It adds
-   a format to the schema and exercises the form parameters for a volume and
-   a mask. `just studio-verify` also queues TIFF, slice-directory and pyramid
-   jobs and compares their decoded arrays with CLI exports.
+   the CLI and generated field descriptions. It installs the extra writer and
+   its regenerated description in a temporary checkout, then runs MCP and its
+   JSON Lines worker against it. They must reject unsupported options and plan
+   and write the new format. `just studio-check` exercises the catalog fields
+   for volumes and masks. `just studio-verify` queues the same test-only
+   format, TIFF, a slice directory and an OME-Zarr pyramid from Studio. It
+   compares their decoded samples with CLI exports.

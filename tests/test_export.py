@@ -151,19 +151,10 @@ def test_registered_format_reaches_export_inspect_cli_and_generated_surfaces(
     from tomojax.cli.mcp.tools.workflows import form
     from tomojax.io import _export_formats as formats  # check-public-imports: allow-private
 
-    def write(path, blocks, record):
-        with path.open("wb") as stream:
-            stream.write(json.dumps(record).encode() + b"\n")
-            for _, slab in blocks:
-                stream.write(slab.tobytes())
+    from ._export_fixture import example_format, fixture_environment
+    from .test_mcp_stdio import connection
 
-    def read(path):
-        with path.open("rb") as stream:
-            return json.loads(stream.readline())
-
-    fmt = formats.Format(
-        "Test volume", (".example",), "file", ("crop",), "Sample values", write, read
-    )
+    fmt = example_format()
     monkeypatch.setattr(formats, "FORMATS", (*formats.FORMATS, fmt))
     path = tmp_path / "out.example"
     source = indexed()
@@ -185,6 +176,26 @@ def test_registered_format_reaches_export_inspect_cli_and_generated_surfaces(
         entries = document["properties"]["path"]["x-formats"]
         assert fmt.describe() in entries
     assert ".example" in format_table()
+
+    # The independent MCP process and its JSON Lines worker both open this
+    # package, containing the added writer and its regenerated description.
+    env = fixture_environment(tmp_path / "package")
+    monkeypatch.setenv("PYTHONPATH", env["PYTHONPATH"])
+    with connection(tmp_path) as client:
+        handle = client.call("open", kind="reconstruction", path=str(native))["structuredContent"][
+            "handle"
+        ]
+        target = tmp_path / "agent.example"
+        request = dict(source=handle, path=str(target))
+        invalid = client.call("export", **request, dtype="uint8", dry_run=True)
+        assert invalid["isError"] and "dtype" in invalid["content"][0]["text"]
+        assert (
+            client.call("export", **request, dry_run=True)["structuredContent"]["format"]
+            == fmt.name
+        )
+        assert not target.exists()
+        assert not client.call("export", **request)["isError"]
+        assert fmt.read_record(target)["export"]["format"] == fmt.name
 
 
 def test_cancel_during_slice_writes_retains_previous_stack(tmp_path):

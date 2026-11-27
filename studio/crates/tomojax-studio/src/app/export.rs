@@ -244,6 +244,7 @@ tj.save('ramp.nxs', tj.Reconstruction(volume,geometry,'fbp',{},length_unit='mm')
             ("volume.tif", "ImageJ TIFF"),
             ("slices", "TIFF slices"),
             ("volume.zarr", "OME-Zarr 0.5"),
+            ("volume.example", "Test volume"),
         ] {
             state.ui.export_format = format.into();
             state.ui.export_path = Some(root.join(name));
@@ -295,10 +296,14 @@ import tifffile, zarr
 from pathlib import Path
 from tomojax.cli.main import main
 source = Path('ramp.nxs')
-for name in ['volume.tif', 'slices', 'volume.zarr']:
+for name in ['volume.tif', 'slices', 'volume.zarr', 'volume.example']:
     dest = Path('cli') / name
     assert main(['export', str(source), '-o', str(dest), '--crop', '2:30,:,:']) == 0
     def arrays(path):
+        if path.suffix == '.example':
+            with path.open('rb') as f:
+                f.readline()
+                return [np.fromfile(f, dtype='<f4').reshape(28, 40, 258)]
         if path.suffix == '.zarr':
             group = zarr.open_group(path,mode='r')
             return [group[key][:] for key in sorted(group.array_keys())]

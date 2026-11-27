@@ -311,6 +311,13 @@ def capture(binary: Path, out_dir: Path, viewport: Viewport, *, live_export: boo
         if live_export:
             path = stage / "export.png"
             env.pop("TOMOJAX_STUDIO_INPUT", None)
+            fixture = subprocess.run(
+                [sys.executable, str(ROOT / "tests/_export_fixture.py"), str(stage / "package")],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            env["PYTHONPATH"] = fixture.stdout.strip()
             env["TOMOJAX_TEST_PYTHON"] = sys.executable
             env["TOMOJAX_EXPORT_UI_EVIDENCE"] = json.dumps(
                 [str(path), viewport.size, str(viewport.scale)]
