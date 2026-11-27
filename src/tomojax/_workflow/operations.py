@@ -587,8 +587,8 @@ def reconstruct(
     the axis to the nearer detector edge, or to the far edge on an offset axial
     parallel full turn; median over sampled horizontal chords on a rolled
     detector), in the scan's length unit.
-    For iterative methods ``outside_grid`` is the share of measured
-    attenuation assigned to the exterior. ``background_treatment`` is
+    For iterative methods ``outside_grid`` is the signed sum of the
+    modeled background divided by the sum of the measurements. ``background_treatment`` is
     ``subtracted``, ``additive_poisson`` or ``none``.
 
     ``checkpoint`` names a directory where the run saves its state, so a run

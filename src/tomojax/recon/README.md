@@ -222,9 +222,10 @@ For iterative reconstruction a coarse fit to the completed rows estimates the
 exterior contribution to each measured ray. Its amplitude comes from continued
 rays that miss the entire output grid. CGLS, SIRT, FISTA and SPDHG subtract this
 background from private measurements. MLEM includes the nonnegative background
-in its Poisson mean. Neither operation changes the measured scan or the matched
-projector pair. `outside_grid` gives the share of the measured signal assigned
-to this background. `background_treatment` records `subtracted`,
+in its Poisson mean. Its subset update uses the share of that mean produced
+inside the grid to minimize a separable likelihood bound. Both treatments keep
+the measured scan and the matched projector pair. `outside_grid` gives the
+signed sum of the modeled background divided by the sum of the measurements. `background_treatment` records `subtracted`,
 `additive_poisson` or `none`.
 
 Direct FBP pads, filters and backprojects one view batch at a time. On a rolled

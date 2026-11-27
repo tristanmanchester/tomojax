@@ -108,6 +108,37 @@ def test_view_sharing_uses_the_same_exterior_on_each_device(method) -> None:
     np.testing.assert_allclose(shared.volume, single.volume, rtol=1e-4, atol=1e-5)
 
 
+@pytest.mark.parametrize("method", ["cgls", "sirt", "mlem"])
+def test_truncated_cone_uses_the_same_model_in_host_output_and_resident_fits(method) -> None:
+    scan = _cone()
+    options = {"warm_start": True, "iterations": 2}
+    resident = tj.reconstruct(scan, method, **options)
+    target = np.empty(scan.grid.shape, np.float32)
+    streamed = tj.reconstruct(scan, method, out=target, **options)
+    assert streamed.volume is target
+    assert streamed.info["truncation"] == resident.info["truncation"]
+    assert resident.info["truncation"]["outside_grid"] > 0
+    np.testing.assert_allclose(target, resident.volume, atol=2e-6, rtol=3e-5)
+
+
+@pytest.mark.parametrize("method", ["sirt", "mlem"])
+def test_raw_slab_uses_the_same_exterior_as_the_whole_scan(method) -> None:
+    scan = _parallel(rows=9)
+    frames = tj.Frames(1000 * np.exp(-scan.projections), scan.geometry, white_level=1000)
+    from tomojax.recon import MLEMConfig, SIRTConfig
+
+    config = SIRTConfig(iterations=3) if method == "sirt" else MLEMConfig(iterations=3)
+    options = {"warm_start": True, "config": config}
+    resident = tj.reconstruct(frames.corrected(), method, **options)
+    with tj.reconstruct_slabs(frames, method, **options) as slabs:
+        sections = list(slabs)
+    assert len(sections) > 1
+    for section, result in sections:
+        assert result.info["truncation"]["outside_grid"] > 0
+        assert result.info["truncation"] == pytest.approx(resident.info["truncation"])
+        np.testing.assert_allclose(result.volume, resident.volume[section], atol=2e-6, rtol=3e-5)
+
+
 def test_checkpoint_preserves_the_exterior_during_the_final_fit(tmp_path) -> None:
     from tomojax import progress
     from tomojax.errors import Canceled

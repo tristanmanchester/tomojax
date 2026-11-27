@@ -528,7 +528,12 @@ def previews() -> Iterator[None]:
 def preview(build: Callable[[], dict[str, Sample]], *, final: bool = False) -> None:
     """Copy coherent arrays at a work boundary only when a preview will be delivered."""
     active = current_task.get()
-    if active is None or not active.watcher.previews or active.previewed == active.done:
+    if (
+        active is None
+        or active.name == "prepare"
+        or not active.watcher.previews
+        or active.previewed == active.done
+    ):
         return
     watcher = active.watcher
     now = monotonic() - watcher.pause_time
