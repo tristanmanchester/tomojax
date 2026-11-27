@@ -79,9 +79,10 @@ least 64) and measures, in cells of 16 detector pixels, how much of the
 difference between the two sets each view contains. The measurement is a
 regression on the difference's structure along detector rows, which is
 unrelated to the sample. A straight line through the interval is fitted to
-those shares at three scales, from 144 pixels down to one cell, each with the
-scale above as its prior. The prior of the broadest scale is linear
-interpolation in position.
+those shares in regions 144 pixels across, with linear interpolation in
+position as the prior, and then in windows of 48 pixels, which are held to
+their region's line unless they differ from it by more than their own
+uncertainty.
 
 - **Sets that differ by noise, by level, or smoothly along a row** tell the
   views nothing, and are interpolated in position exactly as before. The sets'
@@ -97,7 +98,8 @@ interpolation in position.
   edge that only one set has is not in the views, so the flat carries its level
   across the edge instead of stepping there.
 
-The `flat_dark` record reports what was found:
+The `flat_dark` record reports what was found (the last two only when the
+views set a weight somewhere):
 
 | Key | Meaning |
 | --- | --- |

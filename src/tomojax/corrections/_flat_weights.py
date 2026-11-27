@@ -8,11 +8,11 @@ illumination is ``earlier * exp(w L)``, ``log(view) - log(earlier) = w L - p`` f
 line integrals ``p``. The fine structure of ``L`` along detector columns is unrelated
 to the object, so regressing the view on it over a neighborhood measures ``w`` there.
 
-A sample of views gives ``w`` through the interval in each detector cell, fitted as a
-line in the views' positions between the sets. The flat sets' own noise is in ``L``
-and in no view: its expected products are subtracted, so a difference that is only
-noise or smooth across columns carries no information and the weights stay those of
-linear interpolation in position.
+A sample of views gives ``w`` through the interval around each detector cell, fitted
+as a line in the views' positions between the sets. The flat sets' own noise is in
+``L`` and in no view: its expected products are subtracted, so a difference that is
+only noise or smooth across columns carries no information and the weights stay those
+of linear interpolation in position.
 
 The weights describe structure, not level. Where they change along a row while the
 sets differ, blending the sets would put a step in the flat that neither the views
@@ -44,7 +44,7 @@ if TYPE_CHECKING:
 
 LOG = logging.getLogger(__name__)
 
-# Detector pixels along each side of a weight cell; a weight is fitted to the cells around it.
+# Detector pixels along each side of a weight cell; a weight is fitted to the 3 x 3 cells about it.
 _CELL = 16
 # Columns of the running mean that the high-pass along a detector row removes.
 _WIDTH = 15
@@ -141,17 +141,19 @@ def view_weights(
         intervals += 1
     if not intervals:
         return None, {}
-    pixels = max(float(tally[2]), np.finfo(np.float64).tiny)
-    share, unmatched = float(tally[0]) / pixels, float(np.sqrt(tally[1] / pixels))
-    # Where the views set the weights, their mean; nowhere, linear interpolation.
-    start, end = (round(float(w / tally[0]), 4) for w in tally[3:]) if tally[0] else (0.0, 1.0)
+    weights = FlatWeights(ends, levels, (rows, cols), (0, rows))
+    share = round(float(tally[0] / max(tally[2], np.finfo(np.float64).tiny)), 4)
+    if not tally[0]:  # the views say nothing: every weight is linear interpolation
+        return weights, {"flat_weights_from_views": 0.0}
+    start, end = (round(float(w / tally[0]), 4) for w in tally[3:])
+    unmatched = float(f"{np.sqrt(tally[1] / tally[2]):.3g}")
     LOG.info(
         "flat sets weighted by the views over %.1f%% of the detector (later set %.2f at the "
         "start, %.2f at the end); fine flat structure the views do not show: %.2g RMS",
         100 * share, start, end, unmatched,
     )  # fmt: skip
-    return FlatWeights(ends, levels, (rows, cols), (0, rows)), {
-        "flat_weights_from_views": round(share, 4),
+    return weights, {
+        "flat_weights_from_views": share,
         "later_flat_weight": [start, end],
         "flat_structure_unmatched": unmatched,
     }
@@ -202,9 +204,9 @@ def _fitted(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Weights and levels of one interval from its views' cell sums, and what they found.
 
-    Three scales are fitted, each with the scale above as its prior: ``_BROAD``
-    cells each way (whose prior is linear interpolation), one cell each way, and
-    the cell alone. Returns ``(2, cells_v, cells_u)`` weights,
+    Two scales are fitted: ``_BROAD`` cells each way, with linear interpolation
+    as its prior, and one cell each way, with the broad weights as its prior.
+    Returns ``(2, cells_v, cells_u)`` weights,
     ``(2, cells_v, columns)`` levels, and a tally over the detector of the views'
     share of the broad weights, the fine-structure energy that matches neither
     set, the pixels, and the broad weight at each end where the views set it.
@@ -212,8 +214,14 @@ def _fitted(
     around = _windows(cell_sums, 1)
     normal = _normal(around, t)
     broad, share = _solve(_windows(normal, _BROAD) / 9, _LINEAR)
-    near, _ = _solve(normal, broad)
-    ends, _ = _solve(_normal(cell_sums.astype(np.float64), t), near)
+    # How far a cell's weights really lie from its region's: their scatter there beyond
+    # what their own uncertainty explains. Cells that agree are held to the region.
+    free, _ = _solve(normal, broad)
+    precision = normal[0] + normal[2]
+    explained = 1 / (normal[0] + _PRIOR_PRECISION) + 1 / (normal[2] + _PRIOR_PRECISION)
+    excess = _windows(precision * (((free - broad) ** 2).sum(0) - explained), _BROAD)
+    spread = np.maximum(excess / np.maximum(_windows(precision, _BROAD), 1e-300), 0.0) / 2
+    ends, _ = _solve(normal, broad, np.maximum(_PRIOR_PRECISION, 1 / np.maximum(spread, 1e-6)))
     area = share * around[4].mean(0)
     neither = (broad * (1 - broad)).mean(0)  # 0 where each end matches one set
     energy = np.maximum(around[1].mean(0), 0.0)
@@ -354,22 +362,26 @@ def _normal(sums: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 
 def _solve(
-    normal: np.ndarray, prior: np.ndarray, *, clip: bool = True
+    normal: np.ndarray,
+    prior: np.ndarray,
+    precision: np.ndarray | float = _PRIOR_PRECISION,
+    *,
+    clip: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Weights at both ends from normal equations and a prior, and the views' share.
 
-    The prior's two means are each as uncertain as a weight known only to lie in
-    [0, 1]. Returns ``(2, ...)`` weights, clipped to [0, 1] unless told otherwise,
-    and the fraction of their precision that came from the views.
+    By default the prior's two means are each as uncertain as a weight known only
+    to lie in [0, 1]. Returns ``(2, ...)`` weights, clipped to [0, 1] unless told
+    otherwise, and the fraction of their precision that came from the views.
     """
     m00, m01, m11, b0, b1 = normal
-    a00, a11 = m00 + _PRIOR_PRECISION, m11 + _PRIOR_PRECISION
-    b0, b1 = b0 + _PRIOR_PRECISION * prior[0], b1 + _PRIOR_PRECISION * prior[1]
+    a00, a11 = m00 + precision, m11 + precision
+    b0, b1 = b0 + precision * prior[0], b1 + precision * prior[1]
     determinant = a00 * a11 - m01**2
     ends = np.stack([(a11 * b0 - m01 * b1) / determinant, (a00 * b1 - m01 * b0) / determinant])
     if clip:
         ends = np.clip(ends, 0.0, 1.0)
-    return ends, (m00 + m11) / (m00 + m11 + 2 * _PRIOR_PRECISION)
+    return ends, (m00 + m11) / (m00 + m11 + 2 * precision)
 
 
 def _levels(

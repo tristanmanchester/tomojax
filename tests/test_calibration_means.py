@@ -51,7 +51,9 @@ def test_calibration_means_match_independent_host_interpolation(
     ).corrected(views_per_batch=3)
     np.testing.assert_allclose(actual.projections, expected, rtol=2e-6, atol=2e-7)
     assert actual.corrections[0].settings["flat_sets"] == len(positions)
-    assert actual.corrections[0].found == {"pixels_without_light": 5}
+    # Sets that differ by noise leave the views nothing to weigh them by.
+    weighed = {"flat_weights_from_views": 0.0} if several_sets else {}
+    assert actual.corrections[0].found == {"pixels_without_light": 5} | weighed
     assert actual.corrections[-1].found == {"nonpositive_transmission": 0}
     for values, original in zip((counts, flats, darks), originals, strict=True):
         np.testing.assert_array_equal(values, original)

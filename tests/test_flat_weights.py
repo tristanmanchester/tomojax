@@ -131,8 +131,7 @@ def test_sets_that_differ_by_noise_or_level_stay_interpolated_by_position(case: 
     frames, _, _ = _frames(case)
     scan = frames.corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), _by_position(frames), atol=1e-5)
-    found = scan.corrections[0].found
-    assert found["flat_weights_from_views"] == 0 and found["later_flat_weight"] == [0.0, 1.0]
+    assert scan.corrections[0].found == {"pixels_without_light": 0, "flat_weights_from_views": 0.0}
 
 
 def test_sets_of_one_frame_have_no_measured_noise_and_stay_interpolated_by_position() -> None:
