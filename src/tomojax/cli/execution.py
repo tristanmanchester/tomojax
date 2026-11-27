@@ -238,12 +238,20 @@ class Success:
 type Adapter[T: ExecutionInput] = Callable[[T, ExecutionContext], Success]
 
 
-def volume_metadata(grid: tj.Grid, *, storage: Storage, dtype: str, length_unit: str) -> Array:
+def volume_metadata(
+    grid: tj.Grid,
+    *,
+    storage: Storage,
+    dtype: str,
+    length_unit: str,
+    geometry_meta: Mapping[str, Any] | None = None,
+) -> Array:
     """Register a (z, y, x) volume using physical voxel-center coordinates."""
-    from tomojax.core.registration import volume_axes
+    from tomojax.core.registration import volume_axes, volume_values
 
     axes = volume_axes(grid, length_unit)
-    return Array(storage, grid.shape, dtype, axes, f"1/{length_unit}", "attenuation")
+    unit, domain = volume_values(np.dtype(dtype), length_unit, geometry_meta or {})
+    return Array(storage, grid.shape, dtype, axes, unit, domain)
 
 
 def plane_source(operation: Plane, context: ExecutionContext) -> tuple[RegisteredArray, int, Fixed]:

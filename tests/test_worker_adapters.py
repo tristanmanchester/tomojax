@@ -12,6 +12,8 @@ import pytest
 
 import tomojax as tj
 
+from ._helpers import write_rc6_dataset
+
 pytestmark = pytest.mark.surface
 
 
@@ -233,6 +235,11 @@ def test_raw_frames_stream_into_reopenable_slab_volume(worker, tmp_path):
     assert saved.grid.vol_origin == (-5.0, -5.5, -2.0)
     assert saved.info["source"] == str(raw)
     assert saved.info["config"]["exterior"] == "zero"
+    with h5py.File(result[0]) as file:
+        assert file.attrs["file_name"] == "slabs.nxs"
+        provenance = json.loads(file["entry/record"][()])["provenance"]
+        assert provenance["resolved_config"]["config"]["exterior"] == "zero"
+        assert provenance["lineage"]["operation"] == "reconstruct_slabs"
     actual = saved.volume
     frames = tj.load_frames(raw, detector=tj.Detector(13, 5, 1, 1), flats=1000, darks=10)
     from tomojax.recon import FBPConfig
@@ -895,10 +902,16 @@ def test_saved_volume_axes_in_operators_and_roi(worker, tmp_path, axes):
     sim = tj.simulate(size=8, n_views=8)
     x = np.arange(8**3, dtype=np.float32).reshape((8,) * 3) / 64
     path = tmp_path / "asymmetric.nxs"
-    tj.save(path, tj.Reconstruction(x, sim.scan.geometry, "example", {}, sim.scan))
+    write_rc6_dataset(
+        path,
+        grid=sim.scan.grid,
+        detector=sim.scan.detector,
+        angles=sim.scan.angles,
+        projections=sim.scan.projections,
+    )
     with h5py.File(path, "r+") as file:
-        group = file["/entry/processing/tomojax"]
-        group["volume"][:] = x.transpose(tuple("zyx".index(a) for a in axes))
+        group = file.create_group("/entry/processing/tomojax")
+        group["volume"] = x.transpose(tuple("zyx".index(a) for a in axes))
         group.attrs["volume_axes_order"] = axes
         ref = dict(type="hdf5", path=str(path), dataset=group["volume"].name)
     source = dict(type="path", path=str(tmp_path / "scan.nxs"))

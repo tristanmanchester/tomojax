@@ -16,9 +16,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager, closing, contextmanager
-from dataclasses import is_dataclass, replace
+from dataclasses import replace
 import inspect
-import json
 import logging
 import os
 from os import PathLike
@@ -49,10 +48,7 @@ from tomojax._scan.model import (
     cropped_record,
     frame_output_grid,
     geometry_of,
-    geometry_record,
     rebuild,
-    record_of,
-    source_of,
 )
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import Device
@@ -73,7 +69,6 @@ if TYPE_CHECKING:
     from tomojax._workflow import region as _region
     from tomojax._workflow.planning import ResolvedReconstruction
     from tomojax._workflow.smooth_alignment import CenterSelection, JointSelection
-    from tomojax.core.json_values import JsonValue
     from tomojax.corrections.api import CorrectedRows
     from tomojax.geometry import Detector
     from tomojax.io import ProjectionDataset
@@ -128,12 +123,25 @@ def load_reconstruction(path: str | PathLike[str]) -> Reconstruction:
         return reconstruction_from_record(path, load_dataset(os.fspath(path)), load)
 
 
+def _scan_of_record(
+    path: str | PathLike[str],
+    record: ProjectionDataset,
+    read_scan: Callable[[str | PathLike[str]], Scan],
+) -> Scan:
+    if record.source_format == "tomojax":
+        from tomojax._loading.loader import scan_in_result
+        from tomojax.io.api import replace_dataset
+
+        return scan_in_result(Path(path), replace_dataset(record, volume=None))
+    return read_scan(path)
+
+
 def reconstruction_from_record(
     path: str | PathLike[str],
     record: ProjectionDataset,
     read_scan: Callable[[str | PathLike[str]], Scan],
 ) -> Reconstruction:
-    from tomojax._loading.files import saved_volume_grid
+    from tomojax.io.api import replace_dataset, saved_volume_grid
 
     if record.volume is None:
         raise ValueError(f"{path} holds no reconstructed volume")
@@ -143,7 +151,7 @@ def reconstruction_from_record(
             f"{path} holds a simulation phantom, not a reconstruction; "
             "load it with tomojax.load_simulation"
         )
-    scan = None if record.projections is None else read_scan(path)
+    scan = None if record.projections is None else _scan_of_record(path, record, read_scan)
     if scan is None:
         warn(
             f"{path} holds the reconstruction without its scan (saved without "
@@ -153,13 +161,9 @@ def reconstruction_from_record(
     geometry = geometry_of(record, apply_poses=True) if scan is None else scan.geometry
     info = meta.get("reconstruction_info", meta.get("alignment_info"))
     aligned = "reconstruction_method" not in meta and "alignment_info" in meta
-    if aligned:
-        volume_grid = saved_volume_grid(
-            None if record.grid is None else record.grid.to_dict(),
-            meta,
-        )
-        if volume_grid is not None:
-            geometry = rebuild(geometry, grid=volume_grid)
+    volume_grid = saved_volume_grid(record.grid, meta)
+    if volume_grid is not None and volume_grid != geometry.grid:
+        geometry = rebuild(geometry, grid=volume_grid)
     return Reconstruction(
         volume=np.asarray(record.volume),
         geometry=geometry,
@@ -168,6 +172,7 @@ def reconstruction_from_record(
         scan=scan,
         length_unit=recorded_length_unit(meta),
         source_path=str(Path(path).resolve()),
+        source_record=replace_dataset(record, volume=None) if scan is None else None,
     )
 
 
@@ -209,7 +214,7 @@ def simulation_from_record(
 ) -> Simulation:
     if record.volume is None or record.geometry_metadata.get("volume_role") != "phantom":
         raise ValueError(f"{path} holds no simulation phantom")
-    return Simulation(read_scan(path), np.asarray(record.volume))
+    return Simulation(_scan_of_record(path, record, read_scan), np.asarray(record.volume))
 
 
 def load_alignment(path: str | PathLike[str]) -> Alignment:
@@ -257,7 +262,7 @@ def alignment_from_record(
     raw_info = meta.get("alignment_info")
     if not isinstance(raw_info, dict):
         raise ValueError(f"{path} holds no alignment record")
-    scan = read_scan(path)
+    scan = _scan_of_record(path, record, read_scan)
     info = dict(raw_info)
     raw_working_grid = info.pop("working_grid", None)
     image = None if record.volume is None else np.asarray(record.volume)
@@ -329,66 +334,12 @@ def save(
     >>> scan = tj.load("scan.nxs")  # doctest: +SKIP
     >>> tj.save("copy.nxs", scan)  # doctest: +SKIP
     """
-    from tomojax._scan.simulation import Simulation
+    from tomojax._scan.records import result_dataset
     from tomojax.io import save_dataset
-    from tomojax.io.api import replace_dataset
 
     with progress.task("save", Path(path).name, None, ""):
         validate_save(Path(path), item, include_scan=include_scan)
-        if isinstance(item, Scan):
-            record = record_of(item)
-        elif isinstance(item, Simulation):
-            record = record_of(item.scan)
-            record.volume = item.phantom
-            record.geometry_metadata["volume_role"] = "phantom"
-            record.geometry_metadata.pop("reconstruction_method", None)
-            record.geometry_metadata.pop("reconstruction_info", None)
-        elif isinstance(item, Reconstruction):
-            if item.scan is None:
-                record = geometry_record(item.geometry)
-                source = item.info.get("source")
-            else:
-                record = record_of(item.scan, grid=item.grid)
-                source = source_of(item.scan)
-                if not include_scan:
-                    record = replace_dataset(record, projections=None)
-            if item.length_unit is not None:
-                record.geometry_metadata["length_unit"] = item.length_unit
-            record.volume = item.volume
-            record.geometry_metadata["reconstruction_method"] = item.method
-            record.geometry_metadata["reconstruction_info"] = saved_info(
-                {**item.info, "source": source}
-            )
-        elif isinstance(item, Alignment):  # pyright: ignore[reportUnnecessaryIsInstance]
-            record = record_of(item.scan)
-            record.volume = item.image
-            # The alignment made this volume: an earlier reconstruction's method
-            # and settings no longer describe it.
-            record.geometry_metadata.pop("reconstruction_method", None)
-            record.geometry_metadata.pop("reconstruction_info", None)
-            # The image's grid, which need not be the scan's: load_alignment/export read it back.
-            info = {**item.info} if item.grid is None else {**item.info, "working_grid": item.grid}
-            record.geometry_metadata["alignment_info"] = saved_info(info)
-        else:
-            raise TypeError(
-                f"save takes a Scan, Reconstruction, Alignment or Simulation, not {type(item)}"
-            )
-        if not isinstance(item, Simulation):  # a scan loaded from a simulation carries its tag
-            _ = record.geometry_metadata.pop("volume_role", None)
-        save_dataset(path, record)
-
-
-def saved_info(info: dict[str, object]) -> dict[str, JsonValue]:
-    """Convert result metadata to JSON, recording dataclass settings by field."""
-    return cast("dict[str, JsonValue]", json.loads(json.dumps(info, default=_json_value)))
-
-
-def _json_value(value: object) -> object:
-    from dataclasses import fields
-
-    if is_dataclass(value) and not isinstance(value, type):
-        return {item.name: getattr(value, item.name) for item in fields(value)}
-    return str(value)
+        save_dataset(path, result_dataset(item, include_scan=include_scan))
 
 
 # ----------------------------------------------------------------------------- operations

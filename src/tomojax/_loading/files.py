@@ -6,17 +6,18 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import cast
 
 import h5py
 import numpy as np
 
 from tomojax import progress
-from tomojax._scan.model import Alignment, Reconstruction, geometry_record
+from tomojax._loading.registration import registered_member, unit_of
+from tomojax._scan.model import Alignment, Reconstruction
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import object_mapping
 from tomojax.core.input_files import input_path, reading
-from tomojax.core.registration import recorded_length_unit, volume_axes
+from tomojax.core.registration import recorded_length_unit, volume_axes, volume_values
 from tomojax.io.api import (
     ExportCrop,
     ExportDtype,
@@ -24,14 +25,12 @@ from tomojax.io.api import (
     Inspection,
     inspect_export,
     metadata_record,
-    normalize_json,
     plan_export,
+    registered_members,
+    saved_volume_grid,
     volume_entry,
 )
 from tomojax.wire.arrays import Array, Hdf5
-
-if TYPE_CHECKING:
-    from tomojax.geometry import Grid
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:
@@ -178,60 +177,18 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     }, geometry.grid
 
 
-def saved_volume_grid(
-    grid_meta: Mapping[str, Any] | None,
-    geometry_meta: Mapping[str, Any] | None,
-) -> Grid | None:
-    """Resolve the grid belonging to a saved dataset's stored volume.
-
-    Alignments store the scan grid in ``grid_meta`` and the working image's grid
-    under ``geometry_meta["alignment_info"]["working_grid"]``. Reconstructions
-    and simulations store the volume's grid in ``grid_meta``.
-    """
-    from tomojax.geometry import Grid
-
-    meta = geometry_meta or {}
-    if "reconstruction_method" not in meta:
-        alignment_info = meta.get("alignment_info")
-        if isinstance(alignment_info, Mapping):
-            working = alignment_info.get("working_grid")
-            if isinstance(working, Mapping):
-                return Grid.from_dict(working)
-    if grid_meta:
-        return Grid.from_dict(grid_meta)
-    return None
-
-
 def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource:
     """Pair one result's pixels with its geometry and acquisition record."""
-    scan = item.scan
-    geometry = item.geometry if isinstance(item, Reconstruction) else item.scan.geometry
-    dataset = geometry_record(
-        geometry, name=scan.name if scan else "sample", source=scan.source if scan else None
-    )
-    meta = dataset.geometry_metadata
-    if scan is not None:
-        meta["corrections"] = [c.to_dict() for c in scan.corrections]
-        if scan.view_positions is not None:
-            meta["view_positions"] = scan.view_positions.tolist()
-    if isinstance(item, Reconstruction):
-        name, pixels, grid = "volume", item.volume, item.grid
-        meta["reconstruction_method"] = item.method
-        meta["reconstruction_info"] = normalize_json(item.info)
-        if item.length_unit:
-            meta["length_unit"] = item.length_unit
-    elif isinstance(item, Simulation):
-        name, pixels, grid = "phantom", item.phantom, item.scan.grid
-    else:
-        if item.image is None or item.grid is None:
-            raise ValueError("alignment holds no working image to export")
-        name, pixels, grid = "image", item.image, item.grid
-        meta["alignment_info"] = {**item.info, "working_grid": grid.to_dict()}
-    record = metadata_record(dataset.to_nxtomo_metadata())
-    unit = recorded_length_unit(meta) or "scan_length"
-    domain = (
-        "mask" if np.dtype(pixels.dtype).kind in "biu" else str(meta.get("quantity", "attenuation"))
-    )
+    from tomojax._scan.records import result_dataset
+    from tomojax.io.api import replace_dataset
+
+    unit = unit_of(item if isinstance(item, Reconstruction) else item.scan)
+    member = registered_member(item, unit)
+    if member is None:
+        raise ValueError("alignment holds no working image to export")
+    pixels = member.pixels
+    dataset = result_dataset(item)
+    record = metadata_record(replace_dataset(dataset, volume=None).to_nxtomo_metadata())
     from tomojax.core.host_volume import mapped_storage, release_planes
 
     mapped = mapped_storage(pixels)
@@ -247,12 +204,12 @@ def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource
         return data
 
     return ExportSource(
-        name,
+        member.name,
         pixels.shape,
         np.dtype(pixels.dtype),
-        volume_axes(grid, unit),
-        "1" if domain == "mask" else f"1/{unit}",
-        domain,
+        member.axes,
+        member.unit,
+        member.domain,
         read,
         record,
     )
@@ -260,7 +217,7 @@ def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource
 
 @contextmanager
 def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[ExportSource, Array]]:
-    """Read a legacy volume by windows from the same open file as its registration."""
+    """Read registered volume windows from the same open generation as the metadata."""
     from tomojax.geometry import Grid
 
     with reading(path), h5py.File(path, "r") as file:
@@ -276,27 +233,40 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
         if member is not None and member != name:
             raise ValueError(f"{path} has no {member} member to export; available: {name}")
         shape = tuple(data.shape[order.index(a)] for a in "zyx")
-        unit = recorded_length_unit(geom) or "scan_length"
-        grid_dict = meta.grid.to_dict() if isinstance(meta.grid, Grid) else meta.grid
-        grid = saved_volume_grid(grid_dict, geom) or Grid(
-            shape[2], shape[1], shape[0], 1.0, 1.0, 1.0
-        )
-        axes = volume_axes(grid, unit)
-        record = metadata_record(meta)
-        domain = str(geom.get("quantity", "attenuation"))
+        if "tomojax_format" in file.attrs:
+            disk = registered_members(file, path)[name]
+            axes = disk.axes
+        else:
+            unit = recorded_length_unit(geom) or "scan_length"
+            grid = saved_volume_grid(meta.grid, geom) or Grid(
+                shape[2], shape[1], shape[0], 1.0, 1.0, 1.0
+            )
+            axes = volume_axes(grid, unit)
+            value_unit, domain = volume_values(data.dtype, unit, geom)
+            disk = Array(
+                Hdf5(str(path), "/entry/processing/tomojax/volume"),
+                data.shape,
+                data.dtype.str,
+                tuple(axes["zyx".index(a)] for a in order),
+                value_unit,
+                domain,
+            )
+
+        from tomojax.core.host_volume import mapped_storage, release_planes
+
+        pixels = meta.volume
+        direct = isinstance(pixels, np.ndarray) and mapped_storage(pixels) is not None
 
         def read(region: tuple[slice, ...]) -> np.ndarray:
+            if direct and isinstance(pixels, np.ndarray):
+                values = pixels[region].copy()
+                release_planes(pixels, region[0].start, region[0].stop)
+                return values
             selection = tuple(region["zyx".index(a)] for a in order)
             return np.asarray(data[selection]).transpose(*(order.index(a) for a in "zyx"))
 
-        source = ExportSource(name, shape, data.dtype, axes, f"1/{unit}", domain, read, record)
-        disk = Array(
-            Hdf5(str(path), str(data.name)),
-            data.shape,
-            data.dtype.str,
-            tuple(axes["zyx".index(a)] for a in order),
-            source.unit,
-            source.domain,
+        source = ExportSource(
+            name, shape, data.dtype, axes, disk.unit, disk.domain, read, metadata_record(meta)
         )
         yield source, disk
 
@@ -357,6 +327,13 @@ def export(
     >>> recon = tj.load_reconstruction("scan.nxs")  # doctest: +SKIP
     >>> receipt = tj.export("detail.tif", recon, crop=(slice(10, 30), None, None))  # doctest: +SKIP
     """
+    if not isinstance(path, str | PathLike) or not isinstance(
+        item, Reconstruction | Alignment | Simulation
+    ):
+        raise TypeError(
+            "tj.export(path, item) expects a destination path and a Reconstruction, Alignment "
+            "or Simulation with registered geometry"
+        )
     with reading():
         source = volume_source(item)
         plan = plan_export(

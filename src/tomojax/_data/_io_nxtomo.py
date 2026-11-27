@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from itertools import product
-import json
 import math
 import os
 from pathlib import Path
@@ -13,8 +11,17 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.files import replaced_when_complete
-from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
+from ._format2 import (
+    contiguous,
+    copy_pixels,
+    local_map,
+    open_record,
+    read_format_2,
+    signal_at,
+    volume_member,
+    write_record,
+)
 from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees, angles_in_degrees
 from ._io_frames import NXTOMO_FRAME_PATHS, Hdf5Frames, LocatedFrames, locate_frames
 from ._io_helpers import (
@@ -30,16 +37,13 @@ from ._io_helpers import (
     load_sample_metadata,
     load_source_metadata,
     sizes_of,
-    write_string_attr,
 )
 from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata, ValidationReport
-from .geometry_meta import normalize_geometry_type
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from os import PathLike
 
-    import jax
 
 # Where a saved reconstruction keeps its volume.
 _VOLUME = "/entry/processing/tomojax/volume"
@@ -50,10 +54,9 @@ def save_nxtomo(
     projections: np.ndarray | None,
     *,
     metadata: NXTomoMetadata | None = None,
-    compression: str = "lzf",
     overwrite: bool = True,
 ) -> None:
-    """Write a dataset to an HDF5 file using NXtomo + TomoJAX extras.
+    """Write a format-2 NeXus dataset with unfiltered contiguous pixels.
 
     `metadata` owns the persistence contract: geometry, detector/grid definitions,
     optional reconstructed volume, and TomoJAX-specific extras. Volume inputs in
@@ -69,8 +72,6 @@ def save_nxtomo(
     metadata : NXTomoMetadata or None, optional
         Acquisition and reconstruction metadata; absent angles stay absent.
         None writes projections without detector or angular calibration.
-    compression : str, optional
-        HDF5 dataset compression filter; defaults to lzf.
     overwrite : bool, optional
         Replace an existing file; False requires a new path.
 
@@ -87,10 +88,8 @@ def save_nxtomo(
         If output cannot be written or already exists with overwrite=False.
     """
     meta = metadata or NXTomoMetadata()
-    if not overwrite and Path(path).exists():
-        raise FileExistsError(f"{path} exists; pass overwrite=True to replace it")
 
-    proj = None if projections is None else np.asarray(projections)
+    proj = projections
     if proj is None and meta.volume is None:
         raise ValueError("a dataset without projections must hold a volume")
     if proj is not None and proj.ndim != 3:
@@ -98,11 +97,18 @@ def save_nxtomo(
     if meta.volume is not None and meta.volume.ndim != 3:
         raise ValueError("volume must be 3D (nz, ny, nx)")
     with (
-        replaced_when_complete(path, sizes_of(proj, meta.volume)) as temporary,
+        replaced_when_complete(path, sizes_of(proj, meta.volume), overwrite=overwrite) as temporary,
         h5py.File(temporary, "w") as f,
     ):
-        entry = _write_entry(f, meta, proj, compression)
-        _write_volume_section(entry, meta, compression=compression)
+        volume = None
+        if meta.volume is not None:
+            entry = ensure_group(f, "entry", "NXentry")
+            group = ensure_group(entry, str(volume_member(meta.geometry_meta or {})), "NXdata")
+            volume = contiguous(
+                group, "data", tuple(meta.volume.shape), np.dtype(meta.volume.dtype)
+            )
+            copy_pixels(volume, meta.volume)
+        write_record(f, Path(path), meta, proj, volume)
 
 
 @contextmanager
@@ -114,7 +120,7 @@ def slab_volume(
     Parameters
     ----------
     path : Path
-        Private, staged output file.
+        Destination for the completed volume.
     meta : NXTomoMetadata
         Acquisition geometry and volume grid, including physical origin and units.
     shape : tuple of int
@@ -125,275 +131,18 @@ def slab_volume(
     h5py.Dataset
         Registered float32 attenuation dataset, writable until context exit.
     """
-    with h5py.File(path, "w") as f:
+    with (
+        replaced_when_complete(path, f"volume {math.prod(shape) * 4 / 2**30:.1f} GiB") as temporary,
+        h5py.File(temporary, "w") as f,
+    ):
         entry = ensure_group(f, "entry", "NXentry")
-        yield _volume_group(entry, meta).create_dataset(
-            "volume", shape=shape, dtype=np.float32, chunks=True, compression="lzf"
-        )
-        _ = _write_entry(f, meta, None, "lzf")
+        group = ensure_group(entry, "volume", "NXdata")
+        volume = contiguous(group, "data", shape, np.dtype("<f4"))
+        yield volume
+        write_record(f, path, meta, None, volume)
 
 
-def _write_entry(
-    f: h5py.File, meta: NXTomoMetadata, proj: np.ndarray | None, compression: str
-) -> h5py.Group:
-    n_views = len(meta.angles if meta.angles is not None else ()) if proj is None else proj.shape[0]
-    geometry_type_norm = normalize_geometry_type(meta.geometry_type)
-    entry = ensure_group(f, "entry", "NXentry")
-    # NXtomo names its application definition in a field; the attribute
-    # remains for readers of earlier TomoJAX files.
-    entry.create_dataset("definition", data=np.bytes_(b"NXtomo"))
-    write_string_attr(entry, "definition", "NXtomo")
-    inst = ensure_group(entry, "instrument", "NXinstrument")
-
-    _write_geometry_section(entry, meta, geometry_type_norm)
-    det = _write_detector_section(inst, meta, proj, n_views=n_views, compression=compression)
-    _write_sample_section(entry, meta, n_views=n_views)
-
-    if proj is not None:  # NXdata linking for the default plot
-        data_grp = ensure_group(entry, "data", "NXdata")
-        # store projections also under /entry/data/projections for convenience
-        data_grp["projections"] = det["data"]
-        write_string_attr(data_grp, "signal", "projections")
-
-    _write_source_section(inst, meta)
-    _write_grid_metadata(entry, meta)
-    _write_tomojax_metadata_sections(entry, meta, compression=compression)
-    return entry
-
-
-def _write_geometry_section(
-    entry: h5py.Group,
-    meta: NXTomoMetadata,
-    geometry_type_norm: str,
-) -> None:
-    geom = ensure_group(entry, "geometry", "NXcollection")
-    write_string_attr(geom, "type", geometry_type_norm)
-    if meta.geometry_meta:
-        metadata = dict(meta.geometry_meta)
-        info = metadata.get("simulation_info")
-        simulation = info.get("simulation") if isinstance(info, dict) else None
-        if isinstance(info, dict) and isinstance(simulation, dict) and "true_poses" in simulation:
-            poses = np.asarray(simulation["true_poses"], dtype=np.float32)
-            geom.create_dataset("simulation_true_poses", data=poses)
-            metadata["simulation_info"] = {
-                **info,
-                "simulation": {
-                    key: value for key, value in simulation.items() if key != "true_poses"
-                },
-            }
-        geom.attrs["geometry_meta_json"] = json.dumps(metadata)
-
-
-def _write_detector_section(
-    inst: h5py.Group,
-    meta: NXTomoMetadata,
-    proj: np.ndarray | None,
-    *,
-    n_views: int,
-    compression: str,
-) -> h5py.Group:
-    det = ensure_group(inst, "detector", "NXdetector")
-    if proj is not None:  # a reconstruction saved without its scan has only the geometry
-        _, nv, nu = proj.shape
-        det.create_dataset(
-            "data",
-            data=proj,
-            chunks=(1, min(256, nv), min(256, nu)),
-            compression=compression,
-        )
-        det["data"].attrs["long_name"] = "projections"
-        im_key = np.zeros((n_views,), np.int32) if meta.image_key is None else meta.image_key
-        im_key = np.asarray(im_key, dtype=np.int32)
-        if im_key.shape != (n_views,):
-            raise ValueError("image_key must be shape (n_views,)")
-        det.create_dataset("image_key", data=im_key, dtype=np.int32)
-
-    if meta.detector is not None:
-        det_dict = meta.detector if isinstance(meta.detector, dict) else meta.detector.to_dict()
-        det.attrs["detector_meta_json"] = json.dumps(det_dict)
-        # Pitches are in the geometry's length unit; label it only when recorded.
-        acquisition = (meta.geometry_meta or {}).get("acquisition")
-        unit = acquisition.get("length_unit") if isinstance(acquisition, dict) else None
-        for name, key in (("x_pixel_size", "du"), ("y_pixel_size", "dv")):
-            det.create_dataset(name, data=np.asarray(det_dict[key]))
-            if isinstance(unit, str):
-                det[name].attrs["units"] = unit
-    return det
-
-
-def _write_sample_section(entry: h5py.Group, meta: NXTomoMetadata, *, n_views: int) -> None:
-    sample = ensure_group(entry, "sample", "NXsample")
-    sample_name_str = "sample" if meta.sample_name is None else str(meta.sample_name)
-    sample.create_dataset(
-        "name",
-        data=np.array(sample_name_str, dtype=h5py.string_dtype(encoding="utf-8")),
-    )
-    if meta.angles is None:
-        return  # A conversion must not turn absent measurements into zero angles.
-    angles = np.asarray(meta.angles, dtype=np.float32)
-    if angles.shape != (n_views,):
-        raise ValueError("angles must be (n_views,)")
-    trans = ensure_group(sample, "transformations", "NXtransformations")
-    d_angle = trans.create_dataset("rotation_angle", data=angles)
-    d_angle.attrs["units"] = "degree"
-    write_string_attr(d_angle, "transformation_type", "rotation")
-    # The NX axis restates the saved tilted/arbitrary-axis model, so it is
-    # written only when that model determines the axis.
-    inputs = dict(meta.geometry_meta or {})
-    gtype = normalize_geometry_type(meta.geometry_type)
-    inputs["geometry_type"] = "lamino" if gtype == "cone" else gtype
-    if gtype == "parallel" or "tilt" in inputs or "axis_unit_lab" in inputs:
-        axis = nominal_axis_unit_from_inputs(inputs)
-        trans.create_dataset("rotation_axis", data=np.asarray(axis, dtype=np.float32))
-    write_string_attr(trans, "depends_on", "rotation_angle")
-
-
-def _write_source_section(inst: h5py.Group, meta: NXTomoMetadata) -> None:
-    src_grp = ensure_group(inst, "SOURCE", "NXsource")
-    if meta.source_name is not None:
-        src_grp.create_dataset(
-            "name",
-            data=np.array(str(meta.source_name), dtype=h5py.string_dtype(encoding="utf-8")),
-        )
-    if meta.source_type is not None:
-        src_grp.create_dataset(
-            "type",
-            data=np.array(str(meta.source_type), dtype=h5py.string_dtype(encoding="utf-8")),
-        )
-    if meta.source_probe is not None:
-        src_grp.create_dataset(
-            "probe",
-            data=np.array(str(meta.source_probe), dtype=h5py.string_dtype(encoding="utf-8")),
-        )
-
-
-def _write_grid_metadata(entry: h5py.Group, meta: NXTomoMetadata) -> None:
-    if meta.grid is not None:
-        gdict = meta.grid if isinstance(meta.grid, dict) else meta.grid.to_dict()
-        entry.attrs["grid_meta_json"] = json.dumps(gdict)
-
-
-def _write_volume_section(
-    entry: h5py.Group,
-    meta: NXTomoMetadata,
-    *,
-    compression: str,
-) -> None:
-    if meta.volume is None:
-        return
-    tj = _volume_group(entry, meta)
-    direct = isinstance(meta.volume, np.ndarray) and meta.volume.flags.c_contiguous
-    vol = tj.create_dataset(
-        "volume",
-        shape=meta.volume.shape,
-        dtype=meta.volume.dtype,
-        data=meta.volume if direct else None,
-        chunks=True,
-        compression=compression,
-    )
-    if not direct:
-        _write_in_tiles(vol, meta.volume)
-    vol.attrs["long_name"] = "volume"
-
-
-def _volume_group(entry: h5py.Group, meta: NXTomoMetadata) -> h5py.Group:
-    processing = ensure_group(entry, "processing", "NXprocess")
-    tj = ensure_group(processing, "tomojax", "NXcollection")
-    write_string_attr(tj, "volume_axes_order", "zyx")
-    if meta.frame is not None:
-        write_string_attr(tj, "frame", str(meta.frame))
-
-    return tj
-
-
-# Host memory one tile of a saved volume may take.
-_TILE_BYTES = 64 * 1024**2
-
-
-def _write_in_tiles(target: h5py.Dataset, source: np.ndarray | jax.Array) -> None:
-    """Write ``source`` in tiles of whole chunks, at most 64 MiB each.
-
-    Device and noncontiguous host arrays are read one tile at a time, never
-    as a second copy of the whole volume.
-    """
-    chunks = target.chunks
-    assert chunks is not None  # created chunked
-    budget = _TILE_BYTES // target.dtype.itemsize
-    tile = list(chunks)
-    for axis in reversed(range(3)):  # grow along the fast disk axes first
-        others = int(np.prod([n for i, n in enumerate(tile) if i != axis]))
-        tile[axis] = min(
-            target.shape[axis], max(1, budget // others // chunks[axis]) * chunks[axis]
-        )
-    starts = tuple(range(0, n, step) for n, step in zip(target.shape, tile, strict=True))
-    with progress.task("write", _VOLUME, math.prod(map(len, starts)), "tiles"):
-        for start in product(*starts):
-            region = tuple(
-                slice(lo, min(lo + step, n))
-                for lo, step, n in zip(start, tile, target.shape, strict=True)
-            )
-            target[region] = np.asarray(source[region])
-            progress.step("tiles")
-            progress.check_canceled()
-
-
-def _write_tomojax_metadata_sections(
-    entry: h5py.Group,
-    meta: NXTomoMetadata,
-    *,
-    compression: str,
-) -> None:
-    has_alignment_metadata = (
-        meta.align_params is not None
-        or meta.align_gauge is not None
-        or meta.angle_offset is not None
-        or meta.misalign_spec is not None
-    )
-    if has_alignment_metadata or meta.geometry_calibration is not None:
-        processing = ensure_group(entry, "processing", "NXprocess")
-        tj = ensure_group(processing, "tomojax", "NXcollection")
-        if has_alignment_metadata:
-            _write_alignment_metadata_section(tj, meta, compression=compression)
-        if meta.geometry_calibration is not None:
-            calibration_grp = ensure_group(tj, "calibration", "NXcollection")
-            calibration_grp.attrs["geometry_calibration_json"] = json.dumps(
-                meta.geometry_calibration
-            )
-
-    if meta.simulation_artifacts is not None:
-        processing = ensure_group(entry, "processing", "NXprocess")
-        tj = ensure_group(processing, "tomojax", "NXcollection")
-        simulation_grp = ensure_group(tj, "simulation", "NXcollection")
-        simulation_grp.attrs["artifacts_json"] = json.dumps(meta.simulation_artifacts)
-
-
-def _write_alignment_metadata_section(
-    tj: h5py.Group,
-    meta: NXTomoMetadata,
-    *,
-    compression: str,
-) -> None:
-    align_grp = ensure_group(tj, "align", "NXcollection")
-    if meta.align_params is not None:
-        dset = align_grp.create_dataset(
-            "thetas",
-            data=np.asarray(meta.align_params, dtype=np.float32),
-            chunks=True,
-            compression=compression,
-        )
-        names = ["alpha", "beta", "phi", "x", "z", "y"][: int(np.shape(meta.align_params)[1])]
-        dset.attrs["columns"] = np.array(names, dtype=h5py.string_dtype())
-    if meta.align_gauge is not None:
-        align_grp.attrs["gauge_fix_json"] = json.dumps(meta.align_gauge)
-    if meta.angle_offset is not None:
-        align_grp.create_dataset(
-            "angle_offset",
-            data=np.asarray(meta.angle_offset, dtype=np.float32),
-            chunks=True,
-            compression=compression,
-        )
-    if meta.misalign_spec is not None:
-        align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
+_TILE_BYTES = 64 << 20
 
 
 def read_projections(stack: Hdf5Frames) -> np.ndarray:
@@ -457,44 +206,52 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
 def read_nxtomo(
     path: str, *, lazy: bool, layout_only: bool, located: LocatedFrames | None = None
 ) -> LoadedNXTomo:
+    with h5py.File(path, "r") as f:
+        if "tomojax_format" in f.attrs:
+            return read_format_2(f, layout_only=layout_only, lazy_projections=lazy)
+        return read_unmarked(f, path, lazy=lazy, layout_only=layout_only, located=located)
+
+
+def read_unmarked(
+    f: h5py.File, path: str, *, lazy: bool, layout_only: bool, located: LocatedFrames | None
+) -> LoadedNXTomo:
+    """Read a NeXus acquisition or an rc6 saved file from its existing open handle."""
     out: LoadedDataset = {}
     volume_np = None
-
-    with h5py.File(path, "r") as f:
-        entry = child_group(f, "/entry")
-        if entry is None:
-            raise KeyError("Missing /entry")
-        if located is None:
-            where = next((p for p in NXTOMO_FRAME_PATHS if p in f), None)
-            if where is not None:
-                located = locate_frames(path, data_path=where)
-        if located is None:
-            if not _without_frames(f):
-                raise KeyError("Could not find projections dataset under /entry")
-            out["projections"] = None
-            angles = next((child_dataset(f, p) for p in ROTATION_ANGLE_PATHS if p in f), None)
-            if angles is not None:
-                out["angles"] = angles_in_degrees(
-                    np.asarray(angles[...]),
-                    attr_to_str(angles.attrs.get("units")) or "",
-                    frames=len(angles),
-                    path=path,
-                ).astype(np.float32)
-        else:
-            stack = located.stack
-            out["projections"] = stack if lazy else read_projections(stack)
-            key = located.image_key
-            if key is None:
-                axes_log_warning("load_nxtomo: missing image_key for %s; defaulting to zeros", path)
-                key = np.zeros(len(stack), np.int32)
-            out["image_key"] = key
-            out["angles"] = None if located.angles is None else located.angles.astype(np.float32)
-        volume, volume_axes_attr = entry_metadata(out, entry, path=path)
-        if volume is not None:
-            volume_np, disk_order = _volume_in_internal_axes(
-                volume, volume_axes_attr, path=path, layout_only=layout_only
-            )
-            out["disk_volume_axes_order"] = disk_order
+    entry = child_group(f, "/entry")
+    if entry is None:
+        raise KeyError("Missing /entry")
+    if located is None:
+        where = next((p for p in NXTOMO_FRAME_PATHS if p in f), None)
+        if where is not None:
+            located = locate_frames(path, data_path=where)
+    if located is None:
+        if not _without_frames(f):
+            raise KeyError("Could not find projections dataset under /entry")
+        out["projections"] = None
+        angles = next((child_dataset(f, p) for p in ROTATION_ANGLE_PATHS if p in f), None)
+        if angles is not None:
+            out["angles"] = angles_in_degrees(
+                np.asarray(angles[...]),
+                attr_to_str(angles.attrs.get("units")) or "",
+                frames=len(angles),
+                path=path,
+            ).astype(np.float32)
+    else:
+        stack = located.stack
+        out["projections"] = stack if lazy else read_projections(stack)
+        key = located.image_key
+        if key is None:
+            axes_log_warning("load_nxtomo: missing image_key for %s; defaulting to zeros", path)
+            key = np.zeros(len(stack), np.int32)
+        out["image_key"] = key
+        out["angles"] = None if located.angles is None else located.angles.astype(np.float32)
+    volume, volume_axes_attr = entry_metadata(out, entry, path=path)
+    if volume is not None:
+        volume_np, disk_order = _volume_in_internal_axes(
+            volume, volume_axes_attr, path=path, layout_only=layout_only
+        )
+        out["disk_volume_axes_order"] = disk_order
     payload = LoadedNXTomo.from_dataset(out)
     if located is not None and located.acquisition:
         meta = dict(payload.metadata.geometry_meta or {})
@@ -519,6 +276,29 @@ def entry_metadata(
     return volume, volume_axes_attr
 
 
+def native_payload(
+    path: Path,
+    *,
+    include_volume: bool = True,
+    layout_only: bool = False,
+    lazy_projections: bool = False,
+    **paths: str | None,
+) -> LoadedNXTomo | None:
+    """Read a marked TomoJAX generation before acquisition discovery."""
+    if path.suffix.lower() not in {".nxs", ".h5", ".hdf5", ".hdf", ".nx"} or not path.is_file():
+        return None
+    with h5py.File(path, "r") as file:
+        if "tomojax_format" in file.attrs:
+            return read_format_2(
+                file,
+                include_volume=include_volume,
+                layout_only=layout_only,
+                lazy_projections=lazy_projections,
+                **paths,
+            )
+    return None
+
+
 def volume_entry(file: h5py.File) -> tuple[NXTomoMetadata, h5py.Dataset, str]:
     """Locate a saved volume and read its registration from the open file.
 
@@ -532,6 +312,17 @@ def volume_entry(file: h5py.File) -> tuple[NXTomoMetadata, h5py.Dataset, str]:
     tuple
         Metadata, live HDF5 dataset and stored axis order.
     """
+    if "tomojax_format" in file.attrs:
+        payload = read_format_2(file, layout_only=True)
+        record = payload.file_record
+        assert record is not None
+        member = volume_member(record["geometry"]["meta"])
+        if member not in record["arrays"]:
+            raise ValueError(f"{file.filename} holds no reconstructed volume")
+        data = signal_at(file, record["arrays"][member]["path"])
+        # The caller reads windows of this dataset for nonlocal or filtered storage.
+        payload.metadata.volume = local_map(file, data)
+        return payload.metadata, data, "zyx"
     out: LoadedDataset = {}
     entry = child_group(file, "/entry")
     if entry is None:
@@ -582,6 +373,8 @@ def saved_without_frames(path: str | PathLike[str]) -> bool:
 
 
 def _without_frames(file: h5py.File) -> bool:
+    if "tomojax_format" in file.attrs:
+        return "projections" not in open_record(file)["arrays"]
     return isinstance(file.get(_VOLUME), h5py.Dataset) and not any(
         p in file for p in NXTOMO_FRAME_PATHS
     )

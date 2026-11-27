@@ -307,6 +307,19 @@ tomojax correct corrected.nxs -o centered.nxs --detector-center U V
 - **Lab cone-beam CT:** [lab cone-beam CT](lab-ct.md).
 - **Motion and setup-angle correction:** [align a scan](align-a-scan.md).
 
+## Reopen a saved result
+
+`tj.load_reconstruction("recon.nxs")` maps the saved volume in read-only
+`(z, y, x)` order. With `--include-scan` or `tj.save(..., include_scan=True)`,
+the same file holds the projections and their geometry. Open a saved scan with
+`tj.load`, an alignment with `tj.load_alignment`, or a simulation with
+`tj.load_simulation`. A saved scan contains line integrals. In another reader,
+use those projections directly and skip detector calibration and the logarithm.
+
+`tj.inspect("recon.nxs")["contents"]` lists the stored arrays and their
+coordinates. In a NeXus viewer, opening the file displays the volume on its
+physical grid.
+
 ## Watch a Python operation
 
 Use a watch around loading, correction, reconstruction, or alignment. The

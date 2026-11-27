@@ -23,6 +23,15 @@ def indexed(shape=(7, 9, 11)):
     )
 
 
+def test_export_requires_a_destination_and_a_registered_object(tmp_path):
+    path = tmp_path / "volume.raw"
+    array = indexed().volume
+    for arguments in ((array, path), (path, array)):
+        with pytest.raises(TypeError, match=r"export\(path, item\).*registered geometry"):
+            tj.export(*arguments)
+    assert not path.exists()
+
+
 @pytest.mark.parametrize("width", [1, 8, 11])
 @pytest.mark.parametrize("axis", "zyx")
 @pytest.mark.parametrize("fmt", format_descriptions(), ids=lambda f: f["name"])

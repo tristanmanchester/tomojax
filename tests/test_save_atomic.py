@@ -31,7 +31,7 @@ def _fail_part_way(monkeypatch, suffix):
 
         def full(group, name, *args, **kwargs):
             dataset = written(group, name, *args, **kwargs)
-            if name == "volume":
+            if group.name == "/entry" and name == "record":
                 raise OSError(errno.ENOSPC, "No space left on device")
             return dataset
 
@@ -77,3 +77,39 @@ def test_a_save_replaces_the_file_when_complete(tmp_path, suffix):
     tj.save(path, _reconstruction(2.0), include_scan=True)
     assert list(tmp_path.iterdir()) == [path]
     np.testing.assert_array_equal(tj.load_reconstruction(path).volume, 2.0)
+
+
+def test_interrupted_slab_sequence_preserves_the_previous_generation(tmp_path):
+    from tomojax.io.api import NXTomoMetadata, slab_volume
+
+    path = tmp_path / "slabs.nxs"
+    tj.save(path, _reconstruction(3))
+
+    def interrupted_solve():
+        with slab_volume(path, NXTomoMetadata(), (4, 5, 6)) as volume:
+            volume[0] = -1
+            raise InterruptedError()
+
+    with pytest.raises(InterruptedError):
+        interrupted_solve()
+    assert list(tmp_path.iterdir()) == [path]
+    with h5py.File(path) as saved:
+        np.testing.assert_array_equal(saved["entry/volume/data"], 3)
+
+
+def test_save_without_overwrite_preserves_a_file_created_during_the_write(tmp_path, monkeypatch):
+    from tomojax.io.api import save_nxtomo
+
+    path = tmp_path / "first.nxs"
+    create = h5py.Group.create_dataset
+
+    def competing_writer(group, name, *args, **kwargs):
+        if group.name == "/entry" and name == "record":
+            path.write_bytes(b"first writer")
+        return create(group, name, *args, **kwargs)
+
+    monkeypatch.setattr(h5py.Group, "create_dataset", competing_writer)
+    with pytest.raises(FileExistsError):
+        save_nxtomo(str(path), np.zeros((2, 1, 4), np.float32), overwrite=False)
+    assert list(tmp_path.iterdir()) == [path]
+    assert path.read_bytes() == b"first writer"

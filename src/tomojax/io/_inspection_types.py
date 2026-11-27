@@ -158,6 +158,8 @@ class InspectionReport(TypedDict):
         Saved reconstruction shape, axis order and method.
     """
 
+    record: NotRequired[dict[str, object] | None]
+    contents: NotRequired[dict[str, dict[str, object]]]
     schema_version: int
     input_path: str
     projection: ProjectionReport
@@ -238,8 +240,6 @@ class Inspection(InspectionReport):
         What the check found: missing calibration, angles or frames.
     """
 
-    record: dict[str, object] | None
-    contents: dict[str, dict[str, object]]
     loading: LoadingReport | None
     checkpoint: dict[str, object] | None
     valid: bool

@@ -10,12 +10,14 @@ import numpy as np
 import pytest
 
 from tomojax.cli.main import main
+from tomojax.geometry import Grid
 from tomojax.io import load_dataset, save_dataset
 
 from ._helpers import (
     make_projection_dataset,
     write_projection_dataset,
     write_raw_nxtomo,
+    write_rc6_dataset,
 )
 
 pytestmark = pytest.mark.surface
@@ -99,7 +101,7 @@ def test_inspection_angle_range_uses_degrees_of_sample_frames_only(
 ) -> None:
     path = tmp_path / "scan.nxs"
     angles = np.asarray([30.0, 999.0, 60.0, -400.0])
-    write_projection_dataset(path, projections=np.ones((4, 2, 4), np.float32), angles=angles)
+    write_rc6_dataset(path, projections=np.ones((4, 2, 4), np.float32), angles=angles)
     with h5py.File(path, "a") as handle:
         handle["entry/instrument/detector/image_key"][...] = [0, 3, 0, 3]
         stored = handle["entry/sample/transformations/rotation_angle"]
@@ -117,7 +119,7 @@ def test_inspect_cli_exits_1_for_an_invalid_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = tmp_path / "scan.nxs"
-    write_projection_dataset(path)
+    write_rc6_dataset(path)
     with h5py.File(path, "a") as handle:
         del handle["/entry/sample/transformations/rotation_angle"]
 
@@ -315,7 +317,9 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     assert (loaded.grid.nx, loaded.grid.ny, loaded.grid.nz) == (4, 4, 2)
     assert loaded.detector is not None
     with h5py.File(recon) as handle:
-        assert handle["entry/processing/tomojax"].attrs["volume_axes_order"] == "zyx"
+        assert list(handle["entry/volume"].attrs["axes"]) == ["z", "y", "x"]
+        embedded = json.loads(handle["entry/record"][()])["provenance"]
+        assert embedded["resolved_config"]["settings"] == {"scale": 0.5, "exterior": "zero"}
     assert loaded.geometry_metadata["reconstruction_method"] == "fbp"
 
     resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
@@ -485,12 +489,9 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
         for y in range(volume.shape[1]):
             for z in range(volume.shape[2]):
                 volume[x, y, z] = (100 * x) + (10 * y) + z
-    dataset = make_projection_dataset()
-    dataset.volume = volume.transpose(2, 1, 0)
-    save_dataset(path, dataset)
+    write_rc6_dataset(path, grid=Grid(3, 4, 5, 1, 1, 1))
     with h5py.File(path, "r+") as file:
-        group = file["entry/processing/tomojax"]
-        del group["volume"]
+        group = file.create_group("entry/processing/tomojax")
         group.create_dataset("volume", data=volume)
         group.attrs["volume_axes_order"] = "xyz"
 

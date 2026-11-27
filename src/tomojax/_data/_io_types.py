@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, TypedDict, cast
 
 import numpy as np
 
 from tomojax.core.geometry.base import Detector, DetectorDict, Grid, GridDict
 
-from ._io_frames import Hdf5Frames
+from ._io_frames import Hdf5Frames, PinnedFrames
 
 if TYPE_CHECKING:
     import jax
@@ -27,7 +28,9 @@ class SourceInfo(TypedDict, total=False):
     probe: str | None
 
 
-type DatasetValue = np.ndarray | Hdf5Frames | JsonValue | GridDict | DetectorDict | SourceInfo
+type DatasetValue = (
+    np.ndarray | Hdf5Frames | PinnedFrames | JsonValue | GridDict | DetectorDict | SourceInfo
+)
 
 
 type LoadedDataset = dict[str, DatasetValue]
@@ -40,7 +43,7 @@ def _json_object(data: Mapping[str, DatasetValue], key: str) -> JsonObject | Non
         return None
     if not isinstance(value, dict):
         raise TypeError(f"saved {key} must be a JSON object, not {type(value).__name__}")
-    return cast("JsonObject", value)
+    return deepcopy(cast("JsonObject", value))
 
 
 def _source_record(value: DatasetValue | None) -> SourceInfo | None:
@@ -122,8 +125,14 @@ class NXTomoMetadata:
         Radiation source type.
     source_probe : str or None, optional
         Probe label; defaults to x-ray.
+    history : list of dict, optional
+        Provenance of saved source generations in chronological order.
+    projection_domain : str or None, optional
+        Recorded measurement type of the selected detector pixels, counts or line_integrals.
     """
 
+    history: list[JsonObject] = field(default_factory=list, repr=False, kw_only=True)
+    projection_domain: str | None = field(default=None, kw_only=True)
     angles: np.ndarray | None = None
     image_key: np.ndarray | None = None
     grid: Grid | GridDict | None = None
@@ -171,6 +180,10 @@ class NXTomoMetadata:
 
         geometry_type = data.get("geometry_type")
         return cls(
+            history=deepcopy(cast("list[JsonObject]", data.get("history") or [])),
+            projection_domain=str(data["projection_domain"])
+            if "projection_domain" in data
+            else None,
             angles=_copy_array_metadata(data.get("angles")),
             image_key=_copy_array_metadata(data.get("image_key")),
             grid=cast("GridDict | None", _json_object(data, "grid")),
@@ -210,12 +223,15 @@ class LoadedNXTomo:
         Radiation source metadata.
     disk_volume_axes_order : str or None, optional
         Original on-disk volume axis order.
+    file_record : dict or None, optional
+        Format-2 record describing this generation, including its numerical members.
     """
 
-    projections: np.ndarray | Hdf5Frames | None
+    projections: np.ndarray | Hdf5Frames | PinnedFrames | None
     metadata: NXTomoMetadata
     source: SourceInfo | None = None
     disk_volume_axes_order: str | None = None
+    file_record: dict | None = None
 
     @classmethod
     def from_dataset(cls, data: Mapping[str, DatasetValue]) -> LoadedNXTomo:
@@ -331,7 +347,7 @@ class LoadedNXTomo:
         NXTomoMetadata
             Writable persistence metadata with copied array fields.
         """
-        return NXTomoMetadata.from_dataset(self.to_dataset_dict())
+        return NXTomoMetadata.from_dataset(replace(self, projections=None).to_dataset_dict())
 
     def geometry_inputs(self) -> dict[str, DatasetValue]:
         """Return the subset of metadata needed to materialize geometry.
@@ -355,7 +371,7 @@ class LoadedNXTomo:
 
         payload: dict[str, DatasetValue] = {
             "detector": detector.to_dict() if isinstance(detector, Detector) else detector,
-            "angles": np.asarray(angles, dtype=np.float32),
+            "angles": np.asarray(angles),
             "geometry_type": self.metadata.geometry_type,
         }
         grid = self.metadata.grid
@@ -394,9 +410,9 @@ class ValidationReport(TypedDict):
     issues: list[str]
 
 
-def _frames_or_array(value: object) -> np.ndarray | Hdf5Frames:
+def _frames_or_array(value: object) -> np.ndarray | Hdf5Frames | PinnedFrames:
     """Lazily read frames as they are; anything else as an array."""
-    if isinstance(value, Hdf5Frames):
+    if isinstance(value, Hdf5Frames | PinnedFrames):
         return value
     array = np.asarray(value)
     return array[:, None, :] if array.ndim == 2 else array

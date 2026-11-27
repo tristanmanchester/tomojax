@@ -56,6 +56,7 @@ GEOMETRY_KEYS = frozenset(
         "axis_unit_lab",
         "detector_roll",
         "grid_follows_detector",
+        "volume_grid",
     }
 )
 
@@ -656,23 +657,26 @@ def bind_step_geometry(
     )
 
 
-def record_of(scan: Scan, *, grid: Grid | None = None) -> ProjectionDataset:
+def record_of(
+    scan: Scan, *, grid: Grid | None = None, include_projections: bool = True
+) -> ProjectionDataset:
     """A dataset record for ``scan``: its geometry, keeping the source's provenance."""
     from tomojax.io.api import replace_dataset
 
     record = geometry_record(scan.geometry, name=scan.name, source=scan.source, grid=grid)
     meta = record.geometry_metadata
+    meta.pop("corrections", None)
+    meta.pop("view_positions", None)
     if scan.corrections:
         meta["corrections"] = [c.to_dict() for c in scan.corrections]
     if scan.view_positions is not None:
         meta["view_positions"] = scan.view_positions.tolist()
-    record = replace_dataset(record, projections=np.asarray(scan.projections))
-    if scan.source is None:
-        return record
+    record = replace_dataset(record, projections=scan.projections if include_projections else None)
     # A Scan holds only sample-view line integrals, not the acquisition's raw
     # frame labels. Keep the other provenance without reusing a stale view axis.
     metadata = record.to_nxtomo_metadata()
     metadata.image_key = None
+    metadata.projection_domain = "line_integrals"
     return replace_dataset(record, metadata=metadata)
 
 
@@ -709,12 +713,19 @@ def geometry_record(
     from tomojax.io.api import replace_dataset
 
     geometry_type, meta, poses, _ = describe(geometry)
-    kept = {} if source is None else _source_provenance(source.geometry_metadata)
+    kept = (
+        {}
+        if source is None
+        else {k: v for k, v in source.geometry_metadata.items() if k not in GEOMETRY_KEYS}
+    )
     if grid is None and grid_follows_detector(source):
         meta["grid_follows_detector"] = True
+    gauge = dict(source.align_gauge or {}) if source is not None else {}
+    if poses is not None:
+        gauge["pose_translation_frame"] = poses[1]
     fields: dict[str, Any] = {
         "projections": None,
-        "angles": np.asarray(geometry.angles, np.float32),  # pyright: ignore[reportAttributeAccessIssue]
+        "angles": np.asarray(geometry.angles),  # pyright: ignore[reportAttributeAccessIssue]
         "volume": None,
         "detector": geometry.detector,
         "grid": geometry.grid if grid is None else grid,
@@ -723,7 +734,7 @@ def geometry_record(
         # Angle offsets are already in the geometry's angles.
         "angle_offset": None,
         "align_params": None if poses is None else poses[0],
-        "align_gauge": None if poses is None else {"pose_translation_frame": poses[1]},
+        "align_gauge": gauge or None,
         "sample_name": name,
     }
     return ProjectionDataset(**fields) if source is None else replace_dataset(source, **fields)
@@ -1000,6 +1011,8 @@ class Reconstruction:
         File from which the volume was loaded, when present.
     input_files : tuple, optional
         File dependencies retained when loading a standalone volume.
+    source_record : ProjectionDataset or None, optional
+        Saved provenance and geometry retained for a reconstruction without its scan.
     """
 
     volume: np.ndarray | jax.Array
@@ -1011,6 +1024,9 @@ class Reconstruction:
     source_path: str | None = field(default=None, kw_only=True)
     input_files: tuple[InputFiles, ...] = field(
         default_factory=current_inputs, kw_only=True, compare=False, repr=False
+    )
+    source_record: ProjectionDataset | None = field(
+        default=None, kw_only=True, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:

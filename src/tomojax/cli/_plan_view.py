@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from tomojax.cli._results import unit_of
+from tomojax._loading.registration import unit_of
 
 if TYPE_CHECKING:
     import tomojax as tj

@@ -70,7 +70,7 @@ def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
     # Inject malformed metadata without asking the writer to compress a scalar.
     if suffix == ".nxs":
         with h5py.File(path, "r+") as handle:
-            key = "/entry/processing/tomojax/align/angle_offset"
+            key = "/entry/tomojax/angle_offset"
             del handle[key]
             handle.create_dataset(key, data=offsets)
     else:

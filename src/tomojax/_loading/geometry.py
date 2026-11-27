@@ -135,7 +135,7 @@ def _declared_geometry(
     assert detector is not None
     if declared.detector_center is not None:
         detector = replace(detector, center=declared.detector_center)
-    angles = cast("Sequence[float]", np.asarray(record.angles, np.float32))
+    angles = cast("Sequence[float]", record.angles)
     resolved_grid = _declared_grid(declared, detector, grid or record.grid)
     if declared.kind == "parallel":
         geom: ScanGeometry = ParallelGeometry(
@@ -261,7 +261,7 @@ def frame_geometry(
         detector=detector,
         pixel_size=pixel_size,
     )
-    view_angles = record.angles if angles is None else np.asarray(angles, np.float32)
+    view_angles = record.angles if angles is None else np.asarray(angles)
     sampling_changed = (detector is not None and detector != record.detector) or (
         angles is not None and not np.array_equal(view_angles, record.angles)
     )

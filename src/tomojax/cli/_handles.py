@@ -11,9 +11,9 @@ import msgspec
 import numpy as np
 
 import tomojax as tj
+from tomojax._loading.registration import RegisteredMember, registered_member, unit_of
 from tomojax.cli import execution as ex, products as p
-from tomojax.cli._results import unit_of
-from tomojax.core.registration import pose_columns, scan_axes
+from tomojax.core.registration import pose_columns
 from tomojax.recon.api import solver_name
 from tomojax.wire.arrays import (
     Array,
@@ -58,15 +58,11 @@ def handle(item: Root, *, volume_storage: Storage | None = None) -> ex.NewHandle
         pixels["angles"] = np.asarray(source.geometry.angles)
         key = "counts" if isinstance(source, tj.Frames) else "projections"
         pixels[key] = source.counts if isinstance(source, tj.Frames) else source.projections
-    grid = None
-    if isinstance(item, tj.Reconstruction):
-        grid, pixels["volume"] = item.grid, item.volume
-    elif isinstance(item, tj.Simulation):
-        grid, pixels["phantom"] = item.scan.grid, item.phantom
-    elif isinstance(item, tj.Alignment):
+    volume = None if isinstance(item, tj.Scan | tj.Frames) else registered_member(item, unit)
+    if volume is not None:
+        pixels[volume.name] = volume.pixels
+    if isinstance(item, tj.Alignment):
         pixels["poses"] = item.poses
-        if item.image is not None:
-            grid, pixels["image"] = item.grid, item.image
     # A handle owns logical references; the backing NumPy/JAX objects may be shared.
     logical = list(pixels.values())
     if isinstance(source, tj.Frames):
@@ -92,7 +88,7 @@ def handle(item: Root, *, volume_storage: Storage | None = None) -> ex.NewHandle
         bind_result,
         item=item,
         source=source,
-        grid=grid,
+        volume=volume,
         volume_storage=volume_storage,
         unit=unit,
         pixels=pixels,
@@ -106,7 +102,7 @@ def bind_result(
     *,
     item: Root,
     source: tj.Scan | tj.Frames | None,
-    grid: tj.Grid | None,
+    volume: RegisteredMember | None,
     volume_storage: Storage | None,
     unit: str,
     pixels: dict[str, Any],
@@ -119,16 +115,9 @@ def bind_result(
     if source is not None:
         if isinstance(source, tj.Scan):
             members["scan"] = source
-        key = "counts" if isinstance(source, tj.Frames) else "projections"
-        data = pixels[key]
-        arrays[key] = Array(
-            Member(identifier, key),
-            data.shape,
-            np.dtype(data.dtype).str,
-            scan_axes(source.geometry.detector, view, unit),
-            "counts" if key == "counts" else "1",
-            "counts" if key == "counts" else "line_integrals",
-        )
+        detector = registered_member(source, unit, view=view)
+        assert detector is not None
+        arrays[detector.name] = detector.at(Member(identifier, detector.name))
         angles = pixels["angles"]
         arrays["angles"] = Array(
             Member(identifier, "angles"),
@@ -138,20 +127,8 @@ def bind_result(
             "degree",
             "angle",
         )
-    if grid is not None:
-        key = (
-            "volume"
-            if isinstance(item, tj.Reconstruction)
-            else "image"
-            if isinstance(item, tj.Alignment)
-            else "phantom"
-        )
-        arrays[key] = ex.volume_metadata(
-            grid,
-            storage=volume_storage or Member(identifier, key),
-            dtype=np.dtype(pixels[key].dtype).str,
-            length_unit=unit,
-        )
+    if volume is not None:
+        arrays[volume.name] = volume.at(volume_storage or Member(identifier, volume.name))
     product: p.HandleProduct
     if isinstance(item, tj.Frames):
         product = p.Frames(identifier, arrays["counts"])

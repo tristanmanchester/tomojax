@@ -242,13 +242,16 @@ def test_load_arguments_by_input_family(tmp_path, family):
     assert covered == set(inspect.signature(tj.load).parameters)
     assert covered == set(inspect.signature(tj.load_frames).parameters)
 
-    if family == "phase":
+    if family in HDF:
+        check_alternative_datasets(path, counts.shape, fields, detector)
+    logged = family in {"phase", "saved.nxs"}
+    if logged:
         for arg, value in fields.items():
             for load in (projection_frames, tj.load_frames, tj.load):
                 with pytest.raises(ValueError, match=arg):
                     load(path, **{arg: value})
         fields = {}
-    expected = counts if family == "phase" else -np.log((counts - 1) / 200)
+    expected = counts if logged else -np.log((counts - 1) / 200)
     for options in (
         overrides,
         {"angles": angles, "pixel_size": (0.4, 0.8), "grid": grid, "apply_poses": False},
@@ -256,7 +259,7 @@ def test_load_arguments_by_input_family(tmp_path, family):
     ):
         scan = tj.load(path, **fields, **options)
         lazy, raw = projection_frames(path, **fields, **options)
-        assert raw == (family != "phase")
+        assert raw == (not logged)
         np.testing.assert_allclose(scan.projections, expected, rtol=2e-5, atol=1e-6)
         np.testing.assert_allclose(lazy.counts[:], counts)
         geometries = [scan.geometry, lazy.geometry]
@@ -271,8 +274,6 @@ def test_load_arguments_by_input_family(tmp_path, family):
         for geom in geometries:
             np.testing.assert_array_equal(geom.angles, angles)
             assert geom.grid == grid and (geom.detector.du, geom.detector.dv) == (0.4, 0.8)
-    if family in HDF:
-        check_alternative_datasets(path, counts.shape, fields, detector)
     for name in selectors:
         if family == "esrf_bliss" and name == "data_path":
             np.testing.assert_array_equal(tj.load_frames(path, data_path="/1.1").counts[:], counts)

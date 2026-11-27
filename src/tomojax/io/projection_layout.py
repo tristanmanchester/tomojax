@@ -11,7 +11,9 @@ import numpy as np
 from tomojax._data import (
     Hdf5Frames,
     LocatedFrames,
+    PinnedFrames,
     locate_frames,
+    native_payload,
     npz_layout,
     read_nxtomo,
     saved_without_frames,
@@ -37,7 +39,7 @@ def saved_projection_layout(
     *,
     located: LocatedFrames | None = None,
     layout_only: bool = True,
-) -> tuple[ProjectionDataset, Hdf5Frames | MatlabFrames | np.ndarray | None]:
+) -> tuple[ProjectionDataset, Hdf5Frames | PinnedFrames | MatlabFrames | np.ndarray | None]:
     """Read a geometry record with shape-only projections and the matching pixel source."""
     if path.suffix.lower() == ".mat":
         record = psi_record(path, layout_only=layout_only)
@@ -70,7 +72,7 @@ class MatlabFrames:
         return self.stored[views].swapaxes(-1, -2).astype(self.dtype, copy=False)
 
 
-type ProjectionPixels = Hdf5Frames | MatlabFrames | np.ndarray
+type ProjectionPixels = Hdf5Frames | PinnedFrames | MatlabFrames | np.ndarray
 
 
 @dataclass(frozen=True)
@@ -80,8 +82,16 @@ class ProjectionStorage:
     record: ProjectionDataset
     stack: ProjectionPixels
     key: np.ndarray
-    counts: bool
+    domain: str | None
     located: LocatedFrames | None
+
+    @classmethod
+    def from_native(cls, record: ProjectionDataset, stack: ProjectionPixels) -> ProjectionStorage:
+        """Pair a format-2 record with the pixels selected in the same open file."""
+        key = record.image_key
+        if key is None:
+            key = np.zeros(stack.shape[0], np.int32)
+        return cls(record, stack, key, record.projection_domain, None)
 
     def frames_at(self, mask: np.ndarray) -> ProjectionPixels:
         """Restrict the selected storage without reading lazy pixels."""
@@ -125,7 +135,7 @@ def projection_storage(path: Path, *, layout_only: bool, **paths: str | None) ->
     key = record.image_key if located is None else located.image_key
     key = np.zeros(stack.shape[0], np.int32) if key is None else key
     return ProjectionStorage(
-        record, stack, key, counts or bool(np.isin(key, (1, 2)).any()), located
+        record, stack, key, "counts" if counts or np.isin(key, (1, 2)).any() else None, located
     )
 
 
@@ -168,6 +178,19 @@ def select_storage(path: Path, *, layout_only: bool, **paths: str | None) -> Sel
     for name, value in paths.items():
         if value == "":
             raise ValueError(f"{name} needs a nonempty dataset path")
+    saved = native_payload(
+        path, include_volume=False, layout_only=layout_only, lazy_projections=layout_only, **paths
+    )
+    if saved is not None:
+        stack = saved.projections
+        if stack is None:
+            raise ValueError(
+                f"{path} holds a reconstruction saved without its scan: "
+                "tj.load_reconstruction reads it"
+            )
+        shape = np.broadcast_to(np.zeros((), stack.dtype), stack.shape)
+        record = ProjectionDataset.from_nxtomo(replace(saved, projections=shape), source_path=path)
+        return ProjectionStorage.from_native(record, stack)
     acquisition = read_acquisition(path, **paths)
     if acquisition is not None:
         return acquisition

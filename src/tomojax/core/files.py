@@ -152,7 +152,9 @@ def validate_virtual_pixels(data: Any, seen: set[tuple[str, str]] | None = None)
 
 
 @contextmanager
-def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator[Path]:
+def replaced_when_complete(
+    path: str | os.PathLike[str], parts: str, *, overwrite: bool = True
+) -> Iterator[Path]:
     """A temporary file beside ``path`` that replaces it only once the write is complete.
 
     The temporary file is in the same directory, so on the same filesystem; on
@@ -166,6 +168,8 @@ def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator
 
     target = Path(path)
     check_output(target)
+    if not overwrite and os.path.lexists(target):
+        raise FileExistsError(f"{target} exists; pass overwrite=True to replace it")
     target.parent.mkdir(parents=True, exist_ok=True)
     handle, name = tempfile.mkstemp(prefix=f".{target.name}.partial-", dir=target.parent)
     os.close(handle)
@@ -178,7 +182,11 @@ def replaced_when_complete(path: str | os.PathLike[str], parts: str) -> Iterator
         with temporary.open("rb+") as stream:
             os.fsync(stream.fileno())
         with publishing(target):
-            _ = temporary.replace(target)
+            if overwrite:
+                _ = temporary.replace(target)
+            else:
+                os.link(temporary, target)
+                temporary.unlink()
     except BaseException as err:
         written = temporary.stat().st_size if temporary.exists() else 0
         temporary.unlink(missing_ok=True)

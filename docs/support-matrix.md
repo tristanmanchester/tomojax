@@ -41,6 +41,14 @@ This page lists supported workflows, acquisition formats, and numerical backends
 - **Bracketing flat sets:** multi-frame flat sets before and after a scan default to `flat_weights="views"` ([flat fields](../src/tomojax/corrections/README.md#flat-fields)), weighting local texture from a sample of the views while interpolating common row gain by position (using local flat noise so narrow stable strips remain effective, raising the common level over 16-row bands where views transmit more than the inferred beam, and masking pixels at or below the dark count before taking logarithms); single-frame sets interpolate by position. When views move the flat by more than 1% over more than 1% of the detector, TomoJAX warns that the views do not follow the flat sets' positions and names both remedies: borrowing clean flats from another scan with `flats=` (`--flats`), or passing `flat_weights="position"` (`--flat-weights position` on `tomojax correct`, or `flat_weights: "position"` on worker/MCP `correct`, `reconstruct_slabs`, and `correction_preview`).
 - **Cropping and binning:** compressed TIFF crops decode only intersecting strips or tiles. Detector binning reduces output resolution automatically when no explicit grid is recorded; `Scan.binned()` and file-owned grids keep their sampling unless overridden with `grid=`.
 
+## Saved objects
+
+`tj.save` writes scans, reconstructions, alignments and simulations as
+format-2 NeXus in `.nxs`, `.nx`, `.h5`, `.hdf` or `.hdf5` files. NeXus viewers
+can open the default array at its physical coordinates. `tj.inspect` reports
+the file format, arrays and processing record. This release also reads files
+written by 1.0.0rc6 for migration.
+
 ## Acquisition formats
 
 `tj.load_frames` recognizes supported raw exports by file content, even if renamed. Physical pitches are normalized to millimeters.

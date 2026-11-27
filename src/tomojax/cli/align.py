@@ -8,7 +8,6 @@ from dataclasses import asdict, replace
 from functools import partial
 import logging
 from pathlib import Path
-import sys
 from typing import TYPE_CHECKING, get_args
 
 import numpy as np
@@ -240,7 +239,7 @@ def _validate_opposite_views(
         )
 
 
-def _write_manifest(
+def _resolved_settings(
     args: _Args,
     metadata: Mapping[str, object],
     scan: Scan,
@@ -249,11 +248,9 @@ def _write_manifest(
     fit: tuple[str, ...],
     masked: bool,
     method: str,
-) -> None:
-    """Save the requested inputs, fitted geometry and solver record."""
-    from tomojax.cli.manifest import build_manifest, save_manifest
-
-    payload: dict[str, object] = {
+) -> dict[str, object]:
+    """The command configuration and the solver result persisted with its pixels."""
+    return {
         "input_path": args.data,
         "output_path": args.out,
         "manifest_path": args.manifest,
@@ -276,9 +273,6 @@ def _write_manifest(
         "detector": result.scan.detector.to_dict(),
         "alignment": result.info,
     }
-    manifest = build_manifest("tomojax align", list(sys.argv), args, payload)
-    save_manifest(str(args.manifest), manifest)
-    LOG.info("Saved alignment manifest to %s", args.manifest)
 
 
 def _validate_align_args(
@@ -442,11 +436,17 @@ def _solve(
             result = align_resolved(scan, work, checkpoint=args.checkpoint)
     progress.check_canceled()
     assert args.out is not None
-    tj.save(args.out, result)
+    from tomojax.cli.manifest import recording, save_manifest
+
+    masked = isinstance(work, JointSelection) and work.cylinder is not None
+    resolved = _resolved_settings(
+        args, metadata, scan, result, fit=fit, masked=masked, method=method
+    )
+    with recording("align", args, resolved) as manifest:
+        tj.save(args.out, result)
     if args.manifest is not None:
         progress.check_canceled()
-        masked = isinstance(work, JointSelection) and work.cylinder is not None
-        _write_manifest(args, metadata, scan, result, fit=fit, masked=masked, method=method)
+        save_manifest(str(args.manifest), manifest)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 

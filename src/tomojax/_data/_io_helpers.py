@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 from typing import TYPE_CHECKING, cast
 
@@ -15,15 +16,16 @@ LOG = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
-    from numpy.typing import ArrayLike
+    import jax
 
 
-def sizes_of(projections: ArrayLike | None, volume: ArrayLike | None) -> str:
+def sizes_of(projections: np.ndarray | None, volume: np.ndarray | jax.Array | None) -> str:
     """What a dataset write holds, by part, for its error messages."""
-    parts = [] if volume is None else [f"volume {np.asarray(volume).nbytes / 2**30:.1f} GiB"]
-    if projections is not None:
-        parts.append(f"projections {np.asarray(projections).nbytes / 2**30:.1f} GiB")
-    return ", ".join(parts)
+    return ", ".join(
+        f"{name} {math.prod(data.shape) * np.dtype(data.dtype).itemsize / 2**30:.1f} GiB"
+        for name, data in (("volume", volume), ("projections", projections))
+        if data is not None
+    )
 
 
 def _axes_warnings_silenced() -> bool:

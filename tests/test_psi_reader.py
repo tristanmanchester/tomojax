@@ -56,6 +56,16 @@ def test_load_reads_the_phase_angles_and_pixel_size(tmp_path):
     assert report["projection"]["shape"] == [views, rows, columns]
     assert report["detector_metadata"]["du"] == pytest.approx(6.868e-6)
 
+    saved = tmp_path / "phase.nxs"
+    tj.save(saved, scan)
+    restored = tj.load(saved)
+    np.testing.assert_array_equal(restored.projections, phase)
+    np.testing.assert_allclose(restored.angles, angles, rtol=1e-6)
+    assert restored.detector == detector
+    with h5py.File(saved) as file:
+        assert file["entry/data/u"].attrs["units"] == "mm"
+    assert restored.source.geometry_metadata["quantity"] == "phase"
+
 
 def test_load_refuses_complex_unaligned_projections_naming_what_the_file_holds(tmp_path):
     path = tmp_path / "example_data.mat"

@@ -22,8 +22,8 @@ from tomojax.cli import _images
 from tomojax.io.api import (
     locate_frames,
     read_acquisition,
-    saved_volume_axes,
     saved_without_frames,
+    volume_entry,
 )
 from tomojax.io.projection_layout import saved_projection_layout
 from tomojax.wire.arrays import Axis as Registered, Uniform
@@ -88,6 +88,10 @@ def has_saved_volume(path: Path) -> bool:
     if not h5py.is_hdf5(path):
         return False
     with h5py.File(path, "r") as file:
+        if "tomojax_format" in file.attrs:
+            from tomojax.io.api import registered_members
+
+            return bool(registered_members(file, path).keys() & {"volume", "image", "phantom"})
         return isinstance(file.get(_VOLUME_PATH), h5py.Dataset)
 
 
@@ -111,21 +115,14 @@ def projection_image(path: Path) -> np.ndarray | None:
 
 def _saved_shape(path: Path) -> tuple[str, tuple[int, ...]]:
     with h5py.File(path, "r") as file:
-        volume = file[_VOLUME_PATH]
-        if not isinstance(volume, h5py.Dataset):
-            raise ValueError(f"{path}:{_VOLUME_PATH} must be a dataset")
-        attribute = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-        order = saved_volume_axes(None if attribute is None else str(attribute), path).lower()
+        _, volume, order = volume_entry(file)
         return order, tuple(int(n) for n in volume.shape)
 
 
 def saved_plane(path: Path, axis: Axis, index: int) -> np.ndarray:
     """Plane ``index`` across ``axis`` of a saved volume, shown as (z, y, x) minus ``axis``."""
-    order, _ = _saved_shape(path)
     with h5py.File(path, "r") as file:
-        volume = file[_VOLUME_PATH]
-        if not isinstance(volume, h5py.Dataset):
-            raise ValueError(f"{path}:{_VOLUME_PATH} must be a dataset")
+        _, volume, order = volume_entry(file)
         key: list[int | slice] = [slice(None)] * 3
         key[order.index(axis)] = index
         plane = np.asarray(volume[tuple(key)], np.float32)
@@ -200,7 +197,7 @@ def write_scan_slices(
 ) -> None:
     """Reconstruct the ``wanted`` planes of a scan by FBP, which makes an axial plane alone."""
     from tomojax import interactive
-    from tomojax.cli._results import unit_of
+    from tomojax._loading.registration import unit_of
     from tomojax.core.registration import registered_plane, volume_axes
 
     distinct = list(dict.fromkeys(wanted))
@@ -233,7 +230,7 @@ def write_sweep(
 ) -> None:
     """Reconstruct ``plane`` at each candidate center: one image each and a contact sheet."""
     from tomojax import interactive
-    from tomojax.cli._results import unit_of
+    from tomojax._loading.registration import unit_of
 
     axis, index = plane or ("z", scan.grid.nz // 2)
     plans = interactive.resolve_sweep(scan, axis, index, centers, method="fbp")

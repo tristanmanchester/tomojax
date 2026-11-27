@@ -56,8 +56,7 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(arrays,
         if source is None:
             assert value is None
         else:
-            expected = source.astype(value.dtype)  # angles are stored as float32
-            np.testing.assert_array_equal(value, expected)
+            np.testing.assert_array_equal(value, source)
             assert not np.shares_memory(value, source)
             before = source.copy()
             value.flat[0] += 1

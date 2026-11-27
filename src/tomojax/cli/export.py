@@ -63,7 +63,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     def run() -> Result | None:
         data, out = Path(args.data), Path(args.out)
         check_paths(parser, inputs=[data])
-        with saved_export_source(data, args.member) as (source, disk):
+        from tomojax.cli.manifest import recording
+
+        with (
+            recording("export", args, {}),
+            saved_export_source(data, args.member) as (source, disk),
+        ):
             try:
                 crop = None if args.crop is None else crop_intervals(args.crop, "Z0:Z1,Y0:Y1,X0:X1")
                 plan = plan_export(

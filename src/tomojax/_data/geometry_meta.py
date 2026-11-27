@@ -207,7 +207,7 @@ def _resolve_angles(
     *,
     apply_saved_angle_offset: bool,
 ) -> np.ndarray:
-    thetas = np.asarray(meta["angles"], dtype=np.float32)
+    thetas = np.asarray(meta["angles"])
     if not apply_saved_angle_offset:
         return thetas
 
@@ -217,7 +217,7 @@ def _resolve_angles(
     if angle_offset is None or meta.get("misalign_spec") is not None:
         return thetas
 
-    offset = np.asarray(angle_offset, dtype=np.float32)
+    offset = np.asarray(angle_offset)
     if offset.shape != thetas.shape:
         raise ValueError(f"angle_offset must have shape {thetas.shape}, got {offset.shape}")
     if not np.isfinite(offset).all():

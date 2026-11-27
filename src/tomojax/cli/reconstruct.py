@@ -15,7 +15,6 @@ from dataclasses import fields
 from functools import partial
 import logging
 from pathlib import Path
-import sys
 from typing import TYPE_CHECKING, Any, TypedDict, cast, get_args
 
 import numpy as np
@@ -307,18 +306,16 @@ class _Args(argparse.Namespace):
         return config
 
 
-def _write_manifest(
+def _resolved_settings(
     args: _Args,
     metadata: ConfigMetadata,
     scan: Scan,
     result: Reconstruction,
     *,
     masked: bool,
-) -> None:
-    """Write ``--manifest``: the run's inputs and settings and the reconstruction's record."""
-    from tomojax.cli.manifest import build_manifest, save_manifest
-
-    payload: dict[str, object] = {
+) -> dict[str, object]:
+    """The command configuration and the solver result persisted with its pixels."""
+    return {
         "input_path": args.data,
         "output_path": args.out,
         "preview_path": args.preview,
@@ -342,9 +339,6 @@ def _write_manifest(
         # The resolved configuration and the solver's record.
         "reconstruction": result.info,
     }
-    manifest = build_manifest("tomojax reconstruct", list(sys.argv), args, payload)
-    save_manifest(str(args.manifest), manifest)
-    LOG.info("Saved reproducibility manifest to %s", args.manifest)
 
 
 def main() -> int:
@@ -423,7 +417,11 @@ def _solve(
             args.data,
         )
     progress.check_canceled()
-    tj.save(args.out, result, include_scan=args.include_scan)
+    from tomojax.cli.manifest import recording, save_manifest
+
+    resolved = _resolved_settings(args, metadata, scan, result, masked=args.region == "cyl")
+    with recording("reconstruct", args, resolved) as manifest:
+        tj.save(args.out, result, include_scan=args.include_scan)
     if args.preview is not None:
         from tomojax.cli._images import save_volume_plane
 
@@ -432,7 +430,7 @@ def _solve(
         _ = save_volume_plane(Path(args.preview), result.volume, result.grid, "z", label)
     if args.manifest is not None:
         progress.check_canceled()
-        _write_manifest(args, metadata, scan, result, masked=args.region == "cyl")
+        save_manifest(str(args.manifest), manifest)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 

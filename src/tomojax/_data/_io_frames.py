@@ -100,6 +100,42 @@ class Hdf5Frames(FrameStack):
             return out
 
 
+@dataclass(frozen=True)
+class PinnedFrames(FrameStack):
+    """Detector windows on a selected dataset in a held HDF5 generation."""
+
+    signal: h5py.Dataset
+    path: str
+    _bulk_row_reads: ClassVar[bool] = True
+
+    @classmethod
+    def of(cls, data: h5py.Dataset) -> PinnedFrames:
+        validate_virtual_pixels(data)
+        # A separate HDF5 file ID refers to the same open file. Its dataset stays
+        # valid after the caller closes its own ID, even if the pathname is replaced.
+        held = h5py.File(data.file.id.reopen())[str(data.name)]
+        assert isinstance(held, h5py.Dataset)
+        n, rows, cols = data.shape
+        return cls(
+            signal=held,
+            path=data.file.filename,
+            frames=np.arange(n),
+            rows=rows,
+            cols=cols,
+            dtype=data.dtype,
+        )
+
+    def _read(self, indices: np.ndarray, rows: slice, cols: slice) -> np.ndarray:
+        if indices.size == 0:
+            return np.empty((0, self.rows, self.cols), self.dtype)
+        views = (
+            slice(int(indices[0]), int(indices[-1]) + 1)
+            if np.all(np.diff(indices) == 1)
+            else indices
+        )
+        return self.signal[views, rows, cols]
+
+
 NXTOMO_FRAME_PATHS = (
     "/entry/instrument/detector/data",
     "/entry/data/projections",
@@ -124,7 +160,7 @@ def _gda_paths(file: h5py.File, selected: str | None) -> tuple[str, str, str] | 
         data = f"{prefix}/imaging/data"
         if selected is not None and selected.strip("/") != data.strip("/"):
             continue
-        stack = _dataset(file, data)
+        stack = linked_dataset(file, data)
         if stack is None or stack.ndim not in (2, 3):
             continue
         key = next(
@@ -134,7 +170,7 @@ def _gda_paths(file: h5py.File, selected: str | None) -> tuple[str, str, str] | 
                     "tomo_entry/instrument/detector/image_key",
                     "instrument/EtherCAT/image_key",
                 )
-                if _dataset(file, f"{prefix}/{p}") is not None
+                if linked_dataset(file, f"{prefix}/{p}") is not None
             ),
             None,
         )
@@ -147,7 +183,7 @@ def _gda_paths(file: h5py.File, selected: str | None) -> tuple[str, str, str] | 
                     "imaging_sum/smaract_zrot_value_set",
                     "imaging_sum/smaract_zrot",
                 )
-                if _dataset(file, f"{prefix}/{p}") is not None
+                if linked_dataset(file, f"{prefix}/{p}") is not None
             ),
             None,
         )
@@ -263,6 +299,20 @@ class LocatedFrames:
         return marked or self.flats is not None or self.darks is not None
 
 
+def _frame_labels(
+    file: h5py.File, path: str | None, values: np.ndarray | None, frames: int
+) -> tuple[np.ndarray | None, int]:
+    """Decode the selected labels, including ESRF return images marked by the control channel."""
+    if path is None or values is None:
+        return None, 0
+    key = checked_image_key(values, frames=frames, path=f"{file.filename} image_key_path {path!r}")
+    control = linked_dataset(file, f"{path.rsplit('/', 1)[0]}/image_key_control")
+    if control is None or control.ndim != 1 or len(control) < frames:
+        return key, 0
+    returned = np.asarray(control[:frames]) == -1
+    return np.where(returned, 3, key), int(np.count_nonzero(returned))
+
+
 def locate_frames(
     path: str,
     *,
@@ -335,7 +385,9 @@ def locate_frames(
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
         parent = where.rsplit("/", 1)[0] or "/"
         beside = {n: f"{parent.rstrip('/')}/{n}" for n in ("data_white", "data_dark", "theta")}
-        angles_at = angles_at or (beside["theta"] if _dataset(file, beside["theta"]) else None)
+        angles_at = angles_at or (
+            beside["theta"] if linked_dataset(file, beside["theta"]) else None
+        )
         coordinate = None if angles_at else _rotation_coordinate(file, stack, path)
         angles_at = angles_at or (coordinate[0] if coordinate is not None else None)
         angles_by_name = angles_at is None
@@ -347,17 +399,7 @@ def locate_frames(
             file, path, frames, (key_at, key_by_name), (angles_at, angles_by_name)
         )
         read = min(counts.values())
-        key = raw_key
-        if key is not None:
-            key = checked_image_key(key, frames=read, path=f"{path} image_key_path {key_at!r}")
-        control = (
-            _dataset(file, f"{key_at.rsplit('/', 1)[0]}/image_key_control") if key_at else None
-        )
-        returns = 0
-        if key is not None and control is not None and control.ndim == 1 and len(control) >= read:
-            # ESRF marks return (alignment) images -1 here while image_key calls them samples.
-            marked = np.asarray(control[:read]) == -1
-            key, returns = np.where(marked, 3, key), int(np.count_nonzero(marked))
+        key, returns = _frame_labels(file, key_at, raw_key, read)
         acquisition, units_override = _gda_metadata(file, gda, where, key_at, angles_at)
         notes: JsonObject = {}
         if coordinate is not None and coordinate[2] is not None:
@@ -395,7 +437,7 @@ def locate_frames(
             )
         flats, darks = (
             Hdf5Frames.open(path, beside[n])
-            if (key is None or not np.any(key == label)) and _dataset(file, beside[n])
+            if (key is None or not np.any(key == label)) and linked_dataset(file, beside[n])
             else None
             for n, label in (("data_white", 1), ("data_dark", 2))
         )
@@ -417,7 +459,9 @@ def _stack(
     file: h5py.File, path: str, data_path: str | None
 ) -> tuple[str, h5py.Dataset, tuple[str, str, str] | None]:
     """The frames' path and dataset, and the GDA layout they belong to, if any."""
-    where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
+    where = data_path or next(
+        (p for p in _FRAME_PATHS if linked_dataset(file, p) is not None), None
+    )
     gda = _gda_paths(file, data_path) if where is None or data_path is not None else None
     where = where or (gda[0] if gda is not None else None)
     gda = (
@@ -427,7 +471,7 @@ def _stack(
     )
     where = where or _default_frames(file)
     where = where or _only(file, "data", lambda d: len(d.shape) in (2, 3), path)
-    stack = None if where is None else _dataset(file, where)
+    stack = None if where is None else linked_dataset(file, where)
     if data_path is not None and stack is None:
         raise KeyError(f"data_path: {path} has no dataset {data_path!r}")
     if where is not None and stack is not None:
@@ -519,7 +563,7 @@ def _default_frames(file: h5py.File) -> str | None:
         if not isinstance(plot, h5py.Group) or "signal" not in plot.attrs:
             continue
         where = f"{plot.name}/{_text(plot.attrs['signal'])}"
-        signal = _dataset(file, where)
+        signal = linked_dataset(file, where)
         if signal is not None and signal.ndim in (2, 3):
             found.append(where)
     return found[0] if len(found) == 1 else None
@@ -626,7 +670,8 @@ def _recorded_units(entry: h5py.Group, name: str) -> tuple[str, str | None]:
     return units, where
 
 
-def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
+def linked_dataset(file: h5py.Group, where: str) -> h5py.Dataset | None:
+    """Look up a numerical field, reporting a dangling link with its target."""
     found = file.get(where)
     if found is None:
         # get() reads a dangling link as absence: missing frame labels would make
@@ -635,15 +680,15 @@ def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
         if isinstance(link, h5py.ExternalLink):
             raise ValueError(
                 f"{where}: external data unavailable; supply {link.filename!r} "
-                f"beside {file.filename!r}, containing dataset {link.path!r}"
+                f"beside {file.file.filename!r}, containing dataset {link.path!r}"
             )
         if isinstance(link, h5py.SoftLink):
-            raise ValueError(f"{where}: links to {link.path!r}, which {file.filename!r} lacks")
+            raise ValueError(f"{where}: links to {link.path!r}, which {file.file.filename!r} lacks")
     return found if isinstance(found, h5py.Dataset) else None
 
 
 def _read(file: h5py.File, where: str, path: str) -> np.ndarray:
-    found = _dataset(file, where)
+    found = linked_dataset(file, where)
     if found is None:
         if where in file:
             raise ValueError(f"{path}:{where} must be a dataset")
@@ -722,7 +767,7 @@ def _only(
     def visit(where: str) -> None:
         if where.rsplit("/", 1)[-1] != name:
             return
-        item = _dataset(file, where)
+        item = linked_dataset(file, where)
         if item is not None and item.id not in seen:
             # NXdata and NXdetector commonly link to the same pixels. A link
             # alias is not a second acquisition, even across external files.

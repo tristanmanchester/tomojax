@@ -392,8 +392,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         scan = _applied(prepared, args)
         progress.check_canceled()
         import tomojax as tj
+        from tomojax.cli.manifest import recording
 
-        tj.save(output, scan)
+        with recording("correct", args, metadata):
+            tj.save(output, scan)
         if preview is not None:
             progress.check_canceled()
             write_band_preview(Path(preview), prepared, band, args)

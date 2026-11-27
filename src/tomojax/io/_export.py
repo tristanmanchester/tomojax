@@ -13,11 +13,11 @@ from pathlib import Path
 import shutil
 import tempfile
 
-import msgspec
 import numpy as np
 
 from tomojax import progress
 from tomojax.core.input_files import check_output, publishing as protect_inputs
+from tomojax._data import array_record
 from tomojax.errors import InvalidParameter
 from tomojax.io._export_data import Blocks, Crop, ExportSource, Selection, Values
 from tomojax.io._export_formats import FORMATS, Document, Format, format_for, slice_path
@@ -333,14 +333,9 @@ def plan_export(
                 name, f"{fmt.name} does not support {name}; choose from {choices}"
             )
     values = Values.resolve(selection, dtype, value_range)
-    axes = [msgspec.to_builtins(a) for a in selection.axes]
     array = {
         "name": source.name,
-        "shape": list(selection.shape),
-        "dtype": values.dtype,
-        "axes": axes,
-        "unit": values.unit,
-        "domain": source.domain,
+        **array_record(selection.shape, values.dtype, selection.axes, values.unit, source.domain),
     }
     nbytes = math.prod(selection.shape) * np.dtype(values.dtype).itemsize
     paths = fmt.paths(path)

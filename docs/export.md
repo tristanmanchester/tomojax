@@ -14,7 +14,7 @@ tomojax export recon.nxs -o detail.tif --crop 100:300,:,: --binning 2 --compress
 | Slice directory | TIFF slices | ImageJ, Bio-Formats and ITK read the in-plane pixel size. |
 | `.raw` | Raw | The adjacent JSON record gives axes, units and value scaling. |
 | `.mhd` | MetaImage | ITK and VTK read spacing and origin. The header stores lengths without a unit. |
-| `.am` | AmiraMesh | Bio-Formats reads voxel size and assumes micrometres when the unit is unknown. The bounding box records placement. |
+| `.am` | AmiraMesh | Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. The bounding box records placement. |
 <!-- /formats -->
 
 TomoJAX writes volumes in z, y, x order. A crop uses half-open intervals in that order. Binning averages complete spatial bins after the crop and places the new voxel center at the mean of their centers. A one-plane crop writes a single section. With `axis="x"`, planes have z rows and y columns. TIFF viewers treat the first dimension as their stack axis, so changing the stack axis can mirror the display. MetaImage keeps the world frame through its direction matrix.

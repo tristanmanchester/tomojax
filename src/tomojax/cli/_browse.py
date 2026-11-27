@@ -15,7 +15,6 @@ import h5py
 import msgspec
 import numpy as np
 
-from tomojax._loading.files import saved_volume_grid
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
 from tomojax.cli._features import FEATURE_GROUP, saved_mask_metadata
@@ -26,6 +25,7 @@ from tomojax.cli._results import disk_volume, stored_grid
 from tomojax.core.array_grid import Grid, published, require_same_grid
 from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
+from tomojax.io.api import registered_members, saved_volume_grid
 from tomojax.io.projection_layout import saved_npz_layout
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
@@ -70,8 +70,16 @@ def source_array(
     if isinstance(source, Hdf5):
         with h5py.File(path, "r") as file:
             data = explicit_dataset(file, source, field)
+            if "tomojax_format" in file.attrs:
+                for array in registered_members(file, path).values():
+                    if (
+                        isinstance(array.storage, Hdf5)
+                        and file[array.storage.dataset].id == data.id
+                    ):
+                        yield data, array
+                        return
             if (
-                "/" + source.dataset.lstrip("/") == p.VOLUME_DATASET
+                "/" + source.dataset.lstrip("/") == "/entry/processing/tomojax/volume"
                 and "volume_axes_order" in file["/entry/processing/tomojax"].attrs
             ):
                 grid, _, geom_meta, axes = stored_grid(file, path)
@@ -121,7 +129,13 @@ def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
     """Open only the volume and its registration in logical voxel order."""
     if h5py.is_hdf5(path):
         with h5py.File(path, "r") as file:
-            data = file.get(p.VOLUME_DATASET)
+            if "tomojax_format" in file.attrs:
+                for name, array in registered_members(file, path).items():
+                    if name in ("volume", "image", "phantom"):
+                        assert isinstance(array.storage, Hdf5)
+                        yield file[array.storage.dataset], array
+                        return
+            data = file.get("/entry/processing/tomojax/volume")
             if isinstance(data, h5py.Dataset):
                 grid, _, geom_meta, axes = stored_grid(file, path)
                 volume = SavedVolume(data, axes)
@@ -133,9 +147,7 @@ def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
     elif path.is_file() and path.suffix.lower() == ".npz":
         record, arrays = saved_npz_layout(path, volume_only=True)
         if (volume := arrays.get("volume")) is not None:
-            grid = saved_volume_grid(
-                record.grid.to_dict() if record.grid else None, record.geometry_metadata
-            )
+            grid = saved_volume_grid(record.grid, record.geometry_metadata)
             yield (
                 volume,
                 disk_volume(

@@ -245,6 +245,20 @@ Passing a dictionary as `info=info` to `tj.reconstruct_slabs` collects the whole
 
 Only whole-row line-integral corrections (such as `Rings`) are supported in `reconstruct_slabs`, not `Paganin` or `RejectViews`. Release each `block` as you iterate so its volume and projections do not accumulate in memory.
 
+## Read one plane of a saved result
+
+```python
+result = tj.load_reconstruction("volume.nxs")
+plane = result.volume[result.grid.nz // 2]
+```
+
+TomoJAX format 2 stores the native projection and volume arrays contiguously.
+Loading maps their bytes read-only. Indexing brings the selected pages into
+memory, even when the file also holds a scan. The arrays and their metadata
+belong to the same open file generation if another process replaces its name.
+Saving transfers each array in tiles. A scan-free reconstruction records its
+source and geometry and leaves out the projection stack.
+
 ## Bin detectors finer than the grid
 
 When the detector pixel pitch (divided by magnification in cone beam) is finer than the reconstruction voxel pitch, projectors trace more rays than the grid can resolve. `scan.binned(factor)` averages `factor × factor` pixel blocks, reducing projection cost by `factor²` and adjusting the detector center to match (remainder edge pixels are dropped). Iterative `tj.reconstruct` warns with the suggested factor whenever the detector is at least twice as fine as the grid. On the CLI, pass `--binning` to `tomojax correct`. On the FIPS walnut, 2 × 2 binning made iterative reconstruction [3.5× faster with no loss of accuracy](measurements.md#cone-beam-ct-against-astra-and-tigre).

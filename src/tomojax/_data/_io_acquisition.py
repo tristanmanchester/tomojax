@@ -63,8 +63,8 @@ def angles_in_degrees(
     sample_angles = values if image_key is None else values[image_key == 0]
     if values.dtype.kind not in "iuf" or not np.isfinite(sample_angles).all():
         raise ValueError(f"{path}: sample angles must contain only finite real numbers")
-    degrees = values.astype(np.float64)
-    degrees *= angle_scale_degrees(units, path=path)
+    scale = angle_scale_degrees(units, path=path)
+    degrees = values if scale == 1.0 else values.astype(np.float64) * scale
     sample_degrees = degrees if image_key is None else degrees[image_key == 0]
     if not np.isfinite(sample_degrees).all() or np.any(
         np.abs(sample_degrees) > np.finfo(np.float32).max

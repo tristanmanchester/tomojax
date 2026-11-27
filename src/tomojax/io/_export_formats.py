@@ -308,7 +308,7 @@ FORMATS = (
         (".am",),
         "group",
         _COMMON[:-1],
-        "Bio-Formats reads voxel size and assumes micrometres when the unit is unknown. "
+        "Bio-Formats reads voxel size and assumes micrometers when the unit is unknown. "
         "The bounding box records placement.",
         partial(raw, dialect="amira"),
         spatial_only=True,

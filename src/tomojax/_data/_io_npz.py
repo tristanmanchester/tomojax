@@ -17,6 +17,7 @@ from ._io_types import LoadedDataset, LoadedNXTomo, NXTomoMetadata
 _ANGLES_KEY = "thetas_deg"
 _AXES_KEY = "volume_axes_order"
 _JSON_FIELDS = {
+    "history",
     "grid",
     "detector",
     "source",

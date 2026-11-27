@@ -47,6 +47,9 @@ cases = {
         scan(tj.LaminographyGeometry(grid, detector, angles, tilt=25.0, tilt_about="z")),
     ),
     "posed": ("scan", scan(tj.ParallelGeometry(grid, detector, angles)).with_poses(poses)),
+    "alignment": ("alignment", tj.Alignment(
+        cone.with_poses(poses), {}, rng.random(grid.shape, dtype=np.float32), grid
+    )),
     "line": ("scan", scan(line)),
     "simulation": (
         "simulation",
@@ -70,6 +73,9 @@ for name, (kind, item) in cases.items():
         loaded, volume, volume_grid, unit = (
             simulation.scan, simulation.phantom, simulation.scan.grid, None
         )
+    elif kind == "alignment":
+        aligned = tj.load_alignment(path)
+        loaded, volume, volume_grid, unit = aligned.scan, aligned.image, aligned.grid, None
     elif kind == "reconstruction":
         recon = tj.load_reconstruction(path)
         loaded, volume, volume_grid, unit = tj.load(path), recon.volume, recon.grid, recon.length_unit
@@ -142,7 +148,7 @@ fn sizes(value: &Value) -> Vec<usize> {
 fn studio_reads_saved_nxtomo_as_tomojax_loads_it() {
     let directory = tempfile::tempdir().unwrap();
     let cases = corpus(directory.path());
-    assert_eq!(cases.len(), 7);
+    assert_eq!(cases.len(), 8);
     for (name, case) in &cases {
         let path = Path::new(case["path"].as_str().unwrap());
         let inspection = &case["inspection"];
@@ -205,6 +211,7 @@ fn studio_reads_saved_nxtomo_as_tomojax_loads_it() {
 
         let volume_name = match case["kind"].as_str().unwrap() {
             "simulation" => Some("phantom"),
+            "alignment" => Some("image"),
             "reconstruction" => Some("volume"),
             _ => None,
         };

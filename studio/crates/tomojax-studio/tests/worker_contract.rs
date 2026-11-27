@@ -172,13 +172,13 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
 
     let original = hdf5::File::open(&source_path)
         .unwrap()
-        .dataset(metadata::VOLUME)
+        .dataset("/entry/phantom/data")
         .unwrap()
         .read_raw::<f32>()
         .unwrap();
     let recovered = hdf5::File::open(&result_path)
         .unwrap()
-        .dataset(metadata::VOLUME)
+        .dataset("/entry/volume/data")
         .unwrap()
         .read_raw::<f32>()
         .unwrap();
@@ -214,7 +214,7 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
     result.kind = "reconstruction".into();
     result.parent = Some(source_id);
     result.method = Some("fourier".into());
-    result.arrays = registered;
+    result.register_read(&kind, quick, &project.root);
     result.provenance = Some(reconstruction.manifest);
     job.status = project::JobStatus::Completed;
     job.result = Some(result.id.clone());

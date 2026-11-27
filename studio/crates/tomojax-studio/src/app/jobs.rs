@@ -559,7 +559,7 @@ impl AppState {
                     self.fail_job(&job, "Saving did not return a committed file set", false);
                     return;
                 }
-                let mut result = match self.result_asset(&job, &asset, &path, &original) {
+                let result = match self.result_asset(&job, &asset, &path, &original) {
                     Ok(result) => result,
                     Err(error) => {
                         self.release_output(&original);
@@ -567,14 +567,6 @@ impl AppState {
                         return;
                     }
                 };
-                match metadata::saved_arrays(&original.value, &path, None) {
-                    Ok(arrays) => result.arrays = arrays,
-                    Err(error) => {
-                        self.release_output(&original);
-                        self.fail_job(&job, &error, false);
-                        return;
-                    }
-                }
                 self.release_output(&original);
                 self.complete_asset(&job, result);
                 self.start_metadata(&asset);

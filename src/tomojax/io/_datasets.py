@@ -22,6 +22,7 @@ from tomojax._data import (
     load_npz,
     load_nxtomo,
     locate_frames,
+    native_payload,
     save_npz,
     save_nxtomo,
     saved_volume_axes,
@@ -125,6 +126,13 @@ def build_geometry_from_dataset_metadata(
     )
 
 
+def _has_partial_detector(metadata: NXTomoMetadata) -> bool:
+    detector = metadata.detector
+    return (
+        isinstance(detector, dict) and not {"nu", "nv", "du", "dv", "det_center"} <= detector.keys()
+    )
+
+
 @dataclass(slots=True)
 class ProjectionDataset:
     """Standard public in-memory projection dataset.
@@ -220,11 +228,8 @@ class ProjectionDataset:
             If grid or detector metadata have invalid coordinate dimensions.
         """
         metadata = payload.metadata
-        detector = metadata.detector
-        if isinstance(detector, dict) and not {"du", "dv", "det_center"} <= detector.keys():
-            # NPZ can carry an incomplete record too. Preserve its absence so
-            # load_frames can apply an explicit detector before materialization.
-            detector = None
+        # Keep partial detector calibration in metadata until a full detector is supplied.
+        detector = None if _has_partial_detector(metadata) else metadata.detector
         meta = dict(metadata.geometry_meta or {})
         # Older saves stored raw Zeiss tables alongside the effective geometry.
         # Keep them with the acquisition they describe, including after a re-save.
@@ -242,11 +247,14 @@ class ProjectionDataset:
             if isinstance(zeiss, dict):
                 meta["zeiss"] = {**zeiss, **original}
         grid = metadata.grid
+        # Keep native geometry at its recorded precision. Acquisition payloads use
+        # the public reader's float32 convention.
+        angle_dtype = None if payload.file_record is not None else np.float32
         dataset = cls(
             projections=None if payload.projections is None else np.asarray(payload.projections),
             angles=np.asarray(
                 np.empty(0, dtype=np.float32) if metadata.angles is None else metadata.angles,
-                dtype=np.float32,
+                dtype=angle_dtype,
             ),
             volume=None if metadata.volume is None else np.asarray(metadata.volume),
             detector=detector
@@ -260,7 +268,7 @@ class ProjectionDataset:
             angle_offset=(
                 None
                 if metadata.angle_offset is None
-                else np.asarray(metadata.angle_offset, dtype=np.float32)
+                else np.asarray(metadata.angle_offset, dtype=angle_dtype)
             ),
             align_params=(
                 None if metadata.align_params is None else np.asarray(metadata.align_params)
@@ -268,11 +276,24 @@ class ProjectionDataset:
             align_gauge=None if metadata.align_gauge is None else dict(metadata.align_gauge),
             misalign_spec=None if metadata.misalign_spec is None else dict(metadata.misalign_spec),
             source_path=None if source_path is None else str(source_path),
-            source_format="nxtomo",
+            source_format="tomojax" if payload.file_record is not None else "nxtomo",
             sample_name=metadata.sample_name,
         )
-        dataset._metadata = metadata
+        # Pixel storage belongs to the public volume field, not its provenance.
+        dataset._metadata = replace(metadata, volume=None)
         return dataset
+
+    @property
+    def projection_domain(self) -> str | None:
+        """Recorded measurement domain of the selected projections.
+
+        Returns
+        -------
+        str or None
+            `counts` or `line_integrals` for a registered signal, or None
+            when the input supplies no measurement domain.
+        """
+        return None if self._metadata is None else self._metadata.projection_domain
 
     @property
     def image_key(self) -> np.ndarray | None:
@@ -302,20 +323,23 @@ class ProjectionDataset:
             stored = self._metadata
             metadata = replace(
                 stored,
+                history=copy.deepcopy(stored.history),
                 image_key=None if stored.image_key is None else np.array(stored.image_key),
                 geometry_calibration=_copied(stored.geometry_calibration),
                 simulation_artifacts=_copied(stored.simulation_artifacts),
             )
-        metadata.angles = np.array(self.angles, dtype=np.float32, copy=True)
+        metadata.angles = np.array(self.angles, copy=True) if self.angles.size else None
         metadata.volume = None if self.volume is None else np.array(self.volume, copy=True)
         metadata.grid = self.grid
-        metadata.detector = self.detector
+        metadata.detector = (
+            copy.deepcopy(metadata.detector)
+            if self.detector is None and _has_partial_detector(metadata)
+            else self.detector
+        )
         metadata.geometry_type = self.geometry_type
         metadata.geometry_meta = _copied(self.geometry_metadata)
         metadata.angle_offset = (
-            None
-            if self.angle_offset is None
-            else np.array(self.angle_offset, dtype=np.float32, copy=True)
+            None if self.angle_offset is None else np.array(self.angle_offset, copy=True)
         )
         metadata.align_params = (
             None if self.align_params is None else np.array(self.align_params, copy=True)
@@ -353,7 +377,7 @@ class ProjectionDataset:
             )
         payload: dict[str, Any] = {
             "detector": detector.to_dict(),
-            "angles": np.asarray(self.angles, dtype=np.float32),
+            "angles": self.angles,
             "geometry_type": self.geometry_type,
         }
         if self.grid is not None:
@@ -560,8 +584,7 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
     # The metadata copy would duplicate a large volume that the writer only reads.
     metadata = replace_dataset(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
-    projections = None if dataset.projections is None else np.asarray(dataset.projections)
-    writer(str(output_path), projections, metadata=metadata)
+    writer(str(output_path), dataset.projections, metadata=metadata)
 
 
 def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
@@ -690,9 +713,36 @@ def validate_dataset(path: PathLike) -> ValidationReport:
     return {"issues": issues}
 
 
+def _frame_issues(angles: np.ndarray | None, key: np.ndarray | None) -> list[str]:
+    issues = []
+    if angles is None:
+        issues.append("Missing rotation angles; supply angles when loading the frames")
+    if key is not None and not np.any(key == 0):
+        issues.append("No sample frames (image_key == 0)")
+    return issues
+
+
+def _native_issues(saved: LoadedNXTomo) -> list[str]:
+    if saved.projections is None:
+        return [] if saved.metadata.volume is not None else ["No volume or projections"]
+    key = saved.metadata.image_key
+    issues = _frame_issues(saved.metadata.angles, key)
+    if saved.metadata.projection_domain == "counts":
+        issues.extend(
+            calibration_issues(
+                True if key is not None and np.any(key == 1) else None,
+                True if key is not None and np.any(key == 2) else None,
+                None,
+            )
+        )
+    return issues
+
+
 def _dataset_issues(input_path: Path) -> list[str]:
     from ._acquisition import read_acquisition
 
+    if (saved := native_payload(input_path, layout_only=True, lazy_projections=True)) is not None:
+        return _native_issues(saved)
     raw = read_acquisition(input_path)
     if raw is not None:
         issues = calibration_issues(raw.flats, raw.darks, raw.white_level)
@@ -715,12 +765,7 @@ def _dataset_issues(input_path: Path) -> list[str]:
         return []
     if suffix in _HDF5_SUFFIXES:
         located = locate_frames(str(input_path))
-        issues = []
-        if located.angles is None:
-            issues.append("Missing rotation angles; supply angles when loading the frames")
-        if located.image_key is not None and not np.any(located.image_key == 0):
-            issues.append("No sample frames (image_key == 0)")
-        return issues
+        return _frame_issues(located.angles, located.image_key)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
         return [
             "TIFF stacks require an angle sidecar or explicit angles; "
@@ -734,7 +779,7 @@ def _merge_dataset_solver_metadata(
     dataset: ProjectionDataset,
 ) -> None:
     if dataset.angle_offset is not None:
-        payload["angle_offset"] = np.asarray(dataset.angle_offset, dtype=np.float32)
+        payload["angle_offset"] = dataset.angle_offset
     if dataset.align_params is not None:
         payload["align_params"] = np.asarray(dataset.align_params)
     if dataset.align_gauge is not None:

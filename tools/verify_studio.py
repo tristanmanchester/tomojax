@@ -14,17 +14,19 @@ import sys
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, cast
 
+import h5py
 import jax
 import msgspec
 import numpy as np
 from PIL import Image, ImageStat
 
 import tomojax as tj
-from tomojax.geometry import grid_volume_origin
-from tomojax.wire.arrays import Array, Axis, Hdf5, Uniform
+from tomojax.io.api import registered_members
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from tomojax.wire.arrays import Array
 
 ROOT = Path(__file__).resolve().parents[1]
 STUDIO = ROOT / "studio"
@@ -35,7 +37,7 @@ PROJECT_MANIFEST = "project.tomojax.json"
 PROJECT_VIEWS = {
     "Prepare": ("scan", "Projection", "correct"),
     "Reconstruct": ("scan", "Sinogram", "reconstruct"),
-    "Explore": ("ramp", "Volume", "reconstruct"),
+    "Explore": ("aligned", "Volume", "align"),
     "Compare": ("ramp", "Axial", "reconstruct"),
     "Jobs": ("ramp", "Axial", "reconstruct"),
 }
@@ -85,28 +87,12 @@ def write_fixture(root: Path) -> dict[str, Path]:
             "hann": tj.reconstruct(scan, "fbp", filter="hann"),
         }
     detector = scan.detector
-    projections = Array(
-        storage=Hdf5(path="scan.nxs", dataset="/entry/instrument/detector/data"),
-        shape=(views, detector.nv, detector.nu),
-        dtype="<f4",
-        axes=(
-            Axis("view", "acquisition", "degree", Uniform(0.0, 180.0 / views)),
-            Axis(
-                "v",
-                "detector",
-                "scan_length",
-                Uniform(-(detector.nv - 1) * detector.dv / 2, detector.dv),
-            ),
-            Axis(
-                "u",
-                "detector",
-                "scan_length",
-                Uniform(-(detector.nu - 1) * detector.du / 2, detector.du),
-            ),
-        ),
-        unit="1",
-        domain="line_integral",
-    )
+
+    def members(name: str) -> dict[str, Array]:
+        with h5py.File(root / name) as file:
+            return registered_members(file, Path(name))
+
+    projections = members("scan.nxs")["projections"]
     scan_input: dict[str, object] = {
         "name": "Simulated Shepp scan",
         "path": "scan.nxs",
@@ -120,20 +106,7 @@ def write_fixture(root: Path) -> dict[str, Path]:
     for name, result in results.items():
         path = f"{name}.nxs"
         tj.save(root / path, result)
-        grid = result.grid
-        x, y, z = grid_volume_origin(grid)
-        volume = Array(
-            storage=Hdf5(path=path, dataset="/entry/processing/tomojax/volume"),
-            shape=grid.shape,
-            dtype="<f4",
-            axes=(
-                Axis("z", "volume", "scan_length", Uniform(z, grid.vz)),
-                Axis("y", "volume", "scan_length", Uniform(y, grid.vy)),
-                Axis("x", "volume", "scan_length", Uniform(x, grid.vx)),
-            ),
-            unit="1/scan_length",
-            domain="attenuation",
-        )
+        volume = members(path)["volume"]
         assets.append(
             {
                 "id": name,
@@ -163,12 +136,33 @@ def write_fixture(root: Path) -> dict[str, Path]:
             }
         )
 
+    poses = np.zeros((views, 6))
+    poses[:, 3] = 0.25 * np.sin(np.deg2rad(scan.angles))
+    reference = results["ramp"]
+    aligned = tj.Alignment(
+        scan.with_poses(poses), {"fixture": True}, reference.volume, reference.grid
+    )
+    tj.save(root / "aligned.nxs", aligned)
+    assets.append(
+        {
+            "id": "aligned",
+            "name": "Aligned Shepp scan",
+            "path": "aligned.nxs",
+            "kind": "alignment",
+            "parent": "scan",
+            "managed": True,
+            "created": len(assets),
+            "simulated": False,
+            "arrays": members("aligned.nxs"),
+        }
+    )
+
     projects: dict[str, Path] = {}
     for workspace, (active, view, operation) in PROJECT_VIEWS.items():
         label = workspace.lower()
         project = root / label
         project.mkdir()
-        for asset in ("scan", *results):
+        for asset in ("scan", "aligned", *results):
             # Independent manifests and shared immutable file contents.
             _ = shutil.copyfile(root / f"{asset}.nxs", project / f"{asset}.nxs")
         state: dict[str, object] = {

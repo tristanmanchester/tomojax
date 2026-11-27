@@ -206,6 +206,14 @@ class _StoredScan:
         return replace(self.scan, projections=data, source=source)
 
 
+def scan_in_result(path: Path, record: ProjectionDataset) -> Scan:
+    """Resolve the scan in an already-open result through the ordinary measurement rules."""
+    assert record.projections is not None
+    selected = ProjectionStorage.from_native(record, record.projections)
+    item = resolve_measurements(selected, _Calibration())
+    return _corrected_on_load(item, path) if isinstance(item, Frames) else item.materialize()
+
+
 def load_native(path: str | PathLike[str], **options: Any) -> Scan | Frames:
     """Open the selected measurements in their resolved domain."""
     file = Path(path)
@@ -859,13 +867,21 @@ class _Calibration:
         explicit = next((f.name for f in fields(self) if getattr(self, f.name) is not None), None)
         meta = storage.record.geometry_metadata
         logged = any(step["name"] == "log" for step in meta.get("corrections", ()))
-        if logged or meta.get("quantity") == "phase":
+        if storage.domain == "line_integrals" or (
+            storage.record.source_format != "tomojax"
+            and (logged or meta.get("quantity") == "phase")
+        ):
             if explicit or require_raw:
                 raise ValueError(
                     f"{explicit or 'load_frames'} requires counts; the file records line integrals"
                 )
             return False
-        raw = storage.counts or require_raw or self.flats is not None or self.darks is not None
+        raw = (
+            storage.domain == "counts"
+            or require_raw
+            or self.flats is not None
+            or self.darks is not None
+        )
         if explicit and not raw:
             raise ValueError(f"{explicit} requires raw detector counts and flat frames")
         return raw
@@ -934,7 +950,7 @@ def stored_scan(
     """Resolve geometry on the saved view axis, then select the complete scan state."""
     record, sample = storage.record, storage.key == 0
     if angles is not None and not sample.all():
-        expanded = np.zeros(len(sample), np.float32)
+        expanded = np.zeros(len(sample), dtype=np.asarray(angles).dtype)
         expanded[sample] = angles
         angles = expanded
     geometry = None
@@ -983,7 +999,7 @@ def _sample_scan(
 
         meta = dict(record.geometry_metadata)
         positions = meta.get("view_positions")
-        if positions is None and not selected.counts:
+        if positions is None and selected.domain != "counts":
             positions = np.arange(frames) + 0.5
         if positions is not None and len(positions) == frames:
             meta["view_positions"] = np.asarray(positions)[sample].tolist()

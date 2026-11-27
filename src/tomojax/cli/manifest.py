@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import UTC, datetime
 import json
 import platform
@@ -13,7 +14,7 @@ from tomojax.io.api import JsonValue, normalize_json
 
 if TYPE_CHECKING:
     import argparse
-    from collections.abc import Callable, Mapping, Sequence
+    from collections.abc import Callable, Iterator, Mapping, Sequence
     import os
 
 SCHEMA_VERSION = 1
@@ -127,6 +128,26 @@ def build_manifest(
     # to json.dump(..., allow_nan=False).
     _ = json.dumps(manifest, allow_nan=False)
     return manifest
+
+
+@contextmanager
+def recording(
+    command: str, arguments: argparse.Namespace, resolved: Mapping[str, object]
+) -> Iterator[dict[str, JsonValue]]:
+    """Attach the command and the actual configuration to every file written in this scope."""
+    from tomojax.io.api import provenance
+
+    manifest = build_manifest(f"tomojax {command}", list(sys.argv), arguments, resolved)
+    with provenance(
+        {
+            "command": manifest["command"],
+            "argv": manifest["argv"],
+            "arguments": manifest["cli_args"],
+            "resolved_config": manifest["resolved_config"],
+            "devices": manifest["jax"],
+        }
+    ):
+        yield manifest
 
 
 def save_manifest(path: str | os.PathLike[str], manifest: Mapping[str, object]) -> None:

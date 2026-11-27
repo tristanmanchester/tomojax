@@ -26,6 +26,49 @@ For explicit HDF5 crops, `tomojax.io.api.read_hdf5_array(dataset, slices)`
 preserves dtype and axes while decoding eligible gzip chunks in bounded parallel
 batches; the caller retains ownership of the open dataset.
 
+## Saved NeXus files
+
+The root attribute `tomojax_format = 2` selects the native reader and
+`default = "entry"` opens the NeXus entry. Its default plot is the volume,
+working image, phantom or projection stack stored by the object.
+
+| HDF5 path under `/entry` | Contents |
+| --- | --- |
+| `record` | Scalar UTF-8 JSON document |
+| `title`, `sample/name` | Sample name |
+| `instrument/detector` | Projection data, image keys and detector pitches |
+| `instrument/source` | Recorded radiation source and probe |
+| `sample/rotation_angle` | Rotation angles in degrees |
+| `data` | Projection NXdata with links to detector data, rotation angles and image keys, plus detector coordinates `v` and `u` |
+| `volume`, `image`, `phantom` | NXdata with a `data` signal and voxel-center coordinates `z`, `y`, `x` |
+| `tomojax` | Per-view poses, simulation truth poses and angle offsets when available |
+
+An axis starts at the center of element zero. Recorded spatial units apply to
+grid and detector coordinates. Uncalibrated coordinates use `scan_length`.
+Projection datasets written by `tj.save` contain corrected line integrals.
+Readers that import raw NXtomo counts must skip their flat-field and log steps.
+A low-level save of detector counts labels the signal `counts`.
+
+| Record field | Meaning |
+| --- | --- |
+| `format`, `kind`, `length_unit` | Layout version, saved object type and spatial unit |
+| `geometry` | Effective grid, detector, geometry type, corrections and acquisition metadata |
+| `arrays` | Member paths, shape, dtype, axes, units and measured quantity |
+| `tables` | Paths to angles, frame labels, poses and offsets, with units and pose columns |
+| `alignment`, `calibration`, `simulation` | Pose gauge, geometry calibration and simulation settings |
+| `sample`, `source`, `frame` | Sample name, radiation source and coordinate frame |
+| `provenance`, `history` | Writer versions and time, available command or worker context and provenance of earlier saves |
+
+When a reconstruction and its attached scan use different voxel grids,
+`geometry.grid` describes the scan and `geometry.meta.volume_grid` describes
+the reconstructed volume. The volume's NeXus axes use its own grid.
+
+Readers skip additional members and record fields of a supported format.
+An unrecognized format number reports the writing version. The rc6 HDF5
+reader remains available for this release. To migrate a reconstruction while
+preserving its optional projections, load it once and pass
+`include_scan=result.scan is not None` to `tj.save`.
+
 ## HDF5 acquisition metadata
 
 NXtomo angles are read from `/entry/sample/rotation_angle`, or from TomoJAX's

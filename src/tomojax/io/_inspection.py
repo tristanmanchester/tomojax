@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import replace
 import json
 import math
 from pathlib import Path
@@ -17,6 +18,7 @@ from tomojax._data import (
     FrameStack,
     LocatedFrames,
     locate_frames,
+    native_payload,
     saved_without_frames,
 )
 from tomojax._typed_arrays import (
@@ -625,6 +627,27 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
         record, samples = saved_projection_layout(Path(path))
         return _record_report(path, record, samples)
+    payload = native_payload(Path(path), layout_only=True, lazy_projections=True)
+    if payload is not None:
+        description = payload.file_record
+        assert description is not None
+        record = ProjectionDataset.from_nxtomo(replace(payload, projections=None), source_path=path)
+        key = record.image_key
+        report = _record_report(
+            path,
+            record,
+            payload.projections,
+            flat_count=int(np.count_nonzero(key == 1)),
+            dark_count=int(np.count_nonzero(key == 2)),
+        )
+        report.update(record=description, contents=description["arrays"])
+        if payload.projections is not None:
+            report["projection"]["path"] = description["arrays"]["projections"]["path"]
+        if "angles" in description["tables"]:
+            report["angles"]["path"] = description["tables"]["angles"]["path"]
+        if "image_key" in description["tables"]:
+            report["flats_darks"]["image_key_path"] = description["tables"]["image_key"]["path"]
+        return report
     raw = read_acquisition(path)
     if raw is None:
         return inspect_nxtomo(Path(path))

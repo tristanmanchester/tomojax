@@ -529,24 +529,16 @@ def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
     # check-public-imports: allow-private
     from tomojax.cli._previews import saved_plane
     from tomojax.cli.main import main
-    from tomojax.io import ProjectionDataset
+
+    from ._helpers import write_rc6_dataset
 
     nz, ny, nx = shape
     z, y, x = np.indices(shape)
     volume = (100 * x + 10 * y + z).astype(np.float32)
-    dataset = ProjectionDataset(
-        projections=np.zeros((2, 6, 7), np.float32),
-        angles=np.asarray([0.0, 90.0], np.float32),
-        volume=volume,
-        detector=Detector(7, 6, 1.0, 1.0),
-        grid=Grid(nx, ny, nz, 1.0, 1.0, 1.0),
-    )
     path = tmp_path / "old.nxs"
-    save_dataset(path, dataset)
+    write_rc6_dataset(path, grid=Grid(nx, ny, nz, 1.0, 1.0, 1.0))
     with h5py.File(path, "r+") as file:
-        group = file["/entry/processing/tomojax"]
-        del group["volume"], group.attrs["volume_axes_order"]
-        group["volume"] = volume.transpose(2, 1, 0)
+        file["entry/processing/tomojax/volume"] = volume.transpose(2, 1, 0)
     out = tmp_path / "out.raw"
     assert main(["export", str(path), "-o", str(out)]) == 1
     assert "does not record its axis order" in capsys.readouterr().err
@@ -731,19 +723,20 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
     for got, want in pairs:
         np.testing.assert_allclose(got, want, atol=1e-12)
 
-    # The same file as TomoJAX 0.3 wrote it: no convention marker.
-    def strip(name, obj):
-        for key, value in list(obj.attrs.items()):
-            if isinstance(value, str | bytes) and "detector_roll_turns_u_towards_v" in str(value):
-                obj.attrs[key] = _without_marker(value)
-        if isinstance(obj, h5py.Dataset) and obj.dtype.kind in "OS":
-            text = obj[()]
-            if "detector_roll_turns_u_towards_v" in str(text):
-                del handle[name]
-                handle[name] = _without_marker(text)
+    # Files written by 0.3 omit the signed detector-roll convention.
+    from ._helpers import write_rc6_dataset
 
-    with h5py.File(path, "a") as handle:
-        handle.visititems(strip)
+    write_rc6_dataset(
+        path,
+        projections=np.ones((2, 2, 3), np.float32),
+        grid=grid,
+        detector=detector,
+        geometry_type="cone",
+        geometry_metadata=geometry.geometry_metadata(),
+    )
+    with h5py.File(path, "r+") as handle:
+        attrs = handle["entry/geometry"].attrs
+        attrs["geometry_meta_json"] = _without_marker(attrs["geometry_meta_json"])
     with pytest.raises(ValueError, match="TomoJAX 0.3 or earlier"):
         tj.load(path)
 

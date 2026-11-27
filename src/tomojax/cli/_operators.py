@@ -7,12 +7,13 @@ from collections.abc import Callable
 import numpy as np
 
 import tomojax as tj
+from tomojax._loading.registration import unit_of
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, source
 from tomojax.cli._browse import operator_input
 from tomojax.cli._handles import stage_array
-from tomojax.cli._results import scan_axes, unit_of
 from tomojax.core.array_grid import Grid
+from tomojax.core.registration import scan_axes
 from tomojax.errors import InvalidParameter
 from tomojax.wire.arrays import Array, Axis, Coordinates, Member
 

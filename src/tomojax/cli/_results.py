@@ -12,8 +12,13 @@ from typing import TYPE_CHECKING, Any
 import h5py
 import numpy as np
 
-from tomojax.cli.products import VOLUME_DATASET
-from tomojax.core.registration import pose_columns, recorded_length_unit, scan_axes
+from tomojax._loading.registration import registered_member, unit_of
+from tomojax.core.registration import (
+    pose_columns,
+    recorded_length_unit,
+    volume_values,
+)
+from tomojax.io.api import registered_members
 from tomojax.wire.arrays import (
     Array,
     Axis,
@@ -29,10 +34,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     import tomojax as tj
-
-_PROJECTIONS = "/entry/instrument/detector/data"
-_ANGLES = "/entry/sample/transformations/rotation_angle"
-_POSES = "/entry/processing/tomojax/align/thetas"
 
 
 class TerminalFiles:
@@ -68,17 +69,6 @@ class TerminalFiles:
         return Array(self.reference(data), data.shape, data.dtype.str, axes, "unspecified", pointer)
 
 
-def unit_of(item: tj.Scan | tj.Frames | tj.Reconstruction | None) -> str:
-    """Return the recorded spatial unit or the wire name for uncalibrated lengths."""
-    import tomojax as tj
-
-    if isinstance(item, tj.Reconstruction):
-        unit = item.length_unit
-    else:
-        unit = recorded_length_unit(item.source.geometry_metadata) if item and item.source else None
-    return unit or "scan_length"
-
-
 def _decode(value: object, default: str) -> str:
     if value is None:
         return default
@@ -87,7 +77,7 @@ def _decode(value: object, default: str) -> str:
 
 def stored_grid(handle: h5py.File, path: Path) -> tuple[tj.Grid | None, dict, dict, str]:
     """Read volume placement and disk axis order without touching its pixels."""
-    from tomojax._loading.files import saved_volume_grid
+    from tomojax.io.api import saved_volume_grid
 
     grid_meta = json.loads(_decode(handle["/entry"].attrs.get("grid_meta_json"), "{}"))
     geom_group = handle.get("/entry/geometry")
@@ -118,7 +108,7 @@ def disk_volume(
     """Describe the export source in its recorded storage order, including legacy volumes."""
     from tomojax.cli.execution import volume_metadata
 
-    storage = Hdf5(str(path), VOLUME_DATASET)
+    storage = Hdf5(str(path), "/entry/processing/tomojax/volume")
     if grid is None:
         disk_axes = tuple(Axis(a, "stored_volume", "index", Uniform(0, 1)) for a in axes)
         unit = "unspecified"
@@ -128,10 +118,12 @@ def disk_volume(
             storage=storage,
             dtype=dtype,
             length_unit=recorded_length_unit(meta) or "scan_length",
+            geometry_meta=meta,
         )
         disk_axes = tuple(volume.axes["zyx".index(a)] for a in axes)
         unit = volume.unit
-    return Array(storage, shape, dtype, disk_axes, unit, "attenuation")
+    _, domain = volume_values(np.dtype(dtype), recorded_length_unit(meta) or "scan_length", meta)
+    return Array(storage, shape, dtype, disk_axes, unit, domain)
 
 
 def saved_result(
@@ -144,7 +136,7 @@ def saved_result(
 ) -> Result:
     """Describe the arrays actually saved and externalize array-valued diagnostics."""
     import tomojax as tj
-    from tomojax.cli.execution import summarize, volume_metadata
+    from tomojax.cli.execution import summarize
     from tomojax.recon.api import solver_name
 
     with ExitStack() as cleanup:
@@ -155,49 +147,31 @@ def saved_result(
         info: Mapping[str, object] = {}
         if isinstance(item, tj.Reconstruction):
             method, info = solver_name(item.method, item.geometry), item.info
-            grid, volume, key = item.grid, item.volume, "volume"
         elif isinstance(item, tj.Alignment):
             info = item.info
-            grid, volume, key = item.grid, item.image, "image"
-        elif isinstance(item, tj.Simulation):
-            grid, volume, key = item.scan.grid, item.phantom, "phantom"
-        else:
-            grid, volume, key = None, None, ""
-        if grid is not None and volume is not None:
-            arrays[key] = volume_metadata(
-                grid,
-                storage=files.reference(volume, VOLUME_DATASET),
-                dtype=np.dtype(volume.dtype).str,
-                length_unit=unit,
+        if files.path.suffix.lower() != ".npz":
+            with h5py.File(path, "r") as handle:
+                arrays = registered_members(handle, files.path)
+        elif (
+            not isinstance(item, tj.Scan) and (volume := registered_member(item, unit)) is not None
+        ):
+            arrays[volume.name] = volume.at(files.reference(volume.pixels))
+        if include_scan and scan is not None and "projections" not in arrays:
+            view = Axis("view", "acquisition", "degree", Coordinates(files.reference(scan.angles)))
+            detector = registered_member(scan, unit, view=view)
+            assert detector is not None
+            arrays[detector.name] = detector.at(files.reference(detector.pixels))
+        if isinstance(item, tj.Alignment) and "poses" not in arrays:
+            poses = item.poses
+            arrays["poses"] = Array(
+                files.reference(poses),
+                poses.shape,
+                poses.dtype.str,
+                (arrays["projections"].axes[0], Axis("column", "pose", "index", Uniform(0, 1))),
+                "mixed",
+                "poses",
+                columns=pose_columns(unit),
             )
-        if include_scan and scan is not None:
-            view = Axis(
-                "view", "acquisition", "degree", Coordinates(files.reference(scan.angles, _ANGLES))
-            )
-            data = scan.projections
-            arrays["projections"] = Array(
-                files.reference(data, _PROJECTIONS),
-                data.shape,
-                np.dtype(data.dtype).str,
-                scan_axes(scan.detector, view, unit),
-                "1",
-                "line_integrals",
-            )
-            if isinstance(item, tj.Alignment):
-                poses = item.poses
-                storage = files.reference(poses, _POSES if scan.poses is not None else None)
-                # NXtomo persists poses in FP32. Synthesized zero poses retain their NPY dtype.
-                dtype = np.dtype("float32").str if isinstance(storage, Hdf5) else poses.dtype.str
-                columns = pose_columns(unit)
-                arrays["poses"] = Array(
-                    storage,
-                    poses.shape,
-                    dtype,
-                    (view, Axis("column", "pose", "index", Uniform(0, 1))),
-                    "mixed",
-                    "poses",
-                    columns=columns,
-                )
         summary = summarize(info, externalize=files.diagnostic)
         result = Result(2, (*outputs, *files.paths), method, arrays, summary)
         _ = cleanup.pop_all()

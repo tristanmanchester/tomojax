@@ -184,7 +184,7 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
     recon = tj.reconstruct(loaded, "fbp")
     tj.save(tmp_path / "recon.nxs", recon)
     with h5py.File(tmp_path / "recon.nxs") as handle:
-        assert handle["entry/processing/tomojax/volume"].attrs["long_name"] == "volume"
+        assert handle["entry/volume/data"].attrs["long_name"] == "attenuation"
     with pytest.warns(UserWarning, match="without its scan"):
         back = tj.load_reconstruction(tmp_path / "recon.nxs")
     np.testing.assert_allclose(back.volume, np.asarray(recon.volume), rtol=1e-6, atol=1e-6)
@@ -589,6 +589,16 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
     assert reloaded_recon.grid == work_grid
     assert reloaded_recon.scan is not None and reloaded_recon.scan.grid == scan_grid
 
+    # Saving the working image as a reconstruction keeps the attached acquisition's grid.
+    resaved_path = tmp_path / "working-reconstruction.nxs"
+    tj.save(resaved_path, reloaded_recon, include_scan=True)
+    stored = tj.load_reconstruction(resaved_path)
+    assert stored.grid == work_grid
+    assert stored.scan.grid == tj.load(resaved_path).grid == scan_grid
+    np.testing.assert_array_equal(stored.volume, working_image)
+    with h5py.File(resaved_path) as file:
+        np.testing.assert_allclose(file["/entry/volume/y"], [-1.7, -0.9, -0.1, 0.7, 1.5])
+
     slices_dir = tmp_path / "slices"
     assert cli_main(["export", str(aligned_path), "-o", str(slices_dir)]) == 0
     sidecar = json.loads((slices_dir / "slices.json").read_text())
@@ -644,7 +654,11 @@ def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path
 
     # Detector-derived grid policy matches regardless of crop/correct order.
     raw_path = tmp_path / "raw.nxs"
-    tj.save(raw_path, scan)
+    from ._helpers import write_rc6_dataset
+
+    write_rc6_dataset(
+        raw_path, projections=scan.projections, angles=angles, grid=grid, detector=detector
+    )
     with h5py.File(raw_path, "r+") as handle:
         del handle["entry"].attrs["grid_meta_json"]
         handle["entry/instrument/detector/data"][...] = 500.0
@@ -659,9 +673,20 @@ def test_load_frames_honors_apply_poses_false(tmp_path: Path) -> None:
     detector = tj.Detector(6, 4, 1.0, 1.0)
     geometry = tj.ParallelGeometry(grid, detector, [0.0, 90.0])
     poses = np.array([[0.0, 0.0, 0.0, 0.5, -0.25, 0.0], [0.0, 0.0, 0.0, -0.5, 0.25, 0.0]])
-    scan = tj.Scan(np.full((2, 4, 6), 500.0, np.float32), geometry).with_poses(poses)
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
+
     path = tmp_path / "posed.nxs"
-    tj.save(path, scan)
+    save_nxtomo(
+        str(path),
+        np.full((2, 4, 6), 500, np.uint16),
+        metadata=NXTomoMetadata(
+            angles=np.array(geometry.angles),
+            detector=detector,
+            grid=grid,
+            align_params=poses,
+            align_gauge={"pose_translation_frame": "detector"},
+        ),
+    )
 
     with_poses = tj.load_frames(path, flats=1000.0, darks=0.0, apply_poses=True).corrected()
     nominal = tj.load_frames(path, flats=1000.0, darks=0.0, apply_poses=False).corrected()

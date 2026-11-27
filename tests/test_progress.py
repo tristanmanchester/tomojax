@@ -261,7 +261,7 @@ def test_cli_json_records_arrive_during_reconstruction(tmp_path, cancel):
         assert process.wait(timeout=60) == (130 if cancel else 0)
     validate_tree(events)
     assert [e.name for e in work_events(events) if isinstance(e, progress.Started)] == (
-        ["load", "reconstruct"] if cancel else ["load", "reconstruct", "save", "write"]
+        ["reconstruct"] if cancel else ["reconstruct", "save", "write"]
     )
     assert events[-1].status == ("canceled" if cancel else "done")
     assert output.exists() != cancel
@@ -873,6 +873,7 @@ def test_correct_cli_emits_only_json_and_preserves_usage_errors(tmp_path, capsys
         "load",
         "correction",
         "save",
+        "write",
     ]
     np.testing.assert_allclose(tj.load(output).projections[:, 0, 0], -np.log([0.4, 0.8]), rtol=1e-6)
 
@@ -1228,7 +1229,15 @@ def test_metric_inventory_and_unknown_emission():
 def test_load_counts_completed_storage_reads(tmp_path, monkeypatch, suffix):
     original = scan()
     path = tmp_path / ("measurements" + suffix)
-    tj.save(path, original)
+    if suffix == ".nxs":
+        # A contiguous format-2 scan maps immediately. The rc6 reader transfers views.
+        from ._helpers import write_rc6_dataset
+
+        write_rc6_dataset(
+            path, projections=original.projections, angles=original.angles, grid=original.grid
+        )
+    else:
+        tj.save(path, original)
     monkeypatch.setattr("tomojax._data._io_nxtomo._TILE_BYTES", 3 * 2 * 14 * 4)
     events = []
     with progress.watch(events.append):

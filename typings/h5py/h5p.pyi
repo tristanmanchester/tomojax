@@ -1,0 +1,6 @@
+DATASET_CREATE: object
+
+class PropDCID:
+    def set_alloc_time(self, alloc_time: int) -> None: ...
+
+def create(cls: object) -> PropDCID: ...

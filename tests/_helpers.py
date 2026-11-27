@@ -50,6 +50,29 @@ def write_projection_dataset(path: Path, **kwargs: object) -> ProjectionDataset:
     return dataset
 
 
+def write_rc6_dataset(path: Path, **kwargs: object) -> ProjectionDataset:
+    """Build an rc6 fixture from its documented paths, independent of the current writer."""
+    dataset = make_projection_dataset(**kwargs)
+    with h5py.File(path, "w") as file:
+        entry = file.create_group("entry")
+        entry["definition"] = "NXtomo"
+        entry.attrs["grid_meta_json"] = json.dumps(dataset.grid.to_dict())
+        geom = entry.create_group("geometry")
+        geom.attrs["type"] = dataset.geometry_type
+        geom.attrs["geometry_meta_json"] = json.dumps(dataset.geometry_metadata)
+        detector = entry.create_group("instrument/detector")
+        detector.attrs["detector_meta_json"] = json.dumps(dataset.detector.to_dict())
+        detector["x_pixel_size"] = dataset.detector.du
+        detector["y_pixel_size"] = dataset.detector.dv
+        detector["data"] = dataset.projections
+        detector["image_key"] = np.zeros(len(dataset.angles), np.int32)
+        entry["data/projections"] = detector["data"]
+        entry["sample/name"] = dataset.sample_name
+        entry["sample/transformations/rotation_angle"] = dataset.angles
+        entry["sample/transformations/rotation_angle"].attrs["units"] = "degree"
+    return dataset
+
+
 def write_tiff_stack(path: Path, values: list[float], *, shape: tuple[int, int] = (2, 2)) -> None:
     path.mkdir(parents=True, exist_ok=True)
     for index, value in enumerate(values, start=1):

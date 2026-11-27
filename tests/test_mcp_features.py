@@ -352,14 +352,16 @@ register(tj.Reconstruction(np.arange(7**3, dtype="f4").reshape(7,7,7), g, "fbp",
 """,
         )["value"]
         path = tmp_path / "permuted.h5"
-        assert not c.call("save", source=source, path=str(path))["isError"]
-        with h5py.File(path, "r+") as f:
-            tomo = f["/entry/processing/tomojax"]
-            data = tomo["volume"]
-            order = tomo.attrs["volume_axes_order"]
-            if isinstance(order, bytes):
-                order = order.decode()
-            data[...] = data[...].transpose(tuple(order.index(axis) for axis in "xyz"))
+        # The rc6 container supported noncanonical storage order. Build the
+        # permuted fixture independently, in that format.
+        import json
+
+        with h5py.File(path, "w") as f:
+            tomo = f.create_group("/entry/processing/tomojax")
+            f["entry"].attrs["grid_meta_json"] = json.dumps(
+                dict(nx=7, ny=7, nz=7, vx=1, vy=1, vz=1)
+            )
+            tomo["volume"] = np.arange(7**3, dtype="f4").reshape(7, 7, 7).T
             tomo.attrs["volume_axes_order"] = "xyz"
         dataset = str(path) + "::/entry/processing/tomojax/volume"
         box = feature(c, source=source, recipe={"type": "box", "corners": [[1, 2, 3]] * 2})

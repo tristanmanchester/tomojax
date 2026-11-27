@@ -167,6 +167,51 @@ def read_big(path: Path, indices: list[int], expected: np.ndarray) -> None:
         image.close()
 
 
+def native_nexus(root: Path) -> None:
+    """Read the saved default plot, physical axes and detector through two NeXus clients."""
+    from dataclasses import replace
+
+    import h5py
+    from nxtomo.application.nxtomo import NXtomo
+    from silx.io.nxdata.parse import get_default
+
+    source = indexed()
+    frames = np.arange(3 * 2 * 4, dtype=np.float32).reshape(3, 2, 4)
+    detector = tj.Detector(4, 2, 0.042, 0.051)
+    geometry = tj.ParallelGeometry(source.grid, detector, [0.0, 37.0, 82.0])
+    result = replace(source, scan=tj.Scan(frames, geometry), geometry=geometry)
+    path = root / "saved.nxs"
+    tj.save(path, result, include_scan=True)
+    with h5py.File(path) as file:
+        plot = get_default(file)
+        assert plot is not None
+        assert isinstance(plot.signal, h5py.Dataset)
+        assert plot.group.name == "/entry/volume"
+        assert plot.signal[3, 5, 9] == 30509.0
+        assert [axis.name for axis in plot.axes] == [f"/entry/volume/{name}" for name in "zyx"]
+        np.testing.assert_allclose([axis[0] for axis in plot.axes], [-0.006, -0.006, -0.0075])
+        np.testing.assert_allclose(
+            [axis[1] - axis[0] for axis in plot.axes], [0.003, 0.002, 0.0015]
+        )
+        assert "definition" not in file["entry"]
+        assert file["entry/instrument/detector/data"].attrs["long_name"] == "line integrals"
+    acquisition = NXtomo()
+    acquisition.load(str(path), "/entry", detector_data_as="as_numpy_array")
+    assert acquisition.instrument is not None
+    assert acquisition.sample is not None
+    det = acquisition.instrument.detector
+    assert det is not None
+    assert det.x_pixel_size is not None
+    assert det.y_pixel_size is not None
+    assert acquisition.sample.rotation_angle is not None
+    np.testing.assert_array_equal(det.data, frames)
+    np.testing.assert_allclose(
+        acquisition.sample.rotation_angle.to("degree").magnitude, [0, 37, 82]
+    )
+    np.testing.assert_allclose(det.x_pixel_size.to("mm").magnitude, 0.042)
+    np.testing.assert_allclose(det.y_pixel_size.to("mm").magnitude, 0.051)
+
+
 def main() -> None:
     """Verify samples and calibration in independently maintained readers."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -177,6 +222,7 @@ def main() -> None:
         root = Path(tmp)
         imagej_and_bioformats(root)
         metaimage(root)
+        native_nexus(root)
         big_stacks(root, read_big)
     print("ImageJ, Bio-Formats, SimpleITK and VTK read the registered test volumes.")
 

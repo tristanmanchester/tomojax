@@ -44,14 +44,13 @@ def test_nxtomo_records_a_rotation_axis_only_when_the_geometry_determines_it(
     # A cone scan without a tilt or an axis vector leaves the rotation axis unknown.
     save_dataset(path, make_projection_dataset(geometry_type=geometry_type))
     with h5py.File(path) as file:
-        transformations = file["entry/sample/transformations"]
-        assert isinstance(transformations, h5py.Group)
-        recorded = transformations.get("rotation_axis")
+        rotation = file["entry/sample/rotation_angle"]
+        recorded = rotation.attrs.get("vector")
         if axis is None:
             assert recorded is None
         else:
-            assert isinstance(recorded, h5py.Dataset)
-            np.testing.assert_array_equal(recorded[()], axis)
+            assert rotation.attrs["transformation_type"] == "rotation"
+            np.testing.assert_array_equal(recorded, axis)
     assert load_dataset(path).geometry_inputs()["geometry_type"] == geometry_type
 
 

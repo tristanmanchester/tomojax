@@ -10,6 +10,19 @@
   vendor frame files and separate calibration. The worker, MCP, CLI and Python reject
   output names and checkpoint directories that would replace an input, including aliases.
   Validation releases its input files on return or error.
+- `tj.save` writes NeXus format 2 with read-only, memory-mappable arrays,
+  physical coordinate vectors and a processing record at `/entry/record`.
+  TomoJAX 1.0.0rc6 cannot read format 2. Use this release to convert rc6 files
+  to new paths. Choose the line for the kind of object being migrated.
+
+  ```python
+  tj.save("new-scan.nxs", tj.load("old-scan.nxs"))
+  result = tj.load_reconstruction("old-recon.nxs")
+  tj.save("new-recon.nxs", result, include_scan=result.scan is not None)
+  tj.save("new-alignment.nxs", tj.load_alignment("old-alignment.nxs"))
+  tj.save("new-simulation.nxs", tj.load_simulation("old-simulation.nxs"))
+  ```
+
 - FDK, parallel FBP and Fourier inversion filter rolled measurements on physical detector lines. A quarter turn exchanges rows and columns exactly.
 - FDK computes angular weights and short-scan coverage from the corrected source trajectory. Fourier inversion accepts per-view axial rotations.
 - Feature bands, overlays, grid comparisons, and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.

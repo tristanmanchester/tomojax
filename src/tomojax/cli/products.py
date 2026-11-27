@@ -11,8 +11,6 @@ from tomojax.wire import resources
 from tomojax.wire.arrays import Array, Count, Id, Member, Npy, Record
 from tomojax.wire.progress import Info
 
-VOLUME_DATASET = "/entry/processing/tomojax/volume"
-
 Placement = resources.Placement
 Snapshot = resources.Snapshot
 

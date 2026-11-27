@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, ItemsView, Iterator, MutableMapping, ValuesView
 from pathlib import Path
-from typing import Any, Literal, Protocol, overload
+from typing import Any, BinaryIO, Literal, Protocol, overload
 
 import numpy as np
 from numpy.typing import DTypeLike
 
-from . import h5d as h5d
+from . import h5d as h5d, h5p as h5p
 
 class AttributeManager(MutableMapping[str, object]):
     @overload
@@ -45,6 +45,7 @@ class _DatasetID(Protocol):
     def get_offset(self) -> int | None: ...
 
 class Dataset:
+    parent: Group
     file: File
     name: str | None
     id: _DatasetID
@@ -109,11 +110,16 @@ class Group:
     def items(self) -> ItemsView[str, Dataset | Group | None]: ...
     def values(self) -> ValuesView[Dataset | Group | None]: ...
 
+class _FileID(Protocol):
+    def reopen(self) -> _FileID: ...
+    def get_vfd_handle(self) -> int: ...
+
 class File(Group):
+    id: _FileID
     mode: str
     filename: str
     driver: str
-    def __init__(self, name: str | Path, mode: str = "r", **kwargs: object) -> None: ...
+    def __init__(self, name: str | Path | BinaryIO | _FileID, mode: str = "r", **kwargs: object) -> None: ...
     def __enter__(self) -> File: ...
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None: ...
 

@@ -20,7 +20,9 @@ from tomojax._loading.loader import (
     load_scan_with_declaration,
     projection_frames,
 )
+from tomojax._loading.registration import unit_of
 from tomojax._scan.model import combined_geometry, describe
+from tomojax._scan.records import saved_info
 from tomojax._scan.simulation import build_sim_config, simulate_config
 from tomojax._typed_arrays import object_mapping
 from tomojax._workflow.operations import (
@@ -29,7 +31,6 @@ from tomojax._workflow.operations import (
     alignment_task,
     reconstruct_resolved,
     reconstruction_from_record,
-    saved_info,
     simulation_from_record,
     validate_save,
 )
@@ -44,8 +45,6 @@ from tomojax.cli._inputs import check_scan_calibration
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
-from tomojax.cli._results import unit_of
-from tomojax.cli.products import VOLUME_DATASET
 from tomojax.core.array_grid import Grid
 from tomojax.core.array_ops import check_binning
 from tomojax.core.input_files import check_checkpoint, check_output, reading
@@ -126,8 +125,19 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 isinstance(command, op.Plan),
                 isinstance(command, op.Validate),
             )
-            work = admission.prepare(operation)
-            item = p.Validated(admission.details) if isinstance(command, op.Validate) else work()
+            from tomojax.io.api import provenance as file_provenance
+
+            with file_provenance(
+                {
+                    "lineage": msgspec.to_builtins(manifest),
+                    "command": manifest.operation,
+                    "arguments": manifest.parameters,
+                }
+            ):
+                work = admission.prepare(operation)
+                item = (
+                    p.Validated(admission.details) if isinstance(command, op.Validate) else work()
+                )
         context.control.boundary()
         for snapshot in sample():
             context.snapshot(snapshot)
@@ -213,8 +223,16 @@ def saved_storage(path: str) -> Hdf5 | None:
     if not h5py.is_hdf5(path):
         return None
     with h5py.File(path, "r") as file:
+        if "tomojax_format" in file.attrs:
+            from tomojax.io.api import registered_members
+
+            for key, array in registered_members(file, Path(path)).items():
+                if key in ("volume", "image"):
+                    assert isinstance(array.storage, Hdf5)
+                    return array.storage
+            return None
         axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-        return Hdf5(path, VOLUME_DATASET) if axes in ("zyx", b"zyx") else None
+        return Hdf5(path, "/entry/processing/tomojax/volume") if axes in ("zyx", b"zyx") else None
 
 
 @dataclass(frozen=True)
@@ -534,7 +552,7 @@ class Admission:
     def slabs(self, operation: op.ReconstructSlabs) -> Work:
         from tomojax._scan.model import geometry_record
         from tomojax._workflow.operations import slab_settings
-        from tomojax.io.api import dataset_output_format, slab_volume
+        from tomojax.io.api import dataset_output_format, provenance as file_provenance, slab_volume
         from tomojax.recon.api import validate_slab_grid
 
         item: tj.Frames = source(
@@ -569,8 +587,10 @@ class Admission:
             info: dict[str, object] = {"source": item.source.source_path if item.source else None}
             stage = self.context.staging.output(path, force=operation.force)
             manifest = self.context.staging.output(sidecar, force=operation.force)
-            with slab_volume(stage, metadata, grid.shape) as volume:
-                volume.attrs["long_name"] = "volume"
+            with (
+                file_provenance({"resolved_config": info}),
+                slab_volume(stage, metadata, grid.shape) as volume,
+            ):
                 write_slabs(
                     partial(tj.reconstruct_slabs, item, info=info, **settings),
                     volume,
@@ -578,7 +598,9 @@ class Admission:
                     self.request(),
                 )
                 assert metadata.geometry_meta is not None
-                metadata.geometry_meta["reconstruction_info"] = saved_info(info)
+                resolved = saved_info(info)
+                info.update(resolved)
+                metadata.geometry_meta["reconstruction_info"] = resolved
                 self.details.update(info)
             manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
             return p.Files((str(path), str(sidecar)))
@@ -697,10 +719,6 @@ class Admission:
             member = volume_source(held)
         else:
             raise InvalidParameter("source", "choose a volume or mask to export")
-        member.record["provenance"] = {
-            **object_mapping(member.record.get("provenance")),
-            "lineage": msgspec.to_builtins(self.manifest),
-        }
         path = Path(operation.path)
         plan = plan_export(
             path,

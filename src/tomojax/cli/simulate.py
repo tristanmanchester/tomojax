@@ -275,7 +275,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 phantom_settings=phantom_keys or None,
             )
             result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)
-        tj.save(out, result)
+        from tomojax.cli.manifest import recording
+
+        with recording("simulate", args, metadata):
+            tj.save(out, result)
         if args.progress == "json":
             from tomojax.cli._results import saved_result
 

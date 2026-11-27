@@ -10,6 +10,7 @@ noisy_misaligned_recon/
 *.tiff
 *.npy
 *.nxs
+!tests/data/formats/format2-*.nxs
 out/
 runs/
 parallel_proj_test/

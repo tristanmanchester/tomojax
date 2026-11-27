@@ -200,6 +200,8 @@ def read_hdf5_acquisition(
     if not path.is_file() or not h5py.is_hdf5(path):
         return None
     with h5py.File(path, "r") as file:
+        if "tomojax_format" in file.attrs:
+            return None
         layout = _layout(file, data_path)
         if layout is None:
             return None

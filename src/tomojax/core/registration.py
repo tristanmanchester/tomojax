@@ -83,6 +83,20 @@ def scan_axes(det: Detector, view: Axis, unit: str) -> tuple[Axis, Axis, Axis]:
     )
 
 
+def volume_values(
+    dtype: np.dtype, length_unit: str, geometry_meta: Mapping[str, Any]
+) -> tuple[str, str]:
+    """The value unit and physical quantity of a registered volume, on every surface."""
+    if np.dtype(dtype).kind in "biu":
+        return "1", "mask"
+    return f"1/{length_unit}", str(geometry_meta.get("quantity", "attenuation"))
+
+
+def projection_values(*, counts: bool) -> tuple[str, str]:
+    """The value unit and measurement domain of a registered detector stack."""
+    return ("counts", "counts") if counts else ("1", "line_integrals")
+
+
 def pose_columns(unit: str) -> tuple[Column, ...]:
     """Acquisition rotations followed by x, z and y translations."""
     return tuple(

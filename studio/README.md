@@ -57,6 +57,7 @@ Choose **Create a project**, name its folder, and add acquisitions in **Prepare*
 - **Referenced vs managed copies:** by default, Studio references files in place. Enable **Copy sources into the project** before importing to stage managed copies under `inputs/` while leaving originals untouched. For header-driven formats such as Nikon `.xtekct` or SkyScan `.log`, copying brings along the whole acquisition folder. Reference HDF5 files that use external links, virtual datasets, or external raw storage in place.
 - **Supported formats:** NXtomo/HDF5, Data Exchange, ESRF Bliss/EDF/PyHST, Nikon `.xtekct`, Zeiss `.txrm`, SkyScan logs, PSI cSAXS `.mat`, TIFF stacks, and numeric `.npy` arrays. Convert `.npz` archives to NXtomo with `tomojax correct scan.npz -o scan.nxs` before importing.
 - **Native preview and full inspection:** standard NXtomo/HDF5 metadata and initial views load directly in Studio's native I/O threads without waiting for the worker. Click **Inspect dataset** to run TomoJAX's full inspection report, including projection statistics across the stack.
+- **Saved datasets:** Studio reads the registration and default plot of format-2 TomoJAX files directly. Opening an rc6 file gives the Python commands to re-save it before importing.
 - **Calibration:** use **Open & calibrate** when an acquisition needs explicit loader settings (raw-frame kind, flats, darks, angles, pixel pitch, or declared geometry). The form is generated from the worker's parameter schema and reports any missing fields before queuing.
 
 To try Studio without scan files on disk, choose **Try a demo project** on the start screen or launch with `tomojax studio --demo`. Studio creates a new project under its data folder (`~/.local/share/tomojax/Demo projects` on Linux) and simulates a phantom scan with its ground truth; reconstruct it in **Reconstruct**. In any project, **Simulation** in **Prepare** does the same, and **Per-view shift (SD)** adds random per-view motion to try **Alignment** on.
@@ -135,14 +136,14 @@ Each Studio project is a self-contained directory:
 ```text
 project.tomojax.json   # assets, recipes, job records, provenance, and workspace state
 inputs/                # managed source copies (when copying is enabled)
-derived/               # saved NXtomo reconstructions, alignments, and kept previews
+derived/               # saved NeXus reconstructions, alignments, and kept previews
 cache/                 # local viewer cache
 ```
 
 - **Autosave and locking:** workspace state—active asset, slice indices, display window, 3D camera, clipping, comparison pair, measurements, and parameter drafts—saves atomically in the background. An OS file lock ensures only one Studio window writes to a project at a time. The manifest holds up to 32 MiB; if a write fails, the previous manifest stays intact and the status bar reports the error.
 - **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is canceled.
 - **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly. Studio jobs do not write restartable checkpoints to disk; use `checkpoint=` in Python, `--checkpoint` on the CLI, or `checkpoint` through `tomojax serve` or `tomojax mcp` for long cluster runs.
-- **Export:** export derived results from **Explore** as NXtomo (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
+- **Export:** export derived results from **Explore** as TomoJAX NeXus (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
 
 ## Shortcuts, preferences, and environment variables
 
