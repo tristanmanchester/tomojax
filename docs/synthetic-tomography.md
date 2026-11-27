@@ -58,7 +58,7 @@ scan = tj.Scan(tj.project(geometry, shepp_logan_3d(32, 32, 32)), geometry)
 volume = tj.reconstruct(scan, "cgls", iterations=24).volume
 ```
 
-Python keywords mirror the CLI flags: `"cgls"`, `iterations=`, `tv_weight=`, and `nonnegative=` correspond to `--method cgls`, `--iterations`, `--tv-weight`, and `--nonnegative`.
+Python keywords mirror the CLI flags: `"cgls"`, `iterations=`, `tv_weight=`, and `nonnegative=` correspond to `--method cgls`, `--iterations`, `--tv-weight`, and `--nonnegative`. Omitting `iterations=` on unpenalized `"cgls"` or full-data `"sirt"` stops when the projection residual reaches the estimated noise and sampling error (capped at 50 updates, with momentum enabled on full-data SIRT when `relaxation <= 1`). Passing `iterations=` runs that fixed budget (plain sweeps for SIRT unless `SIRTConfig(acceleration=True)` is also passed). Check `recon.info["termination"]`, `early_stop`, and `effective_iterations` to see whether the solver stopped at the discrepancy threshold or at the cap.
 
 `tj.simulate` is the Python counterpart of `tomojax simulate`, and `tj.load_simulation` reads a saved simulation back as the scan and its true object:
 

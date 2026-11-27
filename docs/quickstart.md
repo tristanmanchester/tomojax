@@ -188,6 +188,26 @@ Direct keywords (such as `iterations=100`) override fields of the same name in `
 - **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
 - **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, and `early_stop` (`False` means the solver reached the iteration cap). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
 
+### Iterative solver defaults and stopping
+
+Unregularized iterative solvers (CGLS and SIRT) fit noise and discretization error if run for hundreds of updates, even as their fitted projection residual keeps falling. Stopping near the error level acts as their regularization. When you omit `iterations=` (`--iterations`), each iterative solver follows one of three stopping rules:
+
+| Solver | Default stopping rule | Work cap / budget | Override for a fixed budget or plain path |
+| --- | --- | --- | --- |
+| `fista` | Proximal gradient falls below one estimated noise-score SD (`tv_weight=None`, `tolerance=None`) | Up to 200 updates | Pass `tv_weight=...`, `FISTAConfig(tolerance=0)`, or `iterations=N` |
+| `cgls` | Projection residual RMS falls below estimated detector noise plus sampling error (when unpenalized and `tolerance=None`) | Up to 50 updates | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
+| `sirt` (full data, `subsets=1`) | Same projection-discrepancy stop, with FISTA momentum enabled when `relaxation <= 1` | Up to 50 sweeps | Pass `iterations=N` (plain sweeps; add `SIRTConfig(acceleration=True)` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
+| `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
+| `spdhg` | Fixed stochastic block-update budget | 600 block updates | Pass `iterations=N` |
+
+Check `recon.info` (or the JSON `--manifest`) after an automatic CGLS or SIRT run:
+
+- `termination` is `"projection_discrepancy"` when the residual crossed the threshold and `"iteration_limit"` when the 50-update cap ended the run (CGLS can also report `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"`). `early_stop` is `False` when the budget was exhausted.
+- `effective_iterations` gives the completed updates or sweeps, `measurement_noise_rms` gives the estimated detector noise SD, and `projection_error_rms` gives the total discrepancy threshold in projection units.
+- CGLS reports the final `residual_rms`; SIRT reports `pre_update_residual_rms` (measured at the point projected for the last sweep, including momentum when accelerated) and the resolved `acceleration` flag. On independent axial SIRT slabs, `slab_stopping` lists each slab's range, sweep count, and residual, while top-level `effective_iterations` is the largest sweep count across slabs.
+
+On real scans, motion, scatter, calibration bias, and correlated detector errors often keep the projection residual above the local noise-and-sampling estimate past 50 updates, so `termination="iteration_limit"` is common. That result means the cap ended the solve without detecting the scan's noise floor. Inspect the slices, pass an explicit `iterations=` if structure is still under-resolved, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run identically, pass `iterations=recon.info["effective_iterations"]` for CGLS, and pass both `iterations` and `acceleration` from `recon.info` for SIRT.
+
 ### Export slices
 
 ```bash

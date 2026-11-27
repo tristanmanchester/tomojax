@@ -587,6 +587,50 @@ Kill-and-resume checks on K11-52567 (every checkpoint directory was removed auto
 
 Without a checkpoint, `tools/check_numerical_equivalence.py` against `ed4fdaef` (parallel, cone, and laminography; `fbp`, `cgls`, `sirt`, `fista`, and `align`) passes at 0 ULP on CPU and on the RTX 4070 Laptop GPU (3 repeats, 0 spread).
 
+## Iterative stopping and long-run CGLS
+
+### Discrepancy stopping on independent synthetic scans
+
+Measured 2026-11-27 (`8f767d97`) across 72 independently generated small scans (parallel analytic Gaussian line integrals and cone exact ellipsoid chords against subvoxel-averaged truth, neither projected with TomoJAX). Grids were 16³ (12 or 32 views) and 24³ (18 or 48 views) with 0%, 2%, and 10% independent Gaussian noise (12 cases per geometry and solver path). Each solver was scored at every update through 240 against volume truth; error ratios divide the returned relative volume L2 error by the minimum image error reached by the same method on the same scan. Times are second-call CPU medians, including calibration and host transfer.
+
+| Geometry and path | Automatic updates, range (median) | Median error / best | Worst error / best | Fixed 50 / best, median | Time: automatic / fixed 50 / best budget (ms) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Parallel CGLS | 3–6 (5) | 1.000 | 1.084 | 3.387 | 19 / 157 / 15 |
+| Parallel plain SIRT | 14–48 (29) | 1.028 | 1.099 | 1.135 | 70 / 144 / 67 |
+| Parallel accelerated SIRT | 8–23 (12.5) | 1.064 | 1.245 | 1.243 | 38 / 146 / 44 |
+| Cone CGLS | 5–8 (7) | 1.076 | 1.314 | 3.568 | 83 / 581 / 55 |
+| Cone plain SIRT | 18–48 (36) | 1.016 | 1.296 | 1.211 | 442 / 596 / 275 |
+| Cone accelerated SIRT | 10–16 (14) | 1.060 | 1.324 | 2.436 | 167 / 604 / 130 |
+
+All 72 runs crossed the estimated discrepancy before the 50-update cap, and 55 of 72 landed within 10% of the same method's path minimum. The largest overshoot was the 16³ 32-view cone scan at 2% noise (accelerated SIRT stopped at 16 updates with error 0.1751 vs 0.1323 at 10; CGLS stopped at 8 with error 0.1876 vs 0.1427 at 4). Plain SIRT and accelerated SIRT follow different image-error paths: compared against fixed 50-sweep plain SIRT, automatic accelerated SIRT had higher image error in 8 of 12 parallel cases (median ratio 1.129) and 6 of 12 cone cases (median ratio 1.011), while running in less time.
+
+### Real scans and 501³ cone-beam control
+
+Measured 2026-11-27 (`8f767d97`) on two real scans using interleaved 50/50 held-out view splits and unconstrained iterative solvers: Diamond K11-52567 (16 central detector rows, 1,000 fitted and 1,000 held-out views, Tesla V100S 32 GB) and FIPS Walnut 1 (3 orbits, 1,800 fitted and 1,800 held-out views, 501³ grid, 486 × 384 binned 2×2 detector, NVIDIA RTX PRO 6000 Blackwell 96 GB). Scores are held-out projection relative L2 norms; CGLS was sampled through 80 updates (20, 32, 40, 50, 57, 64, 80) and SIRT through 320.
+
+| Scan and method | Selected update | Held-out score | Lowest sampled score (update) | Excess |
+| --- | ---: | ---: | ---: | ---: |
+| Diamond K11-52567, CGLS | 50 | 0.072721 | 0.072571 (57) | 0.21% |
+| Diamond K11-52567, plain SIRT | 50 | 0.079021 | 0.074714 (320) | 5.76% |
+| Diamond K11-52567, accelerated SIRT | 50 | 0.074525 | 0.072418 (320) | 2.91% |
+| FIPS Walnut 1, CGLS | 50 | 0.022107 | 0.021977 (40) | 0.59% |
+| FIPS Walnut 1, plain SIRT | 50 | 0.059065 | 0.023253 (320) | 154.0% |
+| FIPS Walnut 1, accelerated SIRT | 50 | 0.023301 | 0.022172 (80) | 5.09% |
+
+Both real scans exhausted the 50-update cap (`termination="iteration_limit"`) across all three paths because unmodeled real-scan errors exceeded the local estimate:
+
+- **Diamond K11-52567:** estimated discrepancy was 0.009489 RMS (detector noise 0.009440); residuals at 50 updates were 0.072102 (CGLS), 0.075369 (accelerated SIRT), and 0.080351 (plain SIRT). Warm solve times at 50 updates were 31.34 vs 31.23 s (automatic vs fixed CGLS) and 29.21 vs 29.10 s (accelerated vs plain SIRT), under 0.4% overhead.
+- **FIPS Walnut 1:** estimated discrepancy was 0.004369 RMS (equal to estimated detector noise); residuals at 50 updates were 0.009345 (CGLS), 0.010262 (accelerated SIRT), and 0.027424 (plain SIRT). Warm solve times were 37.35 vs 37.28 s (automatic vs fixed CGLS) and 37.02 vs 36.95 s (accelerated vs plain SIRT), under 0.4% overhead. Fresh-process first calls without warm-up took 37.94 vs 38.63 s (CGLS) and 37.99 vs 38.00 s (SIRT).
+- **Independent noise-free 501³ cone-beam control** (full Walnut 1 geometry, exact ellipsoid chords averaged over 4 subrays per pixel, 4³ subvoxel-averaged truth, Blackwell): estimated detector noise was 0 and discretization error 0.0004655 RMS. Automatic CGLS reached the 50-update cap with relative volume error 0.08567 in 40.60 s (fixed 50 updates: 0.08567 in 39.42 s), compared with 0.07895 at 113 updates (90.59 s) and 0.07638 at 226 updates (181.82 s), 12.2% above the 226-update minimum. Automatic unconstrained accelerated SIRT reached error 0.12288 in 37.09 s at 50 updates.
+
+### Long-run CGLS semi-convergence and periodic checks
+
+Measured 2026-11-26 (`1.0.0rc6`) and 2026-11-27 (`7058c195`) on the full-scale FIPS Walnut 1 split above (1,800 fitted and 1,800 held-out views, 501³ grid, 486 × 384 binned 2×2 detector) and the noise-free 501³ ellipsoid control on one NVIDIA RTX PRO 6000 Blackwell 96 GB GPU, comparing TomoJAX against ASTRA 2.5.0 (`CGLS3D_CUDA`) and TIGRE 3.3.1 (`cgls`) up to 1,280 updates. All reconstructions are scored with TomoJAX's forward projector.
+
+- **Semi-convergence on Walnut 1 (`1.0.0rc6`):** all three CGLS implementations reached their lowest held-out residuals within 0.5% of each other at 40–57 updates (TomoJAX 0.02198 at 40 in 30.3 s, ASTRA 0.02204 at 57 in 34.9 s, TIGRE 0.02209 at 40 in 55.1 s). Running to 1,280 updates raised held-out residual by 15% for TomoJAX (0.02534) even though its fitted residual kept falling (to 0.01835), and by 22% for ASTRA (0.02684), whose fitted residual turned upward after 226 updates (+3.1% by 1,280). TIGRE stopped early between 113 and 160 updates after detecting divergence (held-out 0.02247, 2% above its best).
+- **Semi-convergence on the noise-free 501³ control (`1.0.0rc6`):** TomoJAX CGLS volume error reached its lowest value at 226 updates (0.0764) and rose 40% to 0.1072 by 1,280 as the solver fit subvoxel discretization mismatch. ASTRA's volume error quadrupled from 0.0813 at 160 updates to 0.3304 at 1,280.
+- **Periodic FP32 residual check (`7058c195`):** keeping accurate periodic checks on their 16-update cadence cut residual recomputations over 1,280 Walnut 1 updates from 1,183 to 77 and lowered wall time from 2,428 s to 1,032 s (2.35× faster) at the same held-out residual (0.02535 vs 0.02534). In a timestamped repeat (1,034.9 s, 77 recomputations), per-update GPU time averaged 0.717 s across updates 2–50 (before periodic checks), 0.808 s across 101–200, 0.807 s across 601–700, and 0.818 s across the final 100 updates (1.3% above the first checked window). On the 501³ control, reaching the 113-update held-out optimum dropped from 187 s to 90.6 s (vs 96.4 s for ASTRA's 160-update optimum).
+
 ## Calibrated detector count noise
 
 `tomojax.datasets.DetectorModel` fits photon gain and read noise from repeated flats and darks (`b608d187`, `0199b919`). Calibrating on the first half of flats and evaluating adjacent-frame log differences on the second half (16 rows, 100 exposures):

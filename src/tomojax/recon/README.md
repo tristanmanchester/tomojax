@@ -73,35 +73,65 @@ when the budget was exhausted). To replay an automatic run, pass
 `resolved_tv_weight` and `effective_iterations` from `info`.
 
 With no iteration budget, unpenalized CGLS and full-data SIRT stop when the
-projection residual RMS reaches an estimated discrepancy, up to 50 updates.
-The estimate combines a Haar MAD for measurement noise with the signal power
-that detector sampling resolves more finely than the voxel grid. Within the
-voxel Nyquist band it includes linear interpolation's variation with subvoxel
-phase. The calculation uses bounded detector patches and magnification at
-isocenter. Motion, scatter and calibration bias can leave a larger discrepancy.
-The work cap can then be reached before the statistical stop.
+projection residual RMS reaches an estimated discrepancy, capped at 50 updates.
+Unpenalized least-squares solvers have no image-space regularizer: running them
+for hundreds of updates continues to lower the fitted projection residual while
+amplifying measurement noise and discretization error, so stopping near the
+error level acts as regularization. The discrepancy estimate combines a Haar MAD
+for detector noise with the signal power that detector sampling resolves more
+finely than the voxel grid. Within the voxel Nyquist band it includes linear
+interpolation's variation with subvoxel phase (for cubic interpolation or an
+explicit detector grid, only the measurement noise term is used; a one-pixel
+detector has no spatial noise statistic and falls back to the 50-update cap).
+The calculation uses bounded detector patches (up to 65,536 pixels) and
+magnification at isocenter. Motion, scatter, calibration bias, and correlated
+detector errors can leave the true projection residual above this local estimate,
+so on real scans the 50-update cap often ends the run.
 
-Read `info["termination"]`, `effective_iterations`, `projection_error_rms`
-and `measurement_noise_rms` together. CGLS reports `residual_rms`. SIRT reports
-`pre_update_residual_rms` at the point it projected for its last sweep. For
-accelerated SIRT that point includes momentum. The returned volume includes
-the sweep and respects its bounds. `projection_discrepancy` records a crossing
-and `iteration_limit` records an exhausted budget. CGLS also reports its
-numerical convergence, breakdown and roundoff tests. An explicit CGLS budget,
-tolerance or penalty selects numerical stopping. An explicit SIRT budget runs
-that many sweeps. To replay an automatic SIRT run, set both `iterations` and
-`acceleration` to their reported values.
+Read `info["termination"]`, `effective_iterations`, `early_stop`,
+`projection_error_rms`, and `measurement_noise_rms` together. CGLS reports
+`residual_rms`, and SIRT reports `pre_update_residual_rms` at the point it
+projected for its last sweep (for accelerated SIRT that point includes momentum,
+while the returned volume completes the sweep and respects its bounds and
+support). `termination="projection_discrepancy"` records a crossing and
+`termination="iteration_limit"` records an exhausted budget; CGLS also reports
+its numerical reasons (`converged`, `roundoff_limit`, `numerical_breakdown`).
+On independent axial SIRT slabs, each slab estimates its own discrepancy and can
+stop at a different sweep; `info["slab_stopping"]` lists each slab's `start`,
+`stop`, sweep count, and residual, top-level `effective_iterations` is the
+largest sweep count across slabs, `termination` is `iteration_limit` if any slab
+hit the cap, and `early_stop` is `True` only when every slab stopped early.
 
-Full-data SIRT uses momentum by default when the budget is omitted and the
-relaxation is at most one. Select `SIRTConfig(acceleration=False)` for plain
-SIRT with the same stopping test. Ordered subsets update different points
-during a sweep and use a sweep budget. MLEM retains its Poisson-likelihood
-sweep budget and SPDHG its stochastic block budget. Both report
-`termination="iteration_limit"`. Their updates do not provide the full-data
-least-squares residual used by this rule.
+Full-data SIRT uses FISTA momentum by default when `iterations=None` and
+`relaxation <= 1`. Pass `SIRTConfig(acceleration=False)` for plain SIRT with the
+same discrepancy stop. Passing an explicit `iterations` (or any explicit
+`tolerance`, `absolute_tolerance`, `damping`, or `gradient_damping` in CGLS)
+disables discrepancy stopping: CGLS uses its numerical tests up to that budget,
+and SIRT runs that many plain sweeps unless `acceleration=True` is also set.
+Ordered-subset SIRT (`subsets > 1`), MLEM/OSEM, and SPDHG keep fixed budgets and
+report `termination="iteration_limit"` and `early_stop=False`: each subset or
+block updates a different iterate, MLEM accepts nonnegative measurements in
+arbitrary units without count calibration, and SPDHG's sampled block loss does
+not evaluate full-data optimality. To replay an automatic run, pass
+`iterations=info["effective_iterations"]` for CGLS, both `iterations` and
+`acceleration` from `info` for SIRT, and `resolved_tv_weight` and
+`effective_iterations` from `info` for FISTA.
 
-SIRT uses the exact matched projector pair with row/column normalization:
-`SIRTConfig(iterations=50, subsets=1, lower_bound=0, upper_bound=None, support=None)`.
+### Stopping rules across iterative solvers
+
+| Solver | Default when budget is omitted | Fixed-budget or manual control |
+| --- | --- | --- |
+| `fista` | Proximal-gradient noise-score stop (`tv_weight=None`, `tolerance=None`), cap 200 updates | Pass explicit `tv_weight`, `tolerance=0`, or `iterations=N` |
+| `cgls` | Projection-discrepancy stop (unpenalized, `tolerance=None`), cap 50 updates; numerical checks also apply | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
+| `sirt` (`subsets=1`) | Projection-discrepancy stop, cap 50 sweeps; momentum on when `relaxation <= 1` | Pass `iterations=N` (plain sweeps; add `acceleration=True` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
+| `sirt` (`subsets > 1`) | Fixed budget of 50 sweeps (no momentum) | Pass `iterations=N` |
+| `mlem` | Fixed budget of 50 sweeps | Pass `iterations=N` |
+| `spdhg` | Fixed budget of 600 stochastic block updates | Pass `iterations=N` |
+| `cgls_multires` | Explicit per-level budgets (`iterations_per_level=(32, 16)`), numerical stopping per level | Pass `iterations_per_level=(...)` and `config=CGLSConfig(tolerance=...)` |
+
+SIRT uses the exact matched projector pair with row and column normalization;
+`SIRTConfig()` defaults to `iterations=None, subsets=1, relaxation=1.0, acceleration=None, lower_bound=None, upper_bound=None, support=None`.
+Pass `lower_bound=0` for nonnegativity.
 More subsets select interleaved OS-SART, with one full sweep per iteration;
 one view per subset gives SART. Bounds apply after every subset update, and
 voxels outside the support stay zero. Ordered subsets can cycle on inconsistent
@@ -228,6 +258,9 @@ SPDHG for TV regularization and nonnegativity constraints.
 ```python
 from tomojax.recon import CGLSConfig, cgls
 
+# Omit iterations and tolerance for automatic discrepancy stopping (cap 50):
+volume, info = cgls(geometry, grid, detector, projections)
+# Pass an explicit budget or tolerance for numerical stopping alone:
 volume, info = cgls(
     geometry, grid, detector, projections,
     config=CGLSConfig(iterations=50, tolerance=1e-6, damping=0.0),
@@ -331,11 +364,12 @@ With quadratic smoothness, the estimate also includes
 it diagnoses numerical stagnation without relaxing `tolerance` or `absolute_tolerance`. A large residual
 gap or an apparent stop restarts the conjugate direction. These checks add operator work near
 stopping, while ordinary fixed-budget updates retain the existing operator pair.
-Near the FP32 precision floor, checks also run every 16 iterations. A restart
-gets a follow-up check while the norm stays small. An accurate periodic check
-resumes the usual cadence.
-The componentwise cancellation test and requested convergence tolerance remain
-unchanged; a precision-limited result is still reported as `roundoff_limit`.
+Near the FP32 precision floor, checks run every 16 iterations. A direction
+restart gets a follow-up check on the next small residual, while an accurate
+periodic check resumes the 16-update cadence so long runs keep a steady cost per
+update. The componentwise cancellation test and requested convergence tolerance
+remain unchanged; a precision-limited result is still reported as
+`roundoff_limit`.
 
 Cone-beam CGLS, SIRT and MLEM switch to slab sweeps when the solver's working
 set would not fit on the device, or when `out=` is given. Each z slab of the

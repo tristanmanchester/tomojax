@@ -2,8 +2,24 @@
 
 ## Unreleased
 
+- Unpenalized CGLS and full-data SIRT now stop when the projection residual RMS reaches
+  an estimate of detector noise plus sampling error, capped at 50 updates
+  (`CGLSConfig.iterations`, `CGLSConfig.tolerance`, `SIRTConfig.iterations`, and
+  `SIRTConfig.acceleration` now default to `None`). Full-data SIRT enables FISTA momentum
+  by default when `iterations=None` and `relaxation <= 1`; pass
+  `SIRTConfig(acceleration=False)` for plain automatic SIRT. Passing an explicit
+  `iterations=`, tolerance, or penalty to CGLS uses numerical stopping alone, and passing
+  `iterations=` to SIRT runs that many plain sweeps unless `acceleration=True` is also
+  requested. Ordered-subset SIRT (`subsets > 1`, 50 sweeps), MLEM/OSEM (50 sweeps),
+  SPDHG (600 block updates), and `cgls_multires` (per-level budgets) keep fixed work
+  budgets. Solver `info` reports `termination`, `early_stop`, `effective_iterations`,
+  `measurement_noise_rms`, `projection_error_rms`, and `residual_rms` (CGLS) or
+  `pre_update_residual_rms`, `acceleration`, and `slab_stopping` (SIRT). Checkpoints
+  save stopping state and independent axial SIRT slab partitions.
 - CGLS continues its conjugate recurrence after a periodic FP32 check finds it
-  accurate. Long solves still verify convergence and check a restarted direction.
+  accurate, resuming the 16-update cadence instead of re-verifying every late iteration.
+  Long solves still verify convergence and check a restarted direction on the next small
+  residual.
 
 - Long runs resume after a kill: `checkpoint=` on `tj.reconstruct`, `tj.reconstruct_slabs`,
   and `tj.align` (`--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`) saves

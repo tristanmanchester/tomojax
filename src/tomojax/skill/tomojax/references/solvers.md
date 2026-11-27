@@ -1,5 +1,27 @@
 # Direct inverses and matched projection
 
+## Choosing an iterative solver and stopping rule
+
+Unpenalized CGLS and SIRT have no image-space regularizer: running them for hundreds of updates continues to lower the fitted residual while fitting measurement noise and discretization error. Stopping early acts as their regularization. With `iterations` omitted, each iterative solver uses one of three stopping behaviors:
+
+| Solver | Default stopping rule | Work cap / budget | Fixed budget or plain path |
+| --- | --- | --- | --- |
+| `fista` | Proximal-gradient noise-score stop (`tv_weight=None`, `tolerance=None`) | Up to 200 updates | Pass explicit `tv_weight`, `tolerance=0`, or `iterations=N` |
+| `cgls` | Projection-discrepancy stop (when unpenalized and `tolerance=None`) | Up to 50 updates | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
+| `sirt` (`subsets=1`) | Projection-discrepancy stop; FISTA momentum on when `relaxation <= 1` | Up to 50 sweeps | Pass `iterations=N` (plain sweeps; add `acceleration=True` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
+| `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
+| `spdhg` | Fixed stochastic block-update budget | 600 block updates | Pass `iterations=N` |
+| `cgls_multires` | Explicit per-level budgets (`(32, 16)`), numerical stopping per level | Per-level budgets | Pass `iterations_per_level=(...)` |
+
+Inspect `info` after automatic CGLS or SIRT:
+
+- `termination`: `"projection_discrepancy"` when the residual crossed the estimated noise plus sampling error, `"iteration_limit"` when the 50-update cap ended the run (CGLS also reports `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"`). `early_stop` is `False` when the cap was exhausted.
+- `effective_iterations`, `measurement_noise_rms`, `projection_error_rms`, and the residual (`residual_rms` for CGLS; `pre_update_residual_rms` and resolved `acceleration` for SIRT, plus `slab_stopping` on independent axial SIRT slabs).
+
+On real scans, motion, scatter, calibration bias, and correlated detector errors often leave the projection residual above `projection_error_rms` at 50 updates, so `termination="iteration_limit"` is expected. Check the slices before raising `iterations`, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run, pass `iterations=info["effective_iterations"]` for CGLS, both `iterations` and `acceleration` from `info` for SIRT, and `tv_weight=info["resolved_tv_weight"]` with `iterations=info["effective_iterations"]` for FISTA.
+
+## Direct solver calls
+
 With a parallel scan in `scan`, supply its projections in (view, v, u) order.
 The iterative inverses return diagnostics alongside the image.
 

@@ -80,7 +80,7 @@ What each run saves:
 | `tj.reconstruct_slabs` | Which slabs the caller has finished, plus the solver state of the slab in progress for `sirt` and `mlem`. |
 | `tj.align` (joint fits) | Each finished resolution level (volume, poses, and record), the volume, poses, damping, and step history within a level at Gauss-Newton step boundaries, and the poses during refinement. |
 
-For automatic CGLS and SIRT, the checkpoint includes the stopping statistic alongside the iterate. Each independent axial SIRT slab has its own sampled discrepancy and can stop at a different sweep. The checkpoint retains the partition and finished slabs' diagnostics. The result lists each z range, count and residual in `info["slab_stopping"]`. Its top-level iteration count is the longest slab solve. A coupled cone reconstruction uses one stopping test over all detector rows.
+For automatic CGLS and SIRT, the saved state includes the stopping statistic alongside the iterate. Each independent axial SIRT slab estimates its own discrepancy and can stop at a different sweep. The saved state retains the slab partition and finished slabs' diagnostics. The result lists each slab's z range, sweep count, and residual in `info["slab_stopping"]`; top-level `effective_iterations` is the largest sweep count across slabs, `termination` is `"iteration_limit"` if any slab reached the cap, and `early_stop` is `True` only when every slab stopped early. A coupled cone reconstruction uses one stopping test over all detector rows.
 
 ### Save schedule, time, and disk space
 

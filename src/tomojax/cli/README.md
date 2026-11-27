@@ -66,7 +66,16 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   configuration class (`tomojax.recon.FBPConfig`, `FourierConfig`, `CGLSConfig`,
   `FISTAConfig`, `SPDHGConfig`, `SIRTConfig` or `MLEMConfig`), each replacing that
   field of the class's defaults, as `tj.reconstruct(config=...)` takes them;
-  `--region cyl` zeros the volume outside the cylinder every view sees. The output
+  `--region cyl` zeros the volume outside the cylinder every view sees. Omitting
+  `--iterations` enables automatic stopping for `cgls` and full-data `sirt`
+  (estimated projection discrepancy, capped at 50 updates, with FISTA momentum
+  enabled on full-data `sirt` when `relaxation <= 1`) and for `fista` (estimated
+  proximal-gradient noise score, capped at 200 updates). Ordered-subset `sirt`
+  and `mlem` run 50 sweeps, and `spdhg` runs 600 block updates. Passing
+  `--iterations N` fixes the budget (and runs plain sweeps for `sirt` unless
+  `acceleration = true` is also set in `--config`). Check `termination` and
+  `effective_iterations` in `--manifest` to see whether an automatic solve stopped
+  at the threshold or at the cap. The output
   holds the volume, its geometry and record, and names the input projections;
   `--include-scan` keeps them too. `--checkpoint DIR` (an expert option listed by
   `--config-keys`, also accepted as `checkpoint` in `--config`) saves solver state and
