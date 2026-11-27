@@ -106,10 +106,12 @@ def load(
     corrected with the standard chain, as ``load_frames(path, ...).corrected()``:
     dark subtraction, flat division and ``-log``; :attr:`Scan.corrections`
     records it. Bracketing multi-frame flat sets are weighted from a sample of
-    the views by default while interpolating common row gain by position, and a
-    warning is logged when views move the flat by more than 1% over more than
-    1% of the detector; pass another scan's file as ``flats=`` to borrow its
-    flat frames, or use ``load_frames(path, ...).corrected(flat_weights="position")``
+    the views by default while interpolating common row gain by position. When
+    views move the flat by more than 1% over more than 1% of the detector, a
+    warning reports the shift, explains that a shadow covering both flat sets
+    with no open-beam views leaves the incident intensity uncertain, and names
+    both remedies: passing another scan's file as ``flats=`` to borrow clean
+    flat frames, or using ``load_frames(path, ...).corrected(flat_weights="position")``
     to blend by position alone. For other corrections, load the frames with
     :func:`load_frames`. Every other argument has :func:`load_frames`'s meaning
     and can replace recorded metadata. Explicit flats or darks identify unlabeled
@@ -533,7 +535,9 @@ class Frames:
         ``flat_weights_from_views``, ``later_flat_weight``,
         ``flat_structure_unmatched`` and ``flat_moved_by_views``. When views move
         the flat by more than 1% over more than 1% of the detector, a warning
-        names both remedies: borrowing another scan's flats with ``flats=`` on
+        reports the shift, explains that a shadow covering both flat sets with no
+        open-beam views leaves the incident intensity uncertain, and names both
+        remedies: borrowing clean flats from a matching scan with ``flats=`` on
         :func:`load_frames`, or passing ``flat_weights="position"`` to blend by
         position alone.
 

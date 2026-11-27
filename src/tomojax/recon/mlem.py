@@ -104,9 +104,12 @@ class MLEMConfig:
     Parameters
     ----------
     exterior : {"cylinder", "zero"}, optional
-        In scan reconstruction, "cylinder" estimates the contribution from outside
-        the grid using cylinder-continued detector rows. "zero" fits the measured
-        data directly. The analytic warm start uses the same setting.
+        Model for material beyond the detector in tj.reconstruct and
+        tj.reconstruct_slabs: "cylinder" estimates the nonnegative exterior
+        contribution from a coarse fit to cylinder-continued detector rows and
+        adds it to the predicted counts in each update; "zero" fits the measured
+        data directly. An analytic warm start uses the same setting. Direct
+        mlem() calls fit supplied data as given. Default is 'cylinder'.
     iterations : int, optional
         Maximum number of solver updates. For SIRT and MLEM, an update is a complete
         subset sweep. Default is 50.

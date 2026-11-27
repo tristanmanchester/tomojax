@@ -187,9 +187,12 @@ class FISTAConfig:
     Parameters
     ----------
     exterior : {"cylinder", "zero"}, optional
-        In scan reconstruction, "cylinder" estimates the contribution from outside
-        the grid using cylinder-continued detector rows. "zero" fits the measured
-        data directly. The analytic warm start uses the same setting.
+        Model for material beyond the detector in tj.reconstruct: "cylinder"
+        estimates the exterior contribution from a coarse fit to
+        cylinder-continued detector rows and subtracts it before the solve;
+        "zero" fits the measured data directly. An analytic warm start uses the
+        same setting. Direct fista() calls fit supplied data as given. Default is
+        'cylinder'.
     iterations : int, optional
         Maximum number of FISTA updates. Default is 200.
     data_term : DataTerm, optional

@@ -84,9 +84,12 @@ class SIRTConfig:
     Parameters
     ----------
     exterior : {"cylinder", "zero"}, optional
-        In scan reconstruction, "cylinder" estimates the contribution from outside
-        the grid using cylinder-continued detector rows. "zero" fits the measured
-        data directly. The analytic warm start uses the same setting.
+        Model for material beyond the detector in tj.reconstruct and
+        tj.reconstruct_slabs: "cylinder" estimates the exterior contribution from
+        a coarse fit to cylinder-continued detector rows and subtracts it before
+        the solve; "zero" fits the measured data directly. An analytic warm start
+        uses the same setting. Direct sirt() calls fit supplied data as given.
+        Default is 'cylinder'.
     iterations : int, optional
         Number of complete sweeps. None stops a full-data solve at the estimated
         projection discrepancy or 50 sweeps. Ordered subsets use 50 sweeps.

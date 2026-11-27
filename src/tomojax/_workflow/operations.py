@@ -561,25 +561,30 @@ def reconstruct(
     termination, losses). Fourier's ``backend`` records the actual selected
     implementation separately from the requested configuration.
 
-    An object wider than the detector leaves every row short. By default
-    (``exterior="cylinder"``), ``fbp`` (including cone-beam FDK) and ``fourier``
-    continue each detector row past both edges as the projection of a uniform
-    cylinder about the rotation axis fitted to the row's edge values, removing
-    the bright rim and bowl of a zero exterior; pass
-    ``config=FBPConfig(exterior="zero")`` or
-    ``config=FourierConfig(exterior="zero")`` to assume zero beyond the
-    detector. Edges, contrast between neighboring regions, and fine detail
-    inside the field of view do not depend on the continuation, while the
-    absolute level is only as accurate as the cylinder model and
+    An object wider than the detector leaves nonzero attenuation at the ends of
+    detector rows. By default (``exterior="cylinder"``), ``fbp`` (including
+    cone-beam FDK) and ``fourier`` continue each detector row past its outer
+    edges before filtering, as the projection of a uniform cylinder about the
+    rotation axis fitted to the row's edge values, removing the bright rim and
+    bowl of a zero exterior. Rows ending at zero continue as zero, so contained
+    objects reconstruct unchanged. Edges, contrast between neighboring regions,
+    and fine detail inside the field of view do not depend on the continuation,
+    while the absolute level is only as accurate as the cylinder model and
     non-cylindrical exteriors (such as a square bar) retain partial cupping and
-    rim error. Outside the field of view the volume holds the reconstruction of
-    the continued scan (``region="cyl"`` masks it). The iterative methods
-    estimate the part of each measured line integral formed outside the grid
-    from a coarse reconstruction of those completed rows. CGLS, SIRT, FISTA and
-    SPDHG subtract it from the data they fit. MLEM adds it to the predicted
-    count. Set ``exterior="zero"`` in the selected iterative configuration to
-    fit the original measurements and use zero padding for an analytic warm start.
-    The stored scan keeps its measured values.
+    rim error. Outside the field of view the analytic volume holds the
+    reconstruction of the continued scan (``region="cyl"`` masks it).
+
+    For iterative methods (``cgls``, ``sirt``, ``fista``, ``spdhg``, ``mlem``),
+    ``exterior="cylinder"`` estimates the part of each measured line integral
+    formed outside the reconstruction grid from a coarse fit to those continued
+    rows (skipped when the detector edges are zero or no extended rays miss the
+    grid). CGLS, SIRT, FISTA, and SPDHG subtract that estimate once before the
+    fine solve; MLEM adds its nonnegative estimate to the predicted counts in
+    each update. The scan keeps its original measurements, and an FBP or FDK
+    warm start uses the same ``exterior`` setting. Set ``exterior="zero"`` in
+    any method's configuration class to assume zero beyond the detector and fit
+    the original measurements directly.
+
     Every reconstruction records ``info["truncation"]`` regardless of
     ``exterior`` or method: ``edge_ratio`` (mean edge value over the rows' mean,
     zero for a contained object), ``outside_fraction`` (the share of the
@@ -589,10 +594,11 @@ def reconstruct(
     (median fitted cylinder radius), and ``field_of_view_radius`` (distance from
     the axis to the nearer detector edge, or to the far edge on an offset axial
     parallel full turn; median over sampled horizontal chords on a rolled
-    detector), in the scan's length unit.
-    For iterative methods ``outside_grid`` is the signed sum of the
-    modeled background divided by the sum of the measurements. ``background_treatment`` is
-    ``subtracted``, ``additive_poisson`` or ``none``.
+    detector), in the scan's length unit. Iterative methods also record
+    ``outside_grid`` (signed sum of the modeled exterior divided by the sum of
+    the measurements), ``data_model`` (``"continued_exterior"`` or
+    ``"measured"``), and ``background_treatment`` (``"subtracted"``,
+    ``"additive_poisson"``, or ``"none"``).
 
     ``checkpoint`` names a directory where the run saves its state, so a run
     killed by a scheduler time limit, preemption, or a node failure resumes
@@ -787,18 +793,23 @@ def reconstruct_slabs(
     Pass ``FourierConfig(filter="ramp")`` (or ``"hann"`` or ``"shepp-logan"``)
     to match FBP's detector response in streamed Fourier reconstruction.
     ``fbp`` (parallel and cone FDK) and ``fourier`` continue detector rows with
-    ``exterior="cylinder"`` by default; pass ``FBPConfig(exterior="zero")`` or
-    ``FourierConfig(exterior="zero")`` to assume zero beyond the detector. Each
+    ``exterior="cylinder"`` by default; ``sirt`` and ``mlem`` fit the continued
+    rows per slab to estimate the contribution from outside the grid (subtracting
+    it for SIRT and adding its nonnegative estimate to predicted counts for
+    MLEM). Pass ``exterior="zero"`` in ``FBPConfig``, ``FourierConfig``,
+    ``SIRTConfig``, or ``MLEMConfig`` to assume zero beyond the detector. Each
     yielded slab carries ``info["truncation"]`` (``edge_ratio``,
     ``outside_fraction``, ``interior_shift``, ``radius``, and
-    ``field_of_view_radius``) computed from that slab's detector rows. Passing
-    a dictionary as ``info=`` collects the whole-scan record once the iterator
-    finishes: ``info["truncation"]`` matches an in-memory reconstruction over
-    the full detector (each sampled detector row counted once, including where
-    slabs overlap), alongside ``config``, ``host_slabs=True``, the resolved
-    Fourier ``backend``, and iterative stopping diagnostics (``termination``,
-    ``early_stop``, ``effective_iterations``, and per-slab ``slab_stopping`` on
-    independent planes). Bracketing multi-frame flat sets default to
+    ``field_of_view_radius``, plus ``outside_grid``, ``data_model``, and
+    ``background_treatment`` for SIRT and MLEM) computed from that slab's
+    detector rows. Passing a dictionary as ``info=`` collects the whole-scan
+    record once the iterator finishes: ``info["truncation"]`` matches an
+    in-memory reconstruction over the full detector (each sampled detector row
+    counted once, including where slabs overlap, with iterative ``outside_grid``
+    weighted by slab attenuation), alongside ``config``, ``host_slabs=True``,
+    the resolved Fourier ``backend``, and iterative stopping diagnostics
+    (``termination``, ``early_stop``, ``effective_iterations``, and per-slab
+    ``slab_stopping`` on independent planes). Bracketing multi-frame flat sets default to
     ``flat_weights="views"`` (see :meth:`tomojax.Frames.corrected`); pass
     ``flat_weights="position"`` to blend by position alone.
     CUDA consumes corrected rows without a corrected-projection host round trip.

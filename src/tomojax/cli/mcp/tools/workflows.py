@@ -69,8 +69,8 @@ WORKFLOW_HELP = {
         "features on any source with the same grid; in python it is handles[id].mask."
     ),
     op.Save: (
-        "Save a TomoJAX dataset with its provenance manifest so it can be reopened. Set "
-        "include_scan to keep the source scan with a reconstruction."
+        "Save a TomoJAX dataset with its provenance manifest so it can be reopened, and return "
+        "the written paths. Set include_scan to keep the source scan with a reconstruction."
     ),
     op.Export: (
         "Export projections, a sinogram or a volume in the format selected by the suffix for other "

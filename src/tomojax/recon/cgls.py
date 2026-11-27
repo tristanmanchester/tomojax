@@ -83,9 +83,12 @@ class CGLSConfig:
     Parameters
     ----------
     exterior : {"cylinder", "zero"}, optional
-        In scan reconstruction, "cylinder" estimates the contribution from outside
-        the grid using cylinder-continued detector rows. "zero" fits the measured
-        data directly. The analytic warm start uses the same setting.
+        Model for material beyond the detector in tj.reconstruct: "cylinder"
+        estimates the exterior contribution from a coarse fit to
+        cylinder-continued detector rows and subtracts it before the solve;
+        "zero" fits the measured data directly. An analytic warm start uses the
+        same setting. Direct cgls() calls fit supplied data as given. Default is
+        'cylinder'.
     data_term : {"absolute", "per_view_contrast"}, optional
         Absolute least squares fits line integrals. "per_view_contrast" removes
         one constant per detector view and leaves the absolute level undetermined.
