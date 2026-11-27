@@ -170,8 +170,9 @@ def test_each_interval_between_three_sets_is_weighted_on_its_own() -> None:
     np.testing.assert_allclose(scan.corrections[0].found["later_flat_weight"], [0.5, 0.5], atol=0.1)
 
 
-def test_rows_corrected_alone_and_in_slabs_equal_the_whole_detector() -> None:
-    frames, _, _ = _frames("edge")
+@pytest.mark.parametrize("middle_set", [False, True])
+def test_rows_corrected_alone_and_in_slabs_equal_the_whole_detector(middle_set: bool) -> None:
+    frames, _, _ = _frames("edge", middle_set=middle_set)
     whole = np.asarray(frames.corrected().projections)
     band = correction_preview(frames, (16, 24))
     np.testing.assert_allclose(band.after, whole[:, 16:24], atol=1e-5)
