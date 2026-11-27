@@ -124,7 +124,9 @@ class _Geometry:
         angles, starts, counts = np.unique(angles, return_index=True, return_counts=True)
         self.nviews = len(angles)
         self.groups = None if self.nviews == nviews else np.append(starts, nviews).astype(np.int32)
-        self.device_groups = xp.asarray([] if self.groups is None else self.groups, dtype=xp.int32)
+        # The ungrouped kernel never reads this pointer. Uploading an empty
+        # CuPy array here can precede a cuFFT illegal address in a later JAX FFT.
+        self.device_groups = np.uintp(0) if self.groups is None else xp.asarray(self.groups)
         gaps = np.diff(np.append(angles, angles[0] + np.pi)).astype(np.float64)
         self.view_weights = xp.asarray(
             np.repeat((gaps + np.roll(gaps, 1)) / (2 * np.pi * counts), counts)
