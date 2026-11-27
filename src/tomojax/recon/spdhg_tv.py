@@ -816,6 +816,9 @@ def spdhg(
 ) -> tuple[jnp.ndarray, dict[str, object]]:
     """Reconstruct with stochastic primal-dual weighted L2 and TV updates.
 
+    This solver fits the supplied data as given, and the workflows ``tj.reconstruct``
+    and ``tj.reconstruct_slabs`` handle scans extending beyond the detector.
+
     ``weights`` must be real, nonnegative and finite when stored in FP32;
     zero weights exclude unmeasured samples, including nonfinite measurements.
     Invalid weights fail before solver setup.

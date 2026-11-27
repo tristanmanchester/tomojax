@@ -406,6 +406,9 @@ def mlem(
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """MLEM or OSEM with the exact transpose; see :class:`MLEMConfig`.
 
+    This solver fits the supplied data as given, and the workflows ``tj.reconstruct``
+    and ``tj.reconstruct_slabs`` handle scans extending beyond the detector.
+
     Returns the FP32 volume and an iteration record, without a convergence
     claim. Wholly unobserved voxels are zero; zero measurements drive
     observed voxels to zero. Large host measurement stacks stream in bounded

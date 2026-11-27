@@ -92,7 +92,11 @@ def test_host_fista_matches_resident_with_mapped_state(
         patience=1,
         views_per_batch=6,
     )
-    expected, reference = fista(geometry, grid, det, data, init_x=initial, config=cfg)
+    if warm:
+        expected, reference = fista(geometry, grid, det, data, init_x=initial, config=cfg)
+    else:
+        resident = tj.reconstruct(tj.Scan(data, geometry), "fista", config=cfg)
+        expected, reference = resident.volume, resident.info
     mapped = np.memmap(tmp_path / "volume", np.float32, "w+", shape=(5, 7, 9))
     if warm:
         mapped[...] = initial

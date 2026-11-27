@@ -121,6 +121,23 @@
 - Scans of an object larger than the field of view reconstruct without the bright rim and
   bowl: `fourier`, `fbp`, and cone-beam FDK continue each detector row past both detector
   edges before filtering, as the projection of a uniform cylinder about the rotation axis.
+  A detector row has one cylinder radius, fitted to its views' fall towards both edges, and
+  each view's continuations take their amplitudes from its own edge values; a row that ends
+  at zero continues as zero, so contained objects reconstruct as before. On simulated scans
+  (a tube around a contained sample, a wide plate, bodies 1.15 and 3 times the field of
+  view) the error of the interior level fell from 4–99% of the body's attenuation to
+  0.1–6%, and the bowl across the field from 18–210% to 0.3–4%. Edges, contrast and fine
+  detail do not depend on the continuation; the absolute level is as good as the cylinder
+  model. Voxels outside the field of view hold the reconstruction of the continued scan,
+  and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
+  Every reconstruction's `info["truncation"]` records `edge_ratio`, `outside_fraction`,
+  `interior_shift`, `radius`, and `field_of_view_radius`; each slab of
+  `tj.reconstruct_slabs` has the record of its own rows, and `tomojax reconstruct` and the
+  MCP summary say what share of the attenuation lies beyond the detector. CGLS, SIRT, FISTA-TV and
+  SPDHG use the same continued rows to estimate and subtract the contribution from
+  outside the requested grid. MLEM adds that contribution to its predicted counts.
+  The stored scan retains its measurements. The truncation record gives the exterior
+  share in `outside_grid` and the operation in `background_treatment`.
   Each detector row gets one cylinder radius, fitted to its views' fall toward both edges,
   and each view's two continuations take their amplitudes from its own edge values; a row
   that ends at zero continues as zero, so contained objects reconstruct as before. On four

@@ -201,6 +201,9 @@ def cgls(
 ) -> "tuple[_typed_arrays.JaxArray | np.ndarray, dict[str, object]]":
     """Reconstruct with matched CGLS and report convergence diagnostics.
 
+    This solver fits the supplied data as given, and the workflows ``tj.reconstruct``
+    and ``tj.reconstruct_slabs`` handle scans extending beyond the detector.
+
     Inputs and the solve use FP32. Host arrays on CUDA can use the native
     linear Joseph kernels and return a NumPy volume, avoiding JAX startup and
     tracing; device arrays, streaming, and other models use the compiled JAX

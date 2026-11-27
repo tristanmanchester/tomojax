@@ -215,6 +215,9 @@ slab of `reconstruct_slabs` carries the record of its own rows, and passing
 `info={}` collects the whole-scan record and iterative stopping diagnostics
 once the iterator finishes).
 
+The numerical primitives fit the data they receive, and `tj.reconstruct` and
+`tj.reconstruct_slabs` handle a scan extending beyond the detector.
+
 For iterative reconstruction a coarse fit to the completed rows estimates the
 exterior contribution to each measured ray. Its amplitude comes from continued
 rays that miss the entire output grid. CGLS, SIRT, FISTA and SPDHG subtract this

@@ -153,7 +153,7 @@ def test_streamed_counts_match_resident_subsets_and_release_sources(
         return original(key, start, weights_key, indices, size=size)
 
     monkeypatch.setattr(host, "_read", read)
-    monkeypatch.setattr(module, "should_stream", lambda _: True)
+    monkeypatch.setattr(module, "should_stream", lambda *args, **kwargs: True)
     registered = set(host._SOURCES)
     for scale in (1, 2):
         actual = mlem(geometry, grid, detector, data * scale, config=config)[0]
@@ -289,6 +289,9 @@ def test_host_cone_warm_start_fills_out_before_em(monkeypatch, tmp_path):
         )
     )
     data = np.random.default_rng(925).uniform(0.1, 1, (24, 9, 11)).astype(np.float32)
+    # This comparison isolates FDK initialization followed by the primitive's
+    # observed-count update. The zero-ended rows have no exterior intensity.
+    data[..., :2] = data[..., -2:] = 0
     cfg = MLEMConfig(iterations=1, subsets=3, views_per_batch=3)
     from tomojax.recon.fdk import fdk_host
 

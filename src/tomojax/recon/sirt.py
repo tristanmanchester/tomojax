@@ -483,6 +483,9 @@ def sirt(
 ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
     """Matched FP32 SIRT/OS-SART; each iteration visits every subset once.
 
+    This solver fits the supplied data as given, and the workflows ``tj.reconstruct``
+    and ``tj.reconstruct_slabs`` handle scans extending beyond the detector.
+
     Supports parallel, tilted and cone-beam scans on the existing matched
     projectors. Inputs and updates are FP32. An iteration is a complete sweep,
     not one subset update. With an omitted budget, a full-data sweep measures the
@@ -794,7 +797,7 @@ class SIRTCall:
             data: jax.Array | np.ndarray,
             initial: jax.Array | np.ndarray | None,
             support: jax.Array | np.ndarray | None,
-            _background: np.ndarray | None,
+            _section: slice,
         ) -> tuple[jax.Array | np.ndarray, dict[str, object]]:
             return self.solve(
                 geometry,
