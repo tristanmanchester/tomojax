@@ -22,6 +22,7 @@ import math
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax
+from jax import jit
 import jax.numpy as jnp
 import numpy as np
 
@@ -257,27 +258,27 @@ class Operators:
             # For this requested model only coefficient offsets change. Freeze
             # its exact affine map once; no pose-matrix AD or inverse belongs in
             # later image/pose iterations. The projector and transpose are shared.
-            self.affine = jax.jit(self._affine_geometry)(self.nominal, self.scales)
-        self._geometry = jax.jit(self._geometry)
+            self.affine = jit(self._affine_geometry)(self.nominal, self.scales)
+        self._geometry = jit(self._geometry)
         # A level's outputs are written into buffers it owns, donated (``_stacks``); a buffer
         # the program does not read must still be kept as an argument to receive its output.
-        owned = partial(jax.jit, keep_unused=True)
+        owned = partial(jit, keep_unused=True)
         self.sensitivity = owned(self._sensitivity, donate_argnums=(1,))
-        self._initial_gradient = jax.jit(self._initial_gradient)
-        self._score_inputs = jax.jit(self._score_inputs)
+        self._initial_gradient = jit(self._initial_gradient)
+        self._score_inputs = jit(self._score_inputs)
         self.linearize = owned(self._linearize, donate_argnums=(5,))
-        self.objective = jax.jit(self._objective)
+        self.objective = jit(self._objective)
         self.common_images = owned(self._common_images, donate_argnums=(2,))
-        self.shared_data = jax.jit(self._shared_data)
-        self.forward_scores = jax.jit(self.forward_scores, donate_argnums=(5,))
-        self.view_summary = jax.jit(self._view_summary)
-        self.back_rows = jax.jit(self.back_rows)
-        self._pose_back = jax.jit(self._pose_back)
+        self.shared_data = jit(self._shared_data)
+        self.forward_scores = jit(self.forward_scores, donate_argnums=(5,))
+        self.view_summary = jit(self._view_summary)
+        self.back_rows = jit(self.back_rows)
+        self._pose_back = jit(self._pose_back)
 
     def stack_specs(self, precision: np.ndarray | jax.Array | None) -> dict[str, StackSpec]:
         """Shape and dtype of each stack a level holds (``_stacks``); precision only when given."""
         d = self.detector
-        specs = {
+        specs: dict[str, StackSpec] = {
             "y": (self.image_shape, np.float32),
             "residual": (self.image_shape, np.float32),
             "sw": (self.image_shape, np.float16 if self._half else np.float32),
@@ -328,7 +329,11 @@ class Operators:
 
     def batches[Tree](self, a: Tree) -> Tree:
         """Reshape a padded per-view array tree into (batches, batch, ...)."""
-        return jax.tree.map(lambda x: x.reshape((-1, self.batch, *x.shape[1:])), a)
+
+        def batch(x: jax.Array) -> jax.Array:
+            return x.reshape((-1, self.batch, *x.shape[1:]))
+
+        return jax.tree.map(batch, a)
 
     def prepare(self, q: jax.Array | Coefficients) -> Coefficients:
         """Freeze geometry for the image-only loops."""
@@ -338,8 +343,12 @@ class Operators:
 
     def _geometry(self, q: jax.Array) -> Coefficients:
         """Freeze the small coefficient packet for one linearized image solve."""
-        packets = jax.lax.map(lambda z: self.coefficients(*z), self.views(q))
-        return jax.tree.map(lambda a: a.reshape((self.padded_n, *a.shape[2:])), packets)
+
+        def coefficients(batch: ViewBatch) -> Coefficients:
+            return self.coefficients(*batch)
+
+        packets: Coefficients = jax.lax.map(coefficients, self.views(q))
+        return Coefficients(packets.rays.reshape(self.padded_n, -1), packets.valid.reshape(-1))
 
     def _affine_geometry(self, nominal: jax.Array, scales: jax.Array) -> AffineGeometry:
         q = jnp.zeros((self.padded_n, self.dofs), jnp.float32)

@@ -146,7 +146,7 @@ _LM_MIN = 1e-8
 # as the first argument; one the program does not read must still be kept to receive the
 # output. A product is held behind a barrier where the uncompiled code made it on its own:
 # the CPU compiler would fuse it into the sum that follows (one rounding in place of two).
-_barrier = jax.lax.optimization_barrier
+_barrier: Callable[[jax.Array], jax.Array] = jax.lax.optimization_barrier
 
 
 def _into[**P, R](fun: Callable[P, R]) -> Callable[P, R]:
@@ -179,16 +179,32 @@ class _Volumes:
     @partial(jax.jit, donate_argnums=(0,), keep_unused=True)
     def start(x: jax.Array, x0: float | jax.Array | np.ndarray) -> jax.Array:
         """Zero, or ``x0`` clipped at zero: a coarser level's volume, upsampled first."""
-        x0 = jnp.asarray(x0, jnp.float32)
+        x0 = jnp.asarray(x0, np.float32)
         if x0.shape not in ((), x.shape):
             x0 = jax.image.resize(x0, x.shape, method="linear", antialias=False)
         return jnp.broadcast_to(jnp.maximum(x0, 0), x.shape)
 
-    observed_only = _into(lambda x, observed: jnp.where(observed, x, 0))
-    free = _into(lambda _out, x, gx: (x > 0) | (gx < 0))
-    # The step to max(x + solution, 0) on the free voxels, in the solution's buffer.
-    clipped = _into(lambda s, free, x: jnp.maximum(jnp.where(free, x + s, x), 0) - x)
-    stepped = _into(lambda _out, x, a, dx: x + _barrier(a * dx))
+    @staticmethod
+    @_into
+    def observed_only(x: jax.Array, observed: jax.Array) -> jax.Array:
+        return jnp.where(observed, x, 0)
+
+    @staticmethod
+    @_into
+    def free(_out: jax.Array, x: jax.Array, gx: jax.Array) -> jax.Array:
+        return (x > 0) | (gx < 0)
+
+    @staticmethod
+    @_into
+    def clipped(s: jax.Array, free: jax.Array, x: jax.Array) -> jax.Array:
+        """The feasible step, written into the solution's buffer."""
+        return jnp.maximum(jnp.where(free, x + s, x), 0) - x
+
+    @staticmethod
+    @_into
+    def stepped(_out: jax.Array, x: jax.Array, a: jax.Array, dx: jax.Array) -> jax.Array:
+        return x + _barrier(a * dx)
+
     # The shared rows' image gradient B^T G^-1 b (m = G^-1 b) and their part of the image
     # Jacobi diagonal, diag(B^T G^-1 B), added to the linearization's (``_common``).
     plus_image = _by_slice(
@@ -210,7 +226,7 @@ class _Volumes:
 @jax.jit
 def _shared_gram(images: jax.Array) -> jax.Array:
     """B B^T in FP64: compiled, the FP64 copy of the images is no array of its own."""
-    return jnp.einsum("i...,j...->ij", images.astype(jnp.float64), images.astype(jnp.float64))
+    return jnp.einsum("i...,j...->ij", images.astype(np.float64), images.astype(np.float64))
 
 
 def level_volumes(
@@ -224,13 +240,13 @@ def level_volumes(
     (right-hand side, then solution, then clipped step), with TV the
     stepped gradient ``gx`` and conductance ``d``, and the motion prior's ``factor``.
     """
-    volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+    volume = jax.ShapeDtypeStruct(ops.shape, np.float32)
     names = ("x", "other", "gx0", "dd", "invdiag", "step")
     shapes: dict[str, jax.ShapeDtypeStruct | FactorShape] = dict.fromkeys(
         names + (("gx", "d") if lam else ()), volume
     )
-    shapes["images"] = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
-    shapes["free"] = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+    shapes["images"] = jax.ShapeDtypeStruct((2, *ops.shape), np.float32)
+    shapes["free"] = jax.ShapeDtypeStruct(ops.shape, np.bool_)
     shapes["factor"] = prior.factor_shapes()
     return shapes
 
@@ -414,9 +430,9 @@ class _Level:
             "prior": prior.temporaries(),
         }
         if x0 is None:
-            start = temporaries(_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
+            start = temporaries(_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), np.float32))
         else:
-            start = temporaries(_Volumes.start, jax.ShapeDtypeStruct(ops.shape, jnp.float32), x0)
+            start = temporaries(_Volumes.start, jax.ShapeDtypeStruct(ops.shape, np.float32), x0)
         self.transients["start"] = start
         reserve = transient_reserve(self.transients)
         volumes = level_volumes(ops, prior, self.lam)
@@ -434,18 +450,18 @@ class _Level:
         """The Schur solve's arguments as shapes, every stack on the device."""
         ops, prior = self.ops, self.prior
         f64 = partial(jax.ShapeDtypeStruct, dtype=jnp.float64)
-        volume = jax.ShapeDtypeStruct(ops.shape, jnp.float32)
+        volume = jax.ShapeDtypeStruct(ops.shape, np.float32)
 
         def stack(name: str) -> Stack[_Shape]:
             return Stack.shaped(specs[name], ops.batch)
 
         q = jax.eval_shape(lambda c: ops.prepare(ops.pad_poses(c)), f64((prior.size,)))
         factor = prior.factor_shapes()
-        images = jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32)
+        images = jax.ShapeDtypeStruct((2, *ops.shape), np.float32)
         parts = (f64((2, 2)), f64((2, 2)), images, f64((2, prior.size)), f64((2,)))
         common = jax.eval_shape(_common.Common, *parts)
         poses = jax.eval_shape(partial(_common.PoseSolve.build, prior.solve), factor, common)
-        free = jax.ShapeDtypeStruct(ops.shape, jnp.bool_)
+        free = jax.ShapeDtypeStruct(ops.shape, np.bool_)
         d = volume if self.lam else None
         precision = stack("precision") if weighted else None
         damping = (volume, jax.ShapeDtypeStruct((), jnp.float32))

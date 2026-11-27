@@ -142,7 +142,7 @@ class SharedViewProducts:
                 )
                 return jax.lax.ppermute(accumulator, VIEWS, ring)
 
-            accumulator = jax.lax.fori_loop(0, size, contribute, jnp.zeros(ops.shape, jnp.float32))
+            accumulator = jax.lax.fori_loop(0, size, contribute, jnp.zeros(ops.shape, np.float32))
             return jax.lax.psum(accumulator, VIEWS)
 
         share, whole = PartitionSpec(VIEWS), PartitionSpec()
@@ -201,7 +201,15 @@ class SharedViewProducts:
             common,
             poses,
         )
-        result = jax.tree.map(self.split.gather, result)
+        # Preserve the caller's placement as well as its values. A committed
+        # volume makes XLA recompile the next single-device RHS with sharding:
+        # on CPU that changes its rounding and the subsequent Krylov trajectory.
+        # Only the completed volume step and four scalars leave the mesh.
+        result = (
+            jax.device_put(result, args[8].sharding)
+            if args[8].committed
+            else jax.device_put(jax.device_get(result))
+        )
         _ = result.solution.block_until_ready()
         announce(self.split.mesh.devices.flat)
         return result
@@ -281,7 +289,7 @@ class ImageSolve:
         if self.shared is not None:
             try:
                 result = self.shared(*args)
-            except jax.errors.JaxRuntimeError as exc:
+            except Exception as exc:
                 if not device_out_of_memory(exc):
                     raise
                 progress.retried("single-device image solve")

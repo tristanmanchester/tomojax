@@ -59,7 +59,7 @@ def _cgroup_room_bytes() -> int | None:
         mounts = _CGROUP_MOUNTS.read_text().splitlines()
     except (OSError, ValueError):
         return None
-    rooms = []
+    rooms: list[int] = []
     for group, root, used_file, limits in _memory_hierarchies(groups, mounts):
         for level in (group, *group.parents[: len(group.relative_to(root).parts)]):
             try:
