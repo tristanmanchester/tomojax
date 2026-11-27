@@ -65,7 +65,7 @@ class Open(Record, tag="open"):
     data_path: str | None = None
     image_key_path: str | None = None
     angles_path: str | None = None
-    apply_poses: bool = True
+    apply_poses: bool | msgspec.UnsetType = msgspec.UNSET
 
 
 class Inspect(Record, tag="inspect"):

@@ -19,54 +19,17 @@ if TYPE_CHECKING:
     from tomojax.geometry import Detector, Grid, ScanGeometry
 
 
-def line_integral_frames(scan: Scan, stack: Any, key: np.ndarray) -> Frames:
+def line_integral_frames(scan: Scan, stack: Any) -> Frames:
     """Pair lazy sample storage with the saved scan's geometry and acquisition positions."""
     from tomojax._loading.loader import Frames
 
-    frames = Frames(
+    return Frames(
         stack,
         scan.geometry,
         name=scan.name,
         source=scan.source,
         view_positions=scan.view_positions,
         corrections=scan.corrections,
-    )
-    if np.any(key != 0):
-        frames = replace(frames.selected(key == 0), corrections=scan.corrections)
-    return frames
-
-
-def acquisition_frames(
-    file: Path,
-    *,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    **overrides: Any,
-) -> Frames | None:
-    from tomojax._loading.loader import Frames
-    from tomojax.io.api import read_acquisition
-
-    found = read_acquisition(
-        file, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-    )
-    if found is None:
-        return None
-    record, resolved = frame_geometry(found.nominal_record, offsets=found.offsets, **overrides)
-    return Frames(
-        counts=found.counts,
-        geometry=resolved,
-        flats=found.flats,
-        darks=found.darks,
-        flat_positions=found.flat_positions,
-        white_level=found.white_level,
-        view_positions=found.view_positions,
-        exposure_times=found.exposure_times,
-        flat_exposure_times=found.flat_exposure_times,
-        dark_source=found.dark_source,
-        linear_limit=found.linear_limit,
-        name=record.sample_name or "sample",
-        source=record,
     )
 
 

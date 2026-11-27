@@ -5885,7 +5885,6 @@
         },
         "apply_poses": {
           "type": "boolean",
-          "default": true,
           "description": "Apply per-view poses. On a raw Zeiss acquisition, False also omits the scanner's shifts and center correction. A saved scan that incorporated those corrections requires the original acquisition for nominal geometry. Use scan.with_poses(None) to clear its rigid poses."
         }
       },

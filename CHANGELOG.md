@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Loading uses explicit HDF5 projection, frame-label and angle paths in saved scans.
+  Explicit flat and dark calibration corrects unlabeled counts in integer and
+  floating-point storage. Geometry overrides retain acquisition gaps and restarts
+  used by alignment. Unsupported dataset paths and calibration arguments raise errors.
 - NXtomo files written by GDA with a SmarAct ψ rotation command now load their projection angles when the NXtomo entry omits them.
 
 - Inner feature bands include the rim at volume faces, edges and corners. A full 10 × 10 × 10 box has 488 voxels in its one-voxel inner rim.

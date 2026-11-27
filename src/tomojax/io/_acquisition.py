@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from .dataset_paths import check_dataset_paths
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -110,10 +113,18 @@ def read_acquisition(
     from ._zeiss import read_zeiss
 
     target = Path(path)
-    for reader in (read_nikon, read_zeiss, read_esrf, read_skyscan):
-        acquisition = reader(target, data_path=data_path)
+    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
+    for reader in (
+        read_nikon,
+        read_zeiss,
+        partial(read_esrf, data_path=data_path),
+        read_skyscan,
+        partial(read_hdf5_acquisition, **paths),
+    ):
+        acquisition = reader(target)
         if acquisition is not None:
+            family = acquisition.nominal_record.source_format
+            assert family is not None
+            check_dataset_paths(family, paths)
             return acquisition
-    return read_hdf5_acquisition(
-        target, data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-    )
+    return None

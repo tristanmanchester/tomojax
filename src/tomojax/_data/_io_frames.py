@@ -109,7 +109,7 @@ _FRAME_PATHS = (*NXTOMO_FRAME_PATHS, "/exchange/data")
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 
 
-def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
+def _gda_paths(file: h5py.File, selected: str | None) -> tuple[str, str, str] | None:
     """A coherent GDA imaging acquisition, including stripped NeXus exports.
 
     The rotation command, not the encoder's raw counts, supplies the angles.
@@ -122,6 +122,8 @@ def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
             continue
         prefix = f"/{name}"
         data = f"{prefix}/imaging/data"
+        if selected is not None and selected.strip("/") != data.strip("/"):
+            continue
         stack = _dataset(file, data)
         if stack is None or stack.ndim not in (2, 3):
             continue
@@ -385,6 +387,10 @@ def locate_frames(
                 units_override=units_override,
             )
         )
+        if angles_path is not None and angles is None:
+            raise ValueError(
+                f"angles_path {angles_path!r} has no angular units; supply angles in degrees"
+            )
         flats, darks = (
             Hdf5Frames.open(path, beside[n])
             if (key is None or not np.any(key == label)) and _dataset(file, beside[n])
@@ -410,14 +416,18 @@ def _stack(
 ) -> tuple[str, h5py.Dataset, tuple[str, str, str] | None]:
     """The frames' path and dataset, and the GDA layout they belong to, if any."""
     where = data_path or next((p for p in _FRAME_PATHS if _dataset(file, p) is not None), None)
-    gda = _gda_paths(file) if where is None else None
+    gda = _gda_paths(file, data_path) if where is None or data_path is not None else None
     where = where or (gda[0] if gda is not None else None)
-    gda = gda if gda is not None and where == gda[0] else None
+    gda = (
+        gda
+        if gda is not None and where is not None and where.strip("/") == gda[0].strip("/")
+        else None
+    )
     where = where or _default_frames(file)
     where = where or _only(file, "data", lambda d: len(d.shape) in (2, 3), path)
     stack = None if where is None else _dataset(file, where)
     if data_path is not None and stack is None:
-        raise KeyError(f"{path} has no dataset {data_path!r}")
+        raise KeyError(f"data_path: {path} has no dataset {data_path!r}")
     if where is not None and stack is not None:
         return where, stack, gda
     missing: list[str] = []
@@ -457,7 +467,7 @@ def _records(
     counts = {"data": frames}
     raw: dict[str, np.ndarray | None] = {}
     for name, (where, by_name) in (("image_key", key), ("angles", angles)):
-        values = raw[name] = None if where is None else _read(file, where, path)
+        values = raw[name] = None if where is None else _read(file, where, f"{name}_path: {path}")
         if values is None:
             continue
         if values.ndim != 1 or (by_name and values.shape != (frames,)):

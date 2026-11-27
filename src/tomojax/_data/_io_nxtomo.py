@@ -396,7 +396,7 @@ def _write_alignment_metadata_section(
         align_grp.attrs["misalign_spec_json"] = json.dumps(meta.misalign_spec)
 
 
-def _read_projections(stack: Hdf5Frames) -> np.ndarray:
+def read_projections(stack: Hdf5Frames) -> np.ndarray:
     views, rows, cols = stack.shape
     with progress.task("load", Path(stack.path).name, views, "views"):
         active = progress.for_unit("views")
@@ -464,8 +464,11 @@ def read_nxtomo(
         entry = child_group(f, "/entry")
         if entry is None:
             raise KeyError("Missing /entry")
-        where = next((p for p in NXTOMO_FRAME_PATHS if p in f), None)
-        if where is None:
+        if located is None:
+            where = next((p for p in NXTOMO_FRAME_PATHS if p in f), None)
+            if where is not None:
+                located = locate_frames(path, data_path=where)
+        if located is None:
             if not _without_frames(f):
                 raise KeyError("Could not find projections dataset under /entry")
             out["projections"] = None
@@ -478,10 +481,8 @@ def read_nxtomo(
                     path=path,
                 ).astype(np.float32)
         else:
-            if located is None:
-                located = locate_frames(path, data_path=where)
             stack = located.stack
-            out["projections"] = stack if lazy else _read_projections(stack)
+            out["projections"] = stack if lazy else read_projections(stack)
             key = located.image_key
             if key is None:
                 axes_log_warning("load_nxtomo: missing image_key for %s; defaulting to zeros", path)

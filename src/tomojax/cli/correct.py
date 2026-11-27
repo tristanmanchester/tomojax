@@ -25,6 +25,7 @@ from tomojax.cli._inputs import (
     PUBLIC as INPUTS,
     InputArgs,
     add_inputs,
+    check_scan_calibration,
     input_paths,
     load_keywords,
     validate_inputs,
@@ -431,35 +432,19 @@ def _prepared(
 ) -> _Prepared:
     """Load raw frames or a scan, select views and crop; Rings runs first when asked."""
     from tomojax import Frames
-    from tomojax._loading.loader import (
-        is_raw_input,
-        load_raw_frames_with_declaration,
-        load_scan_with_declaration,
-    )
+    from tomojax._loading.loader import load_native
 
     select = args.views
-    keywords = load_keywords(args)
-    progress.check_canceled()
-    raw = is_raw_input(
-        source,
-        flats=keywords["flats"],
-        darks=keywords["darks"],
-        data_path=keywords["data_path"],
-        image_key_path=keywords["image_key_path"],
-        angles_path=keywords["angles_path"],
-    )
-    progress.check_canceled()
-    if not raw and any(s.domain == "transmission" for s in steps):
+    with progress.task("metadata", Path(source).name, None, ""):
+        item = load_native(source, declared=declared, **load_keywords(args))
+    if not isinstance(item, Frames):
+        check_scan_calibration(args.epsilon, args.flat_weights)
+    if not isinstance(item, Frames) and any(s.domain == "transmission" for s in steps):
         step = next(type(s).__name__.lower() for s in steps if s.domain == "transmission")
         raise ValueError(
             f"{step} acts on transmission, before the log; {source} holds line integrals. "
             "Run tomojax correct on the raw acquisition to apply it."
         )
-    item = (
-        load_raw_frames_with_declaration(source, declared=declared, **keywords)
-        if raw
-        else load_scan_with_declaration(source, declared=declared, **keywords)
-    )
     progress.check_canceled()
     total = int(item.views) if isinstance(item, Frames) else len(item.angles)
     selection = np.arange(total)

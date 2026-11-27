@@ -19,7 +19,10 @@ from scipy.spatial.transform import Rotation
 
 # check-public-imports: allow-private
 from tomojax.alignment._joint._parameters import Parameters
-from tomojax.alignment._joint._pose import MotionPrior  # check-public-imports: allow-private
+from tomojax.alignment._joint._pose import (  # check-public-imports: allow-private
+    MotionPrior,
+    ViewOrder,
+)
 from tomojax.alignment._joint._projection import (  # check-public-imports: allow-private
     fit_gauge,
     posed,
@@ -464,3 +467,35 @@ def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(nam
     coefficients = np.linalg.lstsq(gauge, direction, rcond=None)[0]
     left = np.linalg.norm(direction - gauge @ coefficients) / np.linalg.norm(direction)
     assert left < 10 * eps  # second order; R1b's rigid gauge leaves it whole (about 1)
+
+
+@pytest.mark.parametrize("suffix", ["npz", "nxs"])
+def test_load_overrides_keep_the_acquisition_gap_and_restart(tmp_path, suffix):
+    import tomojax as tj
+
+    path = tmp_path / f"scan.{suffix}"
+    grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(4, 2, 1, 1)
+    geometry = tj.ParallelGeometry(grid, detector, np.arange(6) * 30.0)
+    positions = [0.5, 1.5, 10.5] * 2
+    tj.save(path, tj.Scan(np.ones((6, 2, 4), np.float32), geometry, view_positions=positions))
+    for options in (
+        {"grid": grid},
+        {"angles": geometry.angles},
+        {"pixel_size": 1},
+        {"detector": detector},
+    ):
+        scan = tj.load(path, **options)
+        np.testing.assert_array_equal(scan.view_positions, positions)
+        order = ViewOrder(6, scan.view_positions)
+        assert order.segments == [(0, 3), (3, 6)]
+        prior = MotionPrior(
+            6,
+            np.zeros((30, 0)),
+            parameters=Parameters(6, "rotations"),
+            knot_spacing=(3,) * 5,
+            delta=0.02,
+            order=order,
+        )
+        np.testing.assert_allclose(
+            prior.weights(np.zeros(12), 1.0)[:, 0], [250, 250 / 9, 0, 250, 250 / 9]
+        )

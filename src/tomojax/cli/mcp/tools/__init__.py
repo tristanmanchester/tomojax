@@ -78,7 +78,7 @@ class Open(Record):
     data_path: str | None = None
     image_key_path: str | None = None
     angles_path: str | None = None
-    apply_poses: bool = True
+    apply_poses: bool | msgspec.UnsetType = msgspec.UNSET
     dry_run: bool = False
     detail: Literal["summary", "full"] = "summary"
 

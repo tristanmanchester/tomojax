@@ -131,21 +131,11 @@ def _loading(path: Path) -> dict[str, object]:
 
     Calibration (flats and darks) is the dataset check's to report, in ``issues``.
     """
-    from tomojax._loading.loader import discover_frames, stored_frames
-    from tomojax.io.projection_layout import saved_projection_layout
+    from tomojax._loading.loader import projection_frames
 
     try:
-        frames, located = discover_frames(path, apply_poses=True, layout_only=True, angles=None)
-        if frames is None:
-            try:  # a saved dataset records what its loading found
-                record = saved_projection_layout(path)[0]
-            except KeyError:
-                stored, _ = stored_frames(
-                    path, located, require_raw=True, apply_poses=True, angles=None
-                )
-                record = stored.source
-        else:
-            record = frames.source
+        frames, _ = projection_frames(path, check_calibration=False)
+        record = frames.source
     except (ValueError, KeyError) as err:  # the reader names the argument to supply
         message = err.args[0] if isinstance(err, KeyError) and err.args else str(err)
         return {

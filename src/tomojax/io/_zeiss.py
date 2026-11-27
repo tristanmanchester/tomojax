@@ -457,7 +457,7 @@ def _record(
     return record, offsets
 
 
-def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
+def read_zeiss(path: Path) -> RawAcquisition | None:
     """Read an Xradia acquisition by its OLE content, regardless of its filename.
 
     Xradia stores angles in degrees, distances in mm, and ``pixelsize`` as
@@ -471,8 +471,6 @@ def read_zeiss(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
     with _OleFile(str(path)) as container:
         if not container.exists("ImageInfo/NoOfImages"):
             return None
-        if data_path is not None:
-            raise ValueError("a Zeiss container holds one acquisition, not HDF5 data paths")
         mode = int(_scalar(container, "ImageInfo/AcquisitionMode"))
         if mode != 0:
             raise ValueError(f"{path} is a Zeiss image/scout (mode {mode}), not detector frames")

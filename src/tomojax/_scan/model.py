@@ -717,7 +717,9 @@ def geometry_record(
     return ProjectionDataset(**fields) if source is None else replace_dataset(source, **fields)
 
 
-def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
+def scan_from_record(
+    record: ProjectionDataset, *, apply_poses: bool, geometry: ScanGeometry | None = None
+) -> Scan:
     from tomojax.corrections import Correction
 
     if not apply_poses:
@@ -727,7 +729,7 @@ def scan_from_record(record: ProjectionDataset, *, apply_poses: bool) -> Scan:
     assert record.projections is not None  # tj.load refuses a file without them
     return Scan(
         projections=record.projections,
-        geometry=geometry_of(record, apply_poses=apply_poses),
+        geometry=geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,

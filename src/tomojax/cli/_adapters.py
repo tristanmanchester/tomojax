@@ -20,7 +20,6 @@ from tomojax._loading.loader import (
     load_scan_with_declaration,
     projection_frames,
 )
-from tomojax._parameters import FLAT_WEIGHTS
 from tomojax._scan.model import combined_geometry, describe
 from tomojax._scan.simulation import build_sim_config, simulate_config
 from tomojax._typed_arrays import object_mapping
@@ -41,6 +40,7 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import arguments, scan_layout, source
 from tomojax.cli._browse import check_input_grid, source_array
 from tomojax.cli._handles import Root, handle, stage_array
+from tomojax.cli._inputs import check_scan_calibration
 from tomojax.cli._interactive import correction_product, region_product, slice_product
 from tomojax.cli._options import ancestor_paths, check_destinations, checkpointed
 from tomojax.cli._plans import plan_product
@@ -204,14 +204,6 @@ def geometry_summary(item: Root, *, measured_angles: bool = True) -> dict[str, A
     return summary
 
 
-def raw_only(operation: op.Correct) -> None:
-    """Refuse flat-field settings on a scan of line integrals, which has no flat field."""
-    if operation.epsilon != 1e-6:
-        raise InvalidParameter("epsilon", "epsilon applies to raw frames")
-    if operation.flat_weights != FLAT_WEIGHTS:
-        raise InvalidParameter("flat_weights", "flat_weights applies to raw frames")
-
-
 def saved_storage(path: str) -> Hdf5 | None:
     """Use a saved dataset directly only when it has canonical in-memory axis order."""
     if not h5py.is_hdf5(path):
@@ -256,11 +248,11 @@ class Admission:
 
     @prepare.register
     def open(self, operation: op.Open) -> Work:
-        options = arguments(
-            operation, self.context, omit=("path", "kind"), layout_only=self.validating
-        )
-        declared = options.pop("geometry")
         if operation.kind in ("scan", "frames"):
+            options = arguments(
+                operation, self.context, omit=("path", "kind"), layout_only=self.validating
+            )
+            declared = options.pop("geometry")
             loader = (
                 load_scan_with_declaration
                 if operation.kind == "scan"
@@ -609,7 +601,7 @@ class Admission:
         if isinstance(item, tj.Scan) and isinstance(operation, op.CorrectionPreview):
             # A scan's band bins after its line-integral steps, as Scan.binned does.
             check_scan_steps(steps)
-            raw_only(operation)
+            check_scan_calibration(operation.epsilon, operation.flat_weights)
             check_binning(operation.binning, *item.projections.shape[1:])
             check_rows(operation.rows, item.projections.shape[1], operation.binning)
             settings.pop("epsilon", None)
@@ -617,7 +609,7 @@ class Admission:
             return partial(correction_product, operation, item, steps, settings, self.context)
         if isinstance(item, tj.Scan):
             check_scan_steps(steps)
-            raw_only(operation)
+            check_scan_calibration(operation.epsilon, operation.flat_weights)
             if operation.binning != 1:
                 raise InvalidParameter("binning", "correction binning applies to raw frames")
             return partial(item.corrected, *steps, views_per_batch=operation.views_per_batch)

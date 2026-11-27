@@ -316,7 +316,7 @@ def _nikon_record(
     )
 
 
-def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
+def read_nikon(path: Path) -> RawAcquisition | None:
     """Recognize the XTekCT section by content, irrespective of the file suffix."""
 
     def matches(file: Path) -> bool:
@@ -330,6 +330,4 @@ def read_nikon(path: Path, *, data_path: str | None = None) -> RawAcquisition | 
         return None
     if len(found) != 1:
         raise ValueError(f"{path}: several Nikon parameter files; name one explicitly")
-    if data_path is not None:
-        raise ValueError("a Nikon acquisition has no HDF5 data_path")
     return _raw_nikon(found[0])

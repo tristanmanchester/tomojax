@@ -5078,8 +5078,7 @@
           "default": null
         },
         "apply_poses": {
-          "type": "boolean",
-          "default": true
+          "type": "boolean"
         }
       },
       "required": [

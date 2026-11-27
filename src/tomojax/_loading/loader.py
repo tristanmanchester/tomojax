@@ -11,20 +11,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import nullcontext
-from dataclasses import KW_ONLY, dataclass, field, replace
+from dataclasses import KW_ONLY, dataclass, field, fields, replace
 import logging
 import numbers
 import os
 from os import PathLike
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict, Unpack, cast
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict, Unpack
 
 import numpy as np
 
 from tomojax import progress
-from tomojax._data import calibration_issues, read_nxtomo, views_of
+from tomojax._data import Hdf5Frames, calibration_issues, read_projections, views_of
 from tomojax._loading.frame_sources import (
-    acquisition_frames,
     line_integral_frames,
     selected_frames,
     tiff_frames,
@@ -41,22 +40,22 @@ from tomojax._scan.model import (
     detector_window,
     frame_output_grid,
     rebuild,
+    record_of,
     scan_from_record,
+    selected_scan,
 )
 from tomojax.core.host_volume import discard_failed_outputs
 from tomojax.core.registration import registration
 from tomojax.core.validation import view_indices
 from tomojax.geometry import Detector, Grid, ScanGeometry
-from tomojax.io.projection_layout import saved_projection_layout
+from tomojax.io.projection_layout import ProjectionStorage, select_storage
 
 if TYPE_CHECKING:
     from tomojax import corrections
-    from tomojax._data import FrameStack
     from tomojax._loading.geometry import DeclaredGeometry
-    from tomojax.core.json_values import JsonValue
     from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
-    from tomojax.io.api import LocatedFrames
+    from tomojax.io.projection_layout import ProjectionPixels
 else:
     corrections = AnnotationModule("tomojax.corrections")
 
@@ -69,36 +68,16 @@ if TYPE_CHECKING:
         geometry: ScanGeometry | None
         declared: DeclaredGeometry | None
 
-    class _StoredOverrides(_FrameOverrides):
-        angles: Sequence[float] | np.ndarray | None
-
-    class _StoredFrameSettings(_StoredOverrides):
-        apply_poses: bool
-
 
 LOG = logging.getLogger(__name__)
 
 
-def is_raw_input(
-    path: str | PathLike[str],
-    *,
-    flats: np.ndarray | float | str | PathLike[str] | None = None,
-    darks: np.ndarray | float | str | PathLike[str] | None = None,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-) -> bool:
-    """Whether ``path`` holds raw detector frames rather than saved line integrals."""
-    from tomojax.io.api import read_acquisition
-
-    file = Path(path)
-    if flats is not None or darks is not None:
-        return True
-    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
-    if read_acquisition(file, **paths) is not None:
-        return True
-    located = _located(file, **paths) if file.suffix.lower() in _HDF5 else None
-    return _line_integrals(file, located) is None
+def is_raw_input(path: Path) -> bool:
+    """Whether the selected storage records detector counts, before requiring geometry."""
+    selected = select_storage(path, layout_only=True)
+    return not isinstance(selected, ProjectionStorage) or _Calibration().counts(
+        selected, require_raw=False
+    )
 
 
 def load(
@@ -132,7 +111,9 @@ def load(
     flat frames, or use ``load_frames(path, ...).corrected(flat_weights="position")``
     to blend by position alone. For other corrections, load the frames with
     :func:`load_frames`. Every other argument has :func:`load_frames`'s meaning
-    and supplies what the file does not record. The scan carries the per-view
+    and can replace recorded metadata. Explicit flats or darks identify unlabeled
+    projections as counts regardless of storage dtype. A recorded log correction
+    or phase measurement rules out further flat/dark correction. The scan carries the per-view
     corrections saved with it (by :func:`align` or ``tomojax align``) unless
     ``apply_poses`` is False. Frames that ``image_key`` marks as other than
     sample views are left out.
@@ -192,82 +173,96 @@ def load(
     )
 
 
-def load_scan_with_declaration(
-    path: str | PathLike[str],
-    *,
-    flats: np.ndarray | float | str | PathLike[str] | None = None,
-    darks: np.ndarray | float | str | PathLike[str] | None = None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    apply_poses: bool = True,
-    **overrides: Any,
-) -> Scan:
-    center, overrides["declared"] = center_of(overrides.get("declared"))
+def load_scan_with_declaration(path: str | PathLike[str], **options: Any) -> Scan:
     with discard_failed_outputs() as outputs:
-        progress.check_canceled()
-        file = Path(path)
-        if not file.exists():
-            with progress.task("load", file.name, None, "views"):
-                raise FileNotFoundError(f"no such file: {file}")
-        paths = {
-            "data_path": data_path,
-            "image_key_path": image_key_path,
-            "angles_path": angles_path,
-        }
-        overrides.setdefault("angles", None)
-        discovered, located = discover_frames(file, apply_poses=apply_poses, **paths, **overrides)
-        if discovered is None:
-            found = _line_integrals(file, located)
-            if found is not None:
-                outputs.own(found[0].projections)
-                scan = _record_scan(file, *found, apply_poses=apply_poses, **overrides)
-                return centered(scan, center)
-        frames = _frames(file, discovered, apply_poses=apply_poses, **paths, **overrides)
-        fields = _with_fields(
-            frames,
-            flats=flats,
-            darks=darks,
-            exposure_times=exposure_times,
-            flat_exposure_times=flat_exposure_times,
-        )
-        scan = _corrected_on_load(fields, file)
+        item = load_native(path, **options)
+        scan = _corrected_on_load(item, Path(path)) if isinstance(item, Frames) else item
         outputs.own(scan.projections)
-        return centered(scan, center)
+        return scan
 
 
-def discover_frames(
-    file: Path,
-    *,
-    apply_poses: bool,
-    layout_only: bool = False,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    **overrides: Any,
-) -> tuple[Frames | None, LocatedFrames | None]:
-    """Discover vendor frames first, then labeled HDF5 frames, before reading pixels."""
-    paths = {"data_path": data_path, "image_key_path": image_key_path, "angles_path": angles_path}
-    frames = acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides)
-    if frames is None and (file.is_dir() or file.suffix.lower() in {".tif", ".tiff"}):
-        frames = tiff_frames(file, **overrides)
-    if frames is not None or file.suffix.lower() not in _HDF5:
-        return frames, None
-    located = _located(file, **paths)
-    if located is not None and located.raw:
-        frames = _hdf5_frames(
-            file, located, apply_poses=apply_poses, layout_only=layout_only, **overrides
+@dataclass(frozen=True)
+class _StoredScan:
+    """Complete saved scan state, paired with the selected pixel source."""
+
+    scan: Scan
+    pixels: ProjectionPixels
+
+    def materialize(self) -> Scan:
+        from tomojax.io.api import replace_dataset
+
+        data = (
+            read_projections(self.pixels)
+            if isinstance(self.pixels, Hdf5Frames)
+            else self.pixels
+            if isinstance(self.pixels, np.ndarray)
+            else self.pixels[:]
         )
-    return frames, located
+        source = self.scan.source
+        if source is not None:
+            source = replace_dataset(source, projections=data)
+        return replace(self.scan, projections=data, source=source)
+
+
+def load_native(path: str | PathLike[str], **options: Any) -> Scan | Frames:
+    """Open the selected measurements in their resolved domain."""
+    file = Path(path)
+    progress.check_canceled()
+    if not file.exists():
+        with progress.task("load", file.name, None, "views"):
+            raise FileNotFoundError(f"no such file: {file}")
+    with discard_failed_outputs() as outputs:
+        item = resolve_input(file, layout_only=False, **options)
+        if isinstance(item, Frames):
+            return item
+        outputs.own(item.pixels)
+        return item.materialize()
 
 
 def projection_frames(
+    file: Path, *, require_raw: bool = False, **options: Any
+) -> tuple[Frames, bool]:
+    """Resolve the same scan as an eager load, keeping its detector storage lazy."""
+    item = resolve_input(file, layout_only=True, require_raw=require_raw, **options)
+    if isinstance(item, Frames):
+        return item, True
+    return line_integral_frames(item.scan, item.pixels), False
+
+
+def check_geometry_options(
+    angles_path: str | None,
+    angles: Sequence[float] | np.ndarray | None,
+    overrides: _FrameOverrides,
+) -> None:
+    """Check every supplied description of the same part of the geometry for agreement."""
+    geometry = overrides.get("geometry")
+    if geometry is not None:
+        if angles is not None and not np.array_equal(angles, geometry.angles):
+            raise ValueError("angles disagree with the supplied geometry")
+        for name, value, supplied in (
+            ("detector", overrides.get("detector"), geometry.detector),
+            ("grid", overrides.get("grid"), geometry.grid),
+        ):
+            if value is not None and value != supplied:
+                raise ValueError(f"{name} disagrees with the supplied geometry")
+    if angles_path is not None and (angles is not None or geometry is not None):
+        raise ValueError(
+            "angles_path and angles or geometry both supply rotation angles; choose one"
+        )
+    if overrides.get("pixel_size") is not None and (
+        geometry is not None or overrides.get("detector") is not None
+    ):
+        raise ValueError(
+            "pixel_size= and detector= (or geometry=) both describe the detector: pass one"
+        )
+
+
+def resolve_input(
     file: Path,
     *,
+    layout_only: bool,
     require_raw: bool = False,
-    apply_poses: bool = True,
+    check_calibration: bool = True,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
     exposure_times: np.ndarray | float | None = None,
@@ -276,146 +271,70 @@ def projection_frames(
     image_key_path: str | None = None,
     angles_path: str | None = None,
     angles: Sequence[float] | np.ndarray | None = None,
+    apply_poses: bool = True,
     **overrides: Unpack[_FrameOverrides],
-) -> tuple[Frames, bool]:
-    """Resolve geometry and calibration for a scan without reading its detector pixels."""
-    if not file.exists():
-        raise FileNotFoundError(f"no such file: {file}")
+) -> Frames | _StoredScan:
+    """Resolve the file selection, geometry and measurement domain for all consumers."""
+    from tomojax.corrections.calibration import check_calibration_layout
+
     center, overrides["declared"] = center_of(overrides.get("declared"))
-    if TYPE_CHECKING:
-        settings = _StoredFrameSettings(apply_poses=apply_poses, angles=angles, **overrides)
-    else:
-        settings = dict(apply_poses=apply_poses, angles=angles, **overrides)
-    frames, located = discover_frames(
+    check_geometry_options(angles_path, angles, overrides)
+    selected = select_storage(
         file,
-        layout_only=True,
+        layout_only=layout_only,
         data_path=data_path,
         image_key_path=image_key_path,
         angles_path=angles_path,
-        **settings,
     )
-    if frames is None:
-        frames, raw = stored_frames(file, located, require_raw=require_raw, **settings)
-        if not raw:
-            return centered(frames, center), False
-    fields = _with_fields(
-        frames,
-        flats=flats,
-        darks=darks,
-        exposure_times=exposure_times,
-        flat_exposure_times=flat_exposure_times,
-    )
-    from tomojax.corrections.calibration import check_calibration_layout
-
-    _require_calibration(fields)
-    check_calibration_layout(fields)
-    return centered(fields, center), True
-
-
-def stored_frames(
-    file: Path,
-    located: LocatedFrames | None,
-    *,
-    require_raw: bool,
-    apply_poses: bool,
-    **overrides: Unpack[_StoredOverrides],
-) -> tuple[Frames, bool]:
-    if TYPE_CHECKING:
-        settings = _StoredFrameSettings(apply_poses=apply_poses, **overrides)
+    calibration = _Calibration(flats, darks, exposure_times, flat_exposure_times)
+    if isinstance(selected, Path):
+        frames = tiff_frames(file, angles=angles, **overrides)
+    elif isinstance(selected, ProjectionStorage):
+        raw = calibration.counts(selected, require_raw=require_raw)
+        with discard_failed_outputs() as outputs:
+            outputs.own(selected.stack)
+            scan, samples = _sample_scan(
+                selected, raw=raw, angles=angles, apply_poses=apply_poses, **overrides
+            )
+            if not raw:
+                return _StoredScan(centered(scan, center), samples)
+            frames = _calibration_frames(selected, scan, samples)
     else:
-        settings = dict(apply_poses=apply_poses, **overrides)
-    if located is not None and require_raw:
-        return _hdf5_frames(file, located, layout_only=True, **settings), True
-    try:
-        record, stack = saved_projection_layout(file)
-    except KeyError:
-        if located is None:
-            raise
-        return _hdf5_frames(file, located, layout_only=True, **settings), True
-    _frames_in(record, file)
-    record.volume = None
-    key, raw = sample_key(record, located)
-    if raw and located is not None:
-        return _hdf5_frames(file, located, layout_only=True, **settings), True
-    if raw or require_raw or any(value is not None for value in overrides.values()):
-        return _record_frames(file, record, stack=stack, **settings), raw or require_raw
-    scan = scan_from_record(record, apply_poses=apply_poses)
-    return line_integral_frames(scan, stack, key), False
-
-
-def _line_integrals(
-    file: Path, located: LocatedFrames | None
-) -> tuple[ProjectionDataset, np.ndarray] | None:
-    """A TomoJAX dataset of line integrals and its discovered key, or None for frames."""
-    from tomojax.io import load_dataset
-
-    suffix = file.suffix.lower()
-    if file.is_dir() or suffix in {".tif", ".tiff"}:
-        return None
-    if located is not None and located.raw:
-        return None
-    try:
-        record = load_dataset(file)
-    except KeyError as exc:  # try the raw frame layout
-        if progress.handler_failed(exc):
-            raise
-        return None
-    key, raw = sample_key(record, located)
-    return None if raw else (record, key)
-
-
-def sample_key(record: ProjectionDataset, located: LocatedFrames | None) -> tuple[np.ndarray, bool]:
-    discovered = None if located is None else located.image_key
-    key = _saved_image_key(record) if discovered is None else discovered
-    raw = np.isin(key, (1, 2)).any() or np.issubdtype(
-        np.asarray(record.projections).dtype, np.integer
-    )
-    return key, bool(raw)
-
-
-def _frames_in(record: ProjectionDataset, file: Path) -> np.ndarray:
-    """``record``'s frames; a reconstruction saved without its scan has none to load."""
-    if record.projections is None:
-        raise ValueError(
-            f"{file} holds a reconstruction saved without its scan: tj.load_reconstruction reads it"
+        record, resolved = frame_geometry(
+            selected.nominal_record,
+            offsets=selected.offsets,
+            angles=angles,
+            apply_poses=apply_poses,
+            **overrides,
         )
-    return record.projections
-
-
-def _record_scan(
-    file: Path,
-    record: ProjectionDataset,
-    key: np.ndarray,
-    *,
-    apply_poses: bool,
-    **overrides: Any,
-) -> Scan:
-    """A TomoJAX record's sample views of line integrals, with any caller metadata."""
-    _frames_in(record, file)
-    if all(value is None for value in overrides.values()):
-        scan = scan_from_record(record, apply_poses=apply_poses)
-        if not np.any(key != 0):
-            return scan
-        # The file's sample frames, not a selection made by the caller: no record.
-        return replace(scan.selected(key == 0), corrections=scan.corrections)
-    frames = _record_frames(file, record, apply_poses=apply_poses, **overrides)
-    meta = frames.source.geometry_metadata if frames.source is not None else {}
-    saved = meta.get("corrections") or ()
-    from tomojax.corrections import Correction
-
-    return Scan(
-        projections=np.asarray(frames.counts),
-        geometry=frames.geometry,
-        name=frames.name,
-        corrections=tuple(Correction.from_dict(c) for c in saved),
-        source=frames.source,
-    )
+        frames = Frames(
+            counts=selected.counts,
+            geometry=resolved,
+            flats=selected.flats,
+            darks=selected.darks,
+            flat_positions=selected.flat_positions,
+            white_level=selected.white_level,
+            view_positions=selected.view_positions,
+            exposure_times=selected.exposure_times,
+            flat_exposure_times=selected.flat_exposure_times,
+            dark_source=selected.dark_source,
+            linear_limit=selected.linear_limit,
+            name=record.sample_name or "sample",
+            source=record,
+        )
+    frames = calibration.apply(frames)
+    if check_calibration:
+        issues = calibration_issues(frames.flats, frames.darks, frames.white_level)
+        if issues:
+            raise ValueError(issues[0])
+        check_calibration_layout(frames)
+    return centered(frames, center)
 
 
 def _corrected_on_load(frames: Frames, file: Path) -> Scan:
     from tomojax.core.host_volume import scratch_directory
 
-    scan = _require_calibration(frames).corrected()
+    scan = frames.corrected()
     LOG.info("%s: corrected detector frames to line integrals: %s", file.name,
              ", ".join(str(c) for c in scan.corrections))  # fmt: skip
     directory = scratch_directory(scan.projections)
@@ -779,7 +698,10 @@ def load_frames(
     ``flats`` and ``darks`` (arrays, HDF5 stacks, TIFF files or folders, Zeiss XRM
     images, or one level for every pixel), ``angles``, ``detector``, ``grid`` and a
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
-    replace what the file holds. HDF5 calibration paths use the same automatic
+    replace what the file holds. Dataset paths select arrays inside saved HDF5
+    files too. Bliss accepts ``data_path`` for its sequence. Fixed-layout vendor
+    formats, TIFF, NPZ and MATLAB phase files reject HDF5 dataset paths.
+    HDF5 calibration paths use the same automatic
     dataset discovery as the input and stay lazy: another scan's file supplies its
     flat or dark frames, and a stack that labels none supplies every frame.
 
@@ -860,114 +782,69 @@ def load_frames(
     )
 
 
-def load_raw_frames_with_declaration(
-    path: str | PathLike[str],
-    *,
-    flats: np.ndarray | float | str | PathLike[str] | None = None,
-    darks: np.ndarray | float | str | PathLike[str] | None = None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
-    data_path: str | None = None,
-    image_key_path: str | None = None,
-    angles_path: str | None = None,
-    apply_poses: bool = True,
-    **overrides: Any,
-) -> Frames:
-    center, overrides["declared"] = center_of(overrides.get("declared"))
+def load_raw_frames_with_declaration(path: str | PathLike[str], **options: Any) -> Frames:
     with discard_failed_outputs() as outputs, progress.task("metadata", Path(path).name, None, ""):
-        file = Path(path)
-        if not file.exists():
-            raise FileNotFoundError(f"no such file: {file}")
-        paths = {
-            "data_path": data_path,
-            "image_key_path": image_key_path,
-            "angles_path": angles_path,
-        }
-        overrides.setdefault("angles", None)
-        frames = _frames(
-            file,
-            acquisition_frames(file, apply_poses=apply_poses, **paths, **overrides),
-            apply_poses=apply_poses,
-            **paths,
-            **overrides,
-        )
+        frames, _ = projection_frames(Path(path), require_raw=True, **options)
         outputs.own(frames.counts)
-        fields = _with_fields(
-            frames,
-            flats=flats,
-            darks=darks,
-            exposure_times=exposure_times,
-            flat_exposure_times=flat_exposure_times,
-        )
-        return centered(_require_calibration(fields), center)
+        return frames
 
 
-def _frames(
-    file: Path,
-    discovered: Frames | None,
-    *,
-    apply_poses: bool,
-    data_path: str | None,
-    image_key_path: str | None,
-    angles_path: str | None,
-    **overrides: Any,
-) -> Frames:
-    """The file's detector frames: a recognized acquisition's, a TIFF stack's, or HDF5/NPZ."""
-    if discovered is not None:
-        return discovered
-    suffix = file.suffix.lower()
-    if file.is_dir() or suffix in {".tif", ".tiff"}:
-        return tiff_frames(file, **overrides)
-    if suffix in _HDF5:
-        from tomojax.io.api import locate_frames
+@dataclass(frozen=True)
+class _Calibration:
+    flats: np.ndarray | float | str | PathLike[str] | None = None
+    darks: np.ndarray | float | str | PathLike[str] | None = None
+    exposure_times: np.ndarray | float | None = None
+    flat_exposure_times: np.ndarray | float | None = None
 
-        located = locate_frames(
-            str(file), data_path=data_path, image_key_path=image_key_path, angles_path=angles_path
-        )
-        return _hdf5_frames(file, located, apply_poses=apply_poses, **overrides)
-    from tomojax.io import load_dataset
+    def counts(self, storage: ProjectionStorage, *, require_raw: bool) -> bool:
+        """Resolve count-domain requests against the file's measurement record."""
+        explicit = next((f.name for f in fields(self) if getattr(self, f.name) is not None), None)
+        meta = storage.record.geometry_metadata
+        logged = any(step["name"] == "log" for step in meta.get("corrections", ()))
+        if logged or meta.get("quantity") == "phase":
+            if explicit or require_raw:
+                raise ValueError(
+                    f"{explicit or 'load_frames'} requires counts; the file records line integrals"
+                )
+            return False
+        raw = storage.counts or require_raw or self.flats is not None or self.darks is not None
+        if explicit and not raw:
+            raise ValueError(f"{explicit} requires raw detector counts and flat frames")
+        return raw
 
-    return _record_frames(file, load_dataset(file), apply_poses=apply_poses, **overrides)
-
-
-def _require_calibration(frames: Frames) -> Frames:
-    """Missing file calibration requires a caller choice, not a numerical guess."""
-    issues = calibration_issues(frames.flats, frames.darks, frames.white_level)
-    if issues:
-        raise ValueError(issues[0])
-    return frames
-
-
-def _with_fields(
-    frames: Frames,
-    *,
-    flats: np.ndarray | float | str | PathLike[str] | None,
-    darks: np.ndarray | float | str | PathLike[str] | None,
-    exposure_times: np.ndarray | float | None = None,
-    flat_exposure_times: np.ndarray | float | None = None,
-) -> Frames:
-    """``frames`` with the flat and dark fields given in place of the file's."""
-    changes: dict[str, Any] = {}
-    shape = tuple(int(n) for n in frames.counts.shape[1:])
-    if isinstance(flats, numbers.Real):  # one level for every pixel: a white level
-        changes |= {"flats": None, "flat_positions": None, "white_level": float(flats)}
-    elif flats is not None:
-        flat_frames = _frames_of(flats, "flats", frames.counts)
-        changes |= {
-            "flats": flat_frames,
-            "flat_positions": None,
-            "white_level": None,
-            "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
-        }
-    if isinstance(darks, numbers.Real):
-        changes |= {"darks": np.broadcast_to(np.float32(darks), (1, *shape)), "dark_source": None}
-    elif darks is not None:
-        changes |= {"darks": _frames_of(darks, "darks", frames.counts), "dark_source": None}
-    if exposure_times is not None:
-        changes["exposure_times"] = exposure_times
-    if flat_exposure_times is not None:
-        changes["flat_exposure_times"] = flat_exposure_times
-    return replace(frames, **changes)
+    def apply(self, frames: Frames) -> Frames:
+        """Replace the supplied fields and require the calibration the selected counts need."""
+        flats, darks = self.flats, self.darks
+        exposure_times, flat_exposure_times = self.exposure_times, self.flat_exposure_times
+        changes: dict[str, Any] = {}
+        shape = tuple(int(n) for n in frames.counts.shape[1:])
+        if isinstance(flats, numbers.Real):  # one level for every pixel: a white level
+            changes |= {"flats": None, "flat_positions": None, "white_level": float(flats)}
+        elif flats is not None:
+            flat_frames = _frames_of(flats, "flats", frames.counts)
+            changes |= {
+                "flats": flat_frames,
+                "flat_positions": None,
+                "white_level": None,
+                "flat_exposure_times": getattr(flat_frames, "exposure_times", None),
+            }
+        if isinstance(darks, numbers.Real):
+            changes |= {
+                "darks": np.broadcast_to(np.float32(darks), (1, *shape)),
+                "dark_source": None,
+            }
+        elif darks is not None:
+            changes |= {"darks": _frames_of(darks, "darks", frames.counts), "dark_source": None}
+        if exposure_times is not None:
+            changes["exposure_times"] = exposure_times
+        if flat_exposure_times is not None:
+            changes["flat_exposure_times"] = flat_exposure_times
+        fields = replace(frames, **changes)
+        if fields.flats is None and (exposure_times is not None or flat_exposure_times is not None):
+            raise ValueError(
+                "exposure_times and flat_exposure_times require flat frames, not a white level"
+            )
+        return fields
 
 
 def _count(n: int, noun: str) -> str:
@@ -988,133 +865,56 @@ def _frames_of(value: np.ndarray | float | str | PathLike[str], name: str, count
     return frames
 
 
-_HDF5 = frozenset({".nx", ".nxs", ".h5", ".hdf", ".hdf5"})
-
-
-def _located(file: Path, **paths: str | None) -> LocatedFrames | None:
-    """The file's frames, key and angles (at the given or usual places), or None if not found."""
-    from tomojax.io.api import locate_frames
-
-    try:
-        return locate_frames(str(file), **paths)
-    except KeyError:
-        return None
-
-
-def _hdf5_frames(
-    file: Path,
-    located: LocatedFrames,
+def stored_scan(
+    storage: ProjectionStorage,
+    samples: ProjectionPixels,
     *,
     angles: Sequence[float] | np.ndarray | None,
     apply_poses: bool,
-    layout_only: bool = False,
-    detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
-    declared: DeclaredGeometry | None = None,
-) -> Frames:
-    """The sample frames, flats and darks of an HDF5 file, split by ``image_key``.
-
-    The geometry is the NXtomo file's (``tomojax`` metadata) when it has one,
-    else incomplete until the caller supplies detector/geometry metadata.
-    """
-    from tomojax.io import ProjectionDataset
-    from tomojax.io.api import LoadedNXTomo, NXTomoMetadata
-
-    stack = located.stack
-    key = located.image_key
-    key = np.zeros(len(stack), np.int32) if key is None else key
-    sample = key == 0
-    if not sample.any():
-        raise ValueError(f"{file} holds no sample frames (image_key 0)")
-    views, rows, cols = int(sample.sum()), stack.rows, stack.cols
-    if geometry is not None and angles is None:
-        angles = np.asarray(cast("Any", geometry).angles)
-    if angles is not None:
-        view_angles = np.asarray(angles, np.float64)
-    elif located.angles is not None:
-        view_angles = located.angles[sample]
-    else:
-        raise ValueError(
-            f"{file} records no rotation angles: pass angles=... (degrees), "
-            "or use tomojax correct --angles"
+    **overrides: Unpack[_FrameOverrides],
+) -> Scan:
+    """Resolve geometry on the saved view axis, then select the complete scan state."""
+    record, sample = storage.record, storage.key == 0
+    if angles is not None and not sample.all():
+        expanded = np.zeros(len(sample), np.float32)
+        expanded[sample] = angles
+        angles = expanded
+    geometry = None
+    if angles is not None or any(value is not None for value in overrides.values()):
+        record, geometry = frame_geometry(
+            record, angles=angles, apply_poses=apply_poses, **overrides
         )
-    if view_angles.shape != (views,):
-        raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
-    try:
-        metadata = read_nxtomo(
-            str(file), lazy=True, layout_only=layout_only, located=located
-        ).metadata
-    except KeyError:  # not laid out as NXtomo: the frames alone
-        meta: dict[str, JsonValue] = {"detector_center_status": "not_recorded"}
-        if located.acquisition is not None:
-            meta["acquisition"] = {
-                **located.acquisition,
-                "geometry_status": "not_recorded",
-                "geometry_note": "Source has no calibrated rotation axis or pixel scale.",
-            }
-        metadata = NXTomoMetadata(geometry_meta=meta)
-    metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
-    # The geometry needs the views' shape, not their values: read none of them.
-    placeholder = LoadedNXTomo(np.broadcast_to(np.float32(0), (views, rows, cols)), metadata)
-    record, resolved = frame_geometry(
-        ProjectionDataset.from_nxtomo(placeholder, source_path=file),
-        detector=detector,
-        pixel_size=pixel_size,
-        grid=grid,
-        geometry=geometry,
-        apply_poses=apply_poses,
-        declared=declared,
-    )
-    flats = stack.frames_at(key == 1) if (key == 1).any() else None
-    darks = stack.frames_at(key == 2) if (key == 2).any() else None
-    if located.flats is not None:  # kept apart from the frames: one set
-        flats = located.flats
-    if located.darks is not None:
-        darks = located.darks
-    return Frames(
-        counts=stack.frames_at(sample),
-        geometry=resolved,
-        flats=flats,
-        darks=darks,
-        flat_positions=None
-        if flats is None or located.flats is not None
-        else np.cumsum(sample)[key == 1],
-        name=record.sample_name or "sample",
-        source=record,
-    )
+    scan = scan_from_record(record, apply_poses=apply_poses, geometry=geometry)
+    if sample.all():
+        return scan
+    shape = np.broadcast_to(np.zeros((), samples.dtype), samples.shape)
+    scan = replace(selected_scan(scan, np.flatnonzero(sample), shape), corrections=scan.corrections)
+    return replace(scan, source=record_of(scan))
 
 
-def _saved_image_key(record: ProjectionDataset) -> np.ndarray:
-    """The record's saved frame labels; every frame is a sample view without any."""
-    key = record.image_key
-    return np.zeros(len(record.angles), np.int32) if key is None else np.asarray(key)
-
-
-def _record_frames(
-    file: Path,
-    record: ProjectionDataset,
+def _sample_scan(
+    selected: ProjectionStorage,
     *,
+    raw: bool,
     apply_poses: bool,
-    stack: Any = None,
-    angles: Sequence[float] | np.ndarray | None = None,
-    detector: Detector | None = None,
-    pixel_size: float | tuple[float, float] | None = None,
-    grid: Grid | None = None,
-    geometry: ScanGeometry | None = None,
-    declared: DeclaredGeometry | None = None,
-) -> Frames:
-    """A TomoJAX record's sample frames, flats and darks, split by its saved ``image_key``."""
-    key = _saved_image_key(record)
+    angles: Sequence[float] | np.ndarray | None,
+    **overrides: Unpack[_FrameOverrides],
+) -> tuple[Scan, ProjectionPixels]:
+    """Select per-view records on the same axis as the pixels before resolving geometry."""
+    record, stack, key = selected.record, selected.stack, selected.key
     sample = key == 0
     if not sample.any():
-        raise ValueError(f"{file} holds no sample frames (image_key 0)")
-    stack = _frames_in(record, file) if stack is None else stack
-    samples = stack
+        raise ValueError(f"{record.source_path} holds no sample frames (image_key 0)")
+    samples = stack if sample.all() else selected.frames_at(sample)
+    geometry = overrides.get("geometry")
+    if angles is not None and np.shape(angles) != (int(sample.sum()),):
+        raise ValueError(f"angles needs one entry per sample view ({int(sample.sum())})")
+    if not raw and geometry is None:
+        return stored_scan(
+            selected, samples, angles=angles, apply_poses=apply_poses, **overrides
+        ), samples
     if not sample.all():
         frames = len(key)
-        samples = stack.frames_at(sample) if hasattr(stack, "frames_at") else stack[sample]
 
         def views(values: np.ndarray | None) -> np.ndarray | None:
             if values is None or np.ndim(values) == 0 or len(values) != frames:
@@ -1123,44 +923,52 @@ def _record_frames(
 
         from tomojax.io.api import replace_dataset
 
+        meta = dict(record.geometry_metadata)
+        positions = meta.get("view_positions")
+        if positions is None and not selected.counts:
+            positions = np.arange(frames) + 0.5
+        if positions is not None and len(positions) == frames:
+            meta["view_positions"] = np.asarray(positions)[sample].tolist()
         metadata = record.to_nxtomo_metadata()
         metadata.image_key = None
         record = replace_dataset(
             record,
             projections=np.broadcast_to(np.zeros((), stack.dtype), samples.shape)
-            if hasattr(stack, "frames_at")
+            if not isinstance(samples, np.ndarray)
             else samples,
             angles=views(record.angles),
             angle_offset=views(record.angle_offset),
             align_params=views(record.align_params),
+            geometry_metadata=meta,
             metadata=metadata,
         )
-    record, resolved = frame_geometry(
-        record,
-        angles=angles,
-        detector=detector,
-        pixel_size=pixel_size,
-        grid=grid,
-        geometry=geometry,
-        apply_poses=apply_poses,
-        declared=declared,
-    )
+    if geometry is not None:
+        angles = geometry.angles
+    record, resolved = frame_geometry(record, angles=angles, apply_poses=apply_poses, **overrides)
+    return scan_from_record(record, apply_poses=apply_poses, geometry=resolved), samples
 
-    def labeled(label: int) -> np.ndarray | FrameStack | None:
+
+def _calibration_frames(
+    selected: ProjectionStorage, scan: Scan, samples: ProjectionPixels
+) -> Frames:
+    key = selected.key
+
+    def labeled(label: int) -> ProjectionPixels | None:
         mask = key == label
         if not mask.any():
             return None
-        return stack.frames_at(mask) if hasattr(stack, "frames_at") else stack[mask]
+        return selected.frames_at(mask)
 
     flats = labeled(1)
-    return Frames(
-        samples,
-        resolved,
-        flats=flats,
-        darks=labeled(2),
-        flat_positions=None if flats is None else np.cumsum(sample)[key == 1],
-        name=record.sample_name or "sample",
-        source=record,
+    darks = labeled(2)
+    positions = None if flats is None else np.cumsum(key == 0)[key == 1]
+    if selected.located is not None:
+        if selected.located.flats is not None:
+            flats, positions = selected.located.flats, None
+        if selected.located.darks is not None:
+            darks = selected.located.darks
+    return replace(
+        line_integral_frames(scan, samples), flats=flats, darks=darks, flat_positions=positions
     )
 
 

@@ -95,15 +95,15 @@ def _contains(file: h5py.File, entry: str, data_path: str) -> bool:
     return False
 
 
-def _layout(file: h5py.File, data_path: str | None) -> tuple[str, str, str, str] | None:
-    """Return format, stack, key and angle paths for a recognized acquisition."""
+def _layout(file: h5py.File, data_path: str | None) -> tuple[str, str, str, str, str] | None:
+    """Return the format, owning entry and selected stack/key/angle paths."""
     if "exchange/data" in file:
         where = data_path or "/exchange/data"
-        return "data_exchange", where, "", ""
+        return "data_exchange", "/exchange", where, "", ""
     entries = _entries(file)
     if not entries:
         return None
-    if data_path is not None:
+    if data_path is not None and len(entries) > 1:
         entries = [entry for entry in entries if _contains(file, entry, data_path)]
     if len(entries) != 1:
         raise ValueError("Several NXtomo entries: pass data_path=... for the detector stack")
@@ -135,10 +135,10 @@ def _layout(file: h5py.File, data_path: str | None) -> tuple[str, str, str, str]
         ),
         "",
     )
-    return "nxtomo", where, key if key in file else "", angles
+    return "nxtomo", entry, where, key if key in file else "", angles
 
 
-def _metadata(file: h5py.File, layout: str, where: str) -> dict[str, object]:
+def _metadata(file: h5py.File, layout: str, entry: str, where: str) -> dict[str, object]:
     acquisition: dict[str, object] = {"layout": layout, "data_path": where, "length_unit": "mm"}
     if layout == "data_exchange":
         prefix = "/measurement/instrument/detector/"
@@ -151,11 +151,7 @@ def _metadata(file: h5py.File, layout: str, where: str) -> dict[str, object]:
             if item is not None:
                 acquisition[field] = _text(item[()])
     else:
-        prefix = (
-            where.rsplit("/", 2)[0] + "/instrument/detector/"
-            if where.endswith("/data/data")
-            else where.rsplit("/", 1)[0] + "/"
-        )
+        prefix = entry + "/instrument/detector/"
         names = ("x_pixel_size", "y_pixel_size")
     acquisition["detector_pixel_size"] = [_length(file, prefix + name) for name in names]
     acquisition["pixel_size_paths"] = [prefix + name for name in names if prefix + name in file]
@@ -207,7 +203,7 @@ def read_hdf5_acquisition(
         layout = _layout(file, data_path)
         if layout is None:
             return None
-        name, where, key, angles = layout
+        name, entry, where, key, angles = layout
         located = locate_frames(
             str(path),
             data_path=where,
@@ -224,7 +220,7 @@ def read_hdf5_acquisition(
                 "NXtomo has no frame labels: pass image_key_path=... "
                 "to identify its sample/flat/dark frames"
             )
-        acquisition = _metadata(file, name, where)
+        acquisition = _metadata(file, name, entry, where)
         # How discovery completed the record: unit sources, per-frame record counts.
         acquisition.update(
             {key: value for key, value in (located.acquisition or {}).items() if key != "layout"}
@@ -242,9 +238,7 @@ def read_hdf5_acquisition(
                 str(label): int(count) for label, count in zip(labels, counts, strict=True)
             }
         sample_path = (
-            "/measurement/sample/name"
-            if name == "data_exchange"
-            else "/" + where.strip("/").split("/")[0] + "/sample/name"
+            "/measurement/sample/name" if name == "data_exchange" else entry + "/sample/name"
         )
         sample_label = child_dataset(file, sample_path)
         sample_name = _text(sample_label[()]) if sample_label is not None else None

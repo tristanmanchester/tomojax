@@ -60,7 +60,7 @@ def arguments(
     return {
         field.name: decode(field.name, getattr(record, field.name))
         for field in msgspec.structs.fields(record)
-        if field.name not in omit
+        if field.name not in omit and getattr(record, field.name) is not msgspec.UNSET
     }
 
 
@@ -146,9 +146,9 @@ def source(
             frames, is_raw = projection_frames(Path(ref.path), require_raw=raw is True)
             return frames if raw or (raw is None and is_raw) else scan_layout(frames, raw=is_raw)
         if raw is None:
-            from tomojax._loading.loader import is_raw_input
+            from tomojax._loading.loader import load_native
 
-            raw = is_raw_input(ref.path)
+            return load_native(ref.path)
         return tj.load_frames(ref.path) if raw else tj.load(ref.path)
     item = context.leases[ref].value
     if not isinstance(item, kinds):

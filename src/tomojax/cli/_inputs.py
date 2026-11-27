@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, TypedDict, get_args
 
 from tomojax._loading.geometry import DeclaredGeometry
-from tomojax._parameters import GeometryName, TiltAbout
+from tomojax._parameters import FLAT_WEIGHTS, FlatWeighting, GeometryName, TiltAbout
+from tomojax.errors import InvalidParameter
 
 if TYPE_CHECKING:
     import numpy as np
@@ -206,6 +207,14 @@ def load_keywords(args: InputArgs) -> LoadKeywords:
         "angles_path": args.angles_path,
         "apply_poses": args.apply_poses,
     }
+
+
+def check_scan_calibration(epsilon: float, flat_weights: FlatWeighting) -> None:
+    """Require raw frames for nondefault flat-field settings."""
+    if epsilon != 1e-6:
+        raise InvalidParameter("epsilon", "epsilon applies to raw frames")
+    if flat_weights != FLAT_WEIGHTS:
+        raise InvalidParameter("flat_weights", "flat_weights applies to raw frames")
 
 
 def input_paths(args: InputArgs) -> list[str]:

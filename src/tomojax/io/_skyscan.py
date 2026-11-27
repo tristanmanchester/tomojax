@@ -77,7 +77,7 @@ def _beam_hardening(file: Path, params: configparser.ConfigParser) -> dict[str, 
     return record
 
 
-def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition | None:
+def read_skyscan(path: Path) -> RawAcquisition | None:
     """Recognize a SkyScan log by content and retain its ordered TIFF counts lazily.
 
     Supported exports have acquisition-time geometric and flat-field corrections
@@ -95,8 +95,6 @@ def read_skyscan(path: Path, *, data_path: str | None = None) -> RawAcquisition 
     found = _acquisition_log(path)
     if found is None:
         return None
-    if data_path is not None:
-        raise ValueError("a SkyScan acquisition has no HDF5 data_path")
     file, params = found
     acquisition, system = params["Acquisition"], params["System"]
     for correction in ("Geometrical Correction", "Flat Field Correction"):
