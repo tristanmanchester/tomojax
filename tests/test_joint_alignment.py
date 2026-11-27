@@ -330,8 +330,8 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     increment[:, 5] = 0  # parallel rays cannot fit translation along their beam
     nested = AugmentedGeometry(AugmentedGeometry(calibrated, inner, frame), outer, "detector")
     scan = tj.Scan(np.ones((len(angles), detector.nv, detector.nu), np.float32), nested)
-    tj.save(tmp_path / "input.npz", scan)
-    scan = tj.load(tmp_path / "input.npz")
+    tj.save(tmp_path / "input.nxs", scan)
+    scan = tj.load(tmp_path / "input.nxs")
     before = np.asarray(stack_view_poses(scan.geometry, len(angles)), np.float64)
     expected = before.copy()
     expected[:, :3, :3] = (
@@ -394,8 +394,8 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
         stack_view_poses(aligned.scan.geometry, len(angles)), expected, atol=2e-6
     )
     np.testing.assert_allclose(aligned.poses, aligned.scan.poses, atol=1e-7)
-    tj.save(tmp_path / "aligned.npz", aligned)
-    loaded = tj.load(tmp_path / "aligned.npz")
+    tj.save(tmp_path / "aligned.nxs", aligned)
+    loaded = tj.load(tmp_path / "aligned.nxs")
     np.testing.assert_allclose(stack_view_poses(loaded.geometry, len(angles)), expected, atol=2e-6)
 
 

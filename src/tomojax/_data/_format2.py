@@ -28,11 +28,11 @@ from tomojax.core.registration import (
     volume_values,
 )
 from tomojax.geometry.api import nominal_axis_unit_from_inputs
-from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Uniform
+from tomojax.wire.arrays import Array, Axis, Coordinates, Fixed, Hdf5, Uniform
 
 from ._io_acquisition import angles_in_degrees, checked_image_key
 from ._io_frames import PinnedFrames, linked_dataset
-from ._io_helpers import child_dataset, ensure_group
+from ._io_helpers import child_dataset, ensure_group, native_file
 from ._io_types import LoadedNXTomo, NXTomoMetadata, SourceInfo
 from ._record import array_record, metadata_record
 from .geometry_meta import normalize_geometry_type
@@ -51,6 +51,7 @@ class Member(StrEnum):
     IMAGE = "image"
     PHANTOM = "phantom"
     PROJECTIONS = "projections"
+    MASK = "mask"
 
 
 def volume_member(meta: Mapping[str, object]) -> Member:
@@ -361,7 +362,14 @@ def write_record(
     )
     record.update(format=2, kind=kind, arrays=arrays)
     default = member if volume is not None else "data"
-    entry.attrs["default"] = str(default)
+    finish_record(file, entry, path, record, default=str(default))
+
+
+def finish_record(
+    file: h5py.File, entry: h5py.Group, path: Path, record: dict, *, default: str
+) -> None:
+    """Publish the default member and the portable record for this generation."""
+    entry.attrs["default"] = default
     provenance = record["provenance"]
     file.attrs.update(
         default="entry",
@@ -379,6 +387,20 @@ def write_record(
 
 
 def open_record(file: h5py.File) -> dict:
+    """Read the versioned processing record from this open native file.
+
+    Parameters
+    ----------
+    file : h5py.File
+        Open TomoJAX container.
+
+    Returns
+    -------
+    dict
+        Decoded record describing this generation.
+    """
+    if not native_file(file):
+        raise ValueError(f"{file.filename} holds no saved TomoJAX record")
     number = file.attrs.get("tomojax_format")
     if number != 2:
         version = file.attrs.get("creator_version", "unknown")
@@ -426,6 +448,7 @@ def registered_members(file: h5py.File, path: Path) -> dict[str, Array]:
             tuple(axes),
             description["unit"],
             description["domain"],
+            fixed=msgspec.convert(description.get("fixed", []), type=tuple[Fixed, ...]),
         )
     poses = record["tables"].get("poses")
     if record["kind"] == "alignment" and poses is not None:
@@ -466,7 +489,7 @@ def local_map(file: h5py.File, field: h5py.Dataset) -> np.memmap | None:
 
 
 def pixels_of(file: h5py.File, field: h5py.Dataset, *, layout_only: bool) -> np.ndarray:
-    if field.dtype.kind not in "biuf":
+    if field.dtype.kind not in "biufc":
         raise ValueError(f"{field.name}: expected numerical pixels")
     if layout_only:
         return np.broadcast_to(np.zeros((), field.dtype), field.shape)
@@ -552,6 +575,11 @@ def read_format_2(
     record = open_record(file)
     geom = record["geometry"]
     arrays = record["arrays"]
+    if record["kind"] == "feature":
+        description = arrays["mask"]
+        mask = signal_at(file, description["path"])
+        if mask.dtype != np.uint8 or list(mask.shape) != description["shape"]:
+            raise ValueError(f"{mask.name}: expected the registered uint8 mask shape")
     projections = None
     domain = None
     if "projections" in arrays or data_path is not None:
@@ -612,6 +640,5 @@ def read_format_2(
         projections,
         metadata,
         SourceInfo(name=source.get("name"), type=source.get("type"), probe=source.get("probe")),
-        "zyx" if metadata.volume is not None else None,
         record,
     )

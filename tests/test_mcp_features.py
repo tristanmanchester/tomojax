@@ -196,6 +196,22 @@ def test_features_on_a_diamond_size_volume_touch_only_their_windows(tmp_path):
             c, source=str(path), recipe={"type": "sphere", "at": [1020, 1230, 1340], "radius": 2}
         )
         assert ball["voxels"] == 33
+        saved = tmp_path / "bounded-mask.nxs"
+        assert not c.call("save", source=block["handle"], path=str(saved))["isError"]
+        import h5py
+
+        with h5py.File(saved) as file:
+            mask = file["entry/masks/seeded/data"]
+            assert mask.shape == shape and mask[999, 1200, 1300] == 0
+            assert mask[1000, 1200, 1300] == mask[1039, 1259, 1379] == 1
+            assert mask.chunks is not None
+            touched = np.prod(
+                [
+                    (stop - 1) // chunk - start // chunk + 1
+                    for (start, stop), chunk in zip(block["bounds"], mask.chunks, strict=True)
+                ]
+            )
+            assert mask.id.get_num_chunks() == touched
         shown = c.call(
             "view",
             source=str(path),
@@ -219,18 +235,31 @@ def test_a_feature_saves_reopens_and_exports(session, tmp_path):
     box = feature(
         c,
         source=volume,
-        name="block",
+        name="sample/block",
         recipe={"type": "box", "corners": [[8, 10, 12], [13, 17, 21]]},
     )
     path = tmp_path / "block.h5"
     saved = c.call("save", source=box["handle"], path=str(path))
     assert not saved["isError"], saved["content"][0]["text"]
     with h5py.File(path) as file:
-        mask = file["/entry/feature/mask"][...]
+        field = file["/entry/masks/sample%2Fblock/data"]
+        assert field.compression == "gzip" and field.dtype == np.uint8
+        mask = field[...]
+    import tomojax as tj
+
+    record = tj.inspect(path)["record"]
+    assert record["feature"]["name"] == "sample/block"
+    assert record["feature"]["recipe"] == box["recipe"]
+    assert record["provenance"]["lineage"]["operation"] == "save"
+    assert record["arrays"]["mask"]["path"] == "/entry/masks/sample%2Fblock/data"
     assert mask.shape == (24, 24, 24) and mask.sum() == 480 and mask[8:14, 10:18, 12:22].all()
     reopened = c.call("open", path=str(path), kind="feature")["structuredContent"]
     assert reopened["kind"] == "feature" and reopened["voxels"] == 480
-    assert reopened["name"] == "block" and reopened["bounds"] == box["bounds"]
+    assert reopened["name"] == "sample/block" and reopened["bounds"] == box["bounds"]
+    assert reopened["recipe"] == box["recipe"]
+    copy = tmp_path / "again.nxs"
+    assert not c.call("save", source=reopened["handle"], path=str(copy))["isError"]
+    assert tj.inspect(copy)["record"]["history"][-1] == record["provenance"]
     shown = c.call("view", source=volume, axis="z", index=10, features=[reopened["handle"]])
     assert (images(shown)[0] == CYAN).all(axis=2).sum() > 40
     exported = c.call("export", source=box["handle"], path=str(tmp_path / "slices"))
@@ -269,7 +298,7 @@ def test_save_names_the_suffixes_it_writes(session, tmp_path):
     reply = c.call("save", source=volume, path=str(tmp_path / "volume.tj"))
     assert reply["isError"]
     assert reply["structuredContent"]["message"] == (
-        "cannot save to volume.tj: give a path ending in .h5, .hdf, .hdf5, .npz, .nx, .nxs"
+        "cannot save to volume.tj: give a path ending in .h5, .hdf, .hdf5, .nx, .nxs"
     )
 
 
@@ -329,7 +358,36 @@ view(s, features=[mask])
 """,
         )["value"]
         box = feature(c, source=first, recipe={"type": "box", "corners": [[1, 3, 3]] * 2})
-        band = {"type": "band", "feature": box["handle"], "outer": 1}
+        path = tmp_path / "angles.nxs"
+        assert not c.call("save", source=box["handle"], path=str(path))["isError"]
+        import h5py
+
+        import tomojax as tj
+
+        record = tj.inspect(path)["record"]
+        angle_table = record["arrays"]["mask"]["axes"][0]["coordinates"]["table"]
+        with h5py.File(path) as file:
+            np.testing.assert_array_equal(file[record["tables"][angle_table]["path"]], [0, 13, 80])
+        reopened = c.call("open", kind="feature", path=str(path))["structuredContent"]["handle"]
+        from tomojax.cli.export import main as export_cli
+
+        selected = tmp_path / "selected.h5"
+        assert (
+            export_cli([str(path), "--member", "box", "--crop", "1:3,:,:", "-o", str(selected)])
+            == 0
+        )
+        live = tmp_path / "live.h5"
+        assert not c.call("export", source=reopened, path=str(live), crop=[[1, 3], None, None])[
+            "isError"
+        ]
+        for written in (selected, live):
+            with h5py.File(written) as file:
+                np.testing.assert_array_equal(file["entry/data/rotation_angle"], [13, 80])
+                signal = file["entry/data/data"][:]
+                assert signal.shape == (2, 7, 7) and signal.sum() == signal[0, 3, 3] == 1
+            provenance = tj.inspect(written)["record"]["provenance"]
+            assert provenance["command"] in ("export", "tomojax export")
+        band = {"type": "band", "feature": reopened, "outer": 1}
         assert feature(c, source=equal, recipe=band)["voxels"] == 6
         assert not c.call("view", source=equal, index=0, features=[box["handle"]])["isError"]
         for result in (
@@ -352,18 +410,19 @@ register(tj.Reconstruction(np.arange(7**3, dtype="f4").reshape(7,7,7), g, "fbp",
 """,
         )["value"]
         path = tmp_path / "permuted.h5"
-        # The rc6 container supported noncanonical storage order. Build the
-        # permuted fixture independently, in that format.
+        # The browse API compares arrays by their declared storage axes.
+        # Build an equally spaced XYZ ramp to compare with the ZYX reconstruction.
         import json
 
-        with h5py.File(path, "w") as f:
-            tomo = f.create_group("/entry/processing/tomojax")
-            f["entry"].attrs["grid_meta_json"] = json.dumps(
-                dict(nx=7, ny=7, nz=7, vx=1, vy=1, vz=1)
-            )
-            tomo["volume"] = np.arange(7**3, dtype="f4").reshape(7, 7, 7).T
-            tomo.attrs["volume_axes_order"] = "xyz"
-        dataset = str(path) + "::/entry/processing/tomojax/volume"
+        assert not c.call("save", source=source, path=str(path))["isError"]
+        with h5py.File(path, "r+") as f:
+            field = f["entry/volume/data"]
+            field[...] = np.arange(7**3, dtype="f4").reshape(7, 7, 7).T
+            f["entry/volume"].attrs["axes"] = ["x", "y", "z"]
+            record = json.loads(f["entry/record"][()])
+            record["arrays"]["volume"]["axes"].reverse()
+            f["entry/record"][()] = json.dumps(record)
+        dataset = str(path) + "::/entry/volume/data"
         box = feature(c, source=source, recipe={"type": "box", "corners": [[1, 2, 3]] * 2})
         band = c.call(
             "feature", source=dataset, recipe={"type": "band", "feature": box["handle"], "outer": 1}
@@ -392,7 +451,7 @@ s = tj.Scan(np.ones((2,5,5), np.float32), geom)
         path = tmp_path / "mask.h5"
         assert not c.call("save", source=box["handle"], path=str(path))["isError"]
         grid = dict(nx=5, ny=5, nz=5, vx=1, vy=1, vz=1, vol_origin=[100, 0, 0])
-        config = {"type": "SIRTConfig", "support": str(path) + "::/entry/feature/mask"}
+        config = {"type": "SIRTConfig", "support": str(path) + "::/entry/masks/box/data"}
         result = c.call(
             "reconstruct", source=scan, method="sirt", config=config, grid=grid, dry_run=True
         )
@@ -402,10 +461,12 @@ s = tj.Scan(np.ones((2,5,5), np.float32), geom)
         with h5py.File(path, "r+") as f:
             import json
 
-            group = f["/entry/feature"]
-            a = json.loads(group.attrs["registration"])
-            a["fixed"] = [dict(name="time", frame="acquisition", unit="s", index=1, coordinate=0.5)]
-            group.attrs["registration"] = json.dumps(a)
+            record = f["entry/record"]
+            a = json.loads(record[()])
+            a["arrays"]["mask"]["fixed"] = [
+                dict(name="time", frame="acquisition", unit="s", index=1, coordinate=0.5)
+            ]
+            record[()] = json.dumps(a)
         fixed = c.call("open", path=str(path), kind="feature")["structuredContent"]["handle"]
         result = c.call("view", source=volume, features=[fixed])
         assert result["isError"] and "fixed axes" in result["content"][0]["text"]

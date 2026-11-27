@@ -22,7 +22,7 @@ and the full command list are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 ## What the suite checks
 
 Public tests cover module imports and dependency boundaries, CLI routing and
-output contracts, NeXus/HDF5/NPZ/TIFF roundtrips, flat/dark correction, acquisition
+output contracts, NeXus/HDF5/TIFF roundtrips, flat/dark correction, acquisition
 ordering, physical metadata, and deterministic simulation.
 
 Numerical tests check independent analytic or dense references, forward/adjoint

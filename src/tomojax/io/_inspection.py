@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import replace
-import json
 import math
 from pathlib import Path
 from typing import Any, Protocol, cast
@@ -16,10 +15,10 @@ from numpy.typing import NDArray
 from tomojax._data import (
     ROTATION_ANGLE_PATHS,
     FrameStack,
+    LoadedNXTomo,
     LocatedFrames,
     locate_frames,
     native_payload,
-    saved_without_frames,
 )
 from tomojax._typed_arrays import (
     any_true,
@@ -29,13 +28,11 @@ from tomojax._typed_arrays import (
     min_float,
     numpy_array,
     numpy_float64_array,
-    object_list,
     object_mapping,
     sum_float64,
     true_count,
     unique_int_count_map,
 )
-from tomojax.geometry import Grid
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
@@ -49,17 +46,14 @@ from tomojax.io._inspection_types import (
     NonfiniteReport,
     ProjectionReport,
     ProjectionStatsReport,
-    VolumeReport,
     WorkingSetEstimate,
 )
 from tomojax.io.inspection_memory import memory_estimates
-from tomojax.io.projection_layout import saved_npz_layout, saved_projection_layout
+from tomojax.io.projection_layout import saved_projection_layout
 
 type PathLike = str | Path
 
 
-_ALIGN_PATH = "/entry/processing/tomojax/align"  # where the NXtomo writer puts poses
-_VOLUME_PATH = "/entry/processing/tomojax/volume"
 _DEFAULT_MAX_EXACT_STATS_ELEMENTS = 5_000_000
 _MAX_PERCENTILE_SAMPLE_ELEMENTS = 1_000_000
 
@@ -94,31 +88,6 @@ def _attr_to_str(value: object, default: str | None = None) -> str | None:
         return str(value)
     except (TypeError, UnicodeDecodeError, ValueError):
         return default
-
-
-def _json_attr_to_mapping(value: object) -> dict[str, object] | None:
-    text = _attr_to_str(value)
-    if not text:
-        return None
-    try:
-        parsed = cast("object", json.loads(text))
-    except (json.JSONDecodeError, TypeError):
-        return None
-    return object_mapping(cast("object", parsed)) if isinstance(parsed, dict) else None
-
-
-def _json_safe(value: object) -> object:
-    if isinstance(value, np.generic):
-        return cast("object", value.item())
-    if isinstance(value, np.ndarray):
-        return [_json_safe(item) for item in object_list(cast("object", value.tolist()))]
-    if isinstance(value, dict):
-        return {
-            key: _json_safe(item) for key, item in object_mapping(cast("object", value)).items()
-        }
-    if isinstance(value, list | tuple):
-        return [_json_safe(item) for item in object_list(cast("object", value))]
-    return value
 
 
 def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
@@ -313,65 +282,13 @@ def _angle_summary(
 def _geometry_report(file: h5py.File) -> GeometryReport:
     geom = file.get("/entry/geometry")
     found = isinstance(geom, h5py.Group) and "type" in geom.attrs
-    meta = None
-    if isinstance(geom, h5py.Group):
-        meta = _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
     return {
         "found": bool(found),
         "type": _attr_to_str(geom.attrs.get("type"))
         if found and isinstance(geom, h5py.Group)
         else None,
-        "meta_found": meta is not None,
-        "meta_keys": sorted(str(k) for k in meta) if meta is not None else [],
-    }
-
-
-def _volume_report(file: h5py.File | None) -> VolumeReport:
-    volume = None if file is None else file.get(_VOLUME_PATH)
-    if file is None or not isinstance(volume, h5py.Dataset):
-        return {"found": False, "shape": None, "axes": None, "method": None}
-    group = file["/entry/processing/tomojax"]
-    geom = file.get("/entry/geometry")
-    meta = (
-        _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
-        if isinstance(geom, h5py.Group)
-        else None
-    )
-    method = meta.get("reconstruction_method") if meta is not None else None
-    report: VolumeReport = {
-        "found": True,
-        "shape": [int(v) for v in volume.shape],
-        "axes": _attr_to_str(group.attrs.get("volume_axes_order")) or "zyx",
-        "method": None if method is None else str(method),
-    }
-    if meta and isinstance(info := meta.get("reconstruction_info"), dict):
-        report["reconstruction_info"] = info
-    return report
-
-
-def _detector_metadata_report(file: h5py.File) -> DetectorMetadataReport:
-    detector = file.get("/entry/instrument/detector")
-    meta = (
-        _json_attr_to_mapping(detector.attrs.get("detector_meta_json"))
-        if isinstance(detector, h5py.Group)
-        else None
-    )
-    if meta is None:
-        return {
-            "found": False,
-            "nu": None,
-            "nv": None,
-            "du": None,
-            "dv": None,
-            "center": None,
-        }
-    return {
-        "found": True,
-        "nu": _json_safe(meta.get("nu")),
-        "nv": _json_safe(meta.get("nv")),
-        "du": _json_safe(meta.get("du")),
-        "dv": _json_safe(meta.get("dv")),
-        "center": _json_safe(meta.get("det_center")),  # the file's key for the center
+        "meta_found": False,
+        "meta_keys": [],
     }
 
 
@@ -404,17 +321,6 @@ def _flats_darks_report(located: LocatedFrames | None) -> FlatsDarksReport:
     }
 
 
-def _corrections_report(file: h5py.File) -> list[str]:
-    """The corrections that made the projections, as recorded with them."""
-    geom = file.get("/entry/geometry")
-    meta = (
-        _json_attr_to_mapping(geom.attrs.get("geometry_meta_json"))
-        if isinstance(geom, h5py.Group)
-        else None
-    )
-    return recorded_corrections(None if meta is None else meta.get("corrections"))
-
-
 def recorded_corrections(saved: object) -> list[str]:
     if not isinstance(saved, list):
         return []
@@ -426,18 +332,6 @@ def recorded_corrections(saved: object) -> list[str]:
         for c in entries
         if isinstance(c, dict)
     ]
-
-
-def _alignment_report(file: h5py.File | None) -> AlignmentReport:
-    align = None if file is None else file.get(_ALIGN_PATH)
-    if not isinstance(align, h5py.Group):
-        return alignment_fields(None, None, None, None)
-    return alignment_fields(
-        align.get("thetas"),
-        align.get("angle_offset"),
-        _json_attr_to_mapping(align.attrs.get("misalign_spec_json")),
-        _json_attr_to_mapping(align.attrs.get("gauge_fix_json")),
-    )
 
 
 def alignment_fields(
@@ -461,21 +355,7 @@ def alignment_fields(
     }
 
 
-def _grid_shape_from_metadata(file: h5py.File, projection: ProjectionReport) -> list[int] | None:
-    entry = file.get("/entry")
-    grid = (
-        _json_attr_to_mapping(entry.attrs.get("grid_meta_json"))
-        if isinstance(entry, h5py.Group)
-        else None
-    )
-    if grid is not None:
-        try:  # the grid that loading this file would build
-            saved = Grid.from_dict(grid)
-        except (KeyError, TypeError, ValueError):
-            pass
-        else:
-            return [saved.nx, saved.ny, saved.nz]
-
+def _inferred_shape(projection: ProjectionReport) -> list[int] | None:
     det_shape = projection.get("detector_shape")
     if isinstance(det_shape, dict):
         nu = det_shape.get("nu")
@@ -492,7 +372,9 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
     projections, flats or darks, and its angles are the geometry's.
     """
     input_path = Path(path)
-    located = None if saved_without_frames(input_path) else locate_frames(str(input_path))
+    if (saved := native_payload(input_path, layout_only=True, lazy_projections=True)) is not None:
+        return _native_report(input_path, saved)
+    located = locate_frames(str(input_path))
     with h5py.File(input_path, "r") as file:
         projection_path = None if located is None else located.stack.dataset
         dataset = None if projection_path is None else _dataset_at(file, projection_path)
@@ -503,14 +385,19 @@ def inspect_nxtomo(path: PathLike) -> InspectionReport:
             "projection": projection,
             "angles": _angles_report(file, located),
             "geometry": _geometry_report(file),
-            "detector_metadata": _detector_metadata_report(file),
+            "detector_metadata": {
+                "found": False,
+                "nu": None,
+                "nv": None,
+                "du": None,
+                "dv": None,
+                "center": None,
+            },
             "flats_darks": _flats_darks_report(located),
-            "corrections": _corrections_report(file),
-            "alignment": _alignment_report(file),
-            "memory_estimates": memory_estimates(
-                _grid_shape_from_metadata(file, projection), projection
-            ),
-            "volume": _volume_report(file),
+            "corrections": [],
+            "alignment": alignment_fields(None, None, None, None),
+            "memory_estimates": memory_estimates(_inferred_shape(projection), projection),
+            "volume": {"found": False, "shape": None, "axes": None, "method": None},
         }
     return report
 
@@ -580,7 +467,7 @@ def _record_report(
         "alignment": alignment_fields(
             record.align_params, record.angle_offset, record.misalign_spec, record.align_gauge
         ),
-        "volume": _volume_report(None)
+        "volume": {"found": False, "shape": None, "axes": None, "method": None}
         if record.volume is None
         else {
             "found": True,
@@ -591,6 +478,30 @@ def _record_report(
         },
         "memory_estimates": memory_estimates(grid_shape, projection),
     }
+
+
+def _native_report(path: PathLike, payload: LoadedNXTomo) -> InspectionReport:
+    description = payload.file_record
+    assert description is not None
+    record = ProjectionDataset.from_nxtomo(replace(payload, projections=None), source_path=path)
+    key = record.image_key
+    report = _record_report(
+        path,
+        record,
+        payload.projections,
+        flat_count=int(np.count_nonzero(key == 1)),
+        dark_count=int(np.count_nonzero(key == 2)),
+    )
+    report.update(record=description, contents=description["arrays"])
+    if payload.projections is not None:
+        report["projection"]["path"] = description["arrays"]["projections"]["path"]
+    if "angles" in description["tables"]:
+        report["angles"]["path"] = description["tables"]["angles"]["path"]
+    if "image_key" in description["tables"]:
+        report["flats_darks"]["image_key_path"] = description["tables"]["image_key"]["path"]
+    if description["kind"] == "feature":
+        report["geometry"] = {"found": False, "type": None, "meta_found": False, "meta_keys": []}
+    return report
 
 
 def inspect_dataset(path: PathLike) -> InspectionReport:
@@ -615,41 +526,12 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     OSError
         If the input cannot be opened.
     """
-    if Path(path).suffix.lower() == ".npz":
-        record, arrays = saved_npz_layout(Path(path))
-        key = record.image_key
-        return _record_report(
-            path,
-            record,
-            arrays.get("projections"),
-            statistics=False,
-            flat_count=int(np.count_nonzero(key == 1)),
-            dark_count=int(np.count_nonzero(key == 2)),
-        )
     if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
         record, samples = saved_projection_layout(Path(path))
         return _record_report(path, record, samples)
     payload = native_payload(Path(path), layout_only=True, lazy_projections=True)
     if payload is not None:
-        description = payload.file_record
-        assert description is not None
-        record = ProjectionDataset.from_nxtomo(replace(payload, projections=None), source_path=path)
-        key = record.image_key
-        report = _record_report(
-            path,
-            record,
-            payload.projections,
-            flat_count=int(np.count_nonzero(key == 1)),
-            dark_count=int(np.count_nonzero(key == 2)),
-        )
-        report.update(record=description, contents=description["arrays"])
-        if payload.projections is not None:
-            report["projection"]["path"] = description["arrays"]["projections"]["path"]
-        if "angles" in description["tables"]:
-            report["angles"]["path"] = description["tables"]["angles"]["path"]
-        if "image_key" in description["tables"]:
-            report["flats_darks"]["image_key_path"] = description["tables"]["image_key"]["path"]
-        return report
+        return _native_report(path, payload)
     raw = read_acquisition(path)
     if raw is None:
         return inspect_nxtomo(Path(path))

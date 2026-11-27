@@ -58,26 +58,17 @@ def test_invalid_requested_offsets_are_reported_but_nominal_geometry_can_be_load
         np.testing.assert_allclose(geometry.angles, dataset.angles, rtol=1e-6)
 
 
-@pytest.mark.parametrize("suffix", [".npz", ".nxs"])
 @pytest.mark.parametrize("offsets", _BAD_OFFSETS)
 @pytest.mark.parametrize("poses", [False, True])
-def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(
-    tmp_path, suffix, offsets, poses
-):
+def test_public_scan_load_does_not_hide_malformed_saved_angle_offsets(tmp_path, offsets, poses):
     dataset = _dataset("parallel", np.zeros(4))
-    path = tmp_path / ("offsets" + suffix)
+    path = tmp_path / "offsets.nxs"
     save_dataset(path, dataset)
     # Inject malformed metadata without asking the writer to compress a scalar.
-    if suffix == ".nxs":
-        with h5py.File(path, "r+") as handle:
-            key = "/entry/tomojax/angle_offset"
-            del handle[key]
-            handle.create_dataset(key, data=offsets)
-    else:
-        with np.load(path, allow_pickle=False) as saved:
-            arrays = {key: saved[key] for key in saved.files}
-        arrays["angle_offset"] = offsets
-        np.savez_compressed(path, **arrays)
+    with h5py.File(path, "r+") as handle:
+        key = "/entry/tomojax/angle_offset"
+        del handle[key]
+        handle.create_dataset(key, data=offsets)
     if poses:
         with pytest.raises(ValueError, match="angle_offset"):
             tj.load(path, apply_poses=True)

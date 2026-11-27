@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, field, fields, is_dataclass
 import secrets
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
@@ -86,6 +86,7 @@ class Feature:
     box: tuple[slice, ...]
     registration: Array
     recipe: dict[str, Any]
+    history: list[dict] = field(default_factory=list)
 
     @property
     def shape(self) -> tuple[int, ...]:

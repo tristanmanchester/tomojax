@@ -10,6 +10,7 @@ cost memory in proportion to the feature.
 from __future__ import annotations
 
 from math import ceil, floor
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import msgspec
@@ -21,13 +22,11 @@ from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._handles import owned
 from tomojax.core.array_grid import published, require_same_grid
 from tomojax.errors import InvalidParameter
+from tomojax.io.api import open_record, registered_members, save_mask
 from tomojax.wire.arrays import Array, Coordinates, Hdf5, Member
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
-
-    import h5py
 
     from tomojax.wire.arrays import Storage
 
@@ -313,74 +312,52 @@ def make_feature(
         return feature_handle(ex.Feature(name, inside, box, grid, resolved), data)
 
 
-FEATURE_GROUP = "/entry/feature"
-SAVED_SUFFIXES = (".h5", ".hdf5", ".nxs")
-
-
 def save_feature(path: Path, feature: ex.Feature) -> None:
-    """Write the mask as uint8 on its whole grid, with its registration, name and recipe.
-
-    Only chunks that meet the feature's box are written; the rest read as zero.
-    """
-    import h5py
-
-    with h5py.File(path, "w") as file:
-        group = file.create_group(FEATURE_GROUP)
-        mask = group.create_dataset(
-            "mask", shape=feature.shape, dtype="u1", chunks=True, compression="gzip", fillvalue=0
-        )
-        if feature.inside.size:
-            mask[feature.box] = feature.inside
-        axes = []
-        for axis in feature.registration.axes:
-            c = axis.coordinates
-            if isinstance(c, Coordinates):
-                name = f"coordinates/{axis.name}"
-                group[name] = published(c.values)
-                c = Coordinates(Hdf5(str(path), f"{FEATURE_GROUP}/{name}"))
-            axes.append(msgspec.structs.replace(axis, coordinates=c))
-        registration = msgspec.structs.replace(feature.registration, axes=tuple(axes))
-        group.attrs["registration"] = msgspec.json.encode(registration).decode()
-        group.attrs["box"] = msgspec.json.encode([[b.start, b.stop] for b in feature.box]).decode()
-        group.attrs["name"] = feature.name
-        group.attrs["recipe"] = msgspec.json.encode(feature.recipe).decode()
-
-
-def saved_mask_metadata(group: h5py.Group, ref: Hdf5) -> Array:
-    """Resolve a saved mask's coordinate datasets relative to its current file."""
-    registration = msgspec.json.decode(str(group.attrs["registration"]), type=Array)
-    axes = []
-    for axis in registration.axes:
-        c = axis.coordinates
-        if isinstance(c, Coordinates):
-            if not isinstance(c.values, Hdf5):
-                raise InvalidParameter(
-                    "source", "saved feature coordinates require an HDF5 dataset"
-                )
-            c = Coordinates(Hdf5(ref.path, c.values.dataset))
-        axes.append(msgspec.structs.replace(axis, coordinates=c))
-    return msgspec.structs.replace(mask_metadata(registration, ref), axes=tuple(axes), dtype="|u1")
+    """Persist the feature and its owned coordinates as a native sparse mask."""
+    coordinates = {
+        axis.name: published(axis.coordinates.values)
+        for axis in feature.registration.axes
+        if isinstance(axis.coordinates, Coordinates)
+    }
+    save_mask(
+        path,
+        feature.registration,
+        name=feature.name,
+        recipe=feature.recipe,
+        box=feature.box,
+        inside=feature.inside,
+        coordinates=coordinates,
+        history=feature.history,
+    )
 
 
 def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
-    """Reopen a saved feature, reading only its box and copying its coordinates."""
+    """Open the mask's bounding box and give its coordinate arrays to the new handle."""
     import h5py
 
     with h5py.File(path, "r") as file:
-        group = file.get(FEATURE_GROUP)
-        if not isinstance(group, h5py.Group) or "mask" not in group:
+        record = open_record(file)
+        if record["kind"] != "feature":
             raise InvalidParameter("path", f"{path} holds no saved TomoJAX feature")
-        registration = saved_mask_metadata(group, Hdf5(path, f"{FEATURE_GROUP}/mask"))
-        box = tuple(slice(a, b) for a, b in msgspec.json.decode(str(group.attrs["box"])))
-        mask = group["mask"]
+        registration = registered_members(file, Path(path))["mask"]
+        assert isinstance(registration.storage, Hdf5)
+        description = record["feature"]
+        box = tuple(slice(a, b) for a, b in description["box"])
+        mask = file[registration.storage.dataset]
         assert isinstance(mask, h5py.Dataset)
-        inside = np.asarray(mask[box], dtype=bool) if box else np.zeros((0,) * mask.ndim, bool)
+        inside = np.asarray(mask[box], dtype=bool)
 
         def coordinate(ref: Storage) -> np.ndarray:
             assert isinstance(ref, Hdf5)
             return np.asarray(file[ref.dataset])
 
         grid = owned(registration, coordinate, context)
-        recipe = msgspec.json.decode(str(group.attrs["recipe"]))
-        feature = ex.Feature(str(group.attrs["name"]), inside, box, grid, recipe)
+        feature = ex.Feature(
+            description["name"],
+            inside,
+            box,
+            grid,
+            description["recipe"],
+            [*record["history"], record["provenance"]],
+        )
     return feature_handle(feature, None)

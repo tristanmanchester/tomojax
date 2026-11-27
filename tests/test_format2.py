@@ -85,6 +85,20 @@ def test_hand_built_format2_generations(kind):
     assert report["record"]["provenance"]["command"] == "fixture"
 
 
+def test_hand_built_feature_has_one_registered_label(tmp_path):
+    from tomojax.cli.export import main
+
+    path = Path(__file__).parent / "data" / "formats" / "format2-feature.nxs"
+    reported = tj.inspect(path)
+    assert reported["valid"] and reported["record"]["length_unit"] == "mm"
+    assert reported["contents"]["mask"]["path"] == "/entry/masks/grain/data"
+    output = tmp_path / "grain.raw"
+    assert main([str(path), "-o", str(output), "--member", "grain"]) == 0
+    expected = np.zeros((2, 3, 4), np.uint8)
+    expected[1, 0, 2] = 1
+    np.testing.assert_array_equal(np.fromfile(output, "u1").reshape(expected.shape), expected)
+
+
 def test_remapped_file_uses_original_descriptor(tmp_path, monkeypatch):
     old, _ = volume_and_scan()
     a, b = tmp_path / "active.nxs", tmp_path / "replacement.nxs"

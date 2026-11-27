@@ -88,9 +88,8 @@ def test_metadata_uses_current_owned_arrays_and_preserves_scanner_fields(arrays,
     np.testing.assert_array_equal(stored.volume, np.ones((2, 4, 3)))
 
 
-@pytest.mark.parametrize("suffix", [".npz", ".nxs"])
 @pytest.mark.parametrize("kind", ["parallel", "cone"])
-def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_path, suffix, kind):
+def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_path, kind):
     grid = tj.Grid(4, 5, 3, 0.9, 1.1, 0.8, vol_center=(0.1, -0.2, 0.3))
     detector = tj.Detector(11, 9, 0.8, 0.85, center=(0.2, 0.1))
     angles = 17.123456789 + np.arange(16) * 22.5
@@ -103,7 +102,7 @@ def test_resaved_reconstruction_uses_edited_volume_and_keeps_known_image(tmp_pat
     data = tj.project(geometry, truth)
     config = CGLSConfig(iterations=200, tolerance=1e-8)
     reconstructed = tj.reconstruct(tj.Scan(data, geometry), "cgls", config=config)
-    original, edited = tmp_path / ("original" + suffix), tmp_path / ("edited" + suffix)
+    original, edited = tmp_path / "original.nxs", tmp_path / "edited.nxs"
     tj.save(original, reconstructed, include_scan=True)
     loaded = tj.load_reconstruction(original)
     tj.save(edited, replace(loaded, volume=truth.copy()), include_scan=True)

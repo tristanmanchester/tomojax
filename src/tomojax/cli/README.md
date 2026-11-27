@@ -93,7 +93,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `reconstruct` records `truncation` (`edge_ratio`, `outside_fraction`,
   `interior_shift`, `radius`, `field_of_view_radius`, plus `outside_grid`,
   `data_model`, and `background_treatment` for iterative methods) in the output
-  file and `--manifest`, and appends `, N% of attenuation beyond the detector`
+  file, and appends `, N% of attenuation beyond the detector`
   to its closing line whenever `outside_fraction` rounds to at least 1% (0.5% or
   above), followed for iterative methods with exterior modeling active by
   `, modeled exterior subtracted from fit data` (or
@@ -108,7 +108,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
   `reconstruct` prints a closing line stating how many updates ran, why the
   solve stopped, and any automatic TV weight; check `termination`,
   `early_stop`, and `effective_iterations` (plus `resolved_tv_weight` for
-  `fista`) in `--manifest` for the same fields in JSON. The output
+  `fista`) in `tomojax inspect recon.nxs --json` for the same fields in JSON. The output
   holds the volume, its geometry and record, and names the input projections;
   `--include-scan` keeps them too. `--checkpoint DIR` (also accepted as `checkpoint` in
   `--config`) saves solver state and finished slabs in `DIR` so a killed run resumes

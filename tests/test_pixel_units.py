@@ -78,7 +78,7 @@ def test_a_cone_file_without_a_pixel_size_asks_for_one(tmp_path: Path) -> None:
         geometry_type="cone",
         geometry_metadata={"cone_beam": {"source_to_axis": 100.0, "source_to_detector": 200.0}},
     )
-    path = tmp_path / "cone.npz"
+    path = tmp_path / "cone.nxs"
     save_dataset(path, record)
     with pytest.raises(ValueError, match="Missing detector pixel sizes") as caught:
         tj.load(path, flats=1000, darks=0)

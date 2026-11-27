@@ -113,7 +113,7 @@ def build_parser() -> ProgressParser:
     _ = parser.add_argument(
         "data", metavar="INPUT", help="Raw acquisition, TIFF stack, or a dataset of line integrals"
     )
-    add_output(parser, "Corrected scan to write (.nxs, .h5 or .npz); optional with --dry-run")
+    add_output(parser, "Corrected scan to write (.nxs or .h5); optional with --dry-run")
     for action in options(parser):
         if action.dest == "out":
             action.required = False  # a dry run writes no scan
@@ -392,7 +392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         scan = _applied(prepared, args)
         progress.check_canceled()
         import tomojax as tj
-        from tomojax.cli.manifest import recording
+        from tomojax.cli._provenance import recording
 
         with recording("correct", args, metadata):
             tj.save(output, scan)

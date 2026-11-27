@@ -4,6 +4,11 @@
 
 - On an offset axial parallel full turn, iterative reconstruction continues only the far detector edge. The coarse fit uses physical line integrals along each measured horizontal chord, including on a rolled panel. FBP, Fourier inversion and the truncation record use the same edge selection.
 
+- TomoJAX datasets and feature masks use NeXus format 2. A mask includes its recipe,
+  coordinates and sparse bounding box. CLI and worker outputs embed their command,
+  resolved settings and provenance. Read a saved record with `tomojax inspect FILE --json`.
+  The separate manifest file, `--manifest` option and NPZ dataset container have been removed.
+
 - Studio Explore lists the available export formats and their options. Choose a destination to preview the file count, payload size and reader calibration before queueing the export.
 
 - Interrupted TIFF slice directories, raw files and MetaImage exports can resume from synced slabs when the input file and options match. The CLI, Python, worker and MCP use the same journal and destination lock.
@@ -24,7 +29,7 @@
 
 - `tj.save` writes NeXus format 2 with read-only, memory-mappable arrays,
   physical coordinate vectors and a processing record at `/entry/record`.
-  TomoJAX 1.0.0rc6 cannot read format 2. Use this release to convert rc6 files
+  TomoJAX 1.0.0rc6 cannot read format 2. Use the format-2 migration release (build `4378e691`) to convert rc6 files
   to new paths. Choose the line for the kind of object being migrated.
 
   ```python

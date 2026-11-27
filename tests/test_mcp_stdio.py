@@ -158,7 +158,6 @@ def test_reconstruction_chain_matches_direct_api(tmp_path, size):
         assert not reply["isError"], reply["content"][0]["text"]
         assert [x["name"] for x in reply["content"] if x["type"] == "resource_link"] == [
             "result.nxs",
-            "result.nxs.manifest.json",
         ]
         if size == 32:
             check_sweep_and_difference(c, data, scan, volume)
@@ -367,7 +366,6 @@ def test_slab_destination_over_stdio(tmp_path, contained, method):
         assert not saved["isError"], saved
         assert saved["structuredContent"]["paths"] == [
             str(tmp_path / "slabs.nxs"),
-            str(tmp_path / "slabs.nxs.manifest.json"),
         ]
         info = tj.load_reconstruction(tmp_path / "slabs.nxs").info
         assert info["config"]["exterior"] == "zero"
@@ -453,7 +451,7 @@ def test_correction_comparison_and_frame_profile(tmp_path):
         assert len(profile["coordinates"]) == 5
 
 
-def test_project_and_evaluate_saved_npz(tmp_path):
+def test_project_and_evaluate_saved_nexus(tmp_path):
     def call(name, **params):
         reply = c.call(name, **params)
         assert not reply["isError"], reply
@@ -462,19 +460,19 @@ def test_project_and_evaluate_saved_npz(tmp_path):
     with connection(tmp_path) as c:
         sim = call("simulate", size=8, n_views=12)
         scan = sim["members"]["scan"]
-        call("save", source=sim["handle"], path="sim.npz")
-        actual = call("project", source=scan, volume="sim.npz")["handle"]
+        call("save", source=sim["handle"], path="sim.nxs")
+        actual = call("project", source=scan, volume="sim.nxs")["handle"]
         expected = call("project", source=scan, volume=sim["members"]["phantom"])["handle"]
         assert call("python", code=f"np.array_equal(handles[{actual!r}], handles[{expected!r}])")[
             "value"
         ]
-        for source in (sim["members"]["phantom"], "sim.npz"):
+        for source in (sim["members"]["phantom"], "sim.nxs"):
             stats = call("view", source=source, mode="statistics")
             assert stats["count"] == 8**3
         candidate = {"type": "reconstruct", "method": "cgls", "iterations": 2}
         settings = {"reference": candidate, "candidates": [candidate]}
         expected_score = call("evaluate", source=scan, **settings)["scores"][0]["mse"]
-        assert call("evaluate", source="sim.npz", **settings)["scores"][0]["mse"] == pytest.approx(
+        assert call("evaluate", source="sim.nxs", **settings)["scores"][0]["mse"] == pytest.approx(
             expected_score
         )
 
@@ -579,19 +577,19 @@ def _shows(image, pixels):
     assert np.corrcoef(image.ravel(), np.asarray(pixels, float).ravel())[0, 1] > 0.99
 
 
-def test_inspect_saved_npz_with_and_without_preview(tmp_path):
+def test_inspect_saved_nexus_with_and_without_preview(tmp_path):
     import numpy as np
 
     sim = tj.simulate(size=8, n_views=12)
-    tj.save(tmp_path / "scan.npz", sim.scan)
+    tj.save(tmp_path / "scan.nxs", sim.scan)
     tj.save(
-        tmp_path / "recon.npz",
+        tmp_path / "recon.nxs",
         tj.Reconstruction(sim.phantom, sim.scan.geometry, "example", {}, sim.scan),
     )
     with connection(tmp_path) as c:
         for name in ("scan", "recon"):
             for preview in (False, True):
-                reply = c.call("inspect", path=f"{name}.npz", preview=preview)
+                reply = c.call("inspect", path=f"{name}.nxs", preview=preview)
                 assert not reply["isError"], reply
                 report = reply["structuredContent"]
                 assert report["valid"] and report["angles"]["count"] == 12

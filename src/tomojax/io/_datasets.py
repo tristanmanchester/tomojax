@@ -7,8 +7,7 @@ import copy
 from dataclasses import dataclass, field, replace
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, cast
-from zipfile import BadZipFile
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 
@@ -19,20 +18,17 @@ from tomojax._data import (
     NXTomoMetadata,
     build_geometry_from_meta,
     calibration_issues,
-    load_npz,
     load_nxtomo,
     locate_frames,
     native_payload,
-    save_npz,
     save_nxtomo,
-    saved_volume_axes,
     saved_without_frames,
     validate_nxtomo,
 )
 from tomojax.core.geometry import Detector, Grid, ScanGeometry
 from tomojax.core.input_files import InputFiles, current_inputs, reading
-from tomojax.errors import InvalidParameter
 from tomojax.io._tiff import TIFF_SUFFIXES, read_tiff_frames
+from tomojax.io.dataset_paths import HDF5_SUFFIXES, check_native_destination
 
 __all__ = [
     "LoadedNXTomo",
@@ -41,14 +37,12 @@ __all__ = [
     "ProjectionDataset",
     "ValidationReport",
     "build_geometry_from_dataset_metadata",
-    "convert_dataset",
     "load_dataset",
     "load_nxtomo",
     "load_tiff_stack",
     "locate_frames",
     "save_dataset",
     "save_nxtomo",
-    "saved_volume_axes",
     "saved_without_frames",
     "validate_dataset",
     "validate_nxtomo",
@@ -63,7 +57,6 @@ if TYPE_CHECKING:
 
 type PathLike = str | os.PathLike[str]
 
-_HDF5_SUFFIXES = {".nx", ".nxs", ".h5", ".hdf", ".hdf5"}
 _TIFF_SUFFIXES = TIFF_SUFFIXES
 
 
@@ -392,7 +385,7 @@ class ProjectionDataset:
         """The pixel pitches the file recorded without a whole detector, wherever it put them.
 
         A raw acquisition reader keeps them under ``acquisition``; a partial NXtomo
-        record at the top level; a partial NPZ detector in its own mapping.
+        record at the top level or a partial detector in its own mapping.
         """
         meta = self.geometry_metadata
         for found in (
@@ -466,15 +459,15 @@ class ProjectionDataset:
 def load_dataset(path: PathLike) -> ProjectionDataset:
     """Load a standard TomoJAX projection dataset.
 
-    Supported direct inputs are NXtomo/HDF5 (`.nx`, `.nxs`, `.h5`, `.hdf`, `.hdf5`), TomoJAX
-    `.npz` payloads and PSI cSAXS ptychographic tomography `.mat` files (their aligned
+    Supported direct inputs are NXtomo/HDF5 (`.nx`, `.nxs`, `.h5`, `.hdf`, `.hdf5`)
+    and PSI cSAXS ptychographic tomography `.mat` files (their aligned
     phase projections). TIFF stacks need explicit angle metadata, so use
     :func:`load_tiff_stack`.
 
     Parameters
     ----------
     path : str or pathlib.Path
-        NXtomo/HDF5 or TomoJAX NPZ dataset to read.
+        NXtomo/HDF5 dataset to read.
 
     Returns
     -------
@@ -493,12 +486,10 @@ def load_dataset(path: PathLike) -> ProjectionDataset:
     input_path = Path(path)
     with reading(input_path, owner="result"):
         suffix = input_path.suffix.lower()
-        if suffix in _HDF5_SUFFIXES:
+        if suffix in HDF5_SUFFIXES:
             return ProjectionDataset.from_nxtomo(
                 load_nxtomo(str(input_path)), source_path=input_path
             )
-        if suffix == ".npz":
-            return ProjectionDataset.from_nxtomo(load_npz(str(input_path)), source_path=input_path)
         if suffix == ".mat":
             return psi_record(input_path)
         if input_path.is_dir() or suffix in _TIFF_SUFFIXES:
@@ -530,40 +521,13 @@ def psi_record(path: Path, *, layout_only: bool = False) -> ProjectionDataset:
     return record.with_parallel_detector()
 
 
-def dataset_output_format(path: Path) -> Literal["npz", "hdf5"]:
-    """Select the dataset container from its output name.
-
-    Parameters
-    ----------
-    path : pathlib.Path
-        Requested destination.
-
-    Returns
-    -------
-    str
-        Container used by the dataset writer.
-
-    Raises
-    ------
-    InvalidParameter
-        If the destination has an unsupported suffix.
-    """
-    suffix = path.suffix.lower()
-    if suffix in _HDF5_SUFFIXES:
-        return "hdf5"
-    if suffix == ".npz":
-        return "npz"
-    known = ", ".join(sorted(_HDF5_SUFFIXES | {".npz"}))
-    raise InvalidParameter("path", f"cannot save to {path.name}: give a path ending in {known}")
-
-
 def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
-    """Save a public projection dataset as NXtomo/HDF5 or NPZ.
+    """Save a public projection dataset as NXtomo/HDF5.
 
     Parameters
     ----------
     path : str or pathlib.Path
-        NXtomo/HDF5 or NPZ output path; existing files are overwritten.
+        NXtomo/HDF5 output path; existing files are overwritten.
     dataset : ProjectionDataset
         Projections, geometry and optional volume to persist.
 
@@ -580,53 +544,11 @@ def save_dataset(path: PathLike, dataset: ProjectionDataset) -> None:
         If the output cannot be written.
     """
     output_path = Path(path)
-    writer = save_nxtomo if dataset_output_format(output_path) == "hdf5" else save_npz
+    check_native_destination(output_path)
     # The metadata copy would duplicate a large volume that the writer only reads.
     metadata = replace_dataset(dataset, volume=None).to_nxtomo_metadata()
     metadata.volume = dataset.volume
-    writer(str(output_path), dataset.projections, metadata=metadata)
-
-
-def convert_dataset(input_path: PathLike, output_path: PathLike) -> None:
-    """Convert between supported TomoJAX dataset container formats.
-
-    Parameters
-    ----------
-    input_path : str or pathlib.Path
-        Input NXtomo/HDF5 or NPZ container.
-    output_path : str or pathlib.Path
-        Output container of the other format.
-
-    Returns
-    -------
-    None
-        Write the converted dataset with its metadata.
-
-    Raises
-    ------
-    ValueError
-        If the conversion is not NPZ to HDF5 or HDF5 to NPZ.
-    OSError
-        If a file cannot be read or written.
-    """
-    in_path = Path(input_path)
-    out_path = Path(output_path)
-    input_suffix = in_path.suffix.lower()
-    output_suffix = out_path.suffix.lower()
-    with reading(in_path):
-        if input_suffix == ".npz" and output_suffix in _HDF5_SUFFIXES:
-            data = load_npz(str(in_path))
-            save_nxtomo(
-                str(out_path),
-                np.asarray(data.projections),
-                metadata=data.copy_metadata(),
-            )
-            return
-        if input_suffix in _HDF5_SUFFIXES and output_suffix == ".npz":
-            data = load_nxtomo(str(in_path))
-            save_npz(str(out_path), np.asarray(data.projections), metadata=data.copy_metadata())
-            return
-        raise ValueError("Unsupported conversion. Use .npz <-> .nxs/.h5/.hdf/.hdf5")
+    save_nxtomo(str(output_path), dataset.projections, metadata=metadata)
 
 
 def load_tiff_stack(
@@ -723,6 +645,8 @@ def _frame_issues(angles: np.ndarray | None, key: np.ndarray | None) -> list[str
 
 
 def _native_issues(saved: LoadedNXTomo) -> list[str]:
+    if saved.file_record and saved.file_record["kind"] == "feature":
+        return []
     if saved.projections is None:
         return [] if saved.metadata.volume is not None else ["No volume or projections"]
     key = saved.metadata.image_key
@@ -752,18 +676,15 @@ def _dataset_issues(input_path: Path) -> list[str]:
             issues.insert(0, str(exc))
         return issues
     suffix = input_path.suffix.lower()
-    whole = suffix in {".npz", ".mat"} or (
-        suffix in _HDF5_SUFFIXES and saved_without_frames(input_path)
-    )
-    if whole:
+    if suffix == ".mat":
         try:
             from .projection_layout import saved_projection_layout
 
             saved_projection_layout(input_path)
-        except (BadZipFile, EOFError, OSError, ValueError, KeyError, TypeError) as exc:
+        except (EOFError, OSError, ValueError, KeyError, TypeError) as exc:
             return [str(exc)]
         return []
-    if suffix in _HDF5_SUFFIXES:
+    if suffix in HDF5_SUFFIXES:
         located = locate_frames(str(input_path))
         return _frame_issues(located.angles, located.image_key)
     if input_path.is_dir() or suffix in _TIFF_SUFFIXES:

@@ -11,6 +11,7 @@ import numpy as np
 from tomojax._data import nxdata
 from tomojax.errors import InvalidParameter
 from tomojax.io._export_data import Blocks, Selection
+from tomojax.wire.arrays import Coordinates
 
 
 def nexus_settings(selection: Selection, dataset: str | None) -> dict[str, object]:
@@ -47,12 +48,15 @@ def write_nexus(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
             shuffle=encoding["compress"],
         )
         coordinates = {}
-        if any(a.name == "view" for a in blocks.selection.axes):
-            tables = record["tables"]
-            assert isinstance(tables, dict)
-            angles = parent.create_dataset("rotation_angle", data=tables["angles"]["values"])
-            angles.attrs["units"] = "degree"
-            coordinates["view"] = angles
+        for axis in blocks.selection.axes:
+            if isinstance(axis.coordinates, Coordinates):
+                tables = record["tables"]
+                assert isinstance(tables, dict)
+                key = "angles" if axis.name == "view" else axis.name
+                label = "rotation_angle" if axis.name == "view" else axis.name
+                vector = parent.create_dataset(label, data=tables[key]["values"])
+                vector.attrs["units"] = axis.unit
+                coordinates[axis.name] = vector
         nxdata(
             parent,
             signal,

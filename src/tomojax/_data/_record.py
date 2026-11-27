@@ -17,7 +17,7 @@ from tomojax._data._io_types import NXTomoMetadata
 from tomojax.core.geometry.base import Detector, Grid
 from tomojax.core.json_values import normalize_json
 from tomojax.core.registration import pose_columns, recorded_length_unit
-from tomojax.wire.arrays import Axis, Coordinates
+from tomojax.wire.arrays import Array, Axis, Coordinates
 
 _provenance = ContextVar[Mapping[str, object] | None]("tomojax_file_provenance", default=None)
 
@@ -57,8 +57,8 @@ def array_record(
     """Describe the stored pixels in either a saved file or an export."""
     registered = [msgspec.to_builtins(a) for a in axes]
     for axis, description in zip(axes, registered, strict=True):
-        if axis.name == "view" and isinstance(axis.coordinates, Coordinates):
-            description["coordinates"] = {"table": "angles"}
+        if isinstance(axis.coordinates, Coordinates):
+            description["coordinates"] = {"table": "angles" if axis.name == "view" else axis.name}
     return {
         "shape": list(shape),
         "dtype": dtype,
@@ -139,3 +139,19 @@ def metadata_record(meta: NXTomoMetadata) -> dict[str, Any]:
             **(_provenance.get() or {}),
         },
     }
+
+
+def feature_record(registration: Array, name: str, recipe: dict, history: list) -> dict[str, Any]:
+    """Describe a feature from its owned registration and processing history."""
+    length = next(
+        (
+            a.unit
+            for a in (*registration.axes, *registration.fixed)
+            if a.frame in ("volume", "detector")
+        ),
+        "scan_length",
+    )
+    meta = NXTomoMetadata(history=history, geometry_meta={"length_unit": length})
+    record = metadata_record(meta)
+    record["feature"] = {"name": name, "recipe": recipe}
+    return record

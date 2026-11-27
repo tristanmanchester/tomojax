@@ -1230,29 +1230,26 @@ def test_metric_inventory_and_unknown_emission():
         progress.current_task.get().advance(1, {"typo": 1})
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_load_counts_completed_storage_reads(tmp_path, monkeypatch, suffix):
+def test_load_counts_completed_storage_reads(tmp_path, monkeypatch):
     original = scan()
-    path = tmp_path / ("measurements" + suffix)
-    if suffix == ".nxs":
-        # A contiguous format-2 scan maps immediately. The rc6 reader transfers views.
-        from ._helpers import write_rc6_dataset
+    path = tmp_path / "measurements.nxs"
+    # An external HDF5 acquisition reads the detector in bounded tiles.
+    import h5py
 
-        write_rc6_dataset(
-            path, projections=original.projections, angles=original.angles, grid=original.grid
-        )
-    else:
-        tj.save(path, original)
+    with h5py.File(path, "w") as file:
+        file["entry/instrument/detector/data"] = original.projections
+        file["entry/sample/rotation_angle"] = original.angles
+        file["entry/sample/rotation_angle"].attrs["units"] = "degree"
     monkeypatch.setattr("tomojax._data._io_nxtomo._TILE_BYTES", 3 * 2 * 14 * 4)
     events = []
     with progress.watch(events.append):
-        loaded = tj.load(path)
+        from tomojax.io.api import load_nxtomo
+
+        loaded = load_nxtomo(str(path))
     validate_tree(events)
     (task,) = [e for e in work_events(events) if isinstance(e, progress.Started)]
     assert (task.name, task.label, task.total, task.unit) == ("load", path.name, 13, "views")
-    assert [e.done for e in events if isinstance(e, progress.Advanced)] == (
-        [3, 6, 9, 12, 13] if suffix == ".nxs" else [13]
-    )
+    assert [e.done for e in events if isinstance(e, progress.Advanced)] == ([3, 6, 9, 12, 13])
     np.testing.assert_array_equal(loaded.projections, original.projections)
 
 

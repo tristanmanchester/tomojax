@@ -107,7 +107,7 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
 
     grid, detector = Grid(4, 4, 3, 1.0, 1.0, 1.0), Detector(5, 3, 1.0, 1.0)
     rolled = LaminographyGeometry(grid, detector, [0.0, 90.0], tilt=20, detector_roll=1.5)
-    path = tmp_path / "scan.npz"
+    path = tmp_path / "scan.nxs"
     frames = np.ones((2, 3, 5), np.float32)
     tj.save(path, tj.Scan(frames, rolled))
     loaded = tj.load(path, apply_poses=False).geometry
@@ -118,7 +118,7 @@ def test_a_rolled_parallel_scan_saves_its_roll_and_a_cone_one_keeps_it_in_the_be
     tj.save(path, tj.Scan(frames, cone))
     record = load_dataset(path)
     record.geometry_metadata["detector_roll"] = 1.5
-    invalid = tmp_path / "ambiguous-roll.npz"
+    invalid = tmp_path / "ambiguous-roll.nxs"
     save_dataset(invalid, record)
     with pytest.raises(ValueError, match="belongs in cone_beam"):
         tj.load(invalid, apply_poses=False)

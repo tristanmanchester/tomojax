@@ -202,15 +202,14 @@ def test_scans_and_reconstructions_round_trip_through_files(kind: str, tmp_path:
         tj.load(tmp_path / "missing.nxs")
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_selected_loaded_scans_save_only_their_own_view_labels(tmp_path: Path, suffix: str) -> None:
+def test_selected_loaded_scans_save_only_their_own_view_labels(tmp_path: Path) -> None:
     geometry = _geometries(8)["parallel"]
     source = tmp_path / "source.nxs"
     tj.save(source, tj.Scan(np.zeros((40, 12, 12), np.float32), geometry))
     with h5py.File(source, "a") as handle:
         handle["entry/instrument/detector/image_key"][...] = 0
     selected = tj.load(source).selected([2, 5, 11])
-    target = tmp_path / f"selected{suffix}"
+    target = tmp_path / "selected.nxs"
     tj.save(target, selected)
     loaded = tj.load(target)
     np.testing.assert_array_equal(loaded.angles, selected.angles)
@@ -638,8 +637,6 @@ def test_alignment_save_reload_and_export_keep_scan_and_working_grids_distinct(
 
 
 def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path: Path) -> None:
-    import h5py
-
     from tomojax.corrections import Rings
 
     grid = tj.Grid(8, 8, 4, 1.0, 1.0, 1.0)
@@ -654,14 +651,13 @@ def test_rings_auto_binds_geometry_and_crop_order_preserves_grid_policy(tmp_path
 
     # Detector-derived grid policy matches regardless of crop/correct order.
     raw_path = tmp_path / "raw.nxs"
-    from ._helpers import write_rc6_dataset
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
 
-    write_rc6_dataset(
-        raw_path, projections=scan.projections, angles=angles, grid=grid, detector=detector
+    save_nxtomo(
+        str(raw_path),
+        np.full(scan.projections.shape, 500, np.uint16),
+        metadata=NXTomoMetadata(angles=angles, detector=detector),
     )
-    with h5py.File(raw_path, "r+") as handle:
-        del handle["entry"].attrs["grid_meta_json"]
-        handle["entry/instrument/detector/data"][...] = 500.0
     frames = tj.load_frames(raw_path, flats=1000.0, darks=0.0)
     a = frames.cropped(slice(1, 3), slice(2, 6)).corrected()
     b = frames.corrected().cropped(slice(1, 3), slice(2, 6))

@@ -147,7 +147,6 @@ _RETIRED_KEYS = {
     "spdhg_seed": "seed",
     "tv_prox_iters": "tv_prox_iterations",
     "L": "lipschitz",
-    "save_manifest": "manifest",
     "apply_saved_alignment": "poses",
     "spdhg_tau": "tau",
     "spdhg_sigma_data": "sigma_data",

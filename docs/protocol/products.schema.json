@@ -701,7 +701,7 @@
     },
     "Files": {
       "title": "Files",
-      "description": "All committed output destinations, including adjacent manifests.",
+      "description": "All committed output destinations.",
       "type": "object",
       "properties": {
         "type": {

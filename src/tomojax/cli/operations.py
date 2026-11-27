@@ -215,7 +215,7 @@ class Backproject(Record, tag="backproject"):
 
 
 class Save(Record, tag="save"):
-    """Stage the dataset and adjacent manifest."""
+    """Save the dataset with its provenance."""
 
     source: Member
     path: Id

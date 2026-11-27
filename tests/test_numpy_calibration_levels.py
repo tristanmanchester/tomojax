@@ -10,12 +10,12 @@ import pytest
 import tifffile
 
 import tomojax as tj
-from tomojax.io import ProjectionDataset, save_dataset
+from tomojax.io.api import NXTomoMetadata, save_nxtomo
 
 pytestmark = pytest.mark.surface
 
 
-@pytest.mark.parametrize("suffix", ["tif", "h5", "npz"])
+@pytest.mark.parametrize("suffix", ["tif", "h5", "nxs"])
 @pytest.mark.parametrize("field", ["flats", "darks"])
 @pytest.mark.parametrize(
     "dtype", [np.float16, np.float32, np.float64, np.int16, np.int64, np.uint16]
@@ -32,11 +32,12 @@ def test_numpy_real_levels_preserve_python_calibration(
             handle.create_dataset("exchange/data", data=counts)
             handle.create_dataset("exchange/theta", data=[0.0, 90.0])
     else:
-        save_dataset(
-            path,
-            ProjectionDataset(
-                counts,
-                np.asarray([0.0, 90.0]),
+        save_nxtomo(
+            str(path),
+            counts,
+            metadata=NXTomoMetadata(
+                projection_domain="counts",
+                angles=np.asarray([0.0, 90.0]),
                 detector=tj.Detector(4, 2, 1.0, 1.0),
                 grid=tj.Grid(4, 4, 2, 1.0, 1.0, 1.0),
             ),

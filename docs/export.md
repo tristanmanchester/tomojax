@@ -37,6 +37,9 @@ The complete record is embedded in a TIFF stack. A slice directory holds its rec
 
 Every export checks its primary file, payloads, records and any directory it will replace or recover against live inputs in the same process. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A hard link or symlink to an input also conflicts. If the error names an input inside an owned directory, choose another destination for the export. `force` preserves this protection.
 
+Export a saved feature's labels with `tomojax export mask.nxs -o mask.tif`.
+To select it explicitly, pass `--member mask` or give the feature's recorded name.
+
 ## Continue an interrupted export
 
 If a slice directory, raw file or MetaImage export is canceled or killed, repeat the same request with the same source and destination. TomoJAX keeps completed slabs, the integer range and clipping counts in a sibling directory named `.<destination>.partial`. Leave that directory in place until publication finishes. A second writer that targets the same partial receives an error.

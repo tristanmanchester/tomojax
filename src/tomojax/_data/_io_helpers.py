@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-import json
 import logging
 import math
 import os
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import h5py
 import numpy as np
 
-from ._io_types import JsonObject, LoadedDataset, SourceInfo
-from .geometry_meta import normalize_geometry_type
+from ._io_types import LoadedDataset, SourceInfo
 
 LOG = logging.getLogger(__name__)
 
@@ -95,115 +93,44 @@ def write_string_attr(obj: h5py.Group | h5py.Dataset, key: str, value: str) -> N
     obj.attrs[key] = np.array(value, dtype=h5py.string_dtype(encoding="utf-8"))
 
 
-def _load_json_mapping_attr(
-    raw_attr: object,
-    *,
-    path: str,
-    context: str,
-) -> JsonObject | None:
-    if raw_attr is None:
-        return None
-    payload = attr_to_str(raw_attr)
-    if not payload:
-        return None
-    try:
-        loaded = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        axes_log_warning(
-            "load_nxtomo: ignoring malformed %s JSON for %s: %s",
-            context,
-            path,
-            exc,
+def native_file(file: h5py.File) -> bool:
+    """Recognize a native container before interpreting acquisition conventions."""
+    if "tomojax_format" in file.attrs:
+        return True
+    geometry = file.get("entry/geometry")
+    entry = file.get("entry")
+    detector = file.get("entry/instrument/detector")
+    if (
+        "entry/processing/tomojax" in file
+        or (isinstance(entry, h5py.Group) and "grid_meta_json" in entry.attrs)
+        or (isinstance(detector, h5py.Group) and "detector_meta_json" in detector.attrs)
+        or (
+            isinstance(geometry, h5py.Group)
+            and (
+                "geometry_meta_json" in geometry.attrs
+                or (
+                    attr_to_str(geometry.attrs.get("NX_class")) == "NXcollection"
+                    and "type" in geometry.attrs
+                    and isinstance(entry, h5py.Group)
+                    and attr_to_str(entry.attrs.get("definition")) == "NXtomo"
+                    and "data/projections" in entry
+                )
+            )
         )
-        return None
-    if not isinstance(loaded, dict):
-        axes_log_warning(
-            "load_nxtomo: ignoring non-object %s JSON for %s",
-            context,
-            path,
+    ):
+        raise ValueError(
+            f"{file.filename} is an rc6 TomoJAX file. Open and re-save it with "
+            "the format-2 migration release (build 4378e691) before opening it here."
         )
-        return None
-    return loaded
+    return False
 
 
-def detector_group(entry: h5py.Group) -> h5py.Group | None:
-    inst_grp = child_group(entry, "instrument")
-    return None if inst_grp is None else child_group(inst_grp, "detector")
-
-
-def load_geometry_metadata(
-    out: LoadedDataset,
-    entry: h5py.Group,
-    *,
-    path: str,
-) -> None:
-    geom = child_group(entry, "geometry")
-    geom_type = "parallel"
-    if geom is not None and "type" in geom.attrs:
-        raw_type = attr_to_str(geom.attrs.get("type"), default="parallel")
-        geom_type = normalize_geometry_type(raw_type)
-    out["geometry_type"] = geom_type
-    if geom is None:
-        return
-    meta_dict = _load_json_mapping_attr(
-        geom.attrs.get("geometry_meta_json"),
-        path=path,
-        context="geometry metadata",
-    )
-    if meta_dict is None:
-        return
-    if (poses := child_dataset(geom, "simulation_true_poses")) is not None:
-        info = meta_dict.get("simulation_info")
-        simulation = info.get("simulation") if isinstance(info, dict) else None
-        if not isinstance(simulation, dict):
-            raise ValueError(f"{path}: simulation poses require simulation metadata")
-        simulation["true_poses"] = np.asarray(poses).tolist()
-    out["geometry_meta"] = meta_dict
-    for key, val in meta_dict.items():
-        out.setdefault(key, val)
-
-
-def load_grid_metadata(out: LoadedDataset, entry: h5py.Group, *, path: str) -> None:
-    grid_dict = _load_json_mapping_attr(
-        entry.attrs.get("grid_meta_json"),
-        path=path,
-        context="grid metadata",
-    )
-    if grid_dict is not None:
-        out["grid"] = grid_dict
-
-
-def load_detector_metadata(
-    out: LoadedDataset,
-    entry: h5py.Group,
-    *,
-    path: str,
-) -> None:
-    det_grp = detector_group(entry)
-    detector_dict = None
-    if det_grp is not None:
-        detector_dict = _load_json_mapping_attr(
-            det_grp.attrs.get("detector_meta_json"),
-            path=path,
-            context="detector metadata",
-        )
-    # A default numerical zero is not evidence of a recorded/calibrated center.
-    # Keep saved provenance, including an earlier inferred or still absent center.
-    geometry_meta = dict(cast("JsonObject", out.get("geometry_meta") or {}))
-    geometry_meta.setdefault(
-        "detector_center_status",
-        "recorded"
-        if detector_dict is not None and "det_center" in detector_dict
-        else "not_recorded",
-    )
-    out["geometry_meta"] = geometry_meta
-    if detector_dict is None or not {"du", "dv", "det_center"} <= detector_dict.keys():
-        # A partial calibration cannot construct a Detector. Retain recorded
-        # pixel pitches for inspection, without fabricating the absent center.
-        sizes = [_pixel_size(det_grp, name) for name in ("x_pixel_size", "y_pixel_size")]
-        geometry_meta["detector_pixel_size"] = list(sizes)
-        detector_dict = None
-    out["detector"] = detector_dict
+def load_detector_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
+    detector = child_group(entry, "instrument/detector")
+    out["geometry_meta"] = {
+        "detector_center_status": "not_recorded",
+        "detector_pixel_size": [_pixel_size(detector, k) for k in ("x_pixel_size", "y_pixel_size")],
+    }
 
 
 def _pixel_size(group: h5py.Group | None, name: str) -> float | None:
@@ -235,49 +162,6 @@ def load_source_metadata(out: LoadedDataset, entry: h5py.Group) -> None:
         out["source_type"] = source_info["type"]
     if "probe" in source_info:
         out["source_probe"] = source_info["probe"]
-
-
-_PROCESSING_JSON_SECTIONS = (
-    ("align", "gauge_fix_json", "align_gauge", "alignment gauge fix"),
-    ("align", "misalign_spec_json", "misalign_spec", "misalignment spec"),
-    ("calibration", "geometry_calibration_json", "geometry_calibration", "geometry calibration"),
-    ("simulation", "artifacts_json", "simulation_artifacts", "simulation artifacts"),
-)
-
-
-def load_processing_metadata(
-    out: LoadedDataset,
-    entry: h5py.Group,
-    *,
-    path: str,
-) -> tuple[h5py.Dataset | None, str | None]:
-    tomojax_grp = child_group(entry, "processing/tomojax")
-    if tomojax_grp is None:
-        return None, None
-    volume = child_dataset(tomojax_grp, "volume")
-    volume_axes_attr = attr_to_str(tomojax_grp.attrs.get("volume_axes_order"))
-
-    frame_attr = tomojax_grp.attrs.get("frame")
-    if frame_attr is not None:
-        frame = attr_to_str(frame_attr)
-        if frame:
-            out["frame"] = frame
-
-    align_grp = child_group(tomojax_grp, "align")
-    if align_grp is not None:
-        if (thetas := child_dataset(align_grp, "thetas")) is not None:
-            out["align_params"] = np.asarray(thetas[...])
-        if (offset := child_dataset(align_grp, "angle_offset")) is not None:
-            out["angle_offset"] = np.asarray(offset[...])
-    for group, attr, key, context in _PROCESSING_JSON_SECTIONS:
-        section = child_group(tomojax_grp, group)
-        if section is None:
-            continue
-        mapping = _load_json_mapping_attr(section.attrs.get(attr), path=path, context=context)
-        if mapping is not None:
-            out[key] = mapping
-
-    return volume, volume_axes_attr
 
 
 def load_sample_metadata(out: LoadedDataset, entry: h5py.Group) -> None:

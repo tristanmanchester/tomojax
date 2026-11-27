@@ -64,8 +64,7 @@ When a reconstruction and its attached scan use different voxel grids,
 the reconstructed volume. The volume's NeXus axes use its own grid.
 
 Readers skip additional members and record fields of a supported format.
-An unrecognized format number reports the writing version. The rc6 HDF5
-reader remains available for this release. To migrate a reconstruction while
+An unrecognized format number reports the writing version. Re-save rc6 datasets with the format-2 migration release (build `4378e691`) before upgrading. To migrate a reconstruction while
 preserving its optional projections, load it once and pass
 `include_scan=result.scan is not None` to `tj.save`.
 
@@ -106,7 +105,7 @@ missing input.
 `data_path`, `image_key_path`, and `angles_path` apply to saved HDF5 scans as
 well as raw acquisitions across eager and lazy loads, CLI, worker, and MCP.
 Bliss accepts `data_path` to select its sequence; fixed-layout formats (TIFF,
-NPZ, MATLAB phase, Nikon, SkyScan, Zeiss, and EDF) reject these paths. Supplying
+MATLAB phase, Nikon, SkyScan, Zeiss, and EDF) reject these paths. Supplying
 `flats` or `darks` on an unlabeled projection stack identifies its values as
 detector counts in any storage dtype (including floating-point counts); files
 with a recorded log correction or PSI phase measurement reject flat/dark

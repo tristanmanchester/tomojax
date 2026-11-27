@@ -24,32 +24,23 @@ def _reconstruction(value=1.0):
     )
 
 
-def _fail_part_way(monkeypatch, suffix):
-    """The disk fills once the volume is written (NXtomo) or part-way through the archive (NPZ)."""
-    if suffix == ".nxs":
-        written = h5py.Group.create_dataset
+def _fail_part_way(monkeypatch):
+    """Fill the disk after the volume and before committing the record."""
+    written = h5py.Group.create_dataset
 
-        def full(group, name, *args, **kwargs):
-            dataset = written(group, name, *args, **kwargs)
-            if group.name == "/entry" and name == "record":
-                raise OSError(errno.ENOSPC, "No space left on device")
-            return dataset
-
-        monkeypatch.setattr(h5py.Group, "create_dataset", full)
-    else:
-
-        def full(file, **payload):
-            file.write(b"\0" * 4096)
+    def full(group, name, *args, **kwargs):
+        dataset = written(group, name, *args, **kwargs)
+        if group.name == "/entry" and name == "record":
             raise OSError(errno.ENOSPC, "No space left on device")
+        return dataset
 
-        monkeypatch.setattr(np, "savez_compressed", full)
+    monkeypatch.setattr(h5py.Group, "create_dataset", full)
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_a_save_that_fails_part_way_leaves_no_file(tmp_path, monkeypatch, suffix):
+def test_a_save_that_fails_part_way_leaves_no_file(tmp_path, monkeypatch):
     # tj.save wrote straight to the final name: a full disk left a truncated file there.
-    path = tmp_path / f"recon{suffix}"
-    _fail_part_way(monkeypatch, suffix)
+    path = tmp_path / "recon.nxs"
+    _fail_part_way(monkeypatch)
     with pytest.raises(
         OSError, match=r"stopped after .* written: .* free.*volume .* GiB, projections"
     ):
@@ -57,12 +48,11 @@ def test_a_save_that_fails_part_way_leaves_no_file(tmp_path, monkeypatch, suffix
     assert list(tmp_path.iterdir()) == []  # neither the file nor a partial one
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_a_save_that_fails_over_a_good_file_keeps_it(tmp_path, monkeypatch, suffix):
+def test_a_save_that_fails_over_a_good_file_keeps_it(tmp_path, monkeypatch):
     # Opening the final name for writing emptied a good file before the new one was complete.
-    path = tmp_path / f"recon{suffix}"
+    path = tmp_path / "recon.nxs"
     tj.save(path, _reconstruction(1.0), include_scan=True)
-    _fail_part_way(monkeypatch, suffix)
+    _fail_part_way(monkeypatch)
     with pytest.raises(OSError, match="stopped after"):
         tj.save(path, _reconstruction(2.0), include_scan=True)
     monkeypatch.undo()
@@ -70,9 +60,8 @@ def test_a_save_that_fails_over_a_good_file_keeps_it(tmp_path, monkeypatch, suff
     np.testing.assert_array_equal(tj.load_reconstruction(path).volume, 1.0)
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_a_save_replaces_the_file_when_complete(tmp_path, suffix):
-    path = tmp_path / f"recon{suffix}"
+def test_a_save_replaces_the_file_when_complete(tmp_path):
+    path = tmp_path / "recon.nxs"
     tj.save(path, _reconstruction(1.0), include_scan=True)
     tj.save(path, _reconstruction(2.0), include_scan=True)
     assert list(tmp_path.iterdir()) == [path]

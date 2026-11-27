@@ -134,14 +134,11 @@ def test_default_fit_preserves_existing_rotations_and_uses_the_requested_grid(mo
 
 
 @pytest.mark.parametrize("cone", [False, True])
-@pytest.mark.parametrize("suffix", [".npz", ".nxs"])
-def test_fitted_global_geometry_round_trips_with_held_local_poses(
-    monkeypatch, tmp_path, cone, suffix
-):
+def test_fitted_global_geometry_round_trips_with_held_local_poses(monkeypatch, tmp_path, cone):
     changes = {"center": (1.25, -0.75) if cone else 1.25, "tilt": 0.5, "roll": 0.75}
     _fitter(monkeypatch, changes=changes)
     result = tj.align(_scan(cone), fit=("center", "tilt", "roll"))
-    target = tmp_path / f"aligned{suffix}"
+    target = tmp_path / "aligned.nxs"
     tj.save(target, result)
     loaded = tj.load(target)
     assert loaded.detector.center == result.scan.detector.center
@@ -158,7 +155,7 @@ def test_fitted_global_geometry_round_trips_with_held_local_poses(
 
 
 def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, tmp_path):
-    scan, output, manifest = tmp_path / "scan.nxs", tmp_path / "aligned.nxs", tmp_path / "run.json"
+    scan, output = tmp_path / "scan.nxs", tmp_path / "aligned.nxs"
     tj.save(scan, _scan())
     calls = _fitter(monkeypatch, changes={"tilt": 0.5, "roll": 0.75})
     assert (
@@ -172,14 +169,12 @@ def test_cli_fit_forwards_one_selection_and_saves_its_calibration(monkeypatch, t
                 "translations",
                 "tilt",
                 "roll",
-                "--manifest",
-                str(manifest),
             ]
         )
         == 0
     )
     assert calls[0][4]["fit"] == ("tilt", "roll", "translations")  # stable order
-    saved = json.loads(manifest.read_text())["resolved_config"]
+    saved = tj.inspect(output)["record"]["provenance"]["resolved_config"]
     assert saved["fit"] == ["translations", "tilt", "roll"]
     values = {name: entry["value"] for name, entry in saved["alignment"]["calibration"].items()}
     assert values == pytest.approx({"tilt": 0.5, "roll": 0.75})

@@ -52,27 +52,9 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     if projection_path.is_none() {
         return Ok(None);
     }
-    let entry = file.group(&root).map_err(|error| error.to_string())?;
-    let (geometry, geometry_type) = if file.link_exists(&at("geometry")) {
-        let group = file
-            .group(&at("geometry"))
-            .map_err(|error| error.to_string())?;
-        (
-            json_attribute(&group, "geometry_meta_json")?,
-            string_attribute(&group, "type")?,
-        )
-    } else {
-        (Value::Null, None)
-    };
-    let detector = if file.link_exists(&at("instrument/detector")) {
-        json_attribute(
-            &file
-                .group(&at("instrument/detector"))
-                .map_err(|error| error.to_string())?,
-            "detector_meta_json",
-        )?
-    } else {
-        Value::Null
+    let geometry_type = match file.group(&at("geometry")) {
+        Ok(group) => string_attribute(&group, "type")?,
+        Err(_) => None,
     };
     let mut projection = json!({"found":false,"path":null,"shape":null,"dtype":null});
     if let Some(dataset) = projection_path {
@@ -146,41 +128,19 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     };
     let flat_found = file.link_exists(&at("instrument/detector/data_white"));
     let dark_found = file.link_exists(&at("instrument/detector/data_dark"));
-    let tomojax_grid = entry
-        .attr_names()
-        .map_err(|error| error.to_string())?
-        .iter()
-        .any(|name| name == "grid_meta_json");
     let report = json!({"source":"header_only","input_path":path,
         "projection":projection,"angles":angles,"volume":volume,
-        "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":geometry.is_object(),"meta_keys":geometry.as_object().map(|meta|meta.keys().collect::<Vec<_>>()).unwrap_or_default()},
-        "detector_metadata":{"found":detector.is_object(),"nu":detector.get("nu"),"nv":detector.get("nv"),"du":detector.get("du"),"dv":detector.get("dv"),"center":detector.get("det_center")},
+        "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":false,"meta_keys":[]},
+        "detector_metadata":{"found":false},
         "flats_darks":{"image_key_found":key_found,"image_key_path":image_key,
             "sample_count":sample_count,
             "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
-        "alignment":{"found":file.link_exists(&at("processing/tomojax/align")),"params_found":file.link_exists(&at("processing/tomojax/align/thetas"))}});
-    let mut kind = suggested_kind(&report).to_owned();
-    let interleaved = sample_count
-        .is_some_and(|samples| report["projection"]["n_views"].as_u64() != Some(samples as u64));
-    if kind == "scan" && (interleaved || !(tomojax_grid && detector.is_object())) {
-        kind = "frames".into();
-    }
+        "alignment":{"found":false,"params_found":false}});
     let mut arrays = projection_arrays(&report, path)?;
-    let length_unit = geometry
-        .get("length_unit")
-        .or_else(|| geometry.pointer("/acquisition/length_unit"))
-        .and_then(Value::as_str)
-        .filter(|unit| !unit.is_empty())
-        .unwrap_or("scan_length");
     if let Some(array) = arrays.get_mut("projections") {
-        for axis in &mut array.axes[1..] {
-            if axis.unit == "scan_length" {
-                axis.unit = length_unit.into();
-            }
-        }
         // Raw HDF5 may interleave sample/calibration frames whose angle entries
         // are undefined. Until the loader selects samples, show stored indices.
-        if kind == "frames" && key_found {
+        if key_found {
             array.axes[0].unit = "index".into();
             array.axes[0].coordinates = Coordinates::Uniform {
                 origin: 0.,
@@ -188,7 +148,7 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
             };
         }
     }
-    Ok(Some((kind, arrays, report)))
+    Ok(Some(("frames".into(), arrays, report)))
 }
 
 /// Whether an HDF5 file reads any of its data from other files: through external
@@ -564,13 +524,30 @@ fn nxtomo_entry(file: &hdf5::File) -> Result<Option<String>, String> {
     Ok((found.len() == 1).then(|| found.remove(0)))
 }
 
-fn json_attribute(group: &hdf5::Group, name: &str) -> Result<Value, String> {
-    string_attribute(group, name)?
-        .map(|text| {
-            serde_json::from_str(&text).map_err(|error| format!("Malformed {name}: {error}"))
-        })
-        .transpose()
-        .map(|value| value.unwrap_or(Value::Null))
+fn is_rc6(file: &hdf5::File) -> Result<bool, String> {
+    let legacy_json = [
+        ("/entry", "grid_meta_json"),
+        ("/entry/geometry", "geometry_meta_json"),
+        ("/entry/instrument/detector", "detector_meta_json"),
+    ]
+    .iter()
+    .any(|(path, name)| {
+        file.group(path)
+            .ok()
+            .and_then(|g| g.attr_names().ok())
+            .is_some_and(|names| names.iter().any(|a| a == name))
+    });
+    let bare_rc6 = if file.link_exists("/entry/data/projections")
+        && let Ok(geometry) = file.group("/entry/geometry")
+    {
+        let entry = file.group("/entry").map_err(|e| e.to_string())?;
+        string_attribute(&geometry, "NX_class")?.as_deref() == Some("NXcollection")
+            && string_attribute(&geometry, "type")?.is_some()
+            && string_attribute(&entry, "definition")?.as_deref() == Some("NXtomo")
+    } else {
+        false
+    };
+    Ok(file.link_exists("/entry/processing/tomojax") || legacy_json || bare_rc6)
 }
 
 fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetadata>, String> {
@@ -582,14 +559,8 @@ fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetada
         .iter()
         .any(|name| name == "tomojax_format")
     {
-        if file.link_exists("/entry/processing/tomojax")
-            || file
-                .group("/entry")
-                .ok()
-                .and_then(|entry| entry.attr_names().ok())
-                .is_some_and(|names| names.iter().any(|name| name == "grid_meta_json"))
-        {
-            return Err("Re-save this rc6 file with a format-2 TomoJAX release: tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
+        if is_rc6(file)? {
+            return Err("Re-save this rc6 file with the format-2 migration release (build 4378e691): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
         }
         return Ok(None);
     }

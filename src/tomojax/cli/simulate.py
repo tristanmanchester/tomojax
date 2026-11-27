@@ -275,7 +275,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 phantom_settings=phantom_keys or None,
             )
             result = simulate_config(cfg, grid=resolved_grid, detector=resolved_detector)
-        from tomojax.cli.manifest import recording
+        from tomojax.cli._provenance import recording
 
         with recording("simulate", args, metadata):
             tj.save(out, result)

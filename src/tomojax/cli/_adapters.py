@@ -126,13 +126,18 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
                 isinstance(command, op.Plan),
                 isinstance(command, op.Validate),
             )
+            from tomojax.cli._provenance import runtime_provenance
             from tomojax.io.api import provenance as file_provenance
 
+            writes_file = isinstance(command, op.Run) and isinstance(
+                operation, op.Save | op.Export | op.ReconstructSlabs
+            )
             with file_provenance(
                 {
                     "lineage": msgspec.to_builtins(manifest),
                     "command": manifest.operation,
                     "arguments": manifest.parameters,
+                    **(runtime_provenance() if writes_file else {}),
                 }
             ):
                 work = admission.prepare(operation)
@@ -233,9 +238,7 @@ def saved_storage(path: str) -> Hdf5 | None:
                 if key in ("volume", "image"):
                     assert isinstance(array.storage, Hdf5)
                     return array.storage
-            return None
-        axes = file["/entry/processing/tomojax"].attrs.get("volume_axes_order")
-        return Hdf5(path, "/entry/processing/tomojax/volume") if axes in ("zyx", b"zyx") else None
+        return None
 
 
 @dataclass(frozen=True)
@@ -555,7 +558,8 @@ class Admission:
     def slabs(self, operation: op.ReconstructSlabs) -> Work:
         from tomojax._scan.model import geometry_record
         from tomojax._workflow.operations import slab_settings
-        from tomojax.io.api import dataset_output_format, provenance as file_provenance, slab_volume
+        from tomojax.io.api import provenance as file_provenance, slab_volume
+        from tomojax.io.dataset_paths import check_native_destination
         from tomojax.recon.api import validate_slab_grid
 
         item: tj.Frames = source(
@@ -576,11 +580,9 @@ class Admission:
         validate_slab_grid(cfg, item.geometry, grid, item.geometry.detector)
         path = Path(operation.path)
         check_output(path)
-        if dataset_output_format(path) != "hdf5":
-            raise InvalidParameter("path", "slab reconstruction requires a NeXus/HDF5 destination")
-        sidecar = path.with_name(path.name + ".manifest.json")
+        check_native_destination(path)
         check_checkpoint(operation.checkpoint)
-        check_destinations((path, sidecar), force=operation.force)
+        check_destinations((path,), force=operation.force)
 
         def fill() -> p.Files:
             record = geometry_record(item.geometry, name=item.name, grid=grid, source=item.source)
@@ -589,7 +591,6 @@ class Admission:
             metadata = record.to_nxtomo_metadata()
             info: dict[str, object] = {"source": item.source.source_path if item.source else None}
             stage = self.context.staging.output(path, force=operation.force)
-            manifest = self.context.staging.output(sidecar, force=operation.force)
             with (
                 file_provenance({"resolved_config": info}),
                 slab_volume(stage, metadata, grid.shape) as volume,
@@ -605,8 +606,7 @@ class Admission:
                 info.update(resolved)
                 metadata.geometry_meta["reconstruction_info"] = resolved
                 self.details.update(info)
-            manifest.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-            return p.Files((str(path), str(sidecar)))
+            return p.Files((str(path),))
 
         return fill
 
@@ -656,10 +656,10 @@ class Admission:
         held = self.context.leases[operation.source].value
         path = Path(operation.path)
         if isinstance(held, ex.Feature):
-            from tomojax.cli._features import SAVED_SUFFIXES, save_feature
+            from tomojax.cli._features import save_feature
+            from tomojax.io.dataset_paths import check_native_destination
 
-            if path.suffix.lower() not in SAVED_SUFFIXES:
-                raise InvalidParameter("path", f"save a feature as {', '.join(SAVED_SUFFIXES)}")
+            check_native_destination(path)
             feature = held
         else:
             value = source(
@@ -677,38 +677,31 @@ class Admission:
                 save_feature(stage, feature)
             else:
                 tj.save(stage, value, include_scan=operation.include_scan)
-            return self.write_manifest(paths, force=operation.force)
+            return p.Files(tuple(map(str, paths)))
 
         return write
 
     def durable_paths(
         self,
         path: Path,
-        outputs: list[Path],
+        paths: list[Path],
         *,
         force: bool,
         pending: tuple[Path, ...] | None = None,
     ) -> list[Path]:
         if not path.name or path.name == "..":
             raise InvalidParameter("path", "expected an output file or directory name")
-        paths = [*outputs, path.with_name(path.name + ".manifest.json")]
         self.details.update(
             paths=[str(p) for p in paths], destination_exists=any(p.exists() for p in paths)
         )
-        check_destinations(
-            paths if pending is None else [*pending, paths[-1]], force=force or self.validating
-        )
+        check_destinations(paths if pending is None else pending, force=force or self.validating)
         return paths
-
-    def write_manifest(self, paths: list[Path], *, force: bool) -> p.Files:
-        stage = self.context.staging.output(paths[-1], force=force)
-        stage.write_bytes(msgspec.json.encode(self.manifest) + b"\n")
-        return p.Files(tuple(str(p) for p in paths))
 
     @prepare.register
     def export(self, operation: op.Export) -> Work:
-        from tomojax._loading.files import export_source
-        from tomojax.io.api import ExportSource, plan_export
+        from tomojax._loading.files import export_source, mask_export_source
+        from tomojax.core.array_grid import published
+        from tomojax.io.api import plan_export
 
         lease = self.context.leases[operation.source]
         held = lease.value
@@ -723,15 +716,8 @@ class Admission:
             ):
                 held = held.scan
         if isinstance(held, ex.Feature):
-            member = ExportSource(
-                held.name,
-                held.shape,
-                held.dtype,
-                held.registration.axes,
-                "1",
-                "mask",
-                held.__getitem__,
-                {"recipe": held.recipe},
+            member = mask_export_source(
+                held.name, held.registration, held.recipe, held.history, held.__getitem__, published
             )
         elif isinstance(held, tj.Reconstruction | tj.Simulation | tj.Alignment | tj.Scan):
             member = export_source(held)
@@ -758,7 +744,7 @@ class Admission:
 
         def write() -> p.Files:
             self.details.update(self.context.staging.export(plan, force=operation.force))
-            return self.write_manifest(paths, force=operation.force)
+            return p.Files(tuple(map(str, paths)))
 
         return write
 

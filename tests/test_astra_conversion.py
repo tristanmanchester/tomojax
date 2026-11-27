@@ -286,8 +286,8 @@ def test_independently_imported_orbits_keep_one_object_frame(tmp_path):
         zeros = np.zeros((len(scan.angles), 6), np.float32)
         restored = scan.with_poses(zeros).with_poses(None)
         np.testing.assert_allclose(restored.to_astra()[1]["Vectors"], vectors, atol=1e-6)
-        tj.save(tmp_path / f"calibrated_{len(scan.angles)}.npz", restored)
-        loaded = tj.load(tmp_path / f"calibrated_{len(scan.angles)}.npz")
+        tj.save(tmp_path / f"calibrated_{len(scan.angles)}.nxs", restored)
+        loaded = tj.load(tmp_path / f"calibrated_{len(scan.angles)}.nxs")
         np.testing.assert_allclose(loaded.to_astra()[1]["Vectors"], vectors, atol=1e-6)
 
 

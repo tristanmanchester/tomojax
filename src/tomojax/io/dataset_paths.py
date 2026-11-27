@@ -1,4 +1,11 @@
-"""Dataset selectors supported by each projection reader."""
+"""Native destinations and dataset selectors supported by each projection reader."""
+
+from pathlib import Path
+
+from tomojax.errors import InvalidParameter
+
+HDF5_SUFFIXES = frozenset((".nx", ".nxs", ".h5", ".hdf", ".hdf5"))
+
 
 # Each reader declares which selectors it can resolve. The load contract tests
 # exercise every format here with independently constructed files.
@@ -18,7 +25,6 @@ DATASET_PATHS: dict[str, frozenset[str]] = {
             "esrf_pyhst",
             "tiff",
             "phase",
-            "saved.npz",
         ),
         frozenset[str](),
     ),
@@ -33,3 +39,21 @@ def check_dataset_paths(family: str, paths: dict[str, str | None]) -> None:
             raise ValueError(
                 f"{name} is unavailable for {family}: the acquisition fixes that field"
             )
+
+
+def check_native_destination(path: Path) -> None:
+    """Check that a destination uses a supported NeXus filename.
+
+    Parameters
+    ----------
+    path : Path
+        Native dataset destination.
+
+    Raises
+    ------
+    InvalidParameter
+        If the suffix cannot hold a saved TomoJAX dataset.
+    """
+    if path.suffix.lower() not in HDF5_SUFFIXES:
+        known = ", ".join(sorted(HDF5_SUFFIXES))
+        raise InvalidParameter("path", f"cannot save to {path.name}: give a path ending in {known}")

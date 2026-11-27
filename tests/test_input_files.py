@@ -478,15 +478,13 @@ def test_cli_export_protects_each_format(tmp_path, export_conflicts, capsys):
     assert hashes(tmp_path) == original
 
 
-def test_worker_export_protects_each_format_and_manifest(tmp_path, worker, export_conflicts):
+def test_worker_export_protects_each_format(tmp_path, worker, export_conflicts):
     master, storage, destinations = export_conflicts
     source = member(worker("open", kind="reconstruction", path=str(master)))
-    (tmp_path / "manifest.tif").write_bytes(b"previous output")
-    (tmp_path / "manifest.tif.manifest.json").hardlink_to(storage)
     original = hashes(tmp_path)
     for force in (False, True):
         refused(worker, dict(type="save", source=source, path=str(storage), force=force), storage)
-    for path in [*destinations, tmp_path / "manifest.tif"]:
+    for path in destinations:
         for force in (False, True):
             refused(
                 worker, dict(type="export", source=source, path=str(path), force=force), storage
@@ -495,10 +493,8 @@ def test_worker_export_protects_each_format_and_manifest(tmp_path, worker, expor
     output(worker("close", handle=source["handle"]))
 
 
-def test_mcp_export_protects_each_format_and_manifest(tmp_path, export_conflicts):
+def test_mcp_export_protects_each_format(tmp_path, export_conflicts):
     master, storage, destinations = export_conflicts
-    (tmp_path / "manifest.tif").write_bytes(b"previous output")
-    (tmp_path / "manifest.tif.manifest.json").hardlink_to(storage)
     original = hashes(tmp_path)
     with connection(tmp_path) as client:
         source = client.call("open", kind="reconstruction", path=master.name)["structuredContent"]
@@ -508,7 +504,7 @@ def test_mcp_export_protects_each_format_and_manifest(tmp_path, export_conflicts
                     "save", source=source["handle"], path=storage.name, force=force, dry_run=dry
                 )
                 assert reply["isError"] and str(storage) in reply["structuredContent"]["message"]
-        for path in [*destinations, tmp_path / "manifest.tif"]:
+        for path in destinations:
             for force in (False, True):
                 for dry in (True, False):
                     reply = client.call(
@@ -554,6 +550,33 @@ def test_python_writers_protect_the_mapped_volume_they_read(tmp_path, write):
     with pytest.raises(tj.InvalidParameter, match=source.name):
         write(alias, replace(item, volume=mapped))
     assert hashes(tmp_path) == before
+
+
+@pytest.mark.parametrize("mapped", ["pixels", "coordinates"])
+def test_native_mask_protects_its_mapped_inputs(tmp_path, mapped):
+    from tomojax.io.api import save_mask
+    from tomojax.wire.arrays import Array, Axis, Coordinates, Npy
+
+    source = tmp_path / "source"
+    source.write_bytes(bytes((0, 1, 0)))
+    data = np.memmap(source, mode="r", dtype=np.uint8)
+    alias = tmp_path / "mask.nxs"
+    alias.hardlink_to(source)
+    storage = Npy(str(source))
+    axis = Axis("view", "acquisition", "degree", Coordinates(storage))
+    registration = Array(storage, (3,), "uint8", (axis,), "1", "mask")
+    with pytest.raises(tj.InvalidParameter, match=source.name):
+        save_mask(
+            alias,
+            registration,
+            name="box",
+            recipe={},
+            box=(slice(0, 3),),
+            inside=data if mapped == "pixels" else data.copy(),
+            coordinates={"view": data if mapped == "coordinates" else data.copy()},
+            history=[],
+        )
+    assert alias.read_bytes() == bytes((0, 1, 0)) and alias.samefile(source)
 
 
 @pytest.mark.parametrize("kind", ["scan", "frames"])

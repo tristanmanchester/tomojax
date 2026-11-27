@@ -15,7 +15,6 @@ from tomojax._data import (
     PinnedFrames,
     locate_frames,
     native_payload,
-    npz_layout,
     read_nxtomo,
     saved_without_frames,
 )
@@ -25,14 +24,6 @@ from tomojax.io.dataset_paths import check_dataset_paths
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-
-def saved_npz_layout(
-    path: Path, *, volume_only: bool = False
-) -> tuple[ProjectionDataset, dict[str, np.ndarray]]:
-    """Read the archive's record and its saved arrays."""
-    payload, arrays = npz_layout(path, volume_only=volume_only)
-    return ProjectionDataset.from_nxtomo(payload, source_path=path), arrays
 
 
 def saved_projection_layout(
@@ -48,9 +39,6 @@ def saved_projection_layout(
             return record, record.projections
         stack = Hdf5Frames.open(str(path), "aligned_phase_sinogram")
         return record, MatlabFrames(stack)
-    if path.suffix.lower() == ".npz":
-        record, members = saved_npz_layout(path)
-        return record, members.get("projections")
     payload = read_nxtomo(str(path), lazy=True, layout_only=layout_only, located=located)
     stack = payload.projections
     if stack is not None:
@@ -123,7 +111,7 @@ class ProjectionStorage:
 
 
 def projection_storage(path: Path, *, layout_only: bool, **paths: str | None) -> ProjectionStorage:
-    """Resolve HDF5 paths once. NPZ members and MATLAB phase arrays have fixed meanings."""
+    """Resolve HDF5 paths once. MATLAB phase arrays have fixed meanings."""
     located = None
     suffix = path.suffix.lower()
     counts = False
@@ -138,8 +126,8 @@ def projection_storage(path: Path, *, layout_only: bool, **paths: str | None) ->
                 "tj.load_reconstruction reads it"
             ) from None
         record, stack, counts = hdf_projection_storage(path, located, layout_only=layout_only)
-    elif suffix in {".npz", ".mat"}:
-        check_dataset_paths("saved.npz" if suffix == ".npz" else "phase", paths)
+    elif suffix == ".mat":
+        check_dataset_paths("phase", paths)
         record, stack = saved_projection_layout(path, layout_only=layout_only)
     else:
         raise ValueError(f"unsupported dataset format for {path}")

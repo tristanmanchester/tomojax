@@ -147,10 +147,7 @@ def test_omitted_saved_pose_frame_keeps_its_existing_meaning(segmented: bool) ->
     )
 
 
-@pytest.mark.parametrize("extension", ["nxs", "npz"])
-def test_loading_five_column_pose_files_rejects_legacy_shape(
-    extension: str, tmp_path: Path
-) -> None:
+def test_loading_five_column_pose_files_rejects_legacy_shape(tmp_path: Path) -> None:
     meta = _metadata(5, "detector", segmented=True)
     nominal = _scan(meta, apply_poses=False)
     dataset = ProjectionDataset(
@@ -163,15 +160,13 @@ def test_loading_five_column_pose_files_rejects_legacy_shape(
         align_params=meta["align_params"],
         align_gauge=meta["align_gauge"],
     )
-    path = tmp_path / f"five_columns.{extension}"
-    if extension == "nxs":
-        with pytest.raises(ValueError, match="poses must have shape"):
-            save_dataset(path, dataset)
-        dataset.align_params = np.zeros((6, 6), np.float32)
+    path = tmp_path / "five_columns.nxs"
+    with pytest.raises(ValueError, match="poses must have shape"):
+        save_dataset(path, dataset)
+    dataset.align_params = np.zeros((6, 6), np.float32)
     save_dataset(path, dataset)
-    if extension == "nxs":
-        with h5py.File(path, "r+") as file:
-            del file["/entry/tomojax/poses"]
-            file["/entry/tomojax/poses"] = meta["align_params"]
+    with h5py.File(path, "r+") as file:
+        del file["/entry/tomojax/poses"]
+        file["/entry/tomojax/poses"] = meta["align_params"]
     with pytest.raises(ValueError, match="exactly 6 columns"):
         tj.load(path)

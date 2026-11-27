@@ -159,7 +159,7 @@ class Feature(Record, tag="feature"):
 
 
 class Files(Record, tag="files"):
-    """All committed output destinations, including adjacent manifests."""
+    """All committed output destinations."""
 
     paths: tuple[Id, ...]
 

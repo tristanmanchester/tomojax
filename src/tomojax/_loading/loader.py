@@ -755,7 +755,7 @@ def load_frames(
     whole ``geometry`` (of every sample view; then TIFFs need no ``angles``)
     replace what the file holds. Dataset paths select arrays inside saved HDF5
     files too. Bliss accepts ``data_path`` for its sequence. Fixed-layout vendor
-    formats, TIFF, NPZ and MATLAB phase files reject HDF5 dataset paths.
+    formats, TIFF and MATLAB phase files reject HDF5 dataset paths.
     HDF5 calibration paths use the same automatic
     dataset discovery as the input and stay lazy: another scan's file supplies its
     flat or dark frames, and a stack that labels none supplies every frame.
@@ -763,7 +763,7 @@ def load_frames(
     Parameters
     ----------
     path : str or path-like
-        HDF5, NPZ, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
+        HDF5, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
     flats : array-like, float, str, path-like or None, optional
         Replacement flat frames, calibration stack path (another scan's file
         supplies its flat frames), or constant open-beam level. Supplying flats

@@ -281,10 +281,10 @@ def validate_save(
 ) -> None:
     """Check the destination format and availability of the requested scan before writing."""
     from tomojax.errors import InvalidParameter
-    from tomojax.io.api import dataset_output_format
+    from tomojax.io.dataset_paths import check_native_destination
 
     check_output(path)
-    dataset_output_format(path)
+    check_native_destination(path)
     if isinstance(item, Reconstruction) and item.scan is None and include_scan:
         raise InvalidParameter(
             "include_scan", "this reconstruction was loaded without its scan: there is none to save"

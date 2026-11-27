@@ -98,7 +98,6 @@ def write_raw_nxtomo(path: Path) -> None:
     with h5py.File(path, "w") as handle:
         entry = handle.create_group("entry")
         entry.attrs["definition"] = "NXtomo"
-        entry.attrs["grid_meta_json"] = json.dumps(tiny_grid().to_dict())
         geometry = entry.create_group("geometry")
         geometry.attrs["type"] = "parallel"
         instrument = entry.create_group("instrument")
@@ -107,7 +106,8 @@ def write_raw_nxtomo(path: Path) -> None:
         detector.create_dataset("image_key", data=image_key)
         detector.create_dataset("x_pixel_size", data=np.asarray(1.0, dtype=np.float32))
         detector.create_dataset("y_pixel_size", data=np.asarray(1.0, dtype=np.float32))
-        detector.attrs["detector_meta_json"] = json.dumps(tiny_detector(nu=2, nv=2).to_dict())
+        for pitch in ("x_pixel_size", "y_pixel_size"):
+            detector[pitch].attrs["units"] = "mm"
         sample = entry.create_group("sample")
         sample.create_dataset("name", data="fixture")
         transformations = sample.create_group("transformations")

@@ -78,9 +78,8 @@ def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(
     assert record["memory_estimates"]["reconstruction_grid_shape"] == [115, 115, 1]
 
 
-@pytest.mark.parametrize("suffix", ["nxs", "npz"])
-def test_corrected_grid_still_follows_the_axis_after_saving(tmp_path, offset_acquisition, suffix):
-    corrected = tmp_path / f"corrected.{suffix}"
+def test_corrected_grid_still_follows_the_axis_after_saving(tmp_path, offset_acquisition):
+    corrected = tmp_path / "corrected.nxs"
     scan = tj.load_frames(offset_acquisition).corrected()
     tj.save(corrected, scan)
     fit = tj.align(tj.load(corrected), fit="center")
@@ -88,11 +87,10 @@ def test_corrected_grid_still_follows_the_axis_after_saving(tmp_path, offset_acq
     assert tj.reconstruct(fit.scan).volume.shape == (1, 115, 115)
     # An explicit grid may have exactly the same dimensions as the initial default.
     fixed = tj.load(corrected, grid=scan.grid)
-    copy = tmp_path / f"fixed.{suffix}"
+    copy = tmp_path / "fixed.nxs"
     tj.save(copy, fixed)
-    if suffix == "nxs":
-        assert tj.inspect(corrected)["record"]["geometry"]["meta"]["grid_follows_detector"] is True
-        assert "grid_follows_detector" not in tj.inspect(copy)["record"]["geometry"]["meta"]
+    assert tj.inspect(corrected)["record"]["geometry"]["meta"]["grid_follows_detector"] is True
+    assert "grid_follows_detector" not in tj.inspect(copy)["record"]["geometry"]["meta"]
     assert tj.align(tj.load(copy), fit="center").scan.grid == scan.grid
 
 

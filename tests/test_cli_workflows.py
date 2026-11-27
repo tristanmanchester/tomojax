@@ -17,7 +17,6 @@ from ._helpers import (
     make_projection_dataset,
     write_projection_dataset,
     write_raw_nxtomo,
-    write_rc6_dataset,
 )
 
 pytestmark = pytest.mark.surface
@@ -27,7 +26,7 @@ def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp
     import tomojax as tj
     from tomojax._workflow import operations as _workflow
 
-    path, output, manifest = tmp_path / "scan.nxs", tmp_path / "result.nxs", tmp_path / "run.json"
+    path, output = tmp_path / "scan.nxs", tmp_path / "result.nxs"
     write_projection_dataset(path)
     automatic = {"status": "limited", "reasons": ["Rotation axis metadata is missing."]}
 
@@ -38,10 +37,10 @@ def test_recon_cli_defaults_defer_policy_and_report_limitations(monkeypatch, tmp
         return tj.Reconstruction(volume, scan.geometry, "fbp", {"automatic": automatic}, scan)
 
     monkeypatch.setattr(_workflow, "reconstruct_resolved", automatic_result)
-    assert main(["reconstruct", str(path), "-o", str(output), "--manifest", str(manifest)]) == 0
+    assert main(["reconstruct", str(path), "-o", str(output)]) == 0
     assert load_dataset(output).volume is not None
     assert "Rotation axis metadata is missing" in caplog.text
-    record = json.loads(manifest.read_text())["resolved_config"]
+    record = tj.inspect(output)["record"]["provenance"]["resolved_config"]
     assert record["reconstruction"]["automatic"] == automatic
 
 
@@ -101,10 +100,10 @@ def test_inspection_angle_range_uses_degrees_of_sample_frames_only(
 ) -> None:
     path = tmp_path / "scan.nxs"
     angles = np.asarray([30.0, 999.0, 60.0, -400.0])
-    write_rc6_dataset(path, projections=np.ones((4, 2, 4), np.float32), angles=angles)
+    write_projection_dataset(path, projections=np.ones((4, 2, 4), np.float32), angles=angles)
     with h5py.File(path, "a") as handle:
         handle["entry/instrument/detector/image_key"][...] = [0, 3, 0, 3]
-        stored = handle["entry/sample/transformations/rotation_angle"]
+        stored = handle["entry/sample/rotation_angle"]
         stored[...] = np.radians(angles) if units == "rad" else angles
         stored.attrs["units"] = units
     assert main(["inspect", str(path), "--json"]) == 0
@@ -119,7 +118,7 @@ def test_inspect_cli_exits_1_for_an_invalid_dataset(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     path = tmp_path / "scan.nxs"
-    write_rc6_dataset(path)
+    write_raw_nxtomo(path)
     with h5py.File(path, "a") as handle:
         del handle["/entry/sample/transformations/rotation_angle"]
 
@@ -198,14 +197,14 @@ def test_correct_declares_a_geometry_the_file_does_not_record(tmp_path, capsys):
     assert loaded.source.geometry_metadata.get("detector_center_status") == "provided"
 
 
-def test_import_cli_converts_nxtomo_to_npz(tmp_path: Path) -> None:
+def test_correct_cli_writes_a_native_scan(tmp_path: Path) -> None:
     nxs_path = tmp_path / "scan.nxs"
-    npz_path = tmp_path / "scan.npz"
+    copy_path = tmp_path / "corrected.nxs"
     write_projection_dataset(nxs_path)
 
-    assert main(["correct", str(nxs_path), "-o", str(npz_path)]) == 0
+    assert main(["correct", str(nxs_path), "-o", str(copy_path)]) == 0
 
-    dataset = load_dataset(npz_path)
+    dataset = load_dataset(copy_path)
     assert dataset.projections.shape == (2, 2, 4)
     np.testing.assert_allclose(dataset.angles, [0.0, 90.0])
 
@@ -290,7 +289,6 @@ def test_main_does_not_swallow_programmer_errors(
 def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> None:
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
-    manifest = tmp_path / "recon-manifest.json"
     config = tmp_path / "recon.toml"
     write_projection_dataset(scan)
     _ = config.write_text('scale = 0.5\nexterior = "zero"\n', encoding="utf-8")
@@ -307,7 +305,7 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
         "4",
         "2",
     ]
-    assert main([*args, "--config", str(config), "--manifest", str(manifest)]) == 0
+    assert main([*args, "--config", str(config)]) == 0
 
     loaded = load_dataset(recon)
     assert loaded.volume is not None
@@ -319,10 +317,12 @@ def test_recon_cli_executes_fbp_and_writes_volume_metadata(tmp_path: Path) -> No
     with h5py.File(recon) as handle:
         assert list(handle["entry/volume"].attrs["axes"]) == ["z", "y", "x"]
         embedded = json.loads(handle["entry/record"][()])["provenance"]
-        assert embedded["resolved_config"]["settings"] == {"scale": 0.5, "exterior": "zero"}
+        assert embedded["command"] == "tomojax reconstruct"
+        assert embedded["devices"]["devices"] and embedded["versions"]["python"]["version"]
     assert loaded.geometry_metadata["reconstruction_method"] == "fbp"
 
-    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    with h5py.File(recon) as file:
+        resolved = json.loads(file["entry/record"][()])["provenance"]["resolved_config"]
     assert resolved["method"] == "fbp"
     assert resolved["settings"] == {"scale": 0.5, "exterior": "zero"}
     assert loaded.geometry_metadata["reconstruction_info"]["config"]["exterior"] == "zero"
@@ -344,7 +344,6 @@ def test_recon_cli_runs_cgls_like_the_python_solver(
 ) -> None:
     scan = tmp_path / "scan.nxs"
     recon = tmp_path / "recon.nxs"
-    manifest = tmp_path / "recon-manifest.json"
     write_projection_dataset(scan)
     config = tmp_path / "cgls.toml"
     _ = config.write_text(f'exterior = "{exterior}"\n', encoding="utf-8")
@@ -360,11 +359,12 @@ def test_recon_cli_runs_cgls_like_the_python_solver(
         *(["--warm-start"] if warm_start else []),
     ]
     command = ["reconstruct", str(scan), "-o", str(recon), "--method", "cgls"]
-    assert main([*command, *args, "--manifest", str(manifest)]) == 0
+    assert main([*command, *args]) == 0
     loaded = load_dataset(recon)
     assert loaded.volume is not None
     assert loaded.volume.shape == (2, 4, 4)
-    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    with h5py.File(recon) as file:
+        resolved = json.loads(file["entry/record"][()])["provenance"]["resolved_config"]
     assert resolved["method"] == "cgls"
     assert resolved["reconstruction"]["warm_start"] == warm_start
     assert resolved["reconstruction"]["config"]["iterations"] == 6
@@ -505,11 +505,9 @@ def test_inspect_cli_previews_central_slices_of_xyz_disk_volumes(tmp_path: Path)
         for y in range(volume.shape[1]):
             for z in range(volume.shape[2]):
                 volume[x, y, z] = (100 * x) + (10 * y) + z
-    write_rc6_dataset(path, grid=Grid(3, 4, 5, 1, 1, 1))
-    with h5py.File(path, "r+") as file:
-        group = file.create_group("entry/processing/tomojax")
-        group.create_dataset("volume", data=volume)
-        group.attrs["volume_axes_order"] = "xyz"
+    dataset = make_projection_dataset(grid=Grid(3, 4, 5, 1, 1, 1))
+    dataset.volume = volume.transpose(2, 1, 0)
+    save_dataset(path, dataset)
 
     from tomojax.cli import _previews  # check-public-imports: allow-private
 
@@ -666,7 +664,7 @@ def test_cli_grid_resamples_the_cropped_scan_field_of_view(tmp_path, roi):
         assert not np.asarray(result.volume)[:, 0, 0].any()
 
 
-@pytest.mark.parametrize("auxiliary", ["--preview", "--manifest"])
+@pytest.mark.parametrize("auxiliary", ["--preview"])
 def test_recon_refuses_to_replace_an_existing_auxiliary_output(tmp_path: Path, auxiliary):
     scan = tmp_path / "scan.nxs"
     write_projection_dataset(scan)
@@ -773,7 +771,7 @@ def test_cli_rejects_duplicate_and_self_overwrite_outputs_even_with_force(
 
     same = tmp_path / "out.nxs"
     with pytest.raises(SystemExit) as exc:
-        main(["reconstruct", str(scan), "-o", str(same), "--manifest", str(same), "--force"])
+        main(["reconstruct", str(scan), "-o", str(same), "--preview", str(same), "--force"])
     assert exc.value.code == 2
     assert "duplicate output" in capsys.readouterr().err
 
@@ -926,7 +924,6 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
         assert exc.value.code == 2
 
     out = tmp_path / "aligned.nxs"
-    manifest = tmp_path / "align.json"
     assert (
         main(
             [
@@ -936,14 +933,13 @@ def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path
                 str(out),
                 "--method",
                 "opposite-views",
-                "--manifest",
-                str(manifest),
             ]
         )
         == 0
     )
     assert "Shared corrections  center" in capsys.readouterr().out
-    resolved = json.loads(manifest.read_text(encoding="utf-8"))["resolved_config"]
+    with h5py.File(out) as file:
+        resolved = json.loads(file["entry/record"][()])["provenance"]["resolved_config"]
     assert resolved["method"] == "opposite-views" and resolved["fit"] == ["center"]
     assert "explicit_cli_keys" in resolved and "effective_options" in resolved
 

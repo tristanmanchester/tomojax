@@ -115,7 +115,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `view` | Planes, projections, sinograms, differences, profiles, statistics, pose tables and pose plots, with marks and feature outlines |
 | `feature` | Make a named mask from a box, sphere, cylinder or prism, a region grown from seed points, or a band around another feature |
 | `evaluate` | Score candidate settings on held-out views |
-| `save`, `export` | Write a dataset or feature mask with its manifest and return the written `paths`, or [export a registered volume](export.md). Use `dry_run` to inspect destinations, axes, value mapping and space requirements |
+| `save`, `export` | Write a dataset or feature mask with its embedded processing record and return the written `paths`, or [export a registered volume](export.md). Use `dry_run` to inspect destinations, axes, value mapping and space requirements |
 | `control` | Cancel, pause or resume a session request, close a handle or restart the worker |
 | `python` | Run Python on the connected machine with live handles and `tj` in scope |
 | `submit`, `jobs`, `cancel_job` | Start, inspect or cancel a durable job on the connected machine |
@@ -131,7 +131,7 @@ Workflow `source` fields accept acquisition paths through the normal loader. For
 
 To view or backproject measured line integrals, use `open` and select the scan's `.projections`. For raw counts, open with `kind=frames` and select `.counts`. Use `inspect` with `preview=true` for a first look, or `preview` with `correction_preview` to compare raw and corrected rows.
 
-`view` and the `volume` field of `project` also accept saved TomoJAX volumes by path (`.nxs`, `.h5` or `.npz`). They use logical `(z, y, x)` order. The worker's `read` and `statistics` commands use the same references as `view` and can read a region of a saved volume or lazy frames handle in bounded tiles.
+`view` and the `volume` field of `project` also accept saved TomoJAX volumes by path (`.nxs` or `.h5`). They use logical `(z, y, x)` order. The worker's `read` and `statistics` commands use the same references as `view` and can read a region of a saved volume or lazy frames handle in bounded tiles.
 
 Handles last until you close them, the worker restarts, or the server exits. Save results you want to keep. An ID from an earlier session returns an error that lists the live handles.
 
@@ -176,6 +176,10 @@ Bands, feature outlines and side-by-side views require the same physical samplin
 For an inner rim one voxel thick, use `inner=-1, outer=0`. The space beyond every grid face is background, so the rim follows the feature even where it meets a face, edge or corner of the volume. An outer band includes only source voxels. A full-volume feature thus has an empty outer band, with count zero and null moments.
 
 ## Files
+
+A saved feature stores a compressed mask under `/entry/masks/<name>/data`.
+Its record holds the recipe, bounding box, coordinate axes and lineage. Reopen
+it with `kind="feature"` to view, export or use the mask again.
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A dry run releases its inputs on success or failure. Protection covers HDF5 links, virtual datasets, external raw storage, individual frame files and calibration from another scan. It also applies to sidecars and checkpoint directories. A conflicting path, including a symlink or hard link, returns an error naming the input. Choose a different destination. Each output is written beside its destination and moved into place once whole.
 

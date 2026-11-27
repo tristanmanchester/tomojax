@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from functools import partial
 import hashlib
@@ -21,7 +21,6 @@ from tomojax._scan.model import Alignment, Reconstruction, Scan, projection_reco
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import object_mapping
 from tomojax.core.input_files import input_hdf5, input_path, open_input_hdf5, reading
-from tomojax.core.registration import recorded_length_unit, volume_axes, volume_values
 from tomojax.geometry import Grid
 from tomojax.io.api import (
     ExportCrop,
@@ -32,11 +31,10 @@ from tomojax.io.api import (
     metadata_record,
     plan_export,
     registered_members,
-    saved_volume_grid,
     volume_entry,
 )
 from tomojax.io.projection_layout import MatlabFrames, ProjectionPixels, ProjectionStorage
-from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member
+from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage
 
 
 def inspect(path: str | PathLike[str]) -> Inspection:
@@ -309,6 +307,42 @@ def export_source(
     )
 
 
+def mask_export_source(
+    name: str,
+    registration: Array,
+    recipe: dict,
+    history: list,
+    read: Callable[[tuple[slice, ...]], np.ndarray],
+    coordinate: Callable[[Storage], np.ndarray],
+    identity: Callable[[], tuple[int, ...] | None] | None = None,
+) -> ExportSource:
+    """Export a stored or live mask with owned coordinates and the current operation."""
+    from tomojax._data import feature_record
+
+    def describe_mask(bounds: tuple[tuple[int, int], ...], _binning: int) -> dict[str, object]:
+        record = feature_record(registration, name, recipe, history)
+        for axis, (lo, hi) in zip(registration.axes, bounds, strict=True):
+            if isinstance(axis.coordinates, Coordinates):
+                key = "angles" if axis.name == "view" else axis.name
+                record["tables"][key] = {
+                    "values": coordinate(axis.coordinates.values)[lo:hi].tolist(),
+                    "unit": axis.unit,
+                }
+        return record
+
+    return ExportSource(
+        name,
+        registration.shape,
+        np.dtype(registration.dtype),
+        registration.axes,
+        "1",
+        "mask",
+        read,
+        describe_mask,
+        identity,
+    )
+
+
 @contextmanager
 def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[ExportSource, Array]]:
     """Read registered volume windows from the same open generation as the metadata."""
@@ -316,13 +350,42 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
     from tomojax._loading.loader import stored_scan
 
     with reading(path), open_input_hdf5(path) as file:
-        members = registered_members(file, path) if "tomojax_format" in file.attrs else {}
+        members = registered_members(file, path)
+        if "mask" in members:
+            from tomojax._data import open_record
+
+            record = open_record(file)
+            feature = record["feature"]
+            name = feature["name"]
+            if member not in (None, "mask", name):
+                raise ValueError(
+                    f"{path} has no {member} member to export; available: mask ({name})"
+                )
+            disk = members["mask"]
+            assert isinstance(disk.storage, Hdf5)
+            data = file[disk.storage.dataset]
+            assert isinstance(data, h5py.Dataset)
+
+            def coordinate(ref: Storage) -> np.ndarray:
+                assert isinstance(ref, Hdf5)
+                return np.asarray(file[ref.dataset])
+
+            yield (
+                mask_export_source(
+                    name,
+                    disk,
+                    feature["recipe"],
+                    [*record["history"], record["provenance"]],
+                    lambda region: np.asarray(data[region]),
+                    coordinate,
+                    lambda: hdf5_identity(data),
+                ),
+                disk,
+            )
+            return
         if member == "projections" or (member is None and members.keys() == {"projections"}):
             if "projections" not in members:
-                raise ValueError(
-                    f"{path} has no format-2 projections member. For an rc6 scan, "
-                    "save a new file with tj.save(new_path, tj.load(old_path))."
-                )
+                raise ValueError(f"{path} has no projections member")
             payload = read_format_2(file, include_volume=False, lazy_projections=True)
             selected = ProjectionStorage.from_payload(path, payload)
             if selected.domain == "counts":
@@ -332,7 +395,7 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
             scan = stored_scan(selected, pixels, angles=None, apply_poses=True)
             yield export_source(scan, samples=pixels), members["projections"]
             return
-        meta, data, order = volume_entry(file)
+        meta, data = volume_entry(file)
         geom = meta.geometry_meta or {}
         name = (
             "phantom"
@@ -343,25 +406,7 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
         )
         if member is not None and member != name:
             raise ValueError(f"{path} has no {member} member to export; available: {name}")
-        shape = tuple(data.shape[order.index(a)] for a in "zyx")
-        if members:
-            disk = members[name]
-            axes = disk.axes
-        else:
-            unit = recorded_length_unit(geom) or "scan_length"
-            grid = saved_volume_grid(meta.grid, geom) or Grid(
-                shape[2], shape[1], shape[0], 1.0, 1.0, 1.0
-            )
-            axes = volume_axes(grid, unit)
-            value_unit, domain = volume_values(data.dtype, unit, geom)
-            disk = Array(
-                Hdf5(str(path), "/entry/processing/tomojax/volume"),
-                data.shape,
-                data.dtype.str,
-                tuple(axes["zyx".index(a)] for a in order),
-                value_unit,
-                domain,
-            )
+        disk = members[name]
 
         from tomojax.core.host_volume import mapped_storage, release_planes
 
@@ -373,14 +418,13 @@ def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[Export
                 values = pixels[region].copy()
                 release_planes(pixels, region[0].start, region[0].stop)
                 return values
-            selection = tuple(region["zyx".index(a)] for a in order)
-            return np.asarray(data[selection]).transpose(*(order.index(a) for a in "zyx"))
+            return np.asarray(data[region])
 
         source = ExportSource(
             name,
-            shape,
+            data.shape,
             data.dtype,
-            axes,
+            disk.axes,
             disk.unit,
             disk.domain,
             read,

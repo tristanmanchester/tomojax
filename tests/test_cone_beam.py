@@ -541,9 +541,9 @@ def test_export_and_previews_refuse_an_untagged_volume_as_the_loader_does(
         file["entry/processing/tomojax/volume"] = volume.transpose(2, 1, 0)
     out = tmp_path / "out.raw"
     assert main(["export", str(path), "-o", str(out)]) == 1
-    assert "does not record its axis order" in capsys.readouterr().err
+    assert "rc6" in capsys.readouterr().err
     assert not out.exists()
-    with pytest.raises(ValueError, match="does not record its axis order"):
+    with pytest.raises(ValueError, match="rc6"):
         saved_plane(path, "z", 0)
 
 
@@ -723,20 +723,10 @@ def test_a_rolled_cone_scan_saves_and_loads_to_the_same_detector_frame(tmp_path)
     for got, want in pairs:
         np.testing.assert_allclose(got, want, atol=1e-12)
 
-    # Files written by 0.3 omit the signed detector-roll convention.
-    from ._helpers import write_rc6_dataset
-
-    write_rc6_dataset(
-        path,
-        projections=np.ones((2, 2, 3), np.float32),
-        grid=grid,
-        detector=detector,
-        geometry_type="cone",
-        geometry_metadata=geometry.geometry_metadata(),
-    )
+    # A record without the signed detector-roll convention is ambiguous.
     with h5py.File(path, "r+") as handle:
-        attrs = handle["entry/geometry"].attrs
-        attrs["geometry_meta_json"] = _without_marker(attrs["geometry_meta_json"])
+        record = handle["entry/record"]
+        record[()] = _without_marker(record[()])
     with pytest.raises(ValueError, match="TomoJAX 0.3 or earlier"):
         tj.load(path)
 

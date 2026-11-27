@@ -83,8 +83,8 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, met
         again = tj.reconstruct(item.scan, method, config=cfg)
         np.testing.assert_allclose(again.volume, item.volume, rtol=3e-5, atol=2e-6)
         assert item.info["truncation"] == pytest.approx(again.info["truncation"])
-    tj.save(tmp_path / "slab.npz", collected[0][1])
-    reloaded = tj.load_reconstruction(tmp_path / "slab.npz")
+    tj.save(tmp_path / "slab.nxs", collected[0][1])
+    reloaded = tj.load_reconstruction(tmp_path / "slab.nxs")
     np.testing.assert_array_equal(reloaded.volume, collected[0][1].volume)
 
 

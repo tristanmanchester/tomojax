@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 import h5py
 import numpy as np
 
-from tomojax._data import child_dataset, locate_frames
+from tomojax._data import child_dataset, locate_frames, native_file
 
 from ._acquisition import RawAcquisition
 from ._datasets import ProjectionDataset
@@ -108,11 +108,8 @@ def _layout(file: h5py.File, data_path: str | None) -> tuple[str, str, str, str,
     if len(entries) != 1:
         raise ValueError("Several NXtomo entries: pass data_path=... for the detector stack")
     entry = entries[0]
-    detector = file.get(entry + "/instrument/detector")
-    # TomoJAX's saved metadata/poses are owned by its dataset reader, not raw IO.
-    if entry + "/geometry" in file or (
-        detector is not None and "detector_meta_json" in detector.attrs
-    ):
+    geometry = file.get(entry + "/geometry")
+    if isinstance(geometry, h5py.Group) and "type" in geometry.attrs:
         return None
     where = data_path or next(
         (
@@ -200,7 +197,7 @@ def read_hdf5_acquisition(
     if not path.is_file() or not h5py.is_hdf5(path):
         return None
     with h5py.File(path, "r") as file:
-        if "tomojax_format" in file.attrs:
+        if native_file(file):
             return None
         layout = _layout(file, data_path)
         if layout is None:

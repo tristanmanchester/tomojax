@@ -60,7 +60,6 @@ class _Args(argparse.Namespace):
     region: Region | None
     grid: list[int] | None
     apply_poses: bool
-    manifest: str | None
     checkpoint: str | None
     dry_run: bool
     watch_dir: str | None
@@ -89,7 +88,7 @@ def build_parser() -> ProgressParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    _ = parser.add_argument("data", metavar="INPUT", help="Scan to align (.nxs, .h5, .npz)")
+    _ = parser.add_argument("data", metavar="INPUT", help="Scan to align (.nxs or .h5)")
     _ = parser.add_argument(
         "-o",
         "--output",
@@ -163,7 +162,6 @@ def build_parser() -> ProgressParser:
         default=True,
         help="Correct on top of saved poses (--no-apply-poses uses the nominal geometry)",
     )
-    _ = parser.add_argument("--manifest", metavar="JSON", help="Also save a JSON record of the run")
     add_checkpoint(parser)
     add_config(parser, settings=_config_settings)
     _ = parser.add_argument(
@@ -253,7 +251,6 @@ def _resolved_settings(
     return {
         "input_path": args.data,
         "output_path": args.out,
-        "manifest_path": args.manifest,
         "config_path": metadata["config_path"],
         "config_file_values": metadata["config_file_values"],
         "explicit_cli_keys": metadata["explicit_cli_keys"],
@@ -394,13 +391,13 @@ def _run(
 
     if not Path(args.data).exists():
         raise FileNotFoundError(f"input not found: {args.data}")
-    outputs = [] if args.dry_run else [args.out, args.manifest]
+    outputs = [] if args.dry_run else [args.out]
     check_paths(parser, inputs=[args.data, args.config], outputs=outputs, force=args.force)
     progress.check_canceled()
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
     if not args.dry_run:
-        check_paths(parser, outputs=[args.out, args.manifest], force=args.force)
+        check_paths(parser, outputs=[args.out], force=args.force)
     if watch is not None:
         watch.check_destinations()
     work = partial(_solve, args, metadata, config, watch, scan)
@@ -436,21 +433,18 @@ def _solve(
             result = align_resolved(scan, work, checkpoint=args.checkpoint)
     progress.check_canceled()
     assert args.out is not None
-    from tomojax.cli.manifest import recording, save_manifest
+    from tomojax.cli._provenance import recording
 
     masked = isinstance(work, JointSelection) and work.cylinder is not None
     resolved = _resolved_settings(
         args, metadata, scan, result, fit=fit, masked=masked, method=method
     )
-    with recording("align", args, resolved) as manifest:
+    with recording("align", args, resolved):
         tj.save(args.out, result)
-    if args.manifest is not None:
-        progress.check_canceled()
-        save_manifest(str(args.manifest), manifest)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 
-        outputs = tuple(p for p in (args.out, args.manifest) if p is not None)
+        outputs = (args.out,)
         return saved_result(args.out, result, method=method, outputs=outputs)
     print(f"wrote {args.out} with fitted {', '.join(fit)} for {len(scan.angles)} views")
     for line in _fit_summary(result):

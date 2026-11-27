@@ -243,7 +243,7 @@ def test_simulated_data_on_a_gpu_agree_with_float32_on_the_cpu(
 
 
 @pytest.mark.parametrize(
-    ("geometry", "suffix"), [("parallel", ".nxs"), ("cone", ".npz"), ("lamino", ".nxs")]
+    ("geometry", "suffix"), [("parallel", ".nxs"), ("cone", ".nxs"), ("lamino", ".nxs")]
 )
 def test_true_poses_reproduce_the_simulated_projections(tmp_path, geometry, suffix):
     import tomojax as tj

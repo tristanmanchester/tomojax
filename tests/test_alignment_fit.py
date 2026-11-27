@@ -469,11 +469,10 @@ def test_a_shared_tilt_or_roll_is_a_per_view_direction_the_fit_gauge_removes(nam
     assert left < 10 * eps  # second order; R1b's rigid gauge leaves it whole (about 1)
 
 
-@pytest.mark.parametrize("suffix", ["npz", "nxs"])
-def test_load_overrides_keep_the_acquisition_gap_and_restart(tmp_path, suffix):
+def test_load_overrides_keep_the_acquisition_gap_and_restart(tmp_path):
     import tomojax as tj
 
-    path = tmp_path / f"scan.{suffix}"
+    path = tmp_path / "scan.nxs"
     grid, detector = tj.Grid(4, 4, 2, 1, 1, 1), tj.Detector(4, 2, 1, 1)
     geometry = tj.ParallelGeometry(grid, detector, np.arange(6) * 30.0)
     positions = [0.5, 1.5, 10.5] * 2

@@ -7,7 +7,6 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Workflow | Entry point |
 | --- | --- |
 | Inspect, validate, and preview datasets (including loader findings, slice previews, center sweeps, and checkpoint directories) | `tomojax inspect INPUT [--json] [--preview-dir DIR] [--slice AXIS=INDEX] [--centers SPEC]`, `tj.inspect(path)`, or worker/MCP `inspect` |
-| Convert dataset containers (`.npz`, `.nxs`, `.h5`) | `tomojax correct scan.npz -o scan.nxs` |
 | Preview corrections on a row band before writing | `tomojax correct raw.nxs --dry-run --preview band.png` or `tomojax.interactive.correction_preview` |
 | Load and correct HDF5 raw frames (NXtomo, NeXus scan files, Data Exchange, Diamond/GDA) | `tomojax correct raw.nxs -o corrected.nxs` or `tj.load("raw.nxs")` |
 | Load and correct TIFF stacks (parallel, laminography, cone) | `tomojax correct ./projections --flats ./flats --darks ./darks --angles angles.csv --pixel-size ... -o corrected.nxs` |
@@ -37,7 +36,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 - **Missing rotation axis:** a file that records no rotation axis or pixel scale warns on load (`geometry_status="not_recorded"`, shown under `loading` in `inspect`). Reconstruction and alignment refuse it until geometry is declared: pass `geometry=...` to `tj.load`, `--geometry parallel` (or `lamino` / `cone`) to `tomojax correct`, or `geometry: {"kind": "parallel"}` to worker/MCP `open`.
 - **Missing angles or laminography tilt:** raise an error naming the argument (`angles=` or `geometry=`) rather than assuming defaults.
 - **Missing flats or darks:** supply `flats=` (frames, another scan's HDF5/NeXus file whose flat frames are extracted, or a scalar white level) and `darks=` (frames, another scan's file, or a scalar dark level). Passing `flats=` or `darks=` on an unlabeled stack identifies it as detector counts regardless of storage dtype (including `float32`/`float64`); files with a recorded log correction or PSI phase measurement reject flat/dark calibration. Exposure normalization requires flat frames (not a white level) and both durations. Nikon and SkyScan require explicit `darks=` (SkyScan also requires `flats=`); Zeiss skips darks when `AcquisitionSettings/CameraStaticBackground = 1`.
-- **Dataset path selectors and geometry overrides:** `data_path`, `image_key_path`, and `angles_path` select HDF5 arrays in both raw acquisitions and saved scans (eager and lazy loads, CLI, worker, and MCP); Bliss accepts `data_path` for its sequence, and fixed-storage formats (TIFF, NPZ, MATLAB phase, Nikon, SkyScan, Zeiss, EDF) reject them. Geometry overrides on load preserve recorded `view_positions` (acquisition gaps and restarts).
+- **Dataset path selectors and geometry overrides:** `data_path`, `image_key_path`, and `angles_path` select HDF5 arrays in both raw acquisitions and saved scans (eager and lazy loads, CLI, worker, and MCP); Bliss accepts `data_path` for its sequence, and fixed-storage formats (TIFF, MATLAB phase, Nikon, SkyScan, Zeiss, EDF) reject them. Geometry overrides on load preserve recorded `view_positions` (acquisition gaps and restarts).
 - **Bracketing flat sets:** multi-frame flat sets before and after a scan default to `flat_weights="views"` ([flat fields](../src/tomojax/corrections/README.md#flat-fields)), weighting local texture from a sample of the views while interpolating common row gain by position (using local flat noise so narrow stable strips remain effective, raising the common level over 16-row bands where views transmit more than the inferred beam, and masking pixels at or below the dark count before taking logarithms); single-frame sets interpolate by position. When views move the flat by more than 1% over more than 1% of the detector, TomoJAX warns that the views do not follow the flat sets' positions, explains that a shadow covering both flat sets with no open-beam views leaves the incident intensity uncertain, and names both remedies: borrowing clean flats from a matching scan with `flats=` (`--flats`), or passing `flat_weights="position"` (`--flat-weights position` on `tomojax correct`, or `flat_weights: "position"` on worker/MCP `correct`, `reconstruct_slabs`, and `correction_preview`).
 - **Cropping, binning, and saved grids:** compressed TIFF crops decode only intersecting strips or tiles. A saved scan records whether its grid was derived from the detector or stated by the file or caller: a detector-derived grid follows detector binning (`Frames.corrected(binning=...)` and `Scan.binned()`), cropping, and full-turn center fits even after saving and reopening, while a stated grid keeps its extent and sampling unless overridden with `grid=`.
 
@@ -46,8 +45,10 @@ This page lists supported workflows, acquisition formats, and numerical backends
 `tj.save` writes scans, reconstructions, alignments and simulations as
 format-2 NeXus in `.nxs`, `.nx`, `.h5`, `.hdf` or `.hdf5` files. NeXus viewers
 can open the default array at its physical coordinates. `tj.inspect` reports
-the file format, arrays and processing record. This release also reads files
-written by 1.0.0rc6 for migration.
+the file format, arrays and processing record. Use the format-2 migration
+release (build `4378e691`) to open rc6 HDF5 or NPZ datasets and re-save them
+as NeXus before upgrading. Worker and MCP feature masks use the same container.
+Their array lives under `/entry/masks/<name>/data` and the record holds the recipe.
 
 ## Acquisition formats
 

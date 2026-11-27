@@ -63,7 +63,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     def run() -> Result | None:
         data, out = Path(args.data), Path(args.out)
         check_paths(parser, inputs=[data])
-        from tomojax.cli.manifest import recording
+        from tomojax.cli._provenance import recording
 
         with (
             recording("export", args, {}),

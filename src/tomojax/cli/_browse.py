@@ -17,36 +17,19 @@ import numpy as np
 
 from tomojax.cli import execution as ex, operations as op, products as p
 from tomojax.cli._arguments import explicit_dataset
-from tomojax.cli._features import FEATURE_GROUP, saved_mask_metadata
 from tomojax.cli._frame_reads import frame_pixels, windowed
 from tomojax.cli._handles import owned, stage_array
 from tomojax.cli._planes import READ_BYTES, plane_windows, window
-from tomojax.cli._results import disk_volume, stored_grid
 from tomojax.core.array_grid import Grid, published, require_same_grid
 from tomojax.core.host_volume import host_array, release
 from tomojax.errors import InvalidParameter
-from tomojax.io.api import registered_members, saved_volume_grid
-from tomojax.io.projection_layout import saved_npz_layout
+from tomojax.io.api import registered_members
 from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage, Uniform
 
 if TYPE_CHECKING:
     import jax
 
     from tomojax.cli._frame_reads import WindowedFrames
-
-
-class SavedVolume:
-    """Translate logical (z, y, x) slices to HDF5 hyperslabs before reading."""
-
-    def __init__(self, data: h5py.Dataset, axes: str) -> None:
-        self.data = data
-        self.axes = axes
-        self.to_zyx = tuple(axes.index(axis) for axis in "zyx")
-        self.shape = tuple(data.shape[i] for i in self.to_zyx)
-
-    def __getitem__(self, key: tuple[slice, ...]) -> np.ndarray:
-        stored = tuple(key["zyx".index(axis)] for axis in self.axes)
-        return np.asarray(self.data[stored]).transpose(self.to_zyx)
 
 
 @contextmanager
@@ -76,20 +59,7 @@ def source_array(
                     ):
                         yield data, array
                         return
-            if (
-                "/" + source.dataset.lstrip("/") == "/entry/processing/tomojax/volume"
-                and "volume_axes_order" in file["/entry/processing/tomojax"].attrs
-            ):
-                grid, _, geom_meta, axes = stored_grid(file, path)
-                yield data, disk_volume(path, grid, axes, data.shape, data.dtype.str, geom_meta)
-            elif (
-                data.name == f"{FEATURE_GROUP}/mask" and "registration" in file[FEATURE_GROUP].attrs
-            ):
-                group = file[FEATURE_GROUP]
-                assert isinstance(group, h5py.Group)
-                yield data, saved_mask_metadata(group, source)
-            else:
-                yield data, indexed(source, data)
+            yield data, indexed(source, data)
         return
     data = np.load(path, mmap_mode="r", allow_pickle=False)
     lease = context.leases.get(source)
@@ -133,26 +103,6 @@ def saved_volume(path: Path, field: str) -> Iterator[tuple[Any, Array]]:
                         assert isinstance(array.storage, Hdf5)
                         yield file[array.storage.dataset], array
                         return
-            data = file.get("/entry/processing/tomojax/volume")
-            if isinstance(data, h5py.Dataset):
-                grid, _, geom_meta, axes = stored_grid(file, path)
-                volume = SavedVolume(data, axes)
-                yield (
-                    volume,
-                    disk_volume(path, grid, "zyx", volume.shape, volume.data.dtype.str, geom_meta),
-                )
-                return
-    elif path.is_file() and path.suffix.lower() == ".npz":
-        record, arrays = saved_npz_layout(path, volume_only=True)
-        if (volume := arrays.get("volume")) is not None:
-            grid = saved_volume_grid(record.grid, record.geometry_metadata)
-            yield (
-                volume,
-                disk_volume(
-                    path, grid, "zyx", volume.shape, volume.dtype.str, record.geometry_metadata
-                ),
-            )
-            return
     raise InvalidParameter(field, op.ACQUISITION_ARRAY_ERROR)
 
 
@@ -246,7 +196,7 @@ def browse(
 
 def read_window(
     context: ex.ExecutionContext,
-    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
+    data: ex.Readable | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
     meta: Array,
     ranges: tuple[range, ...],
 ) -> Array:
@@ -337,7 +287,7 @@ def exact_percentiles(
 def statistics(
     request: op.Statistics,
     context: ex.ExecutionContext,
-    data: ex.Readable | SavedVolume | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
+    data: ex.Readable | h5py.Dataset | jax.Array | np.ndarray | WindowedFrames,
     meta: Array,
     ranges: tuple[range, ...],
 ) -> p.StatisticsResult:

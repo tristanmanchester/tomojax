@@ -1,4 +1,4 @@
-"""Projection datasets on disk: load, save, validate and convert them.
+"""Projection datasets on disk: load, save and validate them.
 
 Raw detector frames are read with :func:`tomojax.load_frames` and corrected
 with :mod:`tomojax.corrections`. Expert helpers (acquisition readers, NXtomo

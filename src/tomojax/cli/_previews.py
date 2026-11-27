@@ -37,7 +37,6 @@ if TYPE_CHECKING:
 
 type Axis = Literal["z", "y", "x"]
 
-_VOLUME_PATH = "/entry/processing/tomojax/volume"
 _NUMBER = r"[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?"
 _SPEC = re.compile(rf"^{_NUMBER}(:{_NUMBER}:{_NUMBER}|(,{_NUMBER})*)$")
 _PIXELS = (Registered("row", "image", "px", Uniform(0, 1)),) * 2  # samples kept as they are
@@ -92,7 +91,7 @@ def has_saved_volume(path: Path) -> bool:
             from tomojax.io.api import registered_members
 
             return bool(registered_members(file, path).keys() & {"volume", "image", "phantom"})
-        return isinstance(file.get(_VOLUME_PATH), h5py.Dataset)
+        return False
 
 
 def projection_image(path: Path) -> np.ndarray | None:
@@ -102,7 +101,7 @@ def projection_image(path: Path) -> np.ndarray | None:
     raw = read_acquisition(path)
     if raw is not None:
         samples = raw.counts
-    elif path.suffix.lower() in (".mat", ".npz"):
+    elif path.suffix.lower() == ".mat":
         record, samples = saved_projection_layout(path)
         if samples is not None and record.image_key is not None:
             samples = samples[record.image_key == 0]
@@ -113,21 +112,13 @@ def projection_image(path: Path) -> np.ndarray | None:
     return np.asarray(samples[samples.shape[0] // 2], np.float32)
 
 
-def _saved_shape(path: Path) -> tuple[str, tuple[int, ...]]:
-    with h5py.File(path, "r") as file:
-        _, volume, order = volume_entry(file)
-        return order, tuple(int(n) for n in volume.shape)
-
-
 def saved_plane(path: Path, axis: Axis, index: int) -> np.ndarray:
-    """Plane ``index`` across ``axis`` of a saved volume, shown as (z, y, x) minus ``axis``."""
+    """Plane across one axis of a saved (z, y, x) volume."""
     with h5py.File(path, "r") as file:
-        _, volume, order = volume_entry(file)
+        _, volume = volume_entry(file)
         key: list[int | slice] = [slice(None)] * 3
-        key[order.index(axis)] = index
-        plane = np.asarray(volume[tuple(key)], np.float32)
-    remaining = [a for a in order if a != axis]
-    return np.transpose(plane, [remaining.index(a) for a in "zyx" if a != axis])
+        key["zyx".index(axis)] = index
+        return np.asarray(volume[tuple(key)], np.float32)
 
 
 def _picture(image: np.ndarray, label: str) -> Image.Image:
@@ -167,8 +158,9 @@ def saved_requests(
     path: Path, requests: Sequence[tuple[Axis, int]] | None
 ) -> list[tuple[Axis, int]]:
     """The planes of a saved reconstruction to show (its central planes by default), checked."""
-    order, shape = _saved_shape(path)
-    sizes = dict(zip(order, shape, strict=True))
+    with h5py.File(path, "r") as file:
+        _, volume = volume_entry(file)
+        sizes = dict(zip("zyx", volume.shape, strict=True))
     central: list[tuple[Axis, int]] = [(axis, sizes[axis] // 2) for axis in ("z", "y", "x")]
     wanted = list(requests or central)
     for axis, index in wanted:

@@ -176,7 +176,7 @@ def test_correction_parameters_must_be_finite(step: type[Step], field: str, valu
 @pytest.mark.numerical
 def test_posed_multi_orbit_selection_keeps_the_original_forward_and_transpose(tmp_path):
     scan = _scan(segmented=True)
-    path = tmp_path / "scan.npz"
+    path = tmp_path / "scan.nxs"
     tj.save(path, scan)
     from tomojax.io import load_dataset
 
@@ -185,7 +185,7 @@ def test_posed_multi_orbit_selection_keeps_the_original_forward_and_transpose(tm
     poses = np.arange(36, dtype=np.float32).reshape(6, 6) / 1000
     record.align_params = poses
     record.align_gauge = {"pose_translation_frame": "detector"}
-    posed = tmp_path / "posed.npz"
+    posed = tmp_path / "posed.nxs"
     save_dataset(posed, record)
     scan = tj.load(posed)
     kept = np.asarray([1, 3, 5])

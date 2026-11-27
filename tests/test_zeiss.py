@@ -671,8 +671,7 @@ def shifted_zeiss(tmp_path):
 
 
 @pytest.mark.parametrize("cone", [False, True])
-@pytest.mark.parametrize("extension", ["npz", "nxs"])
-def test_detector_override_preserves_saved_rays_and_poses(tmp_path, shifted_zeiss, extension, cone):
+def test_detector_override_preserves_saved_rays_and_poses(tmp_path, shifted_zeiss, cone):
     from dataclasses import replace
 
     scan = shifted_zeiss(cone)
@@ -681,7 +680,7 @@ def test_detector_override_preserves_saved_rays_and_poses(tmp_path, shifted_zeis
     if cone:
         # Concatenating selections can put views in a different order from either source file.
         before = tj.Scan.combine([before.selected([1]), before])
-    path = tmp_path / f"edited.{extension}"
+    path = tmp_path / "edited.nxs"
     tj.save(path, before)
     after = tj.load(path, detector=before.detector)
     np.testing.assert_array_equal(after.projections, before.projections)

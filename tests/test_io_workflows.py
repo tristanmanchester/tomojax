@@ -21,7 +21,6 @@ from tomojax.io import (
     validate_dataset,
 )
 from tomojax.io.api import (
-    convert_dataset,
     inspect_dataset,
     load_nxtomo,
     locate_frames,
@@ -103,64 +102,42 @@ def test_json_normalization_reports_array_conversion_failures() -> None:
         normalize_json(value)
 
 
-def test_dataset_roundtrips_npz_and_converts_to_nxtomo(tmp_path: Path) -> None:
-    npz_path = tmp_path / "scan.npz"
-    nxs_path = tmp_path / "scan.nxs"
-    dataset = make_projection_dataset()
-
-    save_dataset(npz_path, dataset)
-    loaded_npz = load_dataset(npz_path)
-    convert_dataset(npz_path, nxs_path)
-    loaded_nxs = load_dataset(nxs_path)
-
-    np.testing.assert_allclose(loaded_npz.projections, dataset.projections)
-    np.testing.assert_allclose(loaded_nxs.projections, dataset.projections)
-    assert validate_dataset(nxs_path)["issues"] == []
+def test_numpy_archives_are_refused_at_the_native_file_boundary(tmp_path):
+    path = tmp_path / "scan.npz"
+    with pytest.raises(ValueError, match="path ending in"):
+        save_dataset(path, make_projection_dataset())
+    assert not path.exists()
+    np.savez(path, projections=np.array([{}], dtype=object))
+    for read in (load_dataset, tj.load):
+        with pytest.raises(ValueError, match="unsupported|unrecognized|Unsupported"):
+            read(path)
 
 
-def test_files_keep_their_angle_and_detector_center_keys(tmp_path: Path) -> None:
-    old_path = tmp_path / "old.npz"
-    detector = {"nu": 4, "nv": 2, "du": 1.0, "dv": 1.0, "det_center": [0.5, -1.0]}
-    np.savez_compressed(
-        old_path,
-        projections=np.zeros((2, 2, 4), np.float32),
-        thetas_deg=np.asarray([0.0, 90.0], np.float32),
-        detector=json.dumps(detector),
-        geometry_type="parallel",
-    )
-
-    loaded = load_dataset(old_path)
-
-    np.testing.assert_allclose(loaded.angles, [0.0, 90.0])
-    assert loaded.detector == Detector(nu=4, nv=2, du=1.0, dv=1.0, center=(0.5, -1.0))
-
-    npz_path, nxs_path = tmp_path / "new.npz", tmp_path / "new.nxs"
-    save_dataset(npz_path, loaded)
-    save_dataset(nxs_path, loaded)
-    with np.load(npz_path, allow_pickle=False) as saved:
-        np.testing.assert_allclose(saved["thetas_deg"], [0.0, 90.0])
-        assert json.loads(saved["detector"].item())["det_center"] == [0.5, -1.0]
-    with h5py.File(nxs_path, "r") as saved:
-        angles = saved["/entry/sample/rotation_angle"][()]
-        np.testing.assert_allclose(angles, [0.0, 90.0])
-        meta = json.loads(saved["entry/record"][()])["geometry"]["detector"]
-        assert meta["det_center"] == [0.5, -1.0]
-    assert load_dataset(npz_path).detector == loaded.detector
-    assert load_dataset(nxs_path).detector == loaded.detector
+def test_files_keep_their_angle_and_detector_center_keys(tmp_path):
+    path = tmp_path / "scan.nxs"
+    detector = Detector(4, 2, 1, 1, center=(0.5, -1))
+    write_projection_dataset(path, detector=detector)
+    with h5py.File(path) as file:
+        np.testing.assert_array_equal(file["entry/sample/rotation_angle"], [0, 90])
+        assert json.loads(file["entry/record"][()])["geometry"]["detector"]["det_center"] == [
+            0.5,
+            -1,
+        ]
+    assert load_dataset(path).detector == detector
 
 
-def test_a_saved_volume_without_its_axis_order_is_refused(tmp_path: Path) -> None:
-    # The shape cannot say the order (a cube fits every order, and a guess from a non-cube
-    # is still a guess), so a volume whose file does not record it does not load.
-    path = tmp_path / "volume.nxs"
-    write_rc6_dataset(path)
-    with h5py.File(path, "a") as file:
-        file["entry/processing/tomojax/volume"] = np.zeros((3, 3, 3), dtype=np.float32)
-    with pytest.raises(ValueError, match="does not record its axis order"):
-        load_nxtomo(str(path))
+def test_rc6_native_files_name_the_migration_build_but_external_nexus_still_loads(tmp_path):
+    legacy = tmp_path / "old.nxs"
+    write_rc6_dataset(legacy)
+    for read in (load_dataset, load_nxtomo, tj.load, tj.load_frames, tj.inspect):
+        with pytest.raises(ValueError, match="rc6.*re-save.*4378e691"):
+            read(legacy)
+    external = tmp_path / "external.nxs"
+    write_raw_nxtomo(external)
+    np.testing.assert_allclose(tj.load(external).projections[:, 0, 0], -np.log([0.4, 0.8]))
 
 
-def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
+def test_copy_metadata_preserves_canonical_volume_values(tmp_path: Path) -> None:
     original_path = tmp_path / "original.nxs"
     resaved_path = tmp_path / "resaved.nxs"
     dataset = make_projection_dataset(grid=Grid(4, 3, 2, 1, 1, 1))
@@ -168,7 +145,6 @@ def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
 
     save_dataset(original_path, dataset)
     loaded = load_nxtomo(str(original_path))
-    assert loaded.disk_volume_axes_order == "zyx"
 
     save_nxtomo(
         resaved_path,
@@ -177,7 +153,7 @@ def test_copy_metadata_preserves_disk_volume_axes_order(tmp_path: Path) -> None:
     )
 
     resaved = load_nxtomo(str(resaved_path))
-    assert resaved.disk_volume_axes_order == "zyx"
+    np.testing.assert_array_equal(resaved.volume, dataset.volume)
 
 
 def test_copy_metadata_copies_array_backed_fields(tmp_path: Path) -> None:
@@ -283,7 +259,7 @@ def test_validate_dataset_reports_schema_failures(tmp_path: Path) -> None:
 
 def test_validate_dataset_reports_scalar_axis_datasets(tmp_path: Path) -> None:
     path = tmp_path / "scalar_axes.nxs"
-    write_rc6_dataset(path)
+    write_raw_nxtomo(path)
     with h5py.File(path, "a") as handle:
         detector = handle["entry/instrument/detector"]
         del detector["image_key"]
@@ -360,25 +336,6 @@ def test_a_volume_is_written_in_tiles_without_a_transposed_copy(
         assert h5py.File(path, "r")["/entry/volume/data"].shape == volume.shape
 
 
-@pytest.mark.parametrize("axes", ["xyz", "xzy", "yxz", "yzx", "zxy", "zyx"])
-def test_external_volume_axes_are_normalized_and_saved_as_zyx(tmp_path, axes):
-    path, copied = tmp_path / "external.nxs", tmp_path / "copy.nxs"
-    volume = np.arange(60, dtype=np.float32).reshape(3, 4, 5)
-    write_rc6_dataset(path, grid=Grid(5, 4, 3, 1, 1, 1))
-    with h5py.File(path, "r+") as file:
-        group = file.create_group("entry/processing/tomojax")
-        group.create_dataset("volume", data=volume.transpose(tuple("zyx".index(a) for a in axes)))
-        group.attrs["volume_axes_order"] = axes
-    loaded = load_dataset(path)
-    np.testing.assert_array_equal(loaded.volume, volume)
-    assert loaded.volume.flags.c_contiguous
-    save_dataset(copied, loaded)
-    with h5py.File(copied) as file:
-        group = file["entry/volume"]
-        assert list(group.attrs["axes"]) == ["z", "y", "x"]
-        np.testing.assert_array_equal(group["data"], volume)
-
-
 def test_geometry_volume_shape_is_zyx_but_grid_override_remains_xyz():
     from tomojax.io import build_geometry_from_dataset_metadata
 
@@ -388,49 +345,19 @@ def test_geometry_volume_shape_is_zyx_but_grid_override_remains_xyz():
     assert inferred == explicit and (inferred.nx, inferred.ny, inferred.nz) == (5, 4, 3)
 
 
-def test_single_sinogram_npz_load_infers_one_slice_and_saves_fixed_rank(tmp_path):
-    import tomojax as tj
-
+def test_single_sinogram_load_infers_one_slice_and_saves_fixed_rank(tmp_path):
     data = np.arange(30, dtype=np.float32).reshape(3, 10)
-    source, target = tmp_path / "slice.npz", tmp_path / "slice.nxs"
-    np.savez(
-        source,
-        projections=data,
-        thetas_deg=[0.0, 60.0, 120.0],
-        detector=json.dumps(Detector(10, 1, 0.7, 0.9).to_dict()),
-    )
-    scan = tj.load(source)
-    assert (scan.grid.nx, scan.grid.ny, scan.grid.nz) == (10, 10, 1)
-    np.testing.assert_array_equal(scan.projections, data[:, None])
+    path = tmp_path / "external.h5"
+    with h5py.File(path, "w") as file:
+        file["entry/instrument/detector/data"] = data
+        file["entry/sample/rotation_angle"] = [0, 60, 120]
+        file["entry/sample/rotation_angle"].attrs["units"] = "degree"
+    scan = tj.load_frames(path, detector=Detector(10, 1, 0.7, 0.9), flats=100, darks=0).corrected()
+    assert scan.grid.shape == (1, 10, 10)
+    np.testing.assert_allclose(scan.projections[1:], -np.log(data[1:, None] / 100))
+    target = tmp_path / "slice.nxs"
     tj.save(target, scan)
-    assert not validate_dataset(target)["issues"]
     np.testing.assert_array_equal(tj.load(target).projections, scan.projections)
-
-
-def _coordinate_volume(nz: int, ny: int, nx: int) -> np.ndarray:
-    z, y, x = np.indices((nz, ny, nx))
-    return (100 * x + 10 * y + z).astype(np.float32)
-
-
-def test_npz_volume_round_trips_and_an_untagged_one_is_refused(tmp_path: Path):
-    volume = _coordinate_volume(3, 4, 3)
-    grid, detector = Grid(3, 4, 3, 1, 1, 1), Detector(7, 6, 1, 1)
-    saved = ProjectionDataset(
-        projections=np.zeros((2, 6, 7), np.float32),
-        angles=np.asarray([0.0, 90.0], np.float32),
-        volume=volume,
-        detector=detector,
-        grid=grid,
-    )
-    save_dataset(tmp_path / "new.npz", saved)
-    np.testing.assert_array_equal(load_dataset(tmp_path / "new.npz").volume, volume)
-
-    with np.load(tmp_path / "new.npz", allow_pickle=False) as stored:
-        fields = {key: stored[key] for key in stored.files if key != "volume_axes_order"}
-    fields["volume"] = volume.transpose(2, 1, 0)  # the same shape, read wrongly
-    np.savez_compressed(tmp_path / "old.npz", **fields)
-    with pytest.raises(ValueError, match="axes tag"):
-        load_dataset(tmp_path / "old.npz")
 
 
 def _labeled_dataset(values, key):
@@ -447,9 +374,8 @@ def _labeled_dataset(values, key):
     return ProjectionDataset.from_nxtomo(LoadedNXTomo(np.array(projections), metadata))
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path, suffix: str) -> None:
-    path = tmp_path / f"raw{suffix}"
+def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path) -> None:
+    path = tmp_path / "raw.nxs"
     save_dataset(path, _labeled_dataset([5, 11, 9, 1], [0, 1, 0, 2]))
     scan = tj.load(path)
     np.testing.assert_allclose(
@@ -460,9 +386,8 @@ def test_saved_image_keys_split_raw_frames_in_every_container(tmp_path: Path, su
     assert frames.views == 2 and frames.flats is not None and frames.darks is not None
 
 
-@pytest.mark.parametrize("suffix", [".nxs", ".npz"])
-def test_saved_image_keys_drop_invalid_processed_frames(tmp_path: Path, suffix: str) -> None:
-    path = tmp_path / f"processed{suffix}"
+def test_saved_image_keys_drop_invalid_processed_frames(tmp_path: Path) -> None:
+    path = tmp_path / "processed.nxs"
     save_dataset(path, _labeled_dataset([0.5, 7.0, 0.25], [0, 3, 0]))
     scan = tj.load(path)
     np.testing.assert_allclose(np.asarray(scan.projections)[:, 0, 0], [0.5, 0.25])
@@ -517,40 +442,13 @@ def test_tiled_writes_read_the_source_one_bounded_tile_at_a_time(
     assert sum(source.reads) == volume.size
 
 
-@pytest.mark.parametrize("member", ["projections", "volume"])
-def test_npz_rejects_object_arrays(tmp_path, member):
-    fields = {"volume": np.zeros((2, 3, 4)), "volume_axes_order": "zyx"}
-    fields[member] = np.array([{}], dtype=object)
-    path = tmp_path / "object.npz"
-    np.savez(path, **fields)
-    with pytest.raises(ValueError, match="(?i)object"):
-        load_dataset(path)
-    with pytest.raises(ValueError, match="(?i)object|dtype"):
-        tj.inspect(path)
-
-
-def test_npz_inspection_reports_finite_sample_angle_range(tmp_path):
-    path = tmp_path / "raw.npz"
-    np.savez_compressed(
-        path,
-        projections=np.zeros((5, 1, 8), np.float32),
-        thetas_deg=[180, 5, np.nan, 90, 180],
-        image_key=[1, 0, 0, 0, 2],
-    )
+def test_inspection_reports_sample_angle_range(tmp_path):
+    path = tmp_path / "raw.nxs"
+    write_raw_nxtomo(path)
+    with h5py.File(path, "r+") as file:
+        file["entry/sample/transformations/rotation_angle"][...] = [5, np.nan, 90, 180]
     angles = tj.inspect(path)["angles"]
-    assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (5, 5, 90, 85)
-
-
-def test_npz_inspection_accepts_angles_recorded_only_for_sample_views(tmp_path):
-    path = tmp_path / "raw.npz"
-    np.savez_compressed(
-        path,
-        projections=np.zeros((6, 1, 8), np.float32),
-        thetas_deg=[0, 30, 60, 90],
-        image_key=[1, 0, 0, 0, 0, 2],
-    )
-    angles = tj.inspect(path)["angles"]
-    assert (angles["count"], angles["min"], angles["max"], angles["coverage"]) == (4, 0, 90, 90)
+    assert (angles["min"], angles["max"], angles["coverage"]) == (5, 90, 85)
 
 
 def test_a_broken_frame_label_link_is_an_error_not_missing_labels(tmp_path: Path) -> None:
@@ -604,12 +502,10 @@ def test_dataset_readers_keep_their_inputs_protected(tmp_path: Path) -> None:
     png.hardlink_to(source)
     with pytest.raises(ValueError, match="different destination"):
         save_projection_quicklook(source, png)
-    converted = tmp_path / "converted.npz"
-    converted.hardlink_to(source)
-    with pytest.raises(ValueError, match="different destination"):
-        convert_dataset(source, converted)
-
     loaded = load_dataset(source)
-    with pytest.raises(ValueError, match="different destination"):
-        save_dataset(source, loaded)
+    alias = tmp_path / "other.nxs"
+    alias.hardlink_to(source)
+    for path in (source, alias):
+        with pytest.raises(ValueError, match="different destination"):
+            save_dataset(path, loaded)
     assert source.read_bytes() == originals

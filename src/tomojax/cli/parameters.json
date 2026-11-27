@@ -3978,7 +3978,7 @@
     },
     "Save": {
       "title": "Save",
-      "description": "Stage the dataset and adjacent manifest.",
+      "description": "Save the dataset with its provenance.",
       "type": "object",
       "properties": {
         "type": {

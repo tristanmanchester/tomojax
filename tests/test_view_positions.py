@@ -80,8 +80,8 @@ def test_positions_survive_selection_rejection_combining_and_saving(tmp_path):
     np.testing.assert_array_equal(combined.view_positions, np.r_[np.arange(6), np.arange(4)] + 0.5)
     assert ViewOrder(10, combined.view_positions).segments == [(0, 6), (6, 10)]
 
-    tj.save(tmp_path / "chosen.npz", chosen)
-    loaded = tj.load(tmp_path / "chosen.npz").view_positions
+    tj.save(tmp_path / "chosen.nxs", chosen)
+    loaded = tj.load(tmp_path / "chosen.nxs").view_positions
     np.testing.assert_array_equal(loaded, chosen.view_positions)
     with pytest.raises(ValueError, match="one finite position for each view"):
         tj.Scan(projections, geometry, view_positions=np.arange(23.0))

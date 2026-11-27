@@ -65,7 +65,6 @@ _PUBLIC = (
     "--apply-poses",
     "--include-scan",
     "--preview",
-    "--manifest",
     "--watch-dir",
     "--checkpoint",
     "--progress",
@@ -98,7 +97,7 @@ def build_parser() -> ProgressParser:
         ),
         epilog=_EPILOG,
     )
-    _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs, .h5, .npz)")
+    _ = p.add_argument("data", metavar="INPUT", help="Scan to reconstruct (.nxs or .h5)")
     _ = p.add_argument(
         "-o",
         "--output",
@@ -181,12 +180,6 @@ def build_parser() -> ProgressParser:
     _ = p.add_argument(
         "--preview", metavar="PNG", default=None, help="Also write a PNG of the central x-y slice"
     )
-    _ = p.add_argument(
-        "--manifest",
-        metavar="JSON",
-        default=None,
-        help="Also write a JSON record of the run (inputs, settings, versions)",
-    )
     add_checkpoint(p)
     add_progress(p, watch_dir=True)
     hide_expert(p, _PUBLIC, settings=_SETTINGS)
@@ -247,7 +240,6 @@ class _Args(argparse.Namespace):
     apply_poses: bool
     include_scan: bool
     preview: str | None
-    manifest: str | None
     checkpoint: str | None
 
     force: bool
@@ -274,7 +266,7 @@ class _Args(argparse.Namespace):
             parser.error("--grid dimensions must be positive integers")
         if not Path(self.data).exists():
             raise FileNotFoundError(f"input not found: {self.data}")
-        outputs = [] if self.dry_run else [self.out, self.preview, self.manifest]
+        outputs = [] if self.dry_run else [self.out, self.preview]
         check_paths(parser, inputs=[self.data, self.config], outputs=outputs, force=self.force)
         try:
             return self.method_config(settings)
@@ -319,7 +311,6 @@ def _resolved_settings(
         "input_path": args.data,
         "output_path": args.out,
         "preview_path": args.preview,
-        "manifest_path": args.manifest,
         "config_path": metadata["config_path"],
         "config_file_values": metadata["config_file_values"],
         "explicit_cli_keys": metadata["explicit_cli_keys"],
@@ -367,7 +358,7 @@ def _run(
     scan = tj.load(args.data, apply_poses=args.apply_poses)
     progress.check_canceled()
     if not args.dry_run:
-        check_paths(parser, outputs=[args.out, args.preview, args.manifest], force=args.force)
+        check_paths(parser, outputs=[args.out, args.preview], force=args.force)
     if watch is not None:
         watch.check_destinations()
     work = partial(_solve, args, metadata, config, watch, scan)
@@ -417,10 +408,10 @@ def _solve(
             args.data,
         )
     progress.check_canceled()
-    from tomojax.cli.manifest import recording, save_manifest
+    from tomojax.cli._provenance import recording
 
     resolved = _resolved_settings(args, metadata, scan, result, masked=args.region == "cyl")
-    with recording("reconstruct", args, resolved) as manifest:
+    with recording("reconstruct", args, resolved):
         tj.save(args.out, result, include_scan=args.include_scan)
     if args.preview is not None:
         from tomojax.cli._images import save_volume_plane
@@ -428,14 +419,11 @@ def _solve(
         progress.check_canceled()
         label = f"z plane · {result.method} · {Path(args.out).name}"
         _ = save_volume_plane(Path(args.preview), result.volume, result.grid, "z", label)
-    if args.manifest is not None:
-        progress.check_canceled()
-        save_manifest(str(args.manifest), manifest)
     if args.progress == "json":
         from tomojax.cli._results import saved_result
 
-        outputs = tuple(str(p) for p in (args.out, args.preview, args.manifest) if p is not None)
-        return saved_result(args.out, result, outputs=outputs, include_scan=args.include_scan)
+        outputs = tuple(str(p) for p in (args.out, args.preview) if p is not None)
+        return saved_result(args.out, result, outputs=outputs)
     stopped = solve_summary(result.info)
     ended = "" if stopped is None else f"; {stopped}"
     beyond = beyond_detector(result.info)

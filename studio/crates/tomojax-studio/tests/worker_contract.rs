@@ -117,7 +117,7 @@ impl Client {
         let Product::Files { paths } = result.value else {
             panic!("Save did not publish files")
         };
-        assert!(paths.iter().any(|name| name.ends_with(".manifest.json")));
+        assert_eq!(paths, vec![path.to_string_lossy().into_owned()]);
         assert!(paths.iter().all(|name| Path::new(name).exists()));
     }
 }
