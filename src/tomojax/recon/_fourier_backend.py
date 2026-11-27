@@ -71,7 +71,14 @@ def _free_device_memory() -> int:
     return int(cupy.cuda.runtime.memGetInfo()[0])
 
 
-def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, backend: str) -> int:
+def fourier_slab_depth(
+    grid: Grid,
+    detector: Detector,
+    requested: int | None,
+    backend: str,
+    *,
+    available: int | None = None,
+) -> int:
     """Bound automatic CUDA FFT planes before allocation; explicit budgets stay fixed."""
     if requested is not None:
         depth = operator.index(requested)
@@ -79,7 +86,8 @@ def fourier_slab_depth(grid: Grid, detector: Detector, requested: int | None, ba
         shape, _ = transform_grid(grid, detector)
         # Several transform buffers, workspaces and pending transfers coexist.
         # Bounding one padded FP32 plane stack avoids expensive retry cascades.
-        budget = min(512 * 1024**2, _free_device_memory() // 32)
+        free = _free_device_memory() if available is None else available
+        budget = min(512 * 1024**2, free // 32)
         planes = max(1, budget // (4 * shape[0] * shape[1]))
         depth = min(16, 1 << (planes.bit_length() - 1))
     else:

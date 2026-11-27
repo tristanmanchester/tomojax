@@ -877,7 +877,7 @@ def test_signed_profiles_match_a_dense_full_spectrum_reconstruction(backend, ny,
     assert np.linalg.norm(actual - reference) / np.linalg.norm(reference) < 2e-5
 
 
-@pytest.mark.parametrize("free_gib, expected_depths", [(8, (16, 8, 2)), (32, (16, 16, 4))])
+@pytest.mark.parametrize(("free_gib", "expected_depths"), [(8, (16, 8, 2)), (32, (16, 16, 4))])
 def test_automatic_slab_depth_bounds_padded_physical_support_and_preserves_overrides(
     monkeypatch, free_gib, expected_depths
 ):

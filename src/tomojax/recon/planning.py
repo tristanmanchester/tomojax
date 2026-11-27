@@ -60,7 +60,11 @@ def inversion_storage(
 
         cpu = all(s.scope == "host" for s in snapshot)
         depth = fourier_slab_depth(
-            grid, detector, getattr(cfg, "slices_per_batch", None), "numpy" if cpu else "cupy"
+            grid,
+            detector,
+            getattr(cfg, "slices_per_batch", None),
+            "numpy" if cpu else "cupy",
+            available=room,
         )
         shape, _ = transform_grid(grid, detector)
         buffers = depth * (16 * math.prod(shape) + 4 * views * cols)
