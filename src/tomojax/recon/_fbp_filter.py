@@ -6,15 +6,14 @@ from functools import partial
 from typing import TYPE_CHECKING, NamedTuple
 
 import jax.numpy as jnp
+import numpy as np
 
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
 
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
-from .filters import rfft_filter_array
+from .filters import get_fbp_filter_np, rfft_filter_array
 
 if TYPE_CHECKING:
-    import numpy as np
-
     from tomojax._parameters import Filter
     from tomojax.core.geometry import Detector
 
@@ -31,6 +30,7 @@ class RowFilter(NamedTuple):
 
     spectrum: jnp.ndarray
     radius2: jnp.ndarray | None
+    measured: jnp.ndarray
 
     def rows(self, first: int, stop: int) -> RowFilter:
         """The filter of detector rows ``first:stop``; rows outside the detector are zero."""
@@ -54,16 +54,23 @@ def row_filter(
 ) -> RowFilter:
     """The filter of the rows of a ``(views, nv, nu)`` stack, read over the filter ``detector``."""
     if exterior == "zero":
-        return RowFilter(
-            rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32), None
-        )
+        spectrum = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
+        return RowFilter(spectrum, None, spectrum)
     nu = projections.shape[-1]
     pad = continued_columns(nu)
     fits = Continuation(parallel_axis_distance(detector, nu, pad), nu, pad)
     radius2 = fits.stack_radius(projections)
     reach = (detector.nu - nu) // 2
-    spectrum = rfft_filter_array(filter, nu + pad + reach, float(detector.du), jnp.float32)
-    return RowFilter(spectrum, jnp.asarray(radius2))
+    spectrum = get_fbp_filter_np(filter, nu + pad + reach, float(detector.du), "float32")
+    # Measured input and requested output need only these lags of the wide
+    # filter. Keep its exact spatial weights, including for windowed ramps.
+    length = max(64, 1 << (2 * (nu + reach) - 1).bit_length())
+    measured = spectrum
+    if 2 * (len(spectrum) - 1) > length:
+        impulse = np.fft.irfft(spectrum.astype(np.float64))
+        h = length // 2
+        measured = np.fft.rfft(np.concatenate((impulse[:h], impulse[-h:]))).real.astype(np.float32)
+    return RowFilter(jnp.asarray(spectrum), jnp.asarray(radius2), jnp.asarray(measured))
 
 
 def continued_rows(
@@ -93,13 +100,24 @@ def detector_columns(filtered: jnp.ndarray, nu: int, detector: Detector, pad: in
 
 def ramp_rows(rows: jnp.ndarray, filter: RowFilter, detector: Detector) -> jnp.ndarray:
     """Continue measured rows, ramp-filter them and read the filter detector's columns."""
-    spectrum = filter.spectrum
-    n_fft = 2 * (spectrum.shape[0] - 1)
-    continued = continued_rows(rows, detector, filter.radius2)
-    transformed = jnp.fft.rfft(continued, n=n_fft, axis=-1) * spectrum
-    return detector_columns(
-        jnp.fft.irfft(transformed, n=n_fft, axis=-1),
-        rows.shape[-1],
-        detector,
-        (continued.shape[-1] - rows.shape[-1]) // 2,
-    )
+    nu = rows.shape[-1]
+    n = 2 * (filter.measured.shape[0] - 1)
+    measured = jnp.fft.irfft(jnp.fft.rfft(rows, n=n) * filter.measured, n=n)
+    result = detector_columns(measured, nu, detector, 0)
+    radius = filter.radius2
+    if radius is None:
+        return result
+    # Each view is a linear combination of the same two exterior profiles.
+    # Apply the wide ramp once per profile, then scale its filtered samples.
+    fits = Continuation(parallel_axis_distance(detector, nu, nu), nu, nu)
+    place = partial(jnp.asarray, dtype=rows.dtype)
+    low, high = fits.amplitudes(place, rows[..., : fits.window], rows[..., -fits.window :], radius)
+    unit = jnp.ones_like(radius)
+    left, right = fits.tails(place, unit, unit, radius)
+    length = 2 * (filter.spectrum.shape[0] - 1)
+    for side, pad, amplitude in ((left, 0, low), (right, 2 * nu, high)):
+        tail = jnp.pad(side, ((0, 0), (pad, 0)))
+        transformed = jnp.fft.rfft(tail, n=length) * filter.spectrum
+        filtered = jnp.fft.irfft(transformed, n=length)
+        result += amplitude * detector_columns(filtered, nu, detector, nu)
+    return result
