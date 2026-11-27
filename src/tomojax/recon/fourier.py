@@ -1,4 +1,4 @@
-"""Fourier-slice reconstruction for measured half-turn parallel scans with host storage."""
+"""Fourier-slice reconstruction for axial parallel scans (half turn or full turn)."""
 
 from __future__ import annotations
 
@@ -118,18 +118,21 @@ def fourier(
     config: FourierConfig | None = None,
     out: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Reconstruct a half-turn parallel scan using the Fourier slice theorem.
+    """Reconstruct an axial parallel scan (half turn or full turn) using the Fourier slice theorem.
 
     Projections have shape ``(views, nv, nu)`` in physical line-integral units.
-    Angles may be reordered, reversed, offset or replaced by opposing views,
-    with uniform or nonuniform spacing. Redundant half-turn directions are
-    averaged in physical Fourier coordinates after detector phase/orientation.
-    Per-view translations are honored in either detector or object coordinates.
-    A parallel detector roll (``detector_roll``) is resampled cubically onto the
-    unrolled detector lattice. Axial pose rotations enter the view angles. Out-of-plane
-    rotations do not preserve the independent axial slices required here.
-    Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
-    detector-v rows retain their physical coordinates.
+    Angles may be reordered, reversed, offset, or replaced by opposing views,
+    with uniform or nonuniform spacing. On a stationary full turn with an offset
+    detector, conjugate rays are weighted smoothly across the overlap before
+    transforming. Redundant directions are averaged in physical Fourier
+    coordinates after detector phase and orientation. Per-view translations are
+    honored in either detector or object coordinates. On a rolled detector
+    (``detector_roll``), quarter turns permute rows and columns directly and
+    other roll angles resample cubically onto horizontal detector lines (weighting
+    each line over its own overlap on an offset full turn). Axial pose rotations
+    about z enter the view angles; out-of-plane rotations mix axial slices and
+    are rejected. Detector offsets, anisotropic voxels, shifted/cropped grids,
+    and fractional detector-v rows retain their physical coordinates.
 
     This approximate inverse uses six-point Kaiser--Bessel radial interpolation,
     linear interpolation in measured angle and a padded Cartesian inverse FFT.

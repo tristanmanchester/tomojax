@@ -5647,7 +5647,7 @@
             }
           ],
           "default": null,
-          "description": "Replacement flat frames, calibration stack path (another scan's file supplies its flat frames) or constant open-beam level. A TIFF path is read in the same panel orientation as TIFF projections."
+          "description": "Replacement flat frames, calibration stack path (another scan's file supplies its flat frames), or constant open-beam level. Supplying flats identifies an unlabeled stack as detector counts in any storage dtype; rejected on recorded line integrals or phase. A TIFF path is read in the same panel orientation as TIFF projections."
         },
         "darks": {
           "anyOf": [
@@ -5683,7 +5683,7 @@
             }
           ],
           "default": null,
-          "description": "Replacement dark frames, calibration stack path (another scan's file supplies its dark frames) or constant dark level."
+          "description": "Replacement dark frames, calibration stack path (another scan's file supplies its dark frames), or constant dark level. Supplying darks identifies an unlabeled stack as detector counts in any storage dtype; rejected on recorded line integrals or phase."
         },
         "angles": {
           "anyOf": [
@@ -5777,7 +5777,7 @@
             }
           ],
           "default": null,
-          "description": "Complete sample-view geometry, overriding individual metadata."
+          "description": "Complete sample-view geometry, overriding individual metadata while retaining recorded acquisition view_positions."
         },
         "exposure_times": {
           "anyOf": [
@@ -5810,7 +5810,7 @@
             }
           ],
           "default": null,
-          "description": "Sample exposure durations in seconds, replacing file metadata.",
+          "description": "Sample exposure durations in seconds, replacing file metadata; requires flat frames (not a scalar white level).",
           "x-unit": "s"
         },
         "flat_exposure_times": {
@@ -5844,7 +5844,7 @@
             }
           ],
           "default": null,
-          "description": "Flat exposure durations in seconds, replacing file metadata.",
+          "description": "Flat exposure durations in seconds, replacing file metadata; requires flat frames (not a scalar white level).",
           "x-unit": "s"
         },
         "data_path": {
@@ -5857,7 +5857,7 @@
             }
           ],
           "default": null,
-          "description": "Explicit HDF5 frame dataset path; None discovers it."
+          "description": "Explicit HDF5 frame or projection dataset path (raw or saved HDF5 scan, or Bliss sequence); rejected on fixed-layout formats. None discovers it."
         },
         "image_key_path": {
           "anyOf": [
@@ -5869,7 +5869,7 @@
             }
           ],
           "default": null,
-          "description": "Explicit HDF5 sample/flat/dark key path; None discovers it."
+          "description": "Explicit HDF5 sample/flat/dark key path (raw or saved HDF5 scan); rejected on fixed-layout formats. None discovers it."
         },
         "angles_path": {
           "anyOf": [
@@ -5881,7 +5881,7 @@
             }
           ],
           "default": null,
-          "description": "Explicit HDF5 rotation-angle path; None discovers it."
+          "description": "Explicit HDF5 rotation-angle path (raw or saved HDF5 scan); rejected on fixed-layout formats. None discovers it."
         },
         "apply_poses": {
           "type": "boolean",

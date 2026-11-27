@@ -128,9 +128,11 @@ def add_inputs(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Cone beam: axis offset from the central ray",
     )
-    _ = group.add_argument("--data-path", help="HDF5 path of the stack of frames")
-    _ = group.add_argument("--image-key-path", help="HDF5 path of the image_key")
-    _ = group.add_argument("--angles-path", help="HDF5 path of the rotation angles")
+    _ = group.add_argument(
+        "--data-path", help="HDF5 path of the frame/projection stack, or Bliss sequence"
+    )
+    _ = group.add_argument("--image-key-path", help="HDF5 path of the image_key (raw or saved)")
+    _ = group.add_argument("--angles-path", help="HDF5 path of the rotation angles (raw or saved)")
     _ = group.add_argument(
         "--apply-poses",
         action=argparse.BooleanOptionalAction,

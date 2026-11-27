@@ -256,13 +256,14 @@ def fbp_host(
     remain unchanged until the call finishes. This host-returning routine is
     not differentiable. Use :func:`fbp` for device-resident output.
 
-    Supports every parallel-beam geometry (axial, laminography, arbitrary axis
-    and posed scans), with the same exact weights as :func:`fbp`; cone-beam
-    geometries use :func:`fdk_host`. Built-in axial parallel scans read only the
-    detector rows each slab needs; laminography and posed scans stream views per
-    slab. Anisotropic spacing, detector offsets and shifted volume origins are
-    supported. Row continuation and filtered tails follow ``config.fbp.exterior``,
-    matching :func:`fbp`.
+    Supports every parallel-beam geometry (axial, laminography, arbitrary axis,
+    rolled detectors, and posed scans), with the same angular and offset-detector
+    full-turn overlap weights as :func:`fbp`; cone-beam geometries use
+    :func:`fdk_host`. Built-in unrolled axial parallel scans read only the
+    detector rows each slab needs; laminography, rolled, and posed scans stream
+    views per slab. Anisotropic spacing, detector offsets, and shifted volume
+    origins are supported. Row continuation and filtered tails follow
+    ``config.fbp.exterior``, matching :func:`fbp`.
 
     Parameters
     ----------

@@ -527,8 +527,8 @@ def estimate_center_report(
     sandwich standard errors with leverage correction. Up to eight row bands
     measure the apparent row-center trend. No reconstruction is performed.
     This is the pair-only estimator used by ``method="opposite-views"``; for
-    full-sinogram axial center calibration that handles large offsets, rings
-    and flat drift across a half-turn, use ``tomojax.align(scan, fit="center")``.
+    direct axial center calibration that handles large offsets, rings, and flat
+    drift across a half turn or full turn, use ``tomojax.align(scan, fit="center")``.
 
     Parameters
     ----------
@@ -581,8 +581,8 @@ def estimate_center(
     mean motion to zero; physical center and common sample motion cannot be
     separated from these observations alone. Use ``estimate_center_report``
     to retain the conditional constraints and unresolved-center status, or
-    ``tomojax.align(scan, fit="center")`` for full-sinogram axial center
-    calibration across a half-turn.
+    ``tomojax.align(scan, fit="center")`` for direct axial center
+    calibration across a half turn or full turn.
 
     Parameters
     ----------

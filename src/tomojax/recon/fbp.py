@@ -799,11 +799,16 @@ def fbp(
     using the same filter; ``backend="cuda"`` selects its CUDA kernel.
 
     Projections: (n_views, nv, nu) -> attenuation volume (nz, ny, nx).
-    The rotation axis, arc and angular spacing are fitted from the view poses,
-    so tilted (laminography) axes, partial or full turns and irregular angles
-    are weighted exactly on every measured frequency. Repeated directions
-    share their angular weight equally. Frequencies no view
-    measures, such as laminography's missing cone, reconstruct as zero.
+    The rotation axis, arc, and angular spacing are fitted from the view poses,
+    so tilted (laminography) axes, partial or full turns, and irregular angles
+    are weighted accurately on every measured frequency. Repeated directions
+    share their angular weight equally. On a rolled detector, quarter turns
+    exchange rows and columns without interpolation and other roll angles
+    resample cubically onto physical horizontal detector lines before weighting
+    and filtering. On a stationary axial full turn with an offset detector,
+    conjugate rays are weighted smoothly across the overlap (per horizontal line
+    when rolled). Frequencies no view measures, such as laminography's missing
+    cone, reconstruct as zero.
 
     With the default ``exterior="cylinder"``, FBP extends each side of a
     measured row before filtering. The extension projects a uniform cylinder

@@ -114,8 +114,9 @@ def load(
     :func:`load_frames`. Every other argument has :func:`load_frames`'s meaning
     and can replace recorded metadata. Explicit flats or darks identify unlabeled
     projections as counts regardless of storage dtype. A recorded log correction
-    or phase measurement rules out further flat/dark correction. The scan carries the per-view
-    corrections saved with it (by :func:`align` or ``tomojax align``) unless
+    or phase measurement rules out further flat/dark correction. Geometry
+    overrides retain recorded acquisition ``view_positions``. The scan carries
+    the per-view corrections saved with it (by :func:`align` or ``tomojax align``) unless
     ``apply_poses`` is False. Frames that ``image_key`` marks as other than
     sample views are left out.
 
@@ -722,8 +723,10 @@ def load_frames(
     measured white level, so supply ``flats=`` (frames or one level) explicitly.
     Zeiss Xradia projection files keep their embedded reference images,
     physical calibration and per-view image shifts in the geometry.
-    A GDA command mislabeled as mm is read in degrees with a warning; discovered
-    paths and this correction stay in source metadata.
+    A GDA NXtomo entry that omits its angles reads the SmarAct z-rotation or
+    psi command for the same frame dataset; a recognized command mislabeled as
+    mm is read in degrees with a warning, and discovered paths and this
+    correction stay in source metadata.
     Generic TIFF stacks without acquisition metadata need ``angles`` (degrees) and
     ``flats`` (frames or one level). A parallel-beam file with no recorded pixel
     size loads in pixel units (pitch 1, ``length_unit`` "pixel"), and
@@ -752,11 +755,15 @@ def load_frames(
         HDF5, NPZ, Nikon, SkyScan, Zeiss or ESRF acquisition, or generic TIFF stack.
     flats : array-like, float, str, path-like or None, optional
         Replacement flat frames, calibration stack path (another scan's file
-        supplies its flat frames) or constant open-beam level. A TIFF path is
-        read in the same panel orientation as TIFF projections.
+        supplies its flat frames), or constant open-beam level. Supplying flats
+        identifies an unlabeled stack as detector counts in any storage dtype;
+        rejected on recorded line integrals or phase. A TIFF path is read in
+        the same panel orientation as TIFF projections.
     darks : array-like, float, str, path-like or None, optional
         Replacement dark frames, calibration stack path (another scan's file
-        supplies its dark frames) or constant dark level.
+        supplies its dark frames), or constant dark level. Supplying darks
+        identifies an unlabeled stack as detector counts in any storage dtype;
+        rejected on recorded line integrals or phase.
     angles : array-like or None, optional
         Sample-view angles in degrees, replacing file metadata.
     detector : Detector or None, optional
@@ -768,17 +775,23 @@ def load_frames(
     grid : Grid or None, optional
         Replacement reconstruction grid.
     geometry : ScanGeometry or None, optional
-        Complete sample-view geometry, overriding individual metadata.
+        Complete sample-view geometry, overriding individual metadata while
+        retaining recorded acquisition ``view_positions``.
     exposure_times : numpy.ndarray or float or None, optional
-        Sample exposure durations in seconds, replacing file metadata.
+        Sample exposure durations in seconds, replacing file metadata; requires
+        flat frames (not a scalar white level).
     flat_exposure_times : numpy.ndarray or float or None, optional
-        Flat exposure durations in seconds, replacing file metadata.
+        Flat exposure durations in seconds, replacing file metadata; requires
+        flat frames (not a scalar white level).
     data_path : str or None, optional
-        Explicit HDF5 frame dataset path; None discovers it.
+        Explicit HDF5 frame or projection dataset path (raw or saved HDF5 scan,
+        or Bliss sequence); rejected on fixed-layout formats. None discovers it.
     image_key_path : str or None, optional
-        Explicit HDF5 sample/flat/dark key path; None discovers it.
+        Explicit HDF5 sample/flat/dark key path (raw or saved HDF5 scan);
+        rejected on fixed-layout formats. None discovers it.
     angles_path : str or None, optional
-        Explicit HDF5 rotation-angle path; None discovers it.
+        Explicit HDF5 rotation-angle path (raw or saved HDF5 scan); rejected on
+        fixed-layout formats. None discovers it.
     apply_poses : bool, optional
         Apply per-view poses. On a raw Zeiss acquisition, False also omits the
         scanner's shifts and center correction. A saved scan that incorporated

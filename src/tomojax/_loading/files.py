@@ -42,7 +42,10 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     the angles, geometry, detector, flats and darks, the corrections recorded,
     saved poses, memory estimates and a saved volume, and what loading the file
     as a scan reads (``loading``: its length unit, where its rotation center
-    comes from, frames a stopped scan leaves out, or the argument it needs).
+    comes from, full-turn parallel orbit coverage such as ``full_turn``,
+    ``axis_to_edge_px``, ``field_of_view_px``, ``overlap_px``, and
+    ``central_gap_px``, frames a stopped scan leaves out, or the argument it
+    needs).
     ``valid`` is True when the checks performed for that format find no issues
     in ``issues`` (frame layout, angles, sample frames, and raw calibration for
     recognized acquisitions). A file that records no rotation axis

@@ -502,8 +502,9 @@ def reconstruct(
     """Reconstruct ``scan`` with ``method``.
 
     ``auto`` (default) chooses Fourier inversion for well-sampled axial parallel scans with
-    half-turn or full-turn coverage, matched CGLS for segmented cone geometry and cone arcs
-    shorter than 180 degrees plus the fan angle, and FBP/FDK otherwise,
+    half-turn or full-turn coverage that are unposed or carry axial rotations about z alone,
+    matched CGLS for segmented cone geometry and cone arcs shorter than 180 degrees plus the
+    fan angle (from the effective source orbit), and FBP/FDK otherwise,
     laminography and tilted-axis scans included: for those, ``fista`` gives a
     better image at the cost of its iterations (https://tomojax.dev/measurements/). It
     reconstructs with the geometry and poses the scan carries, on its grid or
@@ -513,18 +514,25 @@ def reconstruct(
     methods bypass this policy.
 
     ``fbp``
-        Filtered backprojection: FDK for cone beams, with Parker weights for
-        short scans and Wang's for offset detectors. ``filter`` is ``ramp``
-        (default), ``shepp-logan`` or ``hann``. Volumes too large for the
-        device are reconstructed in slabs on the host.
+        Filtered backprojection: parallel/laminography FBP and cone-beam FDK,
+        with Parker weights for short cone scans and conjugate-ray overlap
+        weights for offset-detector full turns. Rolled detectors filter along
+        physical horizontal detector lines (quarter turns permute axes without
+        interpolation; other rolls use cubic resampling). FDK derives angular
+        weights, repeated-view grouping, and short-scan coverage from the
+        effective source orbit, including pose-carried angles. ``filter`` is
+        ``ramp`` (default), ``shepp-logan`` or ``hann``. Volumes too large for
+        the device are reconstructed in slabs on the host.
     ``fourier``
-        Fourier-slice inversion of parallel-beam half-turn scans, with
-        nonuniform or repeated angles, axial pose rotations and translations; no cone beams
-        or tilted axes. Omitting ``filter`` (default) keeps the sharper,
-        noisier native response; ``filter="ramp"``, ``"shepp-logan"`` or
-        ``"hann"`` matches FBP's detector response at Fourier speed. Input and
-        output stay on the host; :class:`~tomojax.recon.FourierConfig` selects
-        NumPy or CuPy CUDA.
+        Fourier-slice inversion of axial parallel half-turn and full-turn scans,
+        with nonuniform or repeated angles, offset-detector overlap weighting,
+        rolled detectors (exact quarter-turn permutation, cubic resampling onto
+        horizontal lines otherwise), axial pose rotations about z, and per-view
+        translations; no cone beams or tilted axes. Omitting ``filter``
+        (default) keeps the sharper, noisier native response; ``filter="ramp"``,
+        ``"shepp-logan"`` or ``"hann"`` matches FBP's detector response at
+        Fourier speed. Input and output stay on the host;
+        :class:`~tomojax.recon.FourierConfig` selects NumPy or CuPy CUDA.
     ``cgls``
         Least squares by conjugate gradients. With no budget, tolerances, or
         penalties, stops when the projection residual RMS reaches the estimated
@@ -624,8 +632,10 @@ def reconstruct(
     continued scan's attenuation beyond the detector), ``interior_shift`` (the
     estimated change on the rotation axis from using the cylinder exterior, in
     the volume's units: compare it with the contrast you measure), ``radius``
-    (median fitted cylinder radius), and ``field_of_view_radius``, in the scan's
-    length unit.
+    (median fitted cylinder radius), and ``field_of_view_radius`` (distance from
+    the axis to the nearer detector edge, or to the far edge on an offset axial
+    parallel full turn; median over sampled horizontal chords on a rolled
+    detector), in the scan's length unit.
 
     ``checkpoint`` names a directory where the run saves its state, so a run
     killed by a scheduler time limit, preemption, or a node failure resumes
@@ -1176,17 +1186,22 @@ def align(
     ``motion="smooth"`` fits drift and slips instead. Per-view rotations have a
     prior on their physical size.
 
-    On an unposed, unrolled axial parallel scan with a well-sampled half-turn,
-    ``fit="center"`` alone (with ``method=None`` and no ``grid``, ``region``,
-    ``config`` or joint solver keywords) measures the rotation axis directly
-    from the projections across the full detector width without reconstructing
-    a working volume. Over up to 401 views it scores Fourier-slice edge
-    sharpness, half-turn Fourier parity and the sinusoidal first projection
-    moment, then refines the center to fractions of a native pixel with up to
-    16 opposing view pairs on their common illuminated support (including
-    endpoint-exclusive half-turns and narrow detectors), accounting for
-    stationary detector structure and linear flat-field drift. ``result.image``
-    and ``result.grid`` are None.
+    On an unposed, unrolled axial parallel scan with a well-sampled half turn
+    or full turn, ``fit="center"`` alone (with ``method=None`` and no ``grid``,
+    ``region``, ``config`` or joint solver keywords) measures the rotation axis
+    directly from the projections across the full detector width without
+    reconstructing a working volume. On a half turn, over up to 401 views it
+    scores Fourier-slice edge sharpness, half-turn Fourier parity, and the
+    sinusoidal first projection moment, then refines the center to fractions of
+    a native pixel with up to 16 opposing view pairs on their common
+    illuminated support (including endpoint-exclusive half turns and narrow
+    detectors), accounting for stationary detector structure and linear
+    flat-field drift. On a full turn (including offset-detector
+    half-acquisition), it matches angular contrast across opposing view pairs on
+    their shared detector strip (falling back to half-turn focus if no
+    positive-margin peak is found), and expands a detector-derived grid out to
+    the far detector edge while keeping it centered on the axis. Both direct
+    paths leave ``result.image`` and ``result.grid`` as None.
 
     Passing ``method="joint"``, ``grid``, ``region``, ``config``, any joint
     solver keyword, a multi-parameter ``fit`` or another geometry runs the
@@ -1258,7 +1273,8 @@ def align(
         (``info["method"] == "sinogram-focus"``) and ``method="opposite-views"``
         leave ``image`` and ``grid`` as None and record their diagnostics in
         ``info["diagnostics"]`` (``focus_px``, ``binning``, ``views``, ``pairs``
-        for half-turn focus, or pairs, rows and overlap for full-turn correlation;
+        for half-turn focus, or ``estimator``, ``pairs``, ``rows``, and
+        ``overlap_px`` for full-turn opposing-ray correlation;
         per-pair constraints and consistency statistics for
         ``opposite-views``). Joint fits record resolved settings in
         ``info["config"]``, convergence diagnostics in ``info["report"]``, and

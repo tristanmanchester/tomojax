@@ -1,13 +1,17 @@
 """Feldkamp-Davis-Kress (FDK) reconstruction for cone-beam scans.
 
-Each projection is cosine-weighted, ramp-filtered along detector rows on the
-isocenter plane, and backprojected voxel by voxel with the ``(SOD / U)^2``
-distance weight, where U is the voxel's distance from the source along the
-detector normal. Full turns share angular measure across conjugate views;
-shorter arcs of at least a half turn plus the fan angle use Parker weights
-with a virtual fan spanning the acquired arc, retaining overscan measurements.
-On an offset detector, a ray whose conjugate falls off the panel keeps the
-whole weight of its line.
+Each projection is cosine-weighted, ramp-filtered along physical horizontal
+detector lines on the isocenter plane (quarter turns exchange rows and columns
+without interpolation; other detector rolls resample cubically onto horizontal
+lines with per-line measured endpoints), and backprojected voxel by voxel with
+the ``(SOD / U)^2`` distance weight, where U is the voxel's distance from the
+source along the detector normal. Angular weights, repeated-view grouping, and
+short-scan coverage come from the effective source orbit in the object frame,
+including pose-carried angles. Full turns share angular measure across conjugate
+views; shorter arcs of at least a half turn plus the fan angle use Parker
+weights with a virtual fan spanning the acquired arc, retaining overscan
+measurements. On an offset detector, a ray whose conjugate falls off the panel
+keeps the whole weight of its line.
 
 FDK is exact only in the plane through the source orbit; away from it the
 reconstruction carries the usual cone-beam artifacts, growing with the cone
@@ -463,10 +467,14 @@ def fdk(
     ``projections`` are ``(views, nv, nu)`` line integrals; NumPy and memmap
     stacks stream to the device ``views_per_batch`` views at a time. Full turns
     on an offset detector (the axis projecting off its center) get Wang's
-    weights from the conjugate views and reconstruct the field the detector's long side covers.
-    Each view retains its own calibrated source/detector arrangement; angular
-    quadrature covers the whole scan, independently of segment boundaries.
-    Noncircular trajectories retain FDK's approximate character.
+    weights from the conjugate views and reconstruct the field the detector's
+    long side covers. On a rolled detector, quarter turns permute rows and
+    columns without interpolation and other roll angles resample cubically onto
+    physical horizontal lines, using each line's own measured endpoints for
+    weights and exterior fitting. Angular quadrature, repeated-view grouping,
+    and short-scan coverage come from the effective source orbit in the object
+    frame (including pose-carried axial angles), independently of segment
+    boundaries. Noncircular trajectories retain FDK's approximate character.
 
     With the default ``exterior="cylinder"``, FDK continues rows past both
     detector edges after applying angular weights and before filtering. An
