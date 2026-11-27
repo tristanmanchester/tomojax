@@ -699,6 +699,13 @@ def reconstruct_arrays(
                 **truncation,
                 "outside_grid": share,
                 "data_model": "continued_exterior" if applied else "measured",
+                "background_treatment": (
+                    "additive_poisson"
+                    if background is not None
+                    else "subtracted"
+                    if applied
+                    else "none"
+                ),
             },
         }
 

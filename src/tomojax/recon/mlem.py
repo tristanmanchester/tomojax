@@ -344,7 +344,7 @@ def _run_device(
     valid = indices < n
     indices = order[np.minimum(indices, n - 1)].astype(np.int32)
     initial = None if initial is None else _device(initial)
-    stream = should_stream(projections)
+    stream = should_stream(projections, copies=1 + int(background is not None))
     if stream:
         check_measurements(projections, "mlem")
     context = host_source(np.asarray(projections)) if stream else nullcontext(_device(projections))

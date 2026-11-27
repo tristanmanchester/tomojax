@@ -4,9 +4,8 @@ The analytic methods continue each detector row past the detector's edges as
 the projection of a cylinder about the rotation axis
 (:mod:`tomojax.recon._continuation`). :func:`truncation_record` measures, from
 the same fits, how far the rows run past the detector and how much an interior
-value rests on the continuation. The methods that fit a grid take the data as
-measured: they are exact when the grid holds the object, and the record says
-when the rows do not end inside the detector.
+value rests on the continuation. Iterative reconstruction uses the completed
+rows to estimate the part of each line integral formed outside its grid.
 """
 
 from __future__ import annotations

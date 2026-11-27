@@ -82,7 +82,15 @@ def available(
     return importlib.util.find_spec("cupy") is not None
 
 
-def _device(cp: CuPyValue) -> CuPyValue:
+def array_module() -> CuPyValue:
+    """The optional native array module, loaded when a CUDA solve is selected."""
+    import cupy as cp
+
+    return cp
+
+
+def native_device(cp: CuPyValue) -> CuPyValue:
+    """CuPy device matching the active reconstruction placement."""
     if "jax" in sys.modules:
         import jax
 
@@ -108,11 +116,10 @@ def solve(
     target: float | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Return None only when CUDA is unavailable or the resident data would not fit."""
-    import cupy as cp
-
+    cp = array_module()
     if not cp.cuda.is_available():
         return None
-    with _device(cp):
+    with native_device(cp):
         if not native_fits(
             cfg,
             grid,

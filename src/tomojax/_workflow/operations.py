@@ -572,10 +572,11 @@ def reconstruct(
     absolute level is only as accurate as the cylinder model and
     non-cylindrical exteriors (such as a square bar) retain partial cupping and
     rim error. Outside the field of view the volume holds the reconstruction of
-    the continued scan (``region="cyl"`` masks it). Iterative solvers fit the
-    grid to the measured rays without an exterior model: they are accurate when
-    the grid holds the whole object, and keep the rim and bowl when material
-    extends outside it (unpenalized ``cgls`` also runs to its 50-update cap).
+    the continued scan (``region="cyl"`` masks it). The iterative methods
+    estimate the part of each measured line integral formed outside the grid
+    from a coarse reconstruction of those completed rows. CGLS, SIRT, FISTA and
+    SPDHG subtract it from the data they fit. MLEM adds it to the predicted
+    count. The stored scan keeps its measured values.
     Every reconstruction records ``info["truncation"]`` regardless of
     ``exterior`` or method: ``edge_ratio`` (mean edge value over the rows' mean,
     zero for a contained object), ``outside_fraction`` (the share of the
@@ -586,6 +587,9 @@ def reconstruct(
     the axis to the nearer detector edge, or to the far edge on an offset axial
     parallel full turn; median over sampled horizontal chords on a rolled
     detector), in the scan's length unit.
+    For iterative methods ``outside_grid`` is the share of measured
+    attenuation assigned to the exterior. ``background_treatment`` is
+    ``subtracted``, ``additive_poisson`` or ``none``.
 
     ``checkpoint`` names a directory where the run saves its state, so a run
     killed by a scheduler time limit, preemption, or a node failure resumes
@@ -714,6 +718,11 @@ def reconstruct_resolved(
             operation="reconstruct",
             settings=(plan.config, plan.warm_start, plan.cylinder, scan.geometry),
             input=scan.projections,
+            **(
+                {"projection_model": "continued_exterior_v1"}
+                if method not in {"fourier", "fbp"}
+                else {}
+            ),
         ),
         registration(scan, cylinder_radius=radius),
         progress.runtime() as actual,
@@ -967,6 +976,11 @@ def _reconstruct_slabs_context(
                 operation="reconstruct_slabs",
                 settings=(cfg, target, bound, epsilon, flat_weights, warm_start, frames.geometry),
                 input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
+                **(
+                    {"projection_model": "continued_exterior_v1"}
+                    if method not in {"fourier", "fbp"}
+                    else {}
+                ),
             ),
             corrected_row_source(
                 frames.counts,

@@ -149,7 +149,7 @@ class _HostEM:
             measured = self.problem.measured(batch, first, stop)
             if self.background is not None:
                 additive = self.problem.engine.upload(self.background[batch.views, first:stop])
-                predicted += xp.maximum(additive, 0)
+                predicted += additive
             positive = predicted > 0
             predicted[...] = xp.where(positive, measured / xp.where(positive, predicted, 1), 0)
 

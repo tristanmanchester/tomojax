@@ -709,7 +709,7 @@ def _correction(
                 if stream
                 else background[view_ids]
             )
-            expected = expected + jnp.maximum(additive, 0)
+            expected = expected + additive
         positive = expected > 0
         ratio = measured / jnp.where(positive, expected, 1.0)
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)

@@ -106,10 +106,23 @@ def inversion_storage(
     working = (
         min(resident, max(volume // grid.nz, 4 * batch * rows * cols) * 4) if slabbed else resident
     )
+    if not isinstance(cfg, FBPConfig):
+        import numpy as np
+
+        from ._exterior import storage
+
+        auxiliary_host, auxiliary_device = storage(geometry, grid, detector, views)
+        # The auxiliary solve ends before the fine solve. Device inputs are still
+        # owned by the caller while the corrected copy is fitted.
+        retained = projections if not isinstance(data, np.ndarray) else 0
+        working = max(working + retained, auxiliary_device + retained)
+        hosts += max(auxiliary_host, projections + (volume if slabbed else 0))
+    elif slabbed:
+        hosts += volume
     return Placement(
         devices,
         "slabbed" if slabbed else "resident",
-        hosts + (volume if slabbed else 0),
+        hosts,
         working,
         snapshot,
     )

@@ -48,8 +48,8 @@ def axial_workspace(cfg: SIRTConfig | MLEMConfig, volume: int, projections: int)
         return (3 + min(cfg.subsets, 16) + 2 * cfg.accelerated) * volume + (
             2 + 2 / cfg.subsets
         ) * projections
-    # EM keeps four volume buffers; axial sensitivities have the shape of one plane.
-    return 4 * volume + 2 * projections
+    # EM holds observations, the additive exterior and ratio workspace beside four volumes.
+    return 4 * volume + 3 * projections
 
 
 def axial_slab_depth(

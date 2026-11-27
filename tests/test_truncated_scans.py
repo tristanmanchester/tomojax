@@ -77,6 +77,43 @@ def test_parallel_methods_recover_a_cylinder_wider_than_the_detector(method, con
     assert abs(bowl) < 0.03 * MU
 
 
+@pytest.mark.parametrize("scan_factory", [_parallel, _cone])
+@pytest.mark.parametrize("method", ["cgls", "sirt", "fista", "spdhg", "mlem"])
+def test_iterative_fit_recovers_the_attenuation_and_flat_interior(scan_factory, method) -> None:
+    scan = scan_factory()
+    original = np.asarray(scan.projections).copy()
+    rec = tj.reconstruct(scan, method)
+    level, bowl = _level_and_bowl(np.asarray(rec.volume))
+    assert level == pytest.approx(MU, rel=0.04)
+    assert abs(bowl) < 0.04 * MU
+    expected = "additive_poisson" if method == "mlem" else "subtracted"
+    assert rec.info["truncation"]["background_treatment"] == expected
+    np.testing.assert_array_equal(scan.projections, original)
+
+
+def test_checkpoint_preserves_the_exterior_during_the_final_fit(tmp_path) -> None:
+    from tomojax import progress
+    from tomojax.errors import Canceled
+
+    scan = _parallel()
+    path = tmp_path / "exterior"
+    plain = tj.reconstruct(scan, "sirt", iterations=12)
+    control = progress.Control()
+    tasks = set()
+
+    def cancel(event):
+        if isinstance(event, progress.Started) and event.label == "sirt":
+            tasks.add(event.task)
+        if isinstance(event, progress.Advanced) and event.task in tasks and event.done >= 2:
+            control.cancel()
+
+    with progress.watch(cancel, control=control), pytest.raises(Canceled):
+        tj.reconstruct(scan, "sirt", iterations=12, checkpoint=path)
+    resumed = tj.reconstruct(scan, "sirt", iterations=12, checkpoint=path)
+    np.testing.assert_array_equal(resumed.volume, plain.volume)
+    assert resumed.info["truncation"] == plain.info["truncation"]
+
+
 def test_fdk_recovers_a_cylinder_wider_than_the_detector() -> None:
     rec = tj.reconstruct(_cone(), "fbp", config=FBPConfig(exterior="cylinder"))
     level, bowl = _level_and_bowl(rec.volume)
@@ -139,16 +176,17 @@ def test_every_method_carries_the_record() -> None:
     )
 
 
+@pytest.mark.parametrize("method", ["fbp", "cgls"])
 @pytest.mark.parametrize(("radius", "beyond"), [(RADIUS, True), (0.7, False)])
 def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
-    radius, beyond, tmp_path, capsys
+    method, radius, beyond, tmp_path, capsys
 ) -> None:
     from tomojax.cli.main import main
     from tomojax.cli.mcp.tools import summary_text
 
     tj.save(tmp_path / "scan.nxs", _parallel(radius))
     arguments = ["reconstruct", str(tmp_path / "scan.nxs"), "-o", str(tmp_path / "out.nxs")]
-    assert main([*arguments, "--method", "fbp"]) == 0
+    assert main([*arguments, "--method", method]) == 0
     line = capsys.readouterr().out.strip().splitlines()[-1]
     record = tj.load_reconstruction(tmp_path / "out.nxs").info["truncation"]
     summary = summary_text({"kind": "volume", "truncation": record, "wall_seconds": 1.0})
@@ -157,6 +195,9 @@ def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
     assert (share in line) is beyond
     assert (share in summary) is beyond
     assert ("beyond the detector" in line + summary) is beyond
+    assert ("modeled exterior" in line and "modeled exterior" in summary) == (
+        method == "cgls" and beyond
+    )
 
 
 @pytest.mark.parametrize(
