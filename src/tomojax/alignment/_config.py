@@ -83,7 +83,7 @@ class AlignConfig:
     image_tv_weight : float, optional
         Total-variation weight on the fit's image, as a fraction of its contrast;
         0 leaves the image unregularized. The default scales the penalty by measured noise
-        and by the fraction of views in which each voxel leaves the detector.
+        and by changes in detector coverage between neighboring voxels.
     image_tv_huber : float, optional
         The total variation's Huber width, as a fraction of the contrast.
         Default is 1.0.

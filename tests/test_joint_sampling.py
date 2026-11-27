@@ -206,6 +206,6 @@ def test_image_prior_uses_the_rolled_and_cropped_detector_footprint():
         detector_roll=90,
         detector_pivot=(0, 0),
     )
-    missing = _visibility.unobserved_weight(ops)
+    weight = _visibility.visibility_gradient(ops)
     # The high-column crop removes lab-z = 1 and 2 after a quarter turn.
-    np.testing.assert_allclose(missing[:, 2, 2], [0, 0, 0, 1, 1], atol=1e-6)
+    np.testing.assert_allclose(weight[:, 2, 2], [0, 0, 1, 0, 0], atol=1e-6)

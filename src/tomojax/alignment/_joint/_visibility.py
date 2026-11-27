@@ -51,25 +51,35 @@ def _camera(ops: Operators, ids: np.ndarray) -> tuple[_Array, _Array, _Array]:
     return horizontal / np.float32(d.du), vertical / np.float32(d.dv), divisor
 
 
-def unobserved_weight(ops: Operators) -> _Array:
-    """Square root of the fraction of nominal views missing each voxel's bilinear footprint."""
+def visibility_gradient(ops: Operators) -> _Array:
+    """RMS change in detector footprint across the three forward voxel differences.
+
+    A view weights continuation across its detector edge. Equally visible neighbors
+    share the same support, so that view gives their difference no boundary penalty.
+    """
     g, d = ops.grid, ops.detector
     x0, y0, z0 = grid_volume_origin(g)
     ids = np.linspace(0, ops.n - 1, math.ceil(math.sqrt(ops.n))).round().astype(int)
     x = np.float32(x0) + np.float32(g.vx) * np.arange(g.nx, dtype=np.float32)[None, :]
     y = np.float32(y0) + np.float32(g.vy) * np.arange(g.ny, dtype=np.float32)[:, None]
     z = np.float32(z0) + np.float32(g.vz) * np.arange(g.nz, dtype=np.float32)[:, None, None]
-    missed = np.zeros(ops.shape, np.float32)
+    energy = np.zeros(ops.shape, np.float32)
     horizontal, vertical, divisor = _camera(ops, ids)
     for i in range(len(ids)):
         u, v, den = horizontal[i, :], vertical[i, :], divisor[i, :]
         planes = [x * p.item(0) + y * p.item(1) + p.item(3) for p in (u, v, den)]
         for start in range(0, g.nz, 8):
-            slab = slice(start, start + 8)
+            stop = min(start + 8, g.nz)
+            slab = slice(start, min(stop + 1, g.nz))  # one more plane for the z difference
             scale = planes[2] + z[slab] * den.item(2)
             col = (planes[0] + z[slab] * u.item(2)) / scale
             row = (planes[1] + z[slab] * v.item(2)) / scale
             hit = np.clip((d.nu + 1) / 2 - np.abs(col), 0, 1)
             hit *= np.clip((d.nv + 1) / 2 - np.abs(row), 0, 1)
-            missed[slab] += 1 - hit
-    return np.sqrt(missed / len(ids))
+            length = stop - start
+            out = energy[start:stop]
+            out[:, :, :-1] += np.diff(hit[:length], axis=2) ** 2
+            out[:, :-1] += np.diff(hit[:length], axis=1) ** 2
+            dz = np.diff(hit, axis=0)
+            out[: len(dz)] += dz**2
+    return np.sqrt(energy / len(ids))

@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Joint alignment estimates fixed stripes and transient column shadows from separated detector
+  rows. The volume fit uses measured noise to regularize differences between neighboring
+  voxels where their detector coverage changes. An explicit `image_tv_weight` sets uniform regularization.
   rows. The volume fit uses local detector coverage and measured noise to regularize partially
   observed voxels. An explicit `image_tv_weight` sets uniform regularization.
 - Joint alignment corrects fixed detector stripes and estimates the variance of shadows shared

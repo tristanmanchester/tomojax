@@ -13,7 +13,7 @@ block with missing input pixels is the mean of its finite ones, weighted by thei
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
 right at Nyquist. Faint rays and row contrasts calibrate the fixed detector offsets and
-excess column variance. The default image prior weights the unobserved part of each voxel.
+excess column variance. The default image prior weights differences across the detector edges.
 """
 
 from __future__ import annotations

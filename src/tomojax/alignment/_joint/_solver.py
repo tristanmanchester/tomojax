@@ -32,7 +32,7 @@ from . import _common, _tv as tv
 from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
 from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
-from ._visibility import unobserved_weight
+from ._visibility import visibility_gradient
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -983,7 +983,7 @@ def solve(
             scales=scales,
             delta=delta,
             inner=budget.image_iterations,
-            spatial=jax.device_put(unobserved_weight(ops)) if weight and visibility else 1.0,
+            spatial=jax.device_put(visibility_gradient(ops)) if weight and visibility else 1.0,
             image_tolerance=budget.image_tolerance,
         )
         stacks = level.place(y, precision, placement, x0=x0)
