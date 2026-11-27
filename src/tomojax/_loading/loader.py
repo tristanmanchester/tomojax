@@ -292,16 +292,17 @@ def resolve_input(
     )
 
 
-def loading_record(file: Path) -> ProjectionDataset | None:
+def loading_geometry(file: Path) -> tuple[ProjectionDataset | None, ScanGeometry]:
     """Read saved metadata directly. Raw inputs need their acquisition geometry resolved."""
     selected = select_storage(file, layout_only=True)
     calibration = _Calibration()
     if isinstance(selected, ProjectionStorage) and not calibration.counts(
         selected, require_raw=False
     ):
-        return selected.record
+        return frame_geometry(selected.record)
     item = resolve_measurements(selected, calibration, check_calibration=False)
-    return item.source if isinstance(item, Frames) else item.scan.source
+    measured = item if isinstance(item, Frames) else item.scan
+    return measured.source, measured.geometry
 
 
 def resolve_measurements(

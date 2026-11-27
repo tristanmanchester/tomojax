@@ -136,13 +136,11 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
 
     Calibration (flats and darks) is the dataset check's to report, in ``issues``.
     """
-    from tomojax._loading.loader import Frames, resolve_input
+    from tomojax._loading.loader import loading_geometry
     from tomojax.geometry.coverage import parallel_field
 
     try:
-        item = resolve_input(path, layout_only=True)
-        frames = item if isinstance(item, Frames) else item.scan
-        record = frames.source
+        record, geometry = loading_geometry(path)
     except (ValueError, KeyError) as err:  # the reader names the argument to supply
         message = err.args[0] if isinstance(err, KeyError) and err.args else str(err)
         return {
@@ -155,7 +153,7 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
     metadata = object_mapping(record.geometry_metadata if record is not None else None)
     acquisition = object_mapping(metadata.get("acquisition"))
     coverage = {}
-    field = parallel_field(frames.geometry)
+    field = parallel_field(geometry)
     if field is not None:
         coverage["full_turn"] = True
         if metadata.get("detector_center_status") != "not_recorded":
@@ -172,7 +170,7 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
         "center": metadata.get("detector_center_status"),
         "geometry": acquisition.get("geometry_status"),
         "frame_records": acquisition.get("frame_records"),
-    }, frames.geometry.grid
+    }, geometry.grid
 
 
 def saved_volume_grid(
