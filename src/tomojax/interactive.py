@@ -9,6 +9,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._loading.loader import corrected_data
+from tomojax._parameters import FLAT_WEIGHTS
 from tomojax._scan.model import Scan, bind_step_geometry, binned_geometry, shifted_center
 from tomojax._workflow.operations import reconstruct, reconstruct_resolved
 from tomojax._workflow.planning import (
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
 
     from tomojax._loading.loader import Frames
-    from tomojax._parameters import Method, RegionName
+    from tomojax._parameters import FlatWeighting, Method, RegionName
     from tomojax.corrections import Step
     from tomojax.geometry import Detector, Grid
 
@@ -311,6 +312,7 @@ def correction_preview(
     *steps: Step,
     binning: int = 1,
     epsilon: float = 1e-6,
+    flat_weights: FlatWeighting = FLAT_WEIGHTS,
     views_per_batch: int | None = None,
 ) -> CorrectionBand:
     """Correct complete native blocks for a half-open interval in the binned output.
@@ -332,6 +334,9 @@ def correction_preview(
         Width and height of a native detector block.
     epsilon : float, optional
         Lower bound for flat and transmission values (raw frames).
+    flat_weights : {'views', 'position'}, optional
+        How a view between two flat sets blends them (raw frames), as for
+        :meth:`tomojax.Frames.corrected`.
     views_per_batch : int or None, optional
         Maximum number of views in a correction batch.
 
@@ -360,7 +365,9 @@ def correction_preview(
         binned = mean_detector_pixels(done.projections, binning)[:, low - first : high - first]
         before = np.array(projections[:, native], copy=True)
         return CorrectionBand(before, binned, done.kept, result_detector, "line_integrals")
-    done = corrected_data(source, steps, epsilon, views_per_batch, binning, output_rows=rows)
+    done = corrected_data(
+        source, steps, epsilon, views_per_batch, binning, flat_weights, output_rows=rows
+    )
     counts = source.counts
     before = (
         counts.window(native, slice(None))[:] if hasattr(counts, "window") else counts[:, native, :]

@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
+import re
+from typing import TYPE_CHECKING
 
+import h5py
 import numpy as np
 import pytest
 from scipy.ndimage import gaussian_filter
 
 import tomojax as tj
+from tomojax import progress
+from tomojax.cli.main import main
 from tomojax.corrections import Rings
+from tomojax.errors import InvalidParameter
 from tomojax.interactive import correction_preview
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 ROWS, COLS, VIEWS, FLATS, DARK, PHOTONS = 48, 256, 96, 16, 100.0, 20000.0
 
@@ -191,3 +200,89 @@ def test_views_sampled_in_several_batches_give_the_weights_of_one_batch(
     batched = frames.corrected()
     assert batched.corrections[0].found == whole.corrections[0].found
     np.testing.assert_allclose(np.asarray(batched.projections), np.asarray(whole.projections))
+
+
+def _warnings(frames: tj.Frames, **options: str) -> tuple[tj.Scan, list[str]]:
+    """The corrected scan and the warnings a watching client (the worker, MCP) receives."""
+    events: list[progress.Event] = []
+    with progress.watch(events.append):
+        scan = frames.corrected(**options)  # pyright: ignore[reportArgumentType]
+    notes = [e.message for e in events if isinstance(e, progress.Note) and e.level == "warning"]
+    return scan, notes
+
+
+def test_position_blends_the_flat_sets_by_position_alone_and_says_so() -> None:
+    frames, _, _ = _frames("first set shadowed")
+    scan, notes = _warnings(frames, flat_weights="position")
+    np.testing.assert_allclose(np.asarray(scan.projections), _by_position(frames), atol=1e-5)
+    record = scan.corrections[0]
+    assert record.settings["flat_weights"] == "position"
+    assert record.found == {"pixels_without_light": 0}
+    assert notes == []
+    assert frames.corrected().corrections[0].settings["flat_weights"] == "views"
+
+
+def test_a_flat_set_the_views_reject_is_reported_with_what_to_do() -> None:
+    frames, _, _ = _frames("first set shadowed")
+    scan, notes = _warnings(frames)
+    # The shadow covers 60% of the width, and the views hold the later set there throughout.
+    assert 0.5 < scan.corrections[0].found["flat_moved_by_views"] < 0.7
+    (note,) = notes
+    assert "over 60% of the detector" in note
+    held = re.search(r"later set at ([\d.]+) at the start and ([\d.]+) at the end", note)
+    assert held is not None
+    assert min(map(float, held.groups())) > 0.9
+    assert "flats=" in note
+    assert 'flat_weights="position"' in note
+
+
+@pytest.mark.parametrize("case", ["clean", "fading", "drifting pattern"])
+def test_flats_the_views_follow_raise_no_warning(case: str) -> None:
+    scan, notes = _warnings(_frames(case)[0])
+    assert notes == []
+    assert scan.corrections[0].found.get("flat_moved_by_views", 0.0) < 0.01
+
+
+def test_an_unknown_flat_weighting_is_refused() -> None:
+    frames, _, _ = _frames("clean")
+    with pytest.raises(InvalidParameter, match="flat_weights"):
+        frames.corrected(flat_weights="time")  # pyright: ignore[reportArgumentType]
+
+
+def _write_nxtomo(frames: tj.Frames, path: Path) -> None:
+    """The frames as a raw NXtomo file: darks, the first flat set, the views, the second set."""
+    flats = np.asarray(frames.flats)
+    half = len(flats) // 2
+    darks = np.asarray(frames.darks)
+    data = np.concatenate([darks, flats[:half], np.asarray(frames.counts), flats[half:]])
+    key = np.repeat([2, 1, 0, 1], [len(darks), half, VIEWS, half])
+    angles = np.asarray(frames.geometry.angles)
+    angle = np.concatenate([np.zeros(len(darks) + half), angles, np.full(half, angles[-1])])
+    with h5py.File(path, "w") as handle:
+        entry = handle.create_group("entry")
+        entry.attrs["NX_class"] = "NXentry"
+        entry.attrs["definition"] = "NXtomo"
+        detector = entry.create_group("instrument/detector")
+        detector.create_dataset("data", data=data.astype(np.uint16))
+        detector.create_dataset("image_key", data=key.astype(np.int32))
+        rotation = entry.create_group("sample").create_dataset("rotation_angle", data=angle)
+        rotation.attrs["units"] = "degree"
+
+
+def test_the_command_line_chooses_the_blend_and_the_saved_scan_records_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    frames, _, _ = _frames("first set shadowed")
+    raw, out = tmp_path / "raw.nxs", tmp_path / "scan.nxs"
+    _write_nxtomo(frames, raw)
+    argv = ["correct", str(raw), "-o", str(out), "--progress", "none"]
+    assert main([*argv, "--flat-weights", "position"]) == 0
+    assert "do not follow" not in capsys.readouterr().err
+    saved = tj.load(out)
+    assert saved.corrections[0].settings["flat_weights"] == "position"
+    np.testing.assert_allclose(
+        np.asarray(saved.projections), _by_position(frames), atol=2e-5, rtol=1e-5
+    )
+    assert main([*argv, "--force"]) == 0
+    assert "The views do not follow the flat sets' positions" in capsys.readouterr().err
+    assert tj.load(out).corrections[0].settings["flat_weights"] == "views"

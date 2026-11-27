@@ -57,6 +57,10 @@ _LINEAR = np.array([0.0, 1.0]).reshape(2, 1, 1)
 # Median of a chi-square variable with one degree of freedom.
 _CHI2_MEDIAN = 0.4549
 _VIEW_BYTES = 32 * 2**20
+# A change of the flat, in log, that the views' weights make and a reconstruction shows.
+_MOVED = 0.01
+# The share of the detector over which such a change is news about the acquisition.
+_NEWS = 0.01
 
 
 @dataclass(frozen=True)
@@ -147,16 +151,56 @@ def view_weights(
         return weights, {"flat_weights_from_views": 0.0}
     start, end = (round(float(w / tally[0]), 4) for w in tally[3:])
     unmatched = float(f"{np.sqrt(tally[1] / tally[2]):.3g}")
-    LOG.info(
-        "flat sets weighted by the views over %.1f%% of the detector (later set %.2f at the "
-        "start, %.2f at the end); fine flat structure the views do not show: %.2g RMS",
-        100 * share, start, end, unmatched,
-    )  # fmt: skip
+    moved, there = _moved(fields, weights)
+    if moved > _NEWS:
+        LOG.warning(
+            "The views do not follow the flat sets' positions: over %.0f%% of the detector "
+            "they hold the later set at %.2f at the start and %.2f at the end (position gives "
+            "0 and 1), which moves the flat by more than %g%% there. A flat set does not show "
+            "the beam the views had. The flat field follows the views; pass another scan's "
+            "file as flats= (tomojax correct --flats) to use its flats, or "
+            'flat_weights="position" (--flat-weights position) to blend by position.',
+            100 * moved, *there, 100 * _MOVED,
+        )  # fmt: skip
+    elif moved:
+        LOG.info(
+            "flat sets weighted by the views: the flat moves by more than %g%% over %.2f%% of "
+            "the detector", 100 * _MOVED, 100 * moved,
+        )  # fmt: skip
     return weights, {
         "flat_weights_from_views": share,
         "later_flat_weight": [start, end],
         "flat_structure_unmatched": unmatched,
+        "flat_moved_by_views": round(moved, 4),
     }
+
+
+def _moved(fields: Fields, weights: FlatWeights) -> tuple[float, tuple[float, float]]:
+    """Where the views move the flat from the blend by position, and the weights there.
+
+    At both ends of every interval, compares the views' flat with the position
+    blend (the earlier set at the start, the later at the end). Returns the
+    fraction of measured pixels where they differ by more than ``_MOVED`` in log
+    somewhere, and the later set's mean weight at the start and the end over the
+    pixels and intervals where they do.
+    """
+    usable: np.ndarray = fields.usable
+    moved = np.zeros(usable.shape, bool)
+    count, held = 0, np.zeros(2)
+    for i in range(len(weights.ends)):
+        found = weights.at(slice(None), np.array([i]))
+        ends, levels = found[:2], found[2:]
+        sets = np.where(usable, fields.flats[i : i + 2], 1.0)
+        # Each end's own set to the other set, and the other set's weight there.
+        toward = np.stack([sets[1] / sets[0] - 1, sets[0] / sets[1] - 1])
+        change = np.log1p(np.abs(ends - _LINEAR) * toward) + levels
+        here = usable & (np.abs(change) > _MOVED).any(axis=0)
+        moved |= here
+        count += np.count_nonzero(here)
+        held += np.tensordot(ends, here, 2)
+    fraction = np.count_nonzero(moved) / max(np.count_nonzero(usable), 1)
+    start, end = map(float, held / count if count else _LINEAR.ravel())
+    return fraction, (start, end)
 
 
 def _sampled_sums(

@@ -11,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax._parameters import FLAT_WEIGHTS, FlatWeighting
 from tomojax.core.devices import current_device
 from tomojax.core.host_transfer import upload_host
 from tomojax.core.host_volume import host_available_memory_bytes
@@ -269,6 +270,7 @@ def corrected_row_source(
     host: bool = False,
     dark_source: str | None = None,
     linear_limit: tuple[float, str] | None = None,
+    flat_weights: FlatWeighting = FLAT_WEIGHTS,
 ) -> Iterator[Callable[[int, int], CorrectedRows | Corrected]]:
     """Read corrected detector-row intervals without a materialized projection stack.
 
@@ -313,6 +315,9 @@ def corrected_row_source(
         The detector's stated linear range in counts and where it is stated. The
         record keeps the fraction of counts above it and the line integral where
         it ends, and a warning names both when any count lies above. Default None.
+    flat_weights : {'views', 'position'}, optional
+        How a view between two flat sets blends them, as for
+        :func:`tomojax.corrections.correct_frames`.
 
     Yields
     ------
@@ -340,7 +345,7 @@ def corrected_row_source(
             views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
             white_level=white_level, epsilon=epsilon, view_positions=view_positions,
             exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
-            dark_source=dark_source, counts=counts,
+            dark_source=dark_source, counts=counts, flat_weights=flat_weights,
         )  # fmt: skip
         limit = np.float32(np.inf if linear_limit is None else linear_limit[0])
         edge = None

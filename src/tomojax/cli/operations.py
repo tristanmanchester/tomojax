@@ -6,7 +6,15 @@ from typing import Annotated, Literal
 
 import msgspec
 
-from tomojax._parameters import AlignMethod, GeometryName, Method, Phantom, RegionName
+from tomojax._parameters import (
+    FLAT_WEIGHTS,
+    AlignMethod,
+    FlatWeighting,
+    GeometryName,
+    Method,
+    Phantom,
+    RegionName,
+)
 from tomojax.cli import wire_options as w
 from tomojax.wire.arrays import Count, Id, Member, Npy, Record, Storage
 
@@ -72,6 +80,7 @@ class Correct(Record, tag="correct"):
     source: Source
     corrections: tuple[Step, ...] = ()
     epsilon: float = 1e-6
+    flat_weights: FlatWeighting = FLAT_WEIGHTS
     views_per_batch: int | None = None
     binning: int = 1
 
@@ -111,6 +120,7 @@ class ReconstructSlabs(Record, tag="reconstruct_slabs"):
     corrections: tuple[Step, ...] = ()
     warm_start: bool | None = None
     epsilon: float = 1e-6
+    flat_weights: FlatWeighting = FLAT_WEIGHTS
     checkpoint: str | None = None
 
 

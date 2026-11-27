@@ -66,6 +66,7 @@ class tomojax.Frames(
         *steps: 'corrections.Step',
         *,
         epsilon: 'float' = 1e-06,
+        flat_weights: 'FlatWeighting' = 'views',
         views_per_batch: 'int | None' = None,
         binning: 'int' = 1,
     ) -> 'Scan'
@@ -266,6 +267,7 @@ def tomojax.reconstruct_slabs(
         config: 'recon.FBPConfig | recon.FourierConfig | recon.SIRTConfig | recon.MLEMConfig | None' = None,
         warm_start: 'bool | None' = None,
         epsilon: 'float' = 1e-06,
+        flat_weights: 'FlatWeighting' = 'views',
         checkpoint: 'str | PathLike[str] | None' = None,
         info: 'dict[str, object] | None' = None,
     ) -> 'AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]'
@@ -531,6 +533,7 @@ def tomojax.interactive.correction_preview(
         *,
         binning: 'int' = 1,
         epsilon: 'float' = 1e-06,
+        flat_weights: 'FlatWeighting' = 'views',
         views_per_batch: 'int | None' = None,
     ) -> 'CorrectionBand'
 def tomojax.interactive.reconstruct_slice(
@@ -633,6 +636,7 @@ def tomojax.corrections.correct_frames(
         output_rows: 'tuple[int, int] | None' = None,
         dark_source: 'str | None' = None,
         linear_limit: 'tuple[float, str] | None' = None,
+        flat_weights: 'FlatWeighting' = 'views',
     ) -> 'Corrected'
 def tomojax.corrections.correct_projections(
         projections: 'Any',

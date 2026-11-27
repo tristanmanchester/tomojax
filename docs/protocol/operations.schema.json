@@ -532,6 +532,13 @@
           "type": "number",
           "default": 1e-06
         },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views"
+        },
         "views_per_batch": {
           "anyOf": [
             {
@@ -2590,6 +2597,13 @@
           "type": "number",
           "default": 1e-06
         },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views"
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -4465,6 +4479,13 @@
         "epsilon": {
           "type": "number",
           "default": 1e-06
+        },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views"
         },
         "views_per_batch": {
           "anyOf": [

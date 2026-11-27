@@ -21,6 +21,12 @@ type TiltAbout = Literal["x", "z"]
 
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
 
+# How a view between two flat sets blends them: by what a sample of the views shows
+# of each set, or by its position between them.
+type FlatWeighting = Literal["views", "position"]
+# The blend when the caller does not choose one.
+FLAT_WEIGHTS: FlatWeighting = "views"
+
 
 def check_exterior(exterior: Exterior) -> None:
     """Validate the model of the scan beyond the detector."""
@@ -35,6 +41,13 @@ def normalize_filter(name: str | None) -> Filter:
     if normalized not in get_args(Filter.__value__):
         raise InvalidParameter("filter", f"Unknown filter {name}")
     return cast("Filter", normalized)
+
+
+def flat_weighting(value: str) -> FlatWeighting:
+    """Check how views between two flat sets blend them."""
+    if value in ("views", "position"):
+        return value
+    raise InvalidParameter("flat_weights", f"flat_weights is 'views' or 'position', not {value!r}")
 
 
 def method_fit(method: str | None, fit: str | tuple[str, ...] | None) -> tuple[str, ...]:

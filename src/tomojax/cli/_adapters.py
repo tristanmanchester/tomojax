@@ -20,6 +20,7 @@ from tomojax._loading.loader import (
     load_scan_with_declaration,
     projection_frames,
 )
+from tomojax._parameters import FLAT_WEIGHTS
 from tomojax._scan.model import combined_geometry, describe
 from tomojax._scan.simulation import build_sim_config, simulate_config
 from tomojax._typed_arrays import object_mapping
@@ -199,6 +200,14 @@ def geometry_summary(item: Root, *, measured_angles: bool = True) -> dict[str, A
             for key, entry in calibration.items()
         }
     return summary
+
+
+def raw_only(operation: op.Correct) -> None:
+    """Refuse flat-field settings on a scan of line integrals, which has no flat field."""
+    if operation.epsilon != 1e-6:
+        raise InvalidParameter("epsilon", "epsilon applies to raw frames")
+    if operation.flat_weights != FLAT_WEIGHTS:
+        raise InvalidParameter("flat_weights", "flat_weights applies to raw frames")
 
 
 def saved_storage(path: str) -> Hdf5 | None:
@@ -623,19 +632,17 @@ class Admission:
         if isinstance(item, tj.Scan) and isinstance(operation, op.CorrectionPreview):
             # A scan's band bins after its line-integral steps, as Scan.binned does.
             check_scan_steps(steps)
-            if operation.epsilon != 1e-6:
-                raise InvalidParameter("epsilon", "epsilon applies to raw frames")
+            raw_only(operation)
             check_binning(operation.binning, *item.projections.shape[1:])
             check_rows(operation.rows, item.projections.shape[1], operation.binning)
             settings.pop("epsilon", None)
+            settings.pop("flat_weights", None)
             return partial(correction_product, operation, item, steps, settings, self.context)
         if isinstance(item, tj.Scan):
             check_scan_steps(steps)
-            if operation.epsilon != 1e-6 or operation.binning != 1:
-                raise InvalidParameter(
-                    "epsilon" if operation.epsilon != 1e-6 else "binning",
-                    "epsilon and correction binning apply to raw frames",
-                )
+            raw_only(operation)
+            if operation.binning != 1:
+                raise InvalidParameter("binning", "correction binning applies to raw frames")
             return partial(item.corrected, *steps, views_per_batch=operation.views_per_batch)
         positive_finite(operation.epsilon, "epsilon")
         check_binning(operation.binning, *item.counts.shape[1:])

@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import FLAT_WEIGHTS
 from tomojax.cli._inputs import (
     PUBLIC as INPUTS,
     InputArgs,
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 
     from tomojax import Frames, Scan
     from tomojax._loading.geometry import DeclaredGeometry
+    from tomojax._parameters import FlatWeighting
     from tomojax.corrections import Step
     from tomojax.wire.progress import Result
 
@@ -53,6 +55,7 @@ class _Args(InputArgs):
     reject_views: float | None
     rings: bool
     epsilon: float
+    flat_weights: FlatWeighting
 
 
 _PUBLIC = (
@@ -172,6 +175,13 @@ def build_parser() -> ProgressParser:
     )
     _ = parser.add_argument(
         "--epsilon", type=float, default=1e-6, help="Floor of the flat field and transmission"
+    )
+    _ = parser.add_argument(
+        "--flat-weights",
+        choices=("views", "position"),
+        default=FLAT_WEIGHTS,
+        help="Blend the flat sets around a view by what the views show of each, or by the "
+        "view's position between them (%(default)s)",
     )
     add_progress(parser)
     hide_expert(parser, _PUBLIC)
@@ -463,7 +473,9 @@ def _applied(prepared: _Prepared, args: _Args) -> Scan:
     binning = args.binning
     item = prepared.item
     if isinstance(item, Frames):
-        return item.corrected(*prepared.steps, epsilon=args.epsilon, binning=binning)
+        return item.corrected(
+            *prepared.steps, epsilon=args.epsilon, flat_weights=args.flat_weights, binning=binning
+        )
     scan = item.corrected(*prepared.steps) if prepared.steps else item
     progress.check_canceled()
     return scan.binned(binning)
@@ -561,11 +573,16 @@ def write_band_preview(path: Path, prepared: _Prepared, band: tuple[int, int], a
     from tomojax.cli import _images
     from tomojax.wire.arrays import Axis, Uniform
 
-    after = interactive.correction_preview(
-        prepared.item, band, *prepared.steps, binning=args.binning, epsilon=args.epsilon
-    )
-    before = interactive.correction_preview(
-        prepared.item, band, binning=args.binning, epsilon=args.epsilon
+    before, after = (
+        interactive.correction_preview(
+            prepared.item,
+            band,
+            *steps,
+            binning=args.binning,
+            epsilon=args.epsilon,
+            flat_weights=args.flat_weights,
+        )  # fmt: skip
+        for steps in ((), prepared.steps)
     )
     middle = (band[1] - band[0]) // 2
     views = len(prepared.selection)

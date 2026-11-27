@@ -314,6 +314,18 @@ def test_constructor_paths_precede_io_and_dispatch(worker, operation, path):
         assert (reply["error"]["kind"], reply["error"]["path"]) == ("invalid_parameter", path)
 
 
+def test_flat_field_settings_are_refused_on_line_integrals(worker, simulation):
+    source = simulation["value"]["scan"]
+    for settings, field in [
+        (dict(flat_weights="position"), "flat_weights"),
+        (dict(epsilon=1e-3), "epsilon"),
+    ]:
+        recipe = dict(type="correct", source=source, **settings)
+        for command in ("validate", "run"):
+            failure = worker(command, operation=recipe)["error"]
+            assert (failure["kind"], failure["path"]) == ("invalid_parameter", field)
+
+
 def test_mask_shape_and_subsets_depend_on_the_selected_scan(worker, simulation, tmp_path):
     source = simulation["value"]["scan"]
     path = tmp_path / "support.npy"

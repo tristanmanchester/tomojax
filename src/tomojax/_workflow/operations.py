@@ -30,12 +30,15 @@ import numpy as np
 from tomojax import _typed_arrays, progress, recon
 from tomojax._loading.loader import Frames, load
 from tomojax._parameters import (
+    FLAT_WEIGHTS,
     AlignMethod,
     AnnotationModule,
     Filter,
     Fit,
+    FlatWeighting,
     Method,
     RegionName,
+    flat_weighting,
     method_fit,
 )
 from tomojax._scan.model import (
@@ -785,6 +788,7 @@ def reconstruct_slabs(
     | None = None,
     warm_start: bool | None = None,
     epsilon: float = 1e-6,
+    flat_weights: FlatWeighting = FLAT_WEIGHTS,
     checkpoint: str | PathLike[str] | None = None,
     info: dict[str, object] | None = None,
 ) -> AbstractContextManager[Iterator[tuple[slice, Reconstruction]]]:
@@ -857,6 +861,9 @@ def reconstruct_slabs(
         Start SIRT/OSEM from FBP; None uses the method's default.
     epsilon : float, optional
         Positive finite lower bound for flat field and transmission.
+    flat_weights : {'views', 'position'}, optional
+        How a view between two flat sets blends them, as for
+        :meth:`tomojax.Frames.corrected`.
     checkpoint : str or path-like or None, optional
         Directory recording the finished slabs, created if absent; None records nothing.
     info : dict or None, optional
@@ -894,6 +901,7 @@ def reconstruct_slabs(
         config=config,
         warm_start=warm_start,
         epsilon=epsilon,
+        flat_weights=flat_weights,
         checkpoint=checkpoint,
         info=info,
     )
@@ -908,6 +916,7 @@ def slab_settings(
     warm_start: bool | None,
     corrections: Sequence[corrections.Step],
     epsilon: float,
+    flat_weights: FlatWeighting,
 ) -> tuple[Grid, MethodConfig, tuple[corrections.Step, ...]]:
     """Resolve method, geometry and supported corrections before opening a raw row source."""
     from tomojax.corrections.api import positive_finite, slab_steps
@@ -929,6 +938,7 @@ def slab_settings(
     bound = bind_step_geometry(corrections, frames.geometry)
     slab_steps(bound)
     positive_finite(epsilon, "epsilon")
+    _ = flat_weighting(flat_weights)
     return target, cfg, bound
 
 
@@ -942,6 +952,7 @@ def _reconstruct_slabs_context(
     config: MethodConfig | None,
     warm_start: bool | None,
     epsilon: float,
+    flat_weights: FlatWeighting,
     checkpoint: str | PathLike[str] | None,
     info: dict[str, object] | None,
 ) -> Iterator[Iterator[tuple[slice, Reconstruction]]]:
@@ -963,6 +974,7 @@ def _reconstruct_slabs_context(
             warm_start=warm_start,
             corrections=corrections,
             epsilon=epsilon,
+            flat_weights=flat_weights,
         )
         raw = (frames.flats, frames.darks, frames.flat_positions, frames.white_level)
         timing = (frames.view_positions, frames.exposure_times, frames.flat_exposure_times)
@@ -975,7 +987,7 @@ def _reconstruct_slabs_context(
                     "source": frames.source.source_path if frames.source else None,
                 },
                 operation="reconstruct_slabs",
-                settings=(cfg, target, bound, epsilon, warm_start, frames.geometry),
+                settings=(cfg, target, bound, epsilon, flat_weights, warm_start, frames.geometry),
                 input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
             ),
             corrected_row_source(
@@ -992,6 +1004,7 @@ def _reconstruct_slabs_context(
                 host=cone or bool(getattr(frames.geometry, "detector_roll", 0)),
                 dark_source=frames.dark_source,
                 linear_limit=frames.linear_limit,
+                flat_weights=flat_weights,
             ) as source,
         ):
 

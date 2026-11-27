@@ -23,6 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax import progress
+from tomojax._parameters import FLAT_WEIGHTS, FlatWeighting, flat_weighting
 from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import discard_failed_outputs, release_planes
 from tomojax.core.registration import correction_images
@@ -63,15 +64,15 @@ def correct_frames(
     output_rows: tuple[int, int] | None = None,
     dark_source: str | None = None,
     linear_limit: tuple[float, str] | None = None,
+    flat_weights: FlatWeighting = FLAT_WEIGHTS,
 ) -> Corrected:
     """Convert detector counts to line integrals and record each correction.
 
     ``flats`` are flat frames and ``flat_positions`` the number of views
     recorded before each (frames at one position are one set; None, one set);
     ``white_level`` stands in for flats on scanners that record it instead.
-    A view between two sets of several frames takes the blend of them that a
-    sample of the views supports, and linear interpolation in position where the
-    views say nothing; the ``flat_dark`` record reports it.
+    A view between two flat sets takes a blend of them set by ``flat_weights``;
+    the ``flat_dark`` record reports it.
     ``darks`` default to zero. ``view_positions`` places each view among the
     flats (by default view ``i`` at ``i + 1/2``). ``binning`` averages blocks of
     ``binning`` x ``binning`` detector pixels of the corrected line integrals.
@@ -117,6 +118,11 @@ def correct_frames(
         The detector's stated linear range in counts and where it is stated. The
         record keeps the fraction of counts above it and the line integral where
         it ends, and a warning names both when any count lies above. Default None.
+    flat_weights : {'views', 'position'}, optional
+        How a view between two flat sets blends them. ``"views"`` measures from a
+        sample of the views how much of each set every view contains, and
+        interpolates in position where the views say nothing; ``"position"``
+        interpolates linearly in position alone.
 
     Returns
     -------
@@ -152,8 +158,7 @@ def correct_frames(
     views, rows, cols = (int(s) for s in counts.shape)
     check_binning(binning, rows, cols)
     binning = int(binning)
-    band = slice(0, rows)
-    selected = slice(None)
+    band, selected = slice(0, rows), slice(None)
     if output_rows is not None:
         from ._rows import preview_window
 
@@ -163,10 +168,10 @@ def correct_frames(
     ordered = ordered_steps(steps)
     counts_steps = tuple(s for d, s in ordered if d == "counts")
     fields, field_record, interpolation, view_scales = calibration(
-        views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks,
+        views, (rows, cols), flats=flats, flat_positions=flat_positions, darks=darks, counts=counts,
         white_level=white_level, epsilon=epsilon, view_positions=view_positions,
         exposure_times=exposure_times, flat_exposure_times=flat_exposure_times,
-        dark_source=dark_source, counts=counts, counts_steps=counts_steps,
+        dark_source=dark_source, counts_steps=counts_steps, flat_weights=flat_weights,
     )  # fmt: skip
     acquisition_fields, acquisition_counts = fields, counts
     if band != slice(0, rows):
@@ -273,12 +278,14 @@ def calibration(
     dark_source: str | None,
     counts: CalibrationFrames,
     counts_steps: tuple[Step, ...] = (),
+    flat_weights: FlatWeighting = FLAT_WEIGHTS,
 ) -> Calibration:
     """Flat and dark fields of a whole ``shape`` detector, and each view's weights of them.
 
-    Arguments mean what they do for :func:`correct_frames`. Between two flat sets
-    the ``counts`` themselves weight the sets (:mod:`._flat_weights`).
+    Arguments mean what they do for :func:`correct_frames`. With ``flat_weights``
+    ``"views"`` the ``counts`` themselves weight the sets (:mod:`._flat_weights`).
     """
+    flat_weights = flat_weighting(flat_weights)
     at = (
         np.arange(views) + 0.5 if view_positions is None else np.asarray(view_positions, np.float64)
     )
@@ -294,10 +301,12 @@ def calibration(
             float(np.min(exposure_times)),
             float(np.max(exposure_times)),
         ]
-    interpolation = flat_weights(at, fields.positions, exposure_scales=view_scales)
+    interpolation = position_weights(at, fields.positions, exposure_scales=view_scales)
     if len(fields.positions) > 1:
-        fields.weights, found = view_weights(counts, fields, interpolation, counts_steps)
-        records[0].found.update(found)
+        records[0].settings["flat_weights"] = flat_weights
+        if flat_weights == "views":
+            fields.weights, found = view_weights(counts, fields, interpolation, counts_steps)
+            records[0].found.update(found)
     return Calibration(fields, records, interpolation, view_scales)
 
 
@@ -419,7 +428,7 @@ def exposure_scales(
     return rates[0].astype(np.float32), rates[1]
 
 
-def flat_weights(
+def position_weights(
     q: np.ndarray, positions: np.ndarray, *, exposure_scales: np.ndarray | None = None
 ) -> tuple[np.ndarray, ...]:
     """For each view at ``q``, the flat sets either side of it and the weight of the later one.

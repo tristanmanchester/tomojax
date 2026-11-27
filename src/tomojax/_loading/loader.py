@@ -30,7 +30,7 @@ from tomojax._loading.frame_sources import (
     tiff_frames,
 )
 from tomojax._loading.geometry import center_of, centered, frame_geometry
-from tomojax._parameters import AnnotationModule
+from tomojax._parameters import FLAT_WEIGHTS, AnnotationModule, FlatWeighting
 from tomojax._scan.model import (
     Scan,
     bind_step_geometry,
@@ -524,6 +524,7 @@ class Frames:
         self,
         *steps: corrections.Step,
         epsilon: float = 1e-6,
+        flat_weights: FlatWeighting = FLAT_WEIGHTS,
         views_per_batch: int | None = None,
         binning: int = 1,
     ) -> Scan:
@@ -555,6 +556,9 @@ class Frames:
             Corrections applied in domain order, then in the order supplied.
         epsilon : float, optional
             Positive finite lower bound for flat field and transmission.
+        flat_weights : {'views', 'position'}, optional
+            How a view between two flat sets blends them: by what a sample of the views
+            shows of each set (see :mod:`tomojax.corrections`), or by its position alone.
         views_per_batch : int or None, optional
             Positive views per device batch; None selects a workspace-based size.
         binning : int, optional
@@ -570,7 +574,7 @@ class Frames:
         ValueError
             If calibration, correction settings or batch dimensions are invalid.
         """
-        done = corrected_data(self, steps, epsilon, views_per_batch, binning)
+        done = corrected_data(self, steps, epsilon, views_per_batch, binning, flat_weights)
         everything = len(done.kept) == self.views
         geometry = self.geometry if everything else views_of(self.geometry, done.kept)
         geometry = binned_geometry(geometry, binning) if binning > 1 else geometry
@@ -664,6 +668,7 @@ def corrected_data(
     epsilon: float,
     views_per_batch: int | None,
     binning: int,
+    flat_weights: FlatWeighting,
     *,
     output_rows: tuple[int, int] | None = None,
 ) -> corrections.Corrected:
@@ -696,6 +701,7 @@ def corrected_data(
             views_per_batch=views_per_batch,
             binning=binning,
             output_rows=output_rows,
+            flat_weights=flat_weights,
         )
 
 
