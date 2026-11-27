@@ -88,19 +88,23 @@ class DeviceRows:
     def _zero_buffer(self) -> CuPyValue:
         from tomojax.core.host_transfer import allocate_device
 
-        # This stack lives through one fine solve. A caching pool may reserve
-        # several times its size even after the caller discards the slab.
-        try:
-            with self.cp.cuda.using_allocator(None):
-                return self.cp.zeros(self.data.shape, dtype=np.float32)
-        except (self.cp.cuda.memory.OutOfMemoryError, self.cp.cuda.runtime.CUDARuntimeError) as err:
-            if isinstance(err, self.cp.cuda.runtime.CUDARuntimeError) and err.status != 2:
-                # cudaErrorMemoryAllocation is the only recoverable runtime error here.
-                raise
-            # A preallocated JAX pool can still have room on a full device.
-            (device,) = self.data.devices()
-            storage = allocate_device(self.data.shape, dtype=np.dtype(np.float32), device=device)
-            return self.cp.from_dlpack(storage)
+        (device,) = self.data.devices()
+        stats = device.memory_stats() or {}
+        dtype = np.dtype(np.float32)
+        # Reuse a reserved block if it fits. Growing the JAX pool for this
+        # short-lived stack can retain several times the slab's size.
+        if stats.get("largest_free_block_bytes", 0) < self.data.size * dtype.itemsize:
+            try:
+                with self.cp.cuda.using_allocator(None):
+                    return self.cp.zeros(self.data.shape, dtype=dtype)
+            except (
+                self.cp.cuda.memory.OutOfMemoryError,
+                self.cp.cuda.runtime.CUDARuntimeError,
+            ) as err:
+                if isinstance(err, self.cp.cuda.runtime.CUDARuntimeError) and err.status != 2:
+                    raise  # Only cudaErrorMemoryAllocation can use the reserved pool instead.
+        storage = allocate_device(self.data.shape, dtype=dtype, device=device)
+        return self.cp.from_dlpack(storage)
 
     def write(self, part: slice, rows: slice, block: CuPyValue) -> None:
         with self.cp.cuda.Device(self.input.device.id):

@@ -319,8 +319,8 @@ def test_device_detector_means_preserve_host_rounding_for_every_leaf_width():
 
 
 @pytest.mark.gpu
-@pytest.mark.parametrize("preallocated", [False, True])
-def test_private_exterior_storage_keeps_unmodeled_rows_zero(monkeypatch, preallocated):
+@pytest.mark.parametrize("placement", ["external", "reserved", "external_full"])
+def test_private_exterior_storage_keeps_unmodeled_rows_zero(monkeypatch, placement):
     import jax
 
     # check-public-imports: allow-private
@@ -330,12 +330,21 @@ def test_private_exterior_storage_keeps_unmodeled_rows_zero(monkeypatch, preallo
     data = jax.device_put(np.ones((3, 4, 5), np.float32))
     rows = DeviceRows.on_selected_device(data)
     assert rows is not None
-    if preallocated:
+    (device,) = data.devices()
+    size = data.nbytes if placement == "reserved" else 0
+    monkeypatch.setattr(
+        type(device), "memory_stats", lambda self: {"largest_free_block_bytes": size}
+    )
+    using_allocator = cp.cuda.using_allocator
+    requests = []
 
-        def outside_pool_full(allocator):
+    def external_allocator(allocator):
+        requests.append(allocator)
+        if placement == "external_full":
             raise cp.cuda.runtime.CUDARuntimeError(2)  # cudaErrorMemoryAllocation
+        return using_allocator(allocator)
 
-        monkeypatch.setattr(cp.cuda, "using_allocator", outside_pool_full)
+    monkeypatch.setattr(cp.cuda, "using_allocator", external_allocator)
     rows.write(slice(None), slice(1, 2), cp.full((3, 1, 5), 2.0, dtype=np.float32))
     background, share = rows.result()
     expected = np.zeros(data.shape, np.float32)
@@ -343,6 +352,7 @@ def test_private_exterior_storage_keeps_unmodeled_rows_zero(monkeypatch, preallo
     np.testing.assert_array_equal(background, expected)
     np.testing.assert_array_equal(data, np.ones_like(expected))
     assert share == 0.5
+    assert requests == ([] if placement == "reserved" else [None])
 
 
 @pytest.mark.gpu
