@@ -258,16 +258,17 @@ def test_rolled_offset_panel_recovers_the_join_and_outer_detail(method, exterior
 
 @pytest.mark.parametrize("roll", [18, 90])
 def test_detector_derived_grid_contains_every_rolled_panel_corner(tmp_path, roll):
-    import h5py
+    from tomojax.io.api import NXTomoMetadata, save_nxtomo
 
     detector = tj.Detector(42, 29, 0.8, 1.1, center=(12.0, -0.3))
-    geometry = tj.ParallelGeometry(
-        tj.Grid(9, 9, 3, 1, 1, 1), detector, np.arange(36) * 10, detector_roll=roll
-    )
     path = tmp_path / "panel.nxs"
-    tj.save(path, tj.Scan(np.zeros((36, 29, 42), np.float32), geometry))
-    with h5py.File(path, "r+") as handle:
-        del handle["entry"].attrs["grid_meta_json"]
+    save_nxtomo(
+        str(path),
+        np.zeros((36, 29, 42), np.float32),
+        metadata=NXTomoMetadata(
+            angles=np.arange(36) * 10, detector=detector, geometry_meta={"detector_roll": roll}
+        ),
+    )
     loaded = tj.load(path)
     report = tj.inspect(path)
     # Project the actual rectangle edges into the horizontal and vertical lab axes.
