@@ -38,7 +38,7 @@ from jax.experimental.buffer_callback import buffer_callback
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax.core._cone_runtime import PLANE_THREADS, cuda_module, use_cuda_cone
+from tomojax.core._cone_runtime import PLANE_THREADS, cuda_module, plane_kernel, use_cuda_cone
 from tomojax.core._cuda_joseph import xla_stream
 from tomojax.core.geometry.base import grid_volume_origin
 from tomojax.core.volume_layout import swap_private_axes
@@ -526,9 +526,8 @@ def adjoint_into(
         target[...] = initial
     coeff, images = cp.asarray(coeff), cp.asarray(images)
     weighted, boxes, peak = _weighted_images(module, coeff, (images,), grid, det)
-    sizes = (grid.nx, grid.ny, grid.nz, det.nu, det.nv)
-    dims = tuple(np.int32(x) for x in sizes)
     extent = (grid.nx, grid.ny, grid.nz)
+    dims = tuple(np.int32(x) for x in (*extent, det.nu, det.nv))
     # Each kernel walks every view, adding each of its tiles to the volume once.
     # Private storage puts planes first in the grid, as axis 0 does: concurrent
     # blocks then share detector footprints, keeping the views' images in L2.
@@ -549,7 +548,8 @@ def adjoint_into(
         nb, nc = (extent[i] for i in range(3) if i != axis)
         wide = axis != 2 and grid.nz >= 128
         tile_c = 64 if wide else 32
-        kernel = module.get_function("plane_adjoint_wide" if wide else "plane_adjoint")
+        name = "plane_adjoint_wide" if wide else "plane_adjoint"
+        kernel = module.get_function(plane_kernel(name, views))
         kernel.preferred_shared_memory_carveout = 100 if wide else -1  # four 20.7 KiB wide blocks
         kernel(
             (
@@ -617,7 +617,7 @@ def adjoint_pair_into(
                 separable(shape, (256,), (*part, np.int32(axis), image, target, *dims))
     for axis in (0, 1, 2):
         nb, nc = (extent[i] for i in range(3) if i != axis)
-        module.get_function("pair_plane_adjoint")(
+        module.get_function(plane_kernel("pair_plane_adjoint", views))(
             (
                 (-(-extent[axis] // 2), -(-nb // 15), -(-nc // 32))
                 if z_fast or axis == 0

@@ -1171,7 +1171,7 @@ __device__ __forceinline__ float footprint_peak(const unsigned* peak, int view, 
 // addition's fraction in units of 2^-f; with at most m additions per cell (the rays per
 // cell), f = 31 - ceil(log2 m) keeps that word's sum within 2^30 too. A cell thus sums
 // its float additions exactly down to 2^-(30 + f) B, and rounds once when written.
-#define VMAX 32
+// VMAX is the run-list capacity passed by the cone CUDA module.
 // Plane-tile kernels' threads per block (set by the compiler options), and the blocks
 // per SM their registers allow.
 #ifndef PLANE_THREADS
@@ -1183,7 +1183,19 @@ __device__ __forceinline__ float footprint_peak(const unsigned* peak, int view, 
 #ifndef WIDE_BLOCKS
 #define WIDE_BLOCKS 4
 #endif
-template <int PC, int RHS = 1, int PLANES = 1>
+// Record a view's detector runs and the reciprocal used to decode their indices.
+template<int RUN>
+__device__ __forceinline__ int detector_runs(
+    int ulo, int uhi, int vlo, int vhi, int (&foot)[4], unsigned long long& magic)
+{
+    int rows = vhi - vlo + 1, runs = (rows + RUN - 1) / RUN;
+    int count = (uhi - ulo + 1) * runs;
+    foot[0] = ulo; foot[1] = vlo; foot[2] = rows; foot[3] = runs;
+    magic = ((1ull << 40) + runs - 1) / runs;
+    return count;
+}
+
+template <int PC, int RHS, int PLANES, bool SINGLE_BATCH>
 __device__ __forceinline__ void plane_tile(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
@@ -1212,7 +1224,7 @@ __device__ __forceinline__ void plane_tile(
     int nb0 = min(ROWS, nb - b0), nc0 = min(PC, nc - c0);
     if (!any_view(coeff, axis_box, nviews, a, false)) return;
     for (int i = threadIdx.x; i < RHS * 2 * WORDS; i += blockDim.x) (&acc[0][0][0][0][0])[i] = 0;
-    int t = threadIdx.x;
+    int t = threadIdx.x, ready_runs = 0;
     if (t == 0) touched = 0;
     {
         // The fixed-point scales bound every view's contributions.
@@ -1229,6 +1241,9 @@ __device__ __forceinline__ void plane_tile(
                 for (int r = 0; r < RHS; ++r)
                     bound[r] += footprint_peak(peak, view, r, ulo, uhi, vlo, vhi, nu, nv) * rays;
                 bound[RHS] += rays;
+                // All views fit the shared run list. Fill it while the bounds are in registers.
+                if (SINGLE_BATCH)
+                    ready_runs = detector_runs<RUN>(ulo, uhi, vlo, vhi, foot[t], run_magic[t]);
             }
         }
         #pragma unroll
@@ -1267,7 +1282,7 @@ __device__ __forceinline__ void plane_tile(
     for (int r = 0; r < RHS; ++r) scales[r] = scale[r];
     for (int start = 0; start < nviews; start += VMAX) {
         int count = min(VMAX, nviews - start);
-        int runs_here = 0;
+        int runs_here = ready_runs;
         if (start > 0) __syncthreads();  // the last chunk's views are no longer read
         if (t < count) {
             const float* c = coeff + (long)(start + t) * NC;
@@ -1280,13 +1295,10 @@ __device__ __forceinline__ void plane_tile(
             }
             int ulo, uhi, vlo, vhi;
             float rays;
-            if (!separable(c) && ab[1] >= ab[0]
+            if (!SINGLE_BATCH && !separable(c) && ab[1] >= ab[0]
                 && tile_footprint<PLANES>(c, ab, a, b, cc, b0, nb0, c0, nc0, k, na, nu, nv,
                                           ulo, uhi, vlo, vhi, rays)) {
-                int wv = vhi - vlo + 1, runs = (wv + RUN - 1) / RUN;
-                runs_here = (uhi - ulo + 1) * runs;
-                foot[t][0] = ulo; foot[t][1] = vlo; foot[t][2] = wv; foot[t][3] = runs;
-                run_magic[t] = ((1ull << 40) + runs - 1) / runs;
+                runs_here = detector_runs<RUN>(ulo, uhi, vlo, vhi, foot[t], run_magic[t]);
             }
         }
         if (t < 32) {  // each view's first run: a prefix sum over the (<= 32) views
@@ -1443,23 +1455,25 @@ __device__ __forceinline__ void plane_tile(
 
 }
 
-extern "C" __global__ void __launch_bounds__(PLANE_THREADS, PLANE_BLOCKS) plane_adjoint(
+template <bool SINGLE_BATCH>
+__global__ void __launch_bounds__(PLANE_THREADS, PLANE_BLOCKS) plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
     const unsigned* __restrict__ peak)
 {
-    plane_tile<32, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
+    plane_tile<32, 1, 2, SINGLE_BATCH>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
 }
 
 // Wider physical-z tiles amortize detector footprints and tile boundaries;
 // z-dominant rays and short z extents retain the narrower shared-memory tile. Its
 // two-word tile allows four blocks per SM, so registers need not be capped for eight.
-extern "C" __global__ void __launch_bounds__(PLANE_THREADS, WIDE_BLOCKS) plane_adjoint_wide(
+template <bool SINGLE_BATCH>
+__global__ void __launch_bounds__(PLANE_THREADS, WIDE_BLOCKS) plane_adjoint_wide(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, float* __restrict__ vol, int nx, int ny, int nz, int nu, int nv,
     const unsigned* __restrict__ peak)
 {
-    plane_tile<64, 1, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
+    plane_tile<64, 1, 2, SINGLE_BATCH>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak);
 }
 
 // One traversal accumulates the two spatial gradients and their plane moments.
@@ -1785,13 +1799,14 @@ extern "C" __global__ void __launch_bounds__(256, 4) sep_adjoint_cached_thin(
 
 // Two independent right-hand sides share ray coordinates. Their two-word tiles allow
 // four blocks per SM.
-extern "C" __global__ void __launch_bounds__(PLANE_THREADS, 3) pair_plane_adjoint(
+template <bool SINGLE_BATCH>
+__global__ void __launch_bounds__(PLANE_THREADS, 3) pair_plane_adjoint(
     const float* __restrict__ coeff, const int* __restrict__ axis_box, int nviews, int a,
     const float* __restrict__ img, const float* __restrict__ img1,
     float* __restrict__ vol, float* __restrict__ vol1,
     int nx, int ny, int nz, int nu, int nv, const unsigned* __restrict__ peak)
 {
-    plane_tile<32, 2, 2>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak, vol1, img1);
+    plane_tile<32, 2, 2, SINGLE_BATCH>(coeff, axis_box, nviews, a, img, vol, nx, ny, nz, nu, nv, peak, vol1, img1);
 }
 
 // Two 32-plane row tiles and cached geometry stay within 24 KiB per block.
