@@ -60,7 +60,7 @@ from tomojax._version import __version__
 # JAX eagerly reserves 75% of device memory by default, leaving too little for
 # cuSolver initialization and TomoJAX's CuPy workspaces on small GPUs; growing
 # the pool on demand avoids that reservation while retaining reuse. The ceiling
-# stays JAX's 75%. The pool never hands memory back, so what lives outside it
+# stays JAX's 75%. While the pool retains its regions, what lives outside it
 # (the CUDA context, kernel modules, cuSolver, CuPy) has only what the ceiling
 # leaves: at 90% that was 0.3 GiB on an 8 GB card once a level had grown the
 # pool, and K11 67208's refinement could not load a kernel. An explicit

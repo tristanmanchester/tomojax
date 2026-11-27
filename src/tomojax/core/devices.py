@@ -297,9 +297,9 @@ def pool_stats() -> dict[str, int] | None:
 def block_fits(size: int, stats: Mapping[str, int] | None) -> bool:
     """Whether a pool with allocator figures ``stats`` could hand out one block of ``size`` bytes.
 
-    That is its largest free block, or what it may still grow by under its limit: the pool
-    never returns a free region to the driver, so a request larger than both raises after the
-    allocator's retry, however much is free in all. ``None`` (off a GPU) always fits.
+    This uses the largest free block and the room to grow under the pool limit.
+    The snapshot excludes space the allocator might reclaim by releasing regions.
+    ``None`` (off a GPU) always fits.
     """
     if not stats:
         return True

@@ -15,9 +15,9 @@ reports in use above them then (the allocator's rounding of their chunks) is
 measured, and counted with them.
 
 Then the stacks are placed in the order of who most deserves the device (read in
-every matvec first). An array needs one block, and the pool never hands a free
-region back to the driver, so free space spread over regions is not one block:
-whether one can be had is the allocator's own figure (``fits``), its largest free
+every matvec first). An array needs one block. While the pool retains its regions,
+free space in separate regions cannot serve a single allocation. Placement uses
+the allocator's current figures (``fits``), its largest free
 block or what it may still grow by under its limit. A stack goes to the device only
 if one block for it can be had, and is then really allocated, the allocator judging
 a yes; it stays only if a block for the level's largest transient can still be had.
