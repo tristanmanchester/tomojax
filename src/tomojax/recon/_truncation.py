@@ -11,6 +11,7 @@ when the rows do not end inside the detector.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, replace
 from functools import lru_cache
 import math
 from typing import TYPE_CHECKING
@@ -26,6 +27,8 @@ from ._continuation import (
     parallel_axis_distance,
     radius_views,
 )
+
+from ._detector_rows import DetectorRows, RowSamples
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -53,6 +56,122 @@ def _record_indices(views: int, nv: int) -> tuple[npt.NDArray[np.int64], npt.NDA
     view = radius_views(views)[:: max(1, math.ceil(min(views, 256) / _RECORD_SAMPLES))]
     row = np.linspace(0, nv - 1, min(nv, _RECORD_SAMPLES)).round().astype(np.int64)
     return view, row
+
+
+@dataclass
+class _Chord:
+    samples: RowSamples
+    views: npt.NDArray[np.int64]
+    native: tuple[int, int]
+    distance: bytes
+    z: float
+    values: np.ndarray | None = None
+
+
+class ChordSample:
+    """Sample physical chords for the truncation record, including native slab reads."""
+
+    def __init__(self, chords: list[_Chord]) -> None:
+        self.chords = chords
+
+    @classmethod
+    def for_band(
+        cls, geometry: Geometry, detector: Detector, n_views: int, first: int, height: int
+    ) -> ChordSample | None:
+        parts = cone_parts(geometry, detector)
+        parallel_roll = float(getattr(geometry, "detector_roll", 0.0))
+        if not parallel_roll and not any(b.detector_roll for _, b, _ in parts or ()):
+            return None
+        chosen, _ = _record_indices(n_views, height)
+        chords: list[_Chord] = []
+        start = 0
+        for count, beam, own in parts or ((n_views, None, detector),):
+            stop = start + (count or n_views)
+            views = chosen[(chosen >= start) & (chosen < stop)]
+            start = stop
+            if not len(views):
+                continue
+            roll = parallel_roll if beam is None else beam.detector_roll
+            c, s = DetectorRows(own, roll).axes
+            dz = (first + (height - own.nv) / 2) * own.dv
+            crop = replace(own, nv=height, center=(own.center[0] - s * dz, own.center[1] + c * dz))
+            layout = DetectorRows(crop, roll)
+            horizontal = layout.horizontal
+            _, rows = _record_indices(n_views, horizontal.nv)
+            u, v = layout.coordinates(horizontal, rows)
+            lo, hi = layout.limits(horizontal, rows)
+            for i in range(len(rows)):
+                left, right = lo.item(i), hi.item(i)
+                width = right - left
+                if not width:
+                    continue
+                x = horizontal.center[0] + (left + (width - horizontal.nu) / 2) * horizontal.du
+                panel = replace(horizontal, nu=width, center=(x, horizontal.center[1]))
+                distance = (
+                    parallel_axis_distance(panel, width, width)
+                    if beam is None
+                    else cone_axis_distance(beam, panel, width)
+                )
+                sample = RowSamples(
+                    np.clip(u[i, left:right], 0, crop.nu - 1),
+                    np.clip(v[i, left:right], 0, crop.nv - 1),
+                )
+                band = layout.band(horizontal, rows.item(i), rows.item(i) + 1)
+                z = horizontal.center[1] + (rows.item(i) - (horizontal.nv - 1) / 2) * horizontal.dv
+                chords.append(_Chord(sample, views, band, distance.tobytes(), z))
+        return cls(chords)
+
+    def add(self, first: int, data: np.ndarray | jax.Array) -> None:
+        pending: dict[bytes, list[_Chord]] = {}
+        for chord in self.chords:
+            lo, hi = chord.native
+            if chord.values is None and first <= lo and hi <= first + data.shape[1]:
+                pending.setdefault(chord.views.tobytes(), []).append(chord)
+        for group in pending.values():
+            # One gather per tap covers every sampled chord in this native band.
+            samples = RowSamples(
+                np.concatenate([c.samples.u for c in group]),
+                np.concatenate([c.samples.v for c in group]),
+            )
+            views = group[0].views
+            blocks = [samples.read(data, first, views[i : i + 4]) for i in range(0, len(views), 4)]
+            values = np.concatenate(blocks)
+            at = 0
+            for chord in group:
+                stop = at + len(chord.samples.u)
+                chord.values = values[:, at:stop]
+                at = stop
+
+    def values(self) -> np.ndarray:
+        # Pool repeats of each physical chord across acquisition segments.
+        groups: dict[tuple[float, bytes], list[np.ndarray]] = {}
+        for chord in self.chords:
+            assert chord.values is not None
+            groups.setdefault((chord.z, chord.distance), []).append(chord.values)
+        stats: list[np.ndarray] = []
+        axial: list[float] = []
+        for (_, coordinates), pieces in groups.items():
+            data = np.concatenate(pieces)[:, None, :]
+            with np.errstate(invalid="ignore", divide="ignore"):
+                terms = np.asarray(_measure(coordinates, host=True, by_row=True)(data))[0]
+            distance = np.frombuffer(coordinates, np.float64)
+            width = data.shape[-1]
+            if distance.item(width) <= 0 <= distance.item(2 * width - 1):
+                axial.append(terms.item(4))
+            stats.append(terms)
+        rows = np.stack(stats)
+        # Only chords containing the axis measure an interior change there.
+        rows[:, 4] = np.mean(axial) if axial else 0.0
+        rows[:, 6] = np.median(rows[:, 6])
+        with np.errstate(invalid="ignore", divide="ignore"):
+            return np.asarray(_combine(rows))
+
+    def record(self, read: Callable[[int, int], np.ndarray | jax.Array]) -> dict[str, float]:
+        for chord in self.chords:
+            if chord.values is None:
+                lo, hi = chord.native
+                self.add(lo, read(lo, hi))
+        return record_values(self.values())
 
 
 class ScanSample:
@@ -139,9 +258,13 @@ def record_values(values: np.ndarray | jax.Array) -> dict[str, float]:
 
 
 def truncation_values(
-    geometry: Geometry, detector: Detector, projections: np.ndarray | jax.Array
+    geometry: Geometry, detector: Detector, projections: np.ndarray | jax.Array, *, first: int = 0
 ) -> np.ndarray | jax.Array:
     """Submit the record on the source device; only the five scalars travel to the host."""
+    sample = ChordSample.for_band(geometry, detector, len(projections), first, projections.shape[1])
+    if sample is not None:
+        sample.add(0, projections)
+        return sample.values()
     distance = _axis_distance(geometry, detector, continued_columns(projections.shape[-1]))
     host = isinstance(projections, np.ndarray)
     measure = _measure(distance.tobytes(), host=host)

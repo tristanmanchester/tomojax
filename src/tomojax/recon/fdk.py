@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Generator
 from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from functools import partial
+from functools import lru_cache, partial
 import math
 import operator
 from typing import TYPE_CHECKING
@@ -65,7 +65,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
     from tomojax._parameters import Filter, ProjectorBackend
-    from tomojax._typed_arrays import Device
+    from tomojax._typed_arrays import Device, Float64Array
     from tomojax.core.geometry.base import Detector, Geometry, Grid
     from tomojax.core.geometry.cone import ConeBeam
     from tomojax.recon.types import ReconstructionSlab
@@ -140,7 +140,8 @@ def view_weights(geometry: Geometry, detector: Detector, n_views: int) -> np.nda
     if fan is None:
         return column_weights(parts, grouped_angles(geometry, n_views))
     check_angular_coverage(geometry, detector, n_views)
-    result, first = [], 0
+    result: list[np.ndarray] = []
+    first = 0
     for index, count in enumerate(fan.counts):
         views = slice(first, first + count)
         result.append(
@@ -161,15 +162,16 @@ def _virtual_columns(beam: ConeBeam, detector: Detector) -> tuple[int, int]:
     be read. A column's conjugate has the opposite fan angle (see
     :func:`fan_angles`), which a laterally offset axis maps nonlinearly to u.
     """
-    if not _windowable(beam):
+    if beam.detector_pitch or beam.detector_yaw:
         return 0, 0
     sdd, du = float(beam.source_to_detector), float(detector.du)
     gamma = fan_angles(beam, detector)
-    tilt = np.arctan(float(beam.axis_offset) / float(beam.source_to_axis))
+    tilt = math.atan(beam.axis_offset / beam.source_to_axis)
     # Column of fan angle g: u = SDD tan(g + tilt), clipped short of the 90-degree pole.
-    reach = sdd * np.tan(np.clip(-gamma[[-1, 0]] + tilt, -1.5, 1.5))
+    reach: Float64Array = sdd * np.tan(np.clip(-gamma[[-1, 0]] + tilt, -1.5, 1.5))
     # Fractional column indices of the conjugates of the last and first columns.
-    low, high = (reach - float(detector.center[0])) / du + (detector.nu - 1) / 2
+    columns = (reach - detector.center[0]) / du + (detector.nu - 1) / 2
+    low, high = columns.item(0), columns.item(1)
     pad = (max(0, math.ceil(-low - 1e-6)), max(0, math.ceil(high - (detector.nu - 1) - 1e-6)))
     return (0, 0) if max(pad) <= 1 else pad
 
@@ -294,6 +296,22 @@ class _Prepared:
         transfer_views = max(1, (mib * 2**20) // (4 * self.detector.nu * self.detector.nv))
         return max(1, min(self.views_per_batch, transfer_views))
 
+    def chords(
+        self, projections: np.ndarray | jax.Array | _RowView | PermutedRows, native_row: int
+    ) -> FilteredChords:
+        assert self.fan is not None
+        return FilteredChords(
+            self.fan,
+            projections,
+            native_row,
+            self.first_row,
+            self.first_row + self.detector.nv,
+            self.pad_lo,
+            self.pad_hi,
+            self.config.filter,
+            cylinder=self.config.exterior == "cylinder",
+        )
+
     def coefficients(
         self, geometry: Geometry, grid: Grid, detector: Detector, poses: jax.Array
     ) -> jax.Array:
@@ -363,9 +381,9 @@ def _prepare(
     padding = [_virtual_columns(beam, own) for _, beam, own in parts]
     if cfg.exterior == "cylinder":
         padding.append(grid_columns(parts, grid, poses))
-    pad_lo, pad_hi = np.max(padding, axis=0).tolist()
+    pad_lo, pad_hi = (max(p[i] for p in padding) for i in range(2))
     if fan is not None and not fan.permuted:
-        empty = jnp.empty((0, 0), jnp.float32)
+        empty = jax.device_put(np.empty((0, 0), np.float32))
         return _Prepared(
             cuda,
             detector,
@@ -399,14 +417,17 @@ def _prepare(
     continued = tuple(
         (count, beam, replace(own, nu=own.nu + 2 * pad)) for count, beam, own in parts
     )
+    weights_device, cosine_device, kernel_device = jax.device_put(
+        (np.asarray(weights, np.float32), cosines(continued, n_views), kernel)
+    )
     return _Prepared(
         cuda=cuda,
         fan=fan,
         detector=detector,
         # device_put, unlike jnp.asarray, compiles nothing for a new shape.
-        weights=jax.device_put(np.asarray(weights, np.float32)),
-        cosine=jax.device_put(cosines(continued, n_views)),
-        kernel=jax.device_put(kernel),
+        weights=weights_device,
+        cosine=cosine_device,
+        kernel=kernel_device,
         operator=operator,
         scale=1.0 / magnification,
         views_per_batch=int(cfg.views_per_batch),
@@ -502,25 +523,14 @@ def _accumulate(
     """Filter and sum validated views using coefficients in this volume's voxel frame."""
     n_views = int(coeff.shape[0])
     virtual = prep.virtual(prep.detector)
-    if prep.fan is not None and prep.fan.permuted:
-        projections = PermutedRows(
-            prep.fan, projections, native_row, prep.first_row, prep.detector.nv
-        )
-    chords = (
-        FilteredChords(
-            prep.fan,
-            projections,
-            native_row,
-            prep.first_row,
-            prep.first_row + prep.detector.nv,
-            prep.pad_lo,
-            prep.pad_hi,
-            prep.config.filter,
-            cylinder=prep.config.exterior == "cylinder",
-        )
-        if prep.fan is not None and not prep.fan.permuted
-        else None
-    )
+    chords = None
+    if prep.fan is not None:
+        if prep.fan.permuted:
+            projections = PermutedRows(
+                prep.fan, projections, native_row, prep.first_row, prep.detector.nv
+            )
+        else:
+            chords = prep.chords(projections, native_row)
     pad = continued_columns(prep.detector.nu)
     radius2 = (
         Continuation(np.asarray(prep.distance), prep.detector.nu, pad).stack_radius(projections)
@@ -548,12 +558,14 @@ def _accumulate(
         out = jnp.zeros((grid.nz, grid.ny, grid.nx), jnp.float32, device=device)
         target = next(iter(out.devices()))
         starts = list(range(0, len(views), prep.batch))
+        # Each device retains the current panel across batches and releases it with the slab.
+        panel = lru_cache(maxsize=1)(partial(chords.panel, target)) if chords else None
 
         def read(start: int) -> jax.Array:
             first = views.start + start
             stop = min(first + prep.batch, views.stop)
-            if chords is not None:
-                return chords.read(first, stop, target)
+            if chords is not None and panel is not None:
+                return chords.read(first, stop, target, panel)
             return _device_views(projections, first, stop, target)
 
         # Copy the next batch to the device while the current one is filtered
@@ -646,11 +658,6 @@ def _slab_rows(
     first = max(0, min(detector.nv - 1, math.floor(low) - 1))
     stop = max(first + 1, min(detector.nv, math.ceil(high) + 2))
     return first, stop
-
-
-def _windowable(beam: ConeBeam) -> bool:
-    """Whether a band of detector rows is itself a detector of ``beam`` (no pitch or yaw)."""
-    return float(beam.detector_pitch) == 0.0 and float(beam.detector_yaw) == 0.0
 
 
 def _slab_grid(grid: Grid, z0: int, z1: int) -> Grid:

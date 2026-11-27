@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -11,16 +12,22 @@ from tomojax.core.geometry.views import host_view_poses
 
 from ._detector_rows import DetectorRows
 from ._directions import group_repeats
-from ._fdk_coverage import full_turn_weights, reliability
+from ._fdk_coverage import full_turn_weights, pair_reliability, reliability
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+    from tomojax._typed_arrays import Float64Array
+
     from tomojax.core.geometry.base import Detector, Geometry
     from tomojax.core.geometry.cone import ConeBeam
+
+    type Grouped = tuple[Float64Array, NDArray[np.int64], NDArray[np.int64]]
 
 _TURN = 2 * np.pi
 
 
-def grouped_angles(geometry: Geometry, n_views: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def grouped_angles(geometry: Geometry, n_views: int) -> Grouped:
     """Distinct angles modulo a turn, each view's group, and group sizes.
 
     Angles within a millionth of a turn share their angular measure, including
@@ -48,13 +55,15 @@ def grouped_angles(geometry: Geometry, n_views: int) -> tuple[np.ndarray, np.nda
     for count, beam, _ in parts:
         stop = n_views if count is None else min(start + count, n_views)
         pose = poses[start:stop]
-        source = np.einsum("nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3])
+        source: Float64Array = np.einsum(
+            "nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3]
+        )
         azimuth[start:stop] = np.arctan2(-source[:, 0], -source[:, 1])
         start = stop
     return group_repeats(azimuth)
 
 
-def ordered_arc(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
+def ordered_arc(angles: Float64Array) -> tuple[NDArray[np.int64], Float64Array, bool]:
     """Order distinct angles from the largest circular gap and unwrap the arc.
 
     A closing gap no larger than 1.5 typical view steps counts as a full turn,
@@ -73,7 +82,7 @@ def ordered_arc(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:
     return order, sorted_angles, bool(full_turn)
 
 
-def fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
+def fan_angles(beam: ConeBeam, detector: Detector) -> Float64Array:
     """Fan angle of each detector column from the ray through the rotation axis."""
     u = (np.arange(detector.nu) - (detector.nu - 1) / 2) * detector.du + detector.center[0]
     return np.arctan(u / float(beam.source_to_detector)) - np.arctan(
@@ -83,14 +92,16 @@ def fan_angles(beam: ConeBeam, detector: Detector) -> np.ndarray:
 
 def column_weights(
     parts: tuple[tuple[int | None, ConeBeam, Detector], ...],
-    grouped: tuple[np.ndarray, np.ndarray, np.ndarray],
+    grouped: Grouped,
 ) -> np.ndarray:
     """Weights on rectangular horizontal detector rows for a complete trajectory."""
     angles, view_angle, repeats = grouped
     n_views = len(view_angle)
     ordering = ordered_arc(angles)
     if ordering[2]:
-        fans, pixels, counts = [], [], []
+        fans: list[np.ndarray] = []
+        pixels: list[np.ndarray] = []
+        counts: list[int] = []
         for count, beam, own in parts:
             size = n_views if count is None else count
             counts.append(size)
@@ -100,12 +111,28 @@ def column_weights(
         return full_turn_weights(
             angles, view_angle, repeats, np.concatenate(fans), np.concatenate(pixels), tuple(counts)
         )
-    weights, first = [], 0
-    for count, beam, own in parts:
-        stop = n_views if count is None else first + count
-        selected = view_angle[first:stop]
-        weights.append(_distinct_view_weights(beam, own, selected, ordering))
-        first = stop
+    order, arc, _ = ordering
+    weights: list[np.ndarray] = []
+    short_fans = [short_scan_fan(beam, own, arc) for _, beam, own in parts]
+    pitches = [own.du / beam.source_to_detector for _, beam, own in parts]
+    counts = [count or n_views for count, _, _ in parts]
+    panels: Float64Array = np.asarray(
+        [
+            [g.min().item() - p / 2, g.max().item() + p / 2, p]
+            for (_, g, _), p in zip(short_fans, pitches, strict=True)
+        ]
+    )
+    parameters = np.repeat(panels, counts, axis=0)
+    first = 0
+    for (step, gamma, delta), panel, count in zip(short_fans, panels, counts, strict=True):
+        selected = view_angle[first : first + count]
+        pair = None
+        if len(parts) > 1:
+            pair = pair_reliability(
+                angles, view_angle, repeats, gamma[None, :], parameters, selected
+            )
+        weights.append(parker_weights(order, arc, selected, step, gamma, delta, panel, pair))
+        first += count
     return np.concatenate(weights) / repeats[view_angle][:, None]
 
 
@@ -113,7 +140,18 @@ def check_angular_coverage(geometry: Geometry, detector: Detector, n_views: int)
     """Check the arc of each calibrated fan before allocating weights or reading frames."""
     _, angles, full = ordered_arc(grouped_angles(geometry, n_views)[0])
     for _, beam, own in cone_parts(geometry, detector) or ():
-        panel = DetectorRows(own, beam.detector_roll).horizontal if beam.detector_roll else own
+        panel = own
+        if beam.detector_roll:
+            layout = DetectorRows(own, beam.detector_roll)
+            panel = layout.horizontal
+            if not layout.quarter_turn:
+                lo, hi = layout.limits(panel, np.arange(panel.nv))
+                used = hi > lo
+                left, right = lo[used].min().item(), hi[used].max().item()
+                shift = (left + right - panel.nu) * panel.du / 2
+                panel = replace(
+                    panel, nu=right - left, center=(panel.center[0] + shift, panel.center[1])
+                )
         _ = full_turn_fan(beam, panel) if full else short_scan_fan(beam, panel, angles)
 
 
@@ -127,12 +165,12 @@ def full_turn_fan(beam: ConeBeam, detector: Detector) -> tuple[np.ndarray, float
 
 
 def short_scan_fan(
-    beam: ConeBeam, detector: Detector, angles: np.ndarray
-) -> tuple[float, np.ndarray, float]:
+    beam: ConeBeam, detector: Detector, angles: Float64Array
+) -> tuple[float, Float64Array, float]:
     """Resolve the virtual fan used for Parker weighting and validate the acquired arc."""
     gaps = np.diff(angles)
     step = float(np.median(gaps))
-    arc = float(angles[-1] - angles[0]) + step
+    arc = (angles.item(-1) - angles.item(0)) + step
     gamma = fan_angles(beam, detector)
     delta = float(np.max(np.abs(gamma)))
     if arc < np.pi + 2 * delta - 1e-6:
@@ -145,20 +183,6 @@ def short_scan_fan(
     return step, gamma, max(delta, (arc - np.pi) / 2)
 
 
-def _distinct_view_weights(
-    beam: ConeBeam,
-    detector: Detector,
-    selected: np.ndarray,
-    ordering: tuple[np.ndarray, np.ndarray, bool],
-) -> np.ndarray:
-    """:func:`view_weights` for views at distinct ``angles`` (radians)."""
-    order, sorted_angles, _ = ordering
-    step, gamma, delta = short_scan_fan(beam, detector, sorted_angles)
-    pixel = float(detector.du) / float(beam.source_to_detector)
-    panel = np.array([gamma.min() - pixel / 2, gamma.max() + pixel / 2, pixel])
-    return parker_weights(order, sorted_angles, selected, step, gamma, delta, panel)
-
-
 def parker_weights(
     order: np.ndarray,
     sorted_angles: np.ndarray,
@@ -167,6 +191,7 @@ def parker_weights(
     gamma: np.ndarray,
     delta: float,
     panel: np.ndarray,
+    pair: tuple[Float64Array, Float64Array] | None = None,
 ) -> np.ndarray:
     """Short-scan quadrature for the measured fan interval of a physical detector row."""
     n_views = len(order)
@@ -190,8 +215,13 @@ def parker_weights(
     # Parker's pair sums to one only where the conjugate ray was measured. An
     # offset panel misses some conjugates: share each line's weight between the
     # rays that measured it, by panel-edge reliability as in a full turn.
-    own = parker(beta, g) * reliability(g, panel)
+    window = parker(beta, g)
+    own = window * reliability(g, panel)
     conjugates = parker(beta + np.pi + 2 * g, -g) + parker(beta - np.pi + 2 * g, -g)
-    total = own + conjugates * reliability(-g, panel)
+    total = (
+        own + conjugates * reliability(-g, panel)
+        if pair is None
+        else window * pair[0] + conjugates * pair[1]
+    )
     weight = np.divide(own, total, out=np.ones_like(own), where=total > 0)
     return weight * measure[selected, None]

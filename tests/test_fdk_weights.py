@@ -94,7 +94,8 @@ def test_overscan_conjugate_rays_partition_one(arc):
         )
 
 
-def test_changing_and_repeated_panels_share_actual_conjugate_rays():
+@pytest.mark.parametrize("span", [260, 360])
+def test_changing_and_repeated_panels_share_actual_conjugate_rays(span):
     from tomojax.geometry import ConeSegments
 
     # A five-degree fan has an exact conjugate 190 degrees later. Some panels
@@ -102,7 +103,7 @@ def test_changing_and_repeated_panels_share_actual_conjugate_rays():
     step = 10
     du = 120 * np.tan(np.deg2rad(5))
     parts, labels, offsets = [], [], []
-    for angle in range(0, 360, step):
+    for angle in range(0, span, step):
         for offset in [2] if angle % 30 == 0 else [0, 2]:
             parts.append(
                 ConeGeometry(
@@ -116,7 +117,7 @@ def test_changing_and_repeated_panels_share_actual_conjugate_rays():
             offsets.append(offset)
     scan = ConeSegments(tuple(parts))
     weights = view_weights(scan, scan.detector, len(parts)) / np.deg2rad(step)
-    for angle in range(0, 360, step):
+    for angle in range(0, span, step):
         total = sum(
             weights[i, 3 - offset]
             for i, (a, offset) in enumerate(zip(labels, offsets, strict=True))

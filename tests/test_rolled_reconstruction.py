@@ -111,3 +111,68 @@ def test_parallel_reindexing_preserves_anisotropic_pixels_and_truncated_edges(ki
     rolled = replace(geometry, detector_roll=90, detector=swapped)
     actual = tj.reconstruct(tj.Scan(np.rot90(data, axes=(1, 2)), rolled), method, config=cfg).volume
     np.testing.assert_allclose(actual, direct, atol=1e-6, rtol=1e-5)
+
+
+@pytest.mark.parametrize("method", ["auto", "cgls"])
+def test_oblique_fdk_auto_and_warm_start_follow_the_same_measured_rays(method):
+    grid = tj.Grid(21, 21, 17, 0.8, 0.8, 0.8)
+    panel = tj.Detector(39, 31, 0.8, 0.9, center=(1.3, -0.5))
+    angles = np.linspace(17, 237, 64, endpoint=False)
+    geometry = tj.ConeGeometry(grid, panel, angles, tj.ConeBeam(96, 144, detector_roll=15))
+    data, truth = gaussian(grid, panel, angles, 15)
+    swapped = replace(panel, nu=panel.nv, nv=panel.nu, du=panel.dv, dv=panel.du)
+    rolled = replace(geometry, detector=swapped, beam=replace(geometry.beam, detector_roll=105))
+    options = {"iterations": 1, "warm_start": True} if method == "cgls" else {}
+    direct = tj.reconstruct(tj.Scan(data, geometry), method, **options)
+    same = tj.reconstruct(tj.Scan(np.rot90(data, axes=(1, 2)), rolled), method, **options)
+    assert direct.method == same.method == ("fbp" if method == "auto" else "cgls")
+    for name, value in direct.info["truncation"].items():
+        assert same.info["truncation"][name] == pytest.approx(value, rel=2e-5, abs=1e-7)
+    assert np.linalg.norm(direct.volume - truth) < 0.08 * np.linalg.norm(truth)
+    assert np.linalg.norm(same.volume - direct.volume) < 0.001 * np.linalg.norm(direct.volume)
+
+
+def test_rotating_some_exposures_in_storage_preserves_offset_chord_fits():
+    from tomojax.geometry import ConeSegments
+
+    angles = np.arange(0, 360, 6)
+    grid, panel = tj.Grid(11, 11, 5, 1, 1, 1), tj.Detector(23, 23, 1, 1, (2, 0))
+    native = tj.ConeGeometry(grid, panel, angles, tj.ConeBeam(96, 144, detector_roll=15))
+    # The two halves have different profiles at the truncated edges.
+    v, u = np.mgrid[-11:12, -11:12]
+    radius = np.linspace(12, 22, len(angles))[:, None, None]
+    data = np.sqrt(np.maximum(radius**2 - (u - 2) ** 2 - v**2 / 4, 0)).astype(np.float32)
+    half = len(angles) // 2
+    turned = replace(native, angles=angles[half:], beam=replace(native.beam, detector_roll=105))
+    same = ConeSegments(
+        (replace(native, angles=angles[:half]), turned), trajectory_lengths=(len(angles),)
+    )
+    reindexed = np.concatenate((data[:half], np.rot90(data[half:], axes=(1, 2))))
+    expected = tj.reconstruct(tj.Scan(data, native))
+    actual = tj.reconstruct(tj.Scan(reindexed, same))
+    assert actual.method == expected.method == "fbp"
+    for name, value in expected.info["truncation"].items():
+        assert actual.info["truncation"][name] == pytest.approx(value, rel=2e-5, abs=1e-7)
+    assert np.linalg.norm(actual.volume - expected.volume) < 3e-4 * np.linalg.norm(expected.volume)
+
+
+def test_raw_oblique_cone_slabs_follow_reindexed_rays_and_share_the_whole_scan_record():
+    grid = tj.Grid(11, 13, 37, 0.7, 0.7, 0.45)
+    panel = tj.Detector(31, 43, 0.8, 0.9)
+    angles = np.linspace(0, 360, 48, endpoint=False)
+    geometry = tj.ConeGeometry(grid, panel, angles, tj.ConeBeam(96, 144, detector_roll=15))
+    data, _ = gaussian(grid, panel, angles, 15)
+    counts = 1000 * np.exp(-0.1 * data)
+    expected = tj.reconstruct(tj.Frames(counts, geometry, white_level=1000).corrected(), "fbp")
+    swapped = replace(panel, nu=panel.nv, nv=panel.nu, du=panel.dv, dv=panel.du)
+    rolled = replace(geometry, detector=swapped, beam=replace(geometry.beam, detector_roll=105))
+    frames = tj.Frames(np.rot90(counts, axes=(1, 2)), rolled, white_level=1000)
+    info = {}
+    with tj.reconstruct_slabs(frames, "fbp", info=info) as slabs:
+        parts = [r.volume for _, r in slabs]
+    assert len(parts) > 1
+    assert np.linalg.norm(np.concatenate(parts) - expected.volume) < 0.001 * np.linalg.norm(
+        expected.volume
+    )
+    for name, value in expected.info["truncation"].items():
+        assert info["truncation"][name] == pytest.approx(value, rel=2e-5, abs=1e-7)

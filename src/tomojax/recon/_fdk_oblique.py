@@ -8,7 +8,7 @@ conjugate coverage and cylinder continuation before the ordinary 1-D ramp.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from functools import cached_property, lru_cache, partial
+from functools import cached_property, partial
 import math
 from typing import TYPE_CHECKING
 
@@ -16,23 +16,27 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from tomojax.core.host_transfer import upload_host
+
 from ._continuation import Continuation, cone_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
 from ._fdk_angles import fan_angles, grouped_angles, ordered_arc, parker_weights
-from ._fdk_coverage import full_turn_weights, reliability
+from ._fdk_coverage import pair_reliability, reliability
 from ._fdk_filter import cosines
 from ._row_filter import filter_rows
 from .filters import get_fbp_filter_np
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
     from typing import Protocol
 
     from numpy.typing import NDArray
 
     from tomojax._parameters import Filter
-    from tomojax._typed_arrays import Device
+    from tomojax._typed_arrays import Device, Float64Array
     from tomojax.core.geometry import ConeBeam, Detector, Geometry
+
+    from ._fdk_angles import Grouped
 
     class ProjectionBands(Protocol):
         def __getitem__(self, views: slice, /) -> np.ndarray | jax.Array: ...
@@ -44,7 +48,7 @@ if TYPE_CHECKING:
 class FanRows:
     parts: Parts
     layouts: tuple[DetectorRows, ...]
-    angles: tuple[np.ndarray, np.ndarray, np.ndarray]
+    angles: Grouped
 
     @classmethod
     def for_scan(cls, geometry: Geometry, parts: Parts, n_views: int) -> FanRows | None:
@@ -72,14 +76,14 @@ class FanRows:
         )
 
     @cached_property
-    def bounds(self) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    def bounds(self) -> tuple[tuple[NDArray[np.int64], NDArray[np.int64]], ...]:
         return tuple(
             layout.limits(det, np.arange(det.nv))
             for layout, (_, _, det) in zip(self.layouts, self.parts, strict=True)
         )
 
     @cached_property
-    def fans(self) -> tuple[np.ndarray, ...]:
+    def fans(self) -> tuple[Float64Array, ...]:
         return tuple(fan_angles(beam, det) for _, beam, det in self.parts)
 
     @cached_property
@@ -87,11 +91,11 @@ class FanRows:
         return tuple(n or len(self.angles[1]) for n, _, _ in self.parts)
 
     @cached_property
-    def ordering(self) -> tuple[np.ndarray, np.ndarray, bool]:
+    def ordering(self) -> tuple[NDArray[np.int64], Float64Array, bool]:
         return ordered_arc(self.angles[0])
 
     @cached_property
-    def measure(self) -> np.ndarray:
+    def measure(self) -> Float64Array:
         angles, groups, repeats = self.angles
         order = np.argsort(angles)
         nodes = angles[order]
@@ -99,6 +103,21 @@ class FanRows:
         wrapped = np.concatenate((nodes[-1:] - 2 * np.pi, nodes, nodes[:1] + 2 * np.pi))
         measure[order] = (wrapped[2:] - wrapped[:-2]) / 2
         return measure[groups] / repeats[groups]
+
+    @cached_property
+    def equivalent(self) -> tuple[list[int], ...]:
+        """Segments measuring the same pixel lattice up to a signed permutation."""
+        groups: dict[tuple[ConeBeam, Detector, float], list[int]] = {}
+        runs: list[list[int]] = []
+        for index, (layout, (_, beam, _)) in enumerate(zip(self.layouts, self.parts, strict=True)):
+            native = layout.measured
+            turns, angle = divmod(layout.roll, 90)
+            if int(turns) % 2:
+                native = replace(native, nu=native.nv, nv=native.nu, du=native.dv, dv=native.du)
+            group = groups.setdefault((beam, native, angle), [])
+            group.append(index)
+            runs.append(group)
+        return tuple(runs)
 
     def band(self, first: int, stop: int) -> tuple[int, int]:
         bands = [
@@ -110,14 +129,14 @@ class FanRows:
     def weights(self, index: int, row: int, views: slice) -> np.ndarray:
         """Angular weights on the horizontal line, including its two measured limits."""
         angles, groups, repeats = self.angles
-        limits = []
+        limits: list[list[float]] = []
         for (_, beam, det), (first, stop), fan in zip(
             self.parts, self.bounds, self.fans, strict=True
         ):
             pixel = det.du / beam.source_to_detector
             lo, hi = int(first.item(row)), int(stop.item(row))
             limits.append(
-                [fan[lo] - pixel / 2, fan[max(0, hi - 1)] + pixel / 2, pixel]
+                [fan.item(lo) - pixel / 2, fan.item(max(0, hi - 1)) + pixel / 2, pixel]
                 if hi > lo
                 else [1, -1, pixel]
             )
@@ -125,22 +144,33 @@ class FanRows:
         panel = np.asarray(limits[index])
         order, arc, full = self.ordering
         if not full:
-            step = np.median(np.diff(arc))
-            delta = (arc[-1] - arc[0] + step - np.pi) / 2
+            step = float(np.median(np.diff(arc)))
+            delta = (arc.item(-1) - arc.item(0) + step - np.pi) / 2
+            pair = None
+            if len(self.parts) > 1:
+                parameters = np.repeat(limits, self.counts, axis=0)
+                pair = pair_reliability(
+                    angles, groups, repeats, fan[None, :], parameters, groups[views]
+                )
             return (
-                parker_weights(order, arc, groups[views], step, fan, delta, panel)
+                parker_weights(order, arc, groups[views], step, fan, delta, panel, pair)
                 / repeats[groups[views], None]
             )
+        own = reliability(fan, panel)
         if len(self.parts) == 1:
-            own = reliability(fan, panel)
             total = own + reliability(-fan, panel)
-            partition = np.divide(own, total, out=np.zeros_like(own), where=total > 0)
-            return self.measure[views, None] * partition
-        panels = np.repeat(limits, self.counts, axis=0)
-        fans = np.repeat(self.fans, self.counts, axis=0)
-        return full_turn_weights(
-            angles, groups, repeats, fans, panels[:, 2], self.counts, limits=panels
-        )[views]
+        else:
+            current, opposite = pair_reliability(
+                angles,
+                groups,
+                repeats,
+                fan[None, :],
+                np.repeat(limits, self.counts, axis=0),
+                groups[views],
+            )
+            total = current + opposite
+        partition = np.divide(own, total, out=np.zeros_like(total), where=total > 0)
+        return self.measure[views, None] * partition
 
 
 class PermutedRows:
@@ -155,8 +185,8 @@ class PermutedRows:
     def __getitem__(self, views: slice) -> np.ndarray:
         start = 0
         batches: list[np.ndarray] = []
+        first_view, last_view, _ = views.indices(self.shape[0])
         for layout, count in zip(self.fan.layouts, self.fan.counts, strict=True):
-            first_view, last_view, _ = views.indices(self.shape[0])
             lo, hi = max(first_view, start), min(last_view, start + count)
             start += count
             if hi <= lo:
@@ -233,11 +263,9 @@ class FilteredChords:
         self.fan, self.data, self.native = fan, data, native
         self.first, self.stop = first, stop
         self.pad_lo, self.pad_hi, self.name, self.cylinder = pad_lo, pad_hi, name, cylinder
-        self.starts = np.concatenate(([0], np.cumsum(fan.counts)))
-        # A scan can carry a separate calibrated panel for each exposure.
-        self.panel = lru_cache(maxsize=2)(self._panel)
+        self.starts: NDArray[np.int64] = np.concatenate(([0], np.cumsum(fan.counts)))
 
-    def _panel(self, index: int, device: Device) -> tuple[jax.Array, ...]:
+    def panel(self, device: Device, index: int) -> tuple[jax.Array, ...]:
         _, beam, det = self.fan.parts[index]
         layout = self.fan.layouts[index]
         vertical = np.arange(self.first, self.stop)
@@ -266,10 +294,11 @@ class FilteredChords:
             )
             * scale
         )
-        arrays = [coordinates, angular, cosine, kernel]
+        arrays: list[np.ndarray] = [coordinates, angular, cosine, kernel]
         if self.cylinder:
             fits: list[Continuation | None] = []
-            for left, right in zip(lo.tolist(), hi.tolist(), strict=True):
+            for row in range(len(lo)):
+                left, right = lo.item(row), hi.item(row)
                 width = right - left
                 if width:
                     shift = (left + (width - det.nu) / 2) * det.du
@@ -277,9 +306,7 @@ class FilteredChords:
                     fits.append(Continuation(cone_axis_distance(beam, chord, width), width, width))
                 else:
                     fits.append(None)
-            radii = self._radii(
-                samples, fits, self.starts.item(index), self.fan.counts[index], lo, hi
-            )
+            radii = self._radii(index, fits, lo, hi)
             coeff = np.zeros((2, len(vertical), det.nu), np.float32)
             tails = np.zeros((2, len(vertical), wide.nu), np.float32)
             for r, (fit, radius) in enumerate(zip(fits, radii, strict=True)):
@@ -296,14 +323,12 @@ class FilteredChords:
                 tails[0, r, pad + left - fit.pad : pad + left] = low.ravel()
                 tails[1, r, pad + right : pad + right + fit.pad] = high.ravel()
             arrays.extend((coeff, tails))
-        return tuple(jax.device_put(np.asarray(a, np.float32), device) for a in arrays)
+        return tuple(upload_host(np.asarray(a, np.float32), device) for a in arrays)
 
     def _radii(
         self,
-        samples: RowSamples,
+        segment: int,
         fits: Sequence[Continuation | None],
-        start: int,
-        size: int,
         lo: NDArray[np.int64],
         hi: NDArray[np.int64],
     ) -> list[np.ndarray | None]:
@@ -311,24 +336,45 @@ class FilteredChords:
         # neighbours, accumulating mean squares across the scan in bounded batches.
         widths = np.array([f.window if f else 0 for f in fits])
         row = np.repeat(np.arange(len(fits)), widths)
-        starts = np.concatenate(([0], np.cumsum(widths)))
+        starts: NDArray[np.int64] = np.concatenate(([0], np.cumsum(widths)))
         index = np.arange(len(row)) - starts[row]
         edges = np.stack((lo[row] + index, hi[row] - widths[row] + index))
-        coordinates = RowSamples(samples.u[row, edges], samples.v[row, edges])
-        squares = np.zeros(edges.shape)
-        views = radius_views(size)
-        for view in views:
-            frame = np.asarray(self.data[start + view : start + view + 1], np.float32)
-            squares += np.square(coordinates.read(frame, self.native)[0], dtype=np.float64)
+        det = self.fan.parts[segment][2]
+        x = (edges.astype(np.float64) - (det.nu - 1) / 2) * det.du
+        z = (row.astype(np.float64) + self.first - (det.nv - 1) / 2) * det.dv
+        runs = self.fan.equivalent[segment]
+        views = radius_views(sum(self.fan.counts[i] for i in runs))
+        squares: Float64Array = np.zeros(edges.shape)
+        first = 0
+        for run in runs:
+            size = self.fan.counts[run]
+            layout = self.fan.layouts[run]
+            u, v = layout.pixel_coordinates(x, z)
+            coordinates = RowSamples(
+                np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
+            )
+            selected = (
+                views[(views >= first) & (views < first + size)] + self.starts.item(run) - first
+            )
+            for i in range(len(selected)):
+                view = selected.item(i)
+                frame = np.asarray(self.data[view : view + 1], np.float32)
+                squares += np.square(coordinates.read(frame, self.native)[0], dtype=np.float64)
+            first += size
         low, high = squares / len(views)
-        return [
-            np.asarray(f.mean_square_radius(np.asarray, low[None, a:b], high[None, a:b]))
-            if f
-            else None
-            for f, a, b in zip(fits, starts[:-1], starts[1:], strict=True)
-        ]
+        radii: list[np.ndarray | None] = []
+        for i, fit in enumerate(fits):
+            band = slice(starts.item(i), starts.item(i + 1))
+            radii.append(
+                np.asarray(fit.mean_square_radius(np.asarray, low[None, band], high[None, band]))
+                if fit
+                else None
+            )
+        return radii
 
-    def read(self, first: int, stop: int, device: Device) -> jax.Array:
+    def read(
+        self, first: int, stop: int, device: Device, panel: Callable[[int], tuple[jax.Array, ...]]
+    ) -> jax.Array:
         batches: list[jax.Array] = []
         for index in range(
             int(np.searchsorted(self.starts, first, side="right")) - 1,
@@ -336,7 +382,7 @@ class FilteredChords:
         ):
             lo, hi = max(first, self.starts.item(index)), min(stop, self.starts.item(index + 1))
             views = slice(lo, hi)
-            coords, mask, cosine, kernel, *fit = self.panel(index, device)
+            coords, mask, cosine, kernel, *fit = panel(index)
             if len(self.fan.parts) == 1 and self.fan.ordering[2]:
                 angular, measure = mask, self.fan.measure[views]
             else:
@@ -344,15 +390,20 @@ class FilteredChords:
                     [self.fan.weights(index, row, views) for row in range(self.first, self.stop)],
                     axis=1,
                 )
-                angular = jax.device_put(weights.astype(np.float32), device) * mask
+                angular = upload_host(weights.astype(np.float32), device) * mask
                 measure = np.ones(hi - lo, np.float32)
-            frames = jax.device_put(self.data[views], device).astype(jnp.float32)
+            data = self.data[views]
+            frames = (
+                jax.device_put(data.astype(np.float32), device)
+                if isinstance(data, jax.Array)
+                else upload_host(np.asarray(data, np.float32), device)
+            )
             batches.append(
                 _filter_chords(
                     frames,
                     coords,
                     angular,
-                    jax.device_put(measure.astype(np.float32), device),
+                    upload_host(measure.astype(np.float32), device),
                     cosine,
                     kernel,
                     fit[0] if fit else None,

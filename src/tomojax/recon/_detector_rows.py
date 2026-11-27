@@ -10,7 +10,9 @@ import numpy as np
 
 if TYPE_CHECKING:
     import jax
+    from numpy.typing import NDArray
 
+    from tomojax._typed_arrays import Float32Array, Float64Array
     from tomojax.core.geometry import Detector
 
 
@@ -25,7 +27,7 @@ class DetectorRows:
     def axes(self) -> tuple[float, float]:
         # Exact signed permutations at quarter turns, including on nonsquare panels.
         turns, residual = divmod(self.roll, 90.0)
-        c, s = np.cos(np.deg2rad(residual)), np.sin(np.deg2rad(residual))
+        c, s = math.cos(math.radians(residual)), math.sin(math.radians(residual))
         return ((c, s), (-s, c), (-c, -s), (s, -c))[int(turns) % 4]
 
     @property
@@ -38,31 +40,46 @@ class DetectorRows:
         width, height = det.nu * det.du, det.nv * det.dv
         nu = max(1, math.ceil((abs(c) * width + abs(s) * height) / du - 1e-10))
         nv = max(1, math.ceil((abs(s) * width + abs(c) * height) / dv - 1e-10))
+        if min(det.nu, det.nv) == 1 and not self.quarter_turn:
+            # Anchor the grid on the measured center of a single-pixel strip.
+            nu, nv = nu | 1, nv | 1
         return replace(det, nu=nu, nv=nv, du=du, dv=dv)
 
-    def coordinates(self, horizontal: Detector, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def coordinates(
+        self, horizontal: Detector, rows: NDArray[np.int64]
+    ) -> tuple[Float64Array, Float64Array]:
         """Measured pixel coordinates of each rectified pixel, before band cropping."""
-        det = self.measured
-        x = (np.arange(horizontal.nu) - (horizontal.nu - 1) / 2) * horizontal.du
-        z = (rows[:, None] - (horizontal.nv - 1) / 2) * horizontal.dv
+        x = (np.arange(horizontal.nu, dtype=np.float64) - (horizontal.nu - 1) / 2) * horizontal.du
+        z = (rows[:, None].astype(np.float64) - (horizontal.nv - 1) / 2) * horizontal.dv
+        return self.pixel_coordinates(x, z)
+
+    def pixel_coordinates(
+        self, x: Float64Array, z: Float64Array
+    ) -> tuple[Float64Array, Float64Array]:
+        """Native pixels at physical offsets from the panel center."""
         c, s = self.axes
+        det = self.measured
         u = (c * x + s * z) / det.du + (det.nu - 1) / 2
         v = (-s * x + c * z) / det.dv + (det.nv - 1) / 2
         return u, v
 
-    def limits(self, horizontal: Detector, rows: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    def limits(
+        self, horizontal: Detector, rows: NDArray[np.int64]
+    ) -> tuple[NDArray[np.int64], NDArray[np.int64]]:
         """Half-open interval of horizontal pixel centers measured on each row."""
         u, v = self.coordinates(horizontal, rows)
         det = self.measured
-        valid = (u >= -0.5) & (u < det.nu - 0.5) & (v >= -0.5) & (v < det.nv - 0.5)
-        start = np.argmax(valid, axis=1)
+        valid = (abs(u - (det.nu - 1) / 2) <= det.nu / 2 + 1e-10) & (
+            abs(v - (det.nv - 1) / 2) <= det.nv / 2 + 1e-10
+        )
+        start: NDArray[np.int64] = np.asarray(valid.argmax(axis=1), np.int64)
         return start, start + valid.sum(axis=1)
 
     def band(self, horizontal: Detector, first: int, stop: int) -> tuple[int, int]:
         """Native rows needed to interpolate these complete horizontal lines."""
         _, v = self.coordinates(horizontal, np.array([first, stop - 1]))
-        lo = int(np.clip(np.floor(v.min()) - 1, 0, self.measured.nv - 1))
-        hi = int(np.clip(np.ceil(v.max()) + 2, lo + 1, self.measured.nv))
+        lo = max(0, min(self.measured.nv - 1, math.floor(v.min().item()) - 1))
+        hi = min(self.measured.nv, max(lo + 1, math.ceil(v.max().item()) + 2))
         return lo, hi
 
     @property
@@ -77,10 +94,10 @@ class DetectorRows:
             replace(det, nu=3 * det.nu) if exterior == "cylinder" and not self.quarter_turn else det
         )
 
-    def row_range(self, positions: np.ndarray) -> tuple[int, int]:
+    def row_range(self, positions: Float64Array) -> tuple[int, int]:
         nv = self.horizontal.nv
-        first = int(np.clip(np.floor(positions.min()), 0, nv - 1))
-        stop = int(np.clip(np.ceil(positions.max()) + 1, first + 1, nv))
+        first = max(0, min(nv - 1, math.floor(positions.min().item())))
+        stop = min(nv, max(first + 1, math.ceil(positions.max().item()) + 1))
         return first, stop
 
     def parallel_band(
@@ -110,7 +127,7 @@ class DetectorRows:
         for row in range(first, stop):
             rows = np.array([row])
             u, v = self.coordinates(det, rows)
-            lo, hi = (int(edge[0]) for edge in self.limits(det, rows))
+            lo, hi = (edge.item(0) for edge in self.limits(det, rows))
             width = hi - lo
             if not width:
                 continue
@@ -135,11 +152,11 @@ class DetectorRows:
 class RowSamples:
     """Separable cubic convolution on the measured lattice (Keys, a = -1/2)."""
 
-    u: np.ndarray
-    v: np.ndarray
+    u: Float64Array
+    v: Float64Array
 
     @staticmethod
-    def taps(coordinate: np.ndarray, size: int) -> list[tuple[np.ndarray, np.ndarray]]:
+    def taps(coordinate: Float64Array, size: int) -> list[tuple[NDArray[np.int64], Float32Array]]:
         lower = np.floor(coordinate).astype(int)
         t = (coordinate - lower).astype(np.float32)
         weights = (
@@ -154,12 +171,16 @@ class RowSamples:
             if np.any(w)
         ]
 
-    def read(self, frames: np.ndarray | jax.Array, offset: int) -> np.ndarray:
+    def read(
+        self, frames: np.ndarray | jax.Array, offset: int, views: NDArray[np.int64] | None = None
+    ) -> Float32Array:
         rows = self.taps(self.v - offset, frames.shape[1])
         columns = self.taps(self.u, frames.shape[2])
-        result = np.zeros((len(frames), *self.u.shape), np.float32)
+        selected = slice(None) if views is None else views.reshape((-1,) + (1,) * self.u.ndim)
+        count = len(frames) if views is None else len(views)
+        result = np.zeros((count, *self.u.shape), np.float32)
         for row, wy in rows:
             for column, wx in columns:
                 w = wy * wx
-                result += np.where(w != 0, frames[:, row, column] * w, 0)
+                result += np.where(w != 0, frames[selected, row, column] * w, 0)
         return result

@@ -542,7 +542,12 @@ def _host_batches(
         rows = np.asarray(projections[start:stop], dtype=np.float32)
         if check_finite and not np.isfinite(rows).all():
             raise ValueError("fbp_host: projections must be finite in FP32")
-        arrays = [poses[start:stop], rows, view_scale[start:stop], params[start:stop]]
+        arrays: list[np.ndarray] = [
+            poses[start:stop],
+            rows,
+            view_scale[start:stop],
+            params[start:stop],
+        ]
         if pad:
             # Zero-weight views repeat the last pose and contribute nothing.
             arrays = [
@@ -598,16 +603,10 @@ def _can_use_direct_parallel_fbp(
     return type(geometry) is ParallelGeometry and det_grid is None
 
 
-def _lattice_motion(
+def _lattice_geometry(
     detector: Detector, det_grid: tuple[jnp.ndarray, jnp.ndarray]
-) -> np.ndarray | None:
-    """The pose motion taking ``det_grid``'s rays to the canonical lattice's, None if equal.
-
-    Parallel rays run along lab y through detector-plane points (x, z). A
-    lattice ``o + R q`` (q the centered pixel offsets, R a rotation) sees the
-    object the canonical lattice ``c + q`` sees after moving it by
-    ``p -> c + R.T (p - o)`` in that plane.
-    """
+) -> tuple[Detector, float]:
+    """Recover the physical center and in-plane roll of a rigid detector lattice."""
     nu, nv = detector.nu, detector.nv
     x, z = (np.asarray(a, np.float64).reshape(nv, nu) for a in det_grid)
     origin = np.array([x.mean(), z.mean()])
@@ -638,11 +637,9 @@ def _lattice_motion(
     if np.allclose(rotation, np.eye(2), atol=1e-7) and np.allclose(
         origin, center, atol=1e-6 * extent
     ):
-        return None
-    motion = np.eye(4)
-    motion[np.ix_([0, 2], [0, 2])] = rotation.T
-    motion[[0, 2], 3] = center - rotation.T @ origin
-    return motion.astype(np.float32)
+        return detector, 0.0
+    roll = math.degrees(math.atan2(rotation.item((1, 0)), rotation.item((0, 0))))
+    return replace(detector, center=(origin.item(0), origin.item(1))), roll
 
 
 def _parallel_filter_detector(grid: Grid, detector: Detector) -> Detector:
@@ -937,13 +934,10 @@ def parallel_fbp(
         # Precompute poses once
         T_all = stack_view_poses(geometry, n_views)
         _ = validate_pose_stack(T_all, n_views, context="fbp geometry")
-        motion = None if det_grid is None else _lattice_motion(detector, det_grid)
-        roll = float(getattr(geometry, "detector_roll", 0.0)) if det_grid is None else 0.0
-        if motion is not None:
-            inverse = motion[np.ix_([0, 2], [0, 2])].T
-            origin = inverse @ (np.asarray(detector.center) - motion[[0, 2], 3])
-            detector = replace(detector, center=tuple(origin))
-            roll = float(np.rad2deg(np.arctan2(inverse[1, 0], inverse[0, 0])))
+        if det_grid is None:
+            roll = float(getattr(geometry, "detector_roll", 0.0))
+        else:
+            detector, roll = _lattice_geometry(detector, det_grid)
         if roll:
             layout = DetectorRows(detector, roll)
             proj = layout.parallel_band(

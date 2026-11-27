@@ -421,7 +421,7 @@ def reconstruct_slabs[T](
     ValueError
         If the method or a setting does not support slabs.
     """
-    from ._truncation import ScanSample
+    from ._truncation import ChordSample, ScanSample
 
     if info is None:
         yield from _solve_slabs(
@@ -429,7 +429,9 @@ def reconstruct_slabs[T](
         )
         return
 
-    sample = ScanSample(geometry, detector)
+    sample = ChordSample.for_band(
+        geometry, detector, len(geometry.angles), 0, detector.nv
+    ) or ScanSample(geometry, detector)
 
     def sampled(first: int, stop: int) -> tuple[np.ndarray | jnp.ndarray, T]:
         data, context = read(first, stop)
@@ -473,7 +475,7 @@ def _solve_slabs[T](
         from ._truncation import truncation_values
 
         data, context = read(first, stop)
-        return data, (context, truncation_values(geometry, detector, data))
+        return data, (context, truncation_values(geometry, detector, data, first=first))
 
     match cfg.method:
         case "fbp":
@@ -547,7 +549,7 @@ def _coupled_detector_volume[T](
     warm_start: bool,
     diagnostics: dict[str, object] | None,
 ) -> Generator[ReconstructionSlab[T], None, None]:
-    """An oblique ramp uses the 2D spectrum; Joseph updates couple neighboring voxel planes."""
+    """An oblique filter line crosses native rows; Joseph updates couple neighboring voxel planes."""
     import numpy as np
 
     from tomojax.core import checkpoint
