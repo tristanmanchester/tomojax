@@ -75,7 +75,8 @@ When an `image_key` or angle dataset is paired with the frames by path or
 structure, it may be longer or shorter than the frame stack (for example when a
 scan stops early and separate writer streams end at different counts). TomoJAX
 reads the common prefix from frame 0 covered by all of them, logs a warning with
-the counts, and records the counts in `frame_records`. A key or angle dataset
+the counts, and records the counts in `frame_records` for both standard NXtomo paths
+and structurally discovered NeXus scans. A key or angle dataset
 found only by name is paired by shape and must match the stack length exactly.
 
 `tomojax.load` of a processed file leaves out frames that `image_key` marks as

@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from tomojax import corrections
     from tomojax._data import FrameStack
     from tomojax._loading.geometry import DeclaredGeometry
+    from tomojax.core.json_values import JsonValue
     from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
     from tomojax.io.api import LocatedFrames
@@ -1012,20 +1013,18 @@ def _hdf5_frames(
     if view_angles.shape != (views,):
         raise ValueError(f"{file} has {views} sample frames but {view_angles.size} angles")
     try:
-        metadata = read_nxtomo(str(file), lazy=True, layout_only=layout_only).metadata
+        metadata = read_nxtomo(
+            str(file), lazy=True, layout_only=layout_only, located=located
+        ).metadata
     except KeyError:  # not laid out as NXtomo: the frames alone
-        metadata = NXTomoMetadata(
-            geometry_meta={"detector_center_status": "not_recorded"},
-        )
+        meta: dict[str, JsonValue] = {"detector_center_status": "not_recorded"}
         if located.acquisition is not None:
-            metadata.geometry_meta = {
-                "detector_center_status": "not_recorded",
-                "acquisition": {
-                    **located.acquisition,
-                    "geometry_status": "not_recorded",
-                    "geometry_note": "Source has no calibrated rotation axis or pixel scale.",
-                },
+            meta["acquisition"] = {
+                **located.acquisition,
+                "geometry_status": "not_recorded",
+                "geometry_note": "Source has no calibrated rotation axis or pixel scale.",
             }
+        metadata = NXTomoMetadata(geometry_meta=meta)
     metadata = replace(metadata, angles=view_angles.astype(np.float32), image_key=None)
     # The geometry needs the views' shape, not their values: read none of them.
     placeholder = LoadedNXTomo(np.broadcast_to(np.float32(0), (views, rows, cols)), metadata)

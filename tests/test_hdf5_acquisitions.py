@@ -336,3 +336,19 @@ def test_several_rotation_coordinates_resolve_to_the_scan_axis_or_ask(tmp_path, 
         return
     frames = tj.load_frames(path)
     np.testing.assert_array_equal(frames.geometry.angles, [0, 45, 90, 135])
+
+
+@pytest.mark.parametrize(("written", "keys", "angles"), [(4, 6, 5), (6, 4, 6), (6, 6, 4)])
+def test_fixed_nxtomo_reads_the_common_frame_prefix(tmp_path, written, keys, angles):
+    path = tmp_path / "scan.nxs"
+    with h5py.File(path, "w") as file:
+        det = file.create_group("entry/instrument/detector")
+        det["data"] = np.asarray([1, 101, 51, 26, 201, 11][:written])[:, None, None]
+        det["image_key"] = [2, 1, 0, 0, 1, 2][:keys]
+        file["entry/sample/rotation_angle"] = [0, 0, 10, 40, 0, 0][:angles]
+    scan = tj.load(path)
+    np.testing.assert_array_equal(scan.angles, [10, 40])
+    np.testing.assert_allclose(scan.projections[:, 0, 0], -np.log([0.5, 0.25]))
+    records = {"data": written, "image_key": keys, "angles": angles}
+    assert scan.source.geometry_metadata["acquisition"]["frame_records"] == records
+    assert tj.inspect(path)["loading"]["frame_records"] == records

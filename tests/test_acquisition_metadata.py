@@ -270,7 +270,7 @@ def _write_beamline_frames(path):
 
 
 @pytest.mark.parametrize("name", ["image_key", "rotation_angle"])
-@pytest.mark.parametrize("shape", [(1, 3), (3, 1), (2,), ()])
+@pytest.mark.parametrize("shape", [(1, 3), (3, 1), (2,), (4,), ()])
 def test_unique_malformed_beamline_metadata_is_not_treated_as_absent(tmp_path, name, shape):
     path = tmp_path / "beamline.h5"
     _write_beamline_frames(path)

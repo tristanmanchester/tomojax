@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Stopped-early scans at the standard NXtomo detector path now load the same
+  frames as scans discovered by NeXus structure. Loading keeps the prefix
+  covered by the detector, frame labels and angles. Inspection reports the
+  original counts in `loading.frame_records`.
+
 - Checkpoint and resume work through the worker and the MCP server. `reconstruct`,
   `reconstruct_slabs` and `align` take `checkpoint` (a directory, relative paths against the
   project directory). A checkpointed run that is canceled (`control` cancel, Ctrl-C on the

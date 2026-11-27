@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, cast
 import h5py
 import numpy as np
 
-from ._io_acquisition import ROTATION_ANGLE_PATHS, angles_in_degrees, checked_image_key
 from ._io_types import JsonObject, LoadedDataset, SourceInfo
 from .geometry_meta import normalize_geometry_type
 
@@ -36,7 +35,7 @@ def _axes_warnings_silenced() -> bool:
     }
 
 
-def _axes_log_warning(message: str, *args: object) -> None:
+def axes_log_warning(message: str, *args: object) -> None:
     if not _axes_warnings_silenced():
         LOG.warning(message, *args)
 
@@ -108,7 +107,7 @@ def _load_json_mapping_attr(
     try:
         loaded = json.loads(payload)
     except json.JSONDecodeError as exc:
-        _axes_log_warning(
+        axes_log_warning(
             "load_nxtomo: ignoring malformed %s JSON for %s: %s",
             context,
             path,
@@ -116,7 +115,7 @@ def _load_json_mapping_attr(
         )
         return None
     if not isinstance(loaded, dict):
-        _axes_log_warning(
+        axes_log_warning(
             "load_nxtomo: ignoring non-object %s JSON for %s",
             context,
             path,
@@ -128,32 +127,6 @@ def _load_json_mapping_attr(
 def detector_group(entry: h5py.Group) -> h5py.Group | None:
     inst_grp = child_group(entry, "instrument")
     return None if inst_grp is None else child_group(inst_grp, "detector")
-
-
-def load_image_key(entry: h5py.Group, *, n_views: int, path: str) -> np.ndarray:
-    det_grp = detector_group(entry)
-    image_key = None if det_grp is None else child_dataset(det_grp, "image_key")
-    if image_key is None:
-        _axes_log_warning(
-            "load_nxtomo: missing image_key for %s; defaulting to zeros",
-            path,
-        )
-        return np.zeros((n_views,), dtype=np.int32)
-    return checked_image_key(np.asarray(image_key[...]), frames=n_views, path=path)
-
-
-def load_rotation_angles(
-    entry: h5py.Group, *, n_views: int, path: str, image_key: np.ndarray
-) -> np.ndarray | None:
-    angles = next((entry.file[p] for p in ROTATION_ANGLE_PATHS if p in entry.file), None)
-    if angles is None:
-        return None
-    if not isinstance(angles, h5py.Dataset):
-        raise ValueError(f"{path}: rotation angles must be a dataset")
-    units = attr_to_str(angles.attrs.get("units"), default="") or ""
-    return angles_in_degrees(
-        np.asarray(angles[...]), units, frames=n_views, path=path, image_key=image_key
-    ).astype(np.float32)
 
 
 def load_geometry_metadata(

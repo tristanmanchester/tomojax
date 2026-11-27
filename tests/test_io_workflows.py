@@ -561,7 +561,7 @@ def test_a_broken_frame_label_link_is_an_error_not_missing_labels(tmp_path: Path
         detector = file["/entry/instrument/detector"]
         del detector["image_key"]
         detector["image_key"] = h5py.ExternalLink("absent.h5", "/image_key")
-    with pytest.raises(KeyError):
+    with pytest.raises(ValueError, match="image_key: external data unavailable.*absent.h5"):
         load_dataset(path)
 
 

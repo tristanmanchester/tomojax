@@ -15,20 +15,18 @@ from tomojax import progress
 from tomojax.core.files import replaced_when_complete
 from tomojax.geometry.api import nominal_axis_unit_from_inputs
 
-from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees
-from ._io_frames import Hdf5Frames
+from ._io_acquisition import ROTATION_ANGLE_PATHS, angle_scale_degrees, angles_in_degrees
+from ._io_frames import NXTOMO_FRAME_PATHS, Hdf5Frames, LocatedFrames, locate_frames
 from ._io_helpers import (
     attr_to_str,
+    axes_log_warning,
     child_dataset,
     child_group,
-    detector_group,
     ensure_group,
     load_detector_metadata,
     load_geometry_metadata,
     load_grid_metadata,
-    load_image_key,
     load_processing_metadata,
-    load_rotation_angles,
     load_sample_metadata,
     load_source_metadata,
     sizes_of,
@@ -43,9 +41,8 @@ if TYPE_CHECKING:
 
     import jax
 
-# Where a saved reconstruction keeps its volume, and where a file keeps its frames.
+# Where a saved reconstruction keeps its volume.
 _VOLUME = "/entry/processing/tomojax/volume"
-_FRAMES = ("/entry/instrument/detector/data", "/entry/data/projections", "/entry/projections")
 
 
 def save_nxtomo(
@@ -452,7 +449,9 @@ def load_nxtomo(path: str, *, lazy: bool = False) -> LoadedNXTomo:
     return read_nxtomo(path, lazy=lazy, layout_only=False)
 
 
-def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
+def read_nxtomo(
+    path: str, *, lazy: bool, layout_only: bool, located: LocatedFrames | None = None
+) -> LoadedNXTomo:
     out: LoadedDataset = {}
     volume_np = None
 
@@ -460,30 +459,30 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
         entry = child_group(f, "/entry")
         if entry is None:
             raise KeyError("Missing /entry")
-        det_grp = detector_group(entry)
-        if det_grp is not None and "data" in det_grp:
-            where = "/entry/instrument/detector/data"
-        elif "data/projections" in entry:
-            where = "/entry/data/projections"
-        elif "projections" in entry:
-            where = "/entry/projections"
-        elif _without_frames(f):  # a reconstruction saved without its scan
-            where = None
-        else:
-            raise KeyError("Could not find projections dataset under /entry")
+        where = next((p for p in NXTOMO_FRAME_PATHS if p in f), None)
         if where is None:
+            if not _without_frames(f):
+                raise KeyError("Could not find projections dataset under /entry")
             out["projections"] = None
             angles = next((child_dataset(f, p) for p in ROTATION_ANGLE_PATHS if p in f), None)
-            n_views = 0 if angles is None else angles.shape[0]
-            image_key = np.zeros(n_views, np.int32)
+            if angles is not None:
+                out["angles"] = angles_in_degrees(
+                    np.asarray(angles[...]),
+                    attr_to_str(angles.attrs.get("units")) or "",
+                    frames=len(angles),
+                    path=path,
+                ).astype(np.float32)
         else:
-            stack = Hdf5Frames.open(path, where)
-            proj = stack if lazy else _read_projections(stack)
-            out["projections"] = proj
-            n_views = proj.shape[0]
-            image_key = load_image_key(entry, n_views=n_views, path=path)
-            out["image_key"] = image_key
-        out["angles"] = load_rotation_angles(entry, n_views=n_views, path=path, image_key=image_key)
+            if located is None:
+                located = locate_frames(path, data_path=where)
+            stack = located.stack
+            out["projections"] = stack if lazy else _read_projections(stack)
+            key = located.image_key
+            if key is None:
+                axes_log_warning("load_nxtomo: missing image_key for %s; defaulting to zeros", path)
+                key = np.zeros(len(stack), np.int32)
+            out["image_key"] = key
+            out["angles"] = None if located.angles is None else located.angles.astype(np.float32)
         load_geometry_metadata(out, entry, path=path)
         load_grid_metadata(out, entry, path=path)
         load_detector_metadata(out, entry, path=path)
@@ -497,6 +496,11 @@ def read_nxtomo(path: str, *, lazy: bool, layout_only: bool) -> LoadedNXTomo:
             )
             out["disk_volume_axes_order"] = disk_order
     payload = LoadedNXTomo.from_dataset(out)
+    if located is not None and located.acquisition:
+        meta = dict(payload.metadata.geometry_meta or {})
+        saved = meta.get("acquisition")
+        meta["acquisition"] = {**(saved if isinstance(saved, dict) else {}), **located.acquisition}
+        payload.metadata.geometry_meta = meta
     payload.metadata.volume = volume_np
     return payload
 
@@ -534,7 +538,9 @@ def saved_without_frames(path: str | PathLike[str]) -> bool:
 
 
 def _without_frames(file: h5py.File) -> bool:
-    return isinstance(file.get(_VOLUME), h5py.Dataset) and not any(p in file for p in _FRAMES)
+    return isinstance(file.get(_VOLUME), h5py.Dataset) and not any(
+        p in file for p in NXTOMO_FRAME_PATHS
+    )
 
 
 def saved_volume_axes(attribute: str | None, path: object) -> str:

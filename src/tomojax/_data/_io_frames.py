@@ -100,12 +100,12 @@ class Hdf5Frames(FrameStack):
             return out
 
 
-_FRAME_PATHS = (
+NXTOMO_FRAME_PATHS = (
     "/entry/instrument/detector/data",
     "/entry/data/projections",
     "/entry/projections",
-    "/exchange/data",  # APS Data Exchange
 )
+_FRAME_PATHS = (*NXTOMO_FRAME_PATHS, "/exchange/data")
 _IMAGE_KEY_PATH = "/entry/instrument/detector/image_key"
 
 
@@ -318,14 +318,12 @@ def locate_frames(
         def per_frame(item: h5py.Dataset) -> bool:
             return item.shape == (frames,)
 
-        key_at = image_key_path or (_IMAGE_KEY_PATH if _dataset(file, _IMAGE_KEY_PATH) else None)
+        key_at = image_key_path or (_IMAGE_KEY_PATH if _IMAGE_KEY_PATH in file else None)
         key_at = key_at or (gda[1] if gda is not None else None)
         key_at = key_at or _detector_key(file, stack, path)
         key_by_name = key_at is None
         key_at = key_at or _only(file, "image_key", per_frame, path, validate_unmatched=True)
-        angles_at = angles_path or next(
-            (p for p in ROTATION_ANGLE_PATHS if _dataset(file, p) is not None), None
-        )
+        angles_at = angles_path or next((p for p in ROTATION_ANGLE_PATHS if p in file), None)
         angles_at = angles_at or (gda[2] if gda is not None else None)
         angles_at = angles_at or _only(file, "rotation_angle", per_frame, path)
         parent = where.rsplit("/", 1)[0] or "/"
@@ -455,8 +453,11 @@ def _records(
     raw: dict[str, np.ndarray | None] = {}
     for name, (where, by_name) in (("image_key", key), ("angles", angles)):
         values = raw[name] = None if where is None else _read(file, where, path)
-        if values is not None and values.ndim == 1 and not by_name:
-            counts[name] = len(values)
+        if values is None:
+            continue
+        if values.ndim != 1 or (by_name and values.shape != (frames,)):
+            raise ValueError(f"{path}: {name} must have shape ({frames},), not {values.shape}")
+        counts[name] = len(values)
     read = min(counts.values())
     if len(set(counts.values())) > 1:
         nouns = {"data": "frames", "image_key": "image_key entries", "angles": "angles"}
@@ -468,9 +469,7 @@ def _records(
         )
 
     def cut(values: np.ndarray | None) -> np.ndarray | None:
-        if values is None or values.ndim != 1 or len(values) < read:
-            return values  # left for the shape check to reject
-        return values[:read]
+        return None if values is None else values[:read]
 
     return cut(raw["image_key"]), cut(raw["angles"]), counts
 
@@ -624,6 +623,8 @@ def _dataset(file: h5py.File, where: str) -> h5py.Dataset | None:
 def _read(file: h5py.File, where: str, path: str) -> np.ndarray:
     found = _dataset(file, where)
     if found is None:
+        if where in file:
+            raise ValueError(f"{path}:{where} must be a dataset")
         raise KeyError(f"{path} has no dataset {where!r}")
     return np.asarray(found[()])
 
