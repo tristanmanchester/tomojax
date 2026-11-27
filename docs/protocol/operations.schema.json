@@ -1569,8 +1569,15 @@
           ]
         },
         "iterations": {
-          "type": "integer",
-          "default": 600
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "tv_weight": {
           "anyOf": [

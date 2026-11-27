@@ -63,9 +63,9 @@ backprojections across devices. Comparing the expected largest absolute noise
 score over supported voxels with the TV cost of a unit impulse in the flat
 interior sets the weight. Coverage variation, detector correlations, and model
 bias limit this approximation, and coherent artifacts such as rings should be
-removed beforehand. SPDHG uses Haar-MAD calibration with an empirical minimum of
-`5e-5`. Both solvers accept an explicit dimensionless weight, including `0` to
-disable TV.
+removed beforehand. SPDHG uses the same noise-calibrated penalty. With weighted
+data, the calibration uses observed pixels and the weighted score. Both solvers
+accept an explicit dimensionless weight, including zero to disable TV.
 
 On multiple CUDA GPUs, when the resident `float32` volume is at least 64 MiB and
 partitioning its longest axis gives each device an interior of at least
@@ -144,7 +144,7 @@ not evaluate full-data optimality. To replay an automatic run, pass
 | `sirt` (`subsets=1`) | Projection-discrepancy stop, cap 50 sweeps; momentum on when `relaxation <= 1` | Pass `iterations=N` (plain sweeps; add `acceleration=True` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
 | `sirt` (`subsets > 1`) | Fixed budget of 50 sweeps (no momentum) | Pass `iterations=N` |
 | `mlem` | Fixed budget of 50 sweeps | Pass `iterations=N` |
-| `spdhg` | Fixed budget of 600 stochastic block updates | Pass `iterations=N` |
+| `spdhg` | One block per update, with ceil(200 × √B) updates for B blocks | Pass `iterations=N` |
 | `cgls_multires` | Explicit per-level budgets (`iterations_per_level=(32, 16)`), numerical stopping per level | Pass `iterations_per_level=(...)` and `config=CGLSConfig(tolerance=...)` |
 
 ![The central slice of FIPS walnut 1 and an enlarged region, reconstructed by FDK, CGLS, plain SIRT and the default SIRT with momentum, each after 50 updates. Plain SIRT is still blurred; SIRT with momentum is as sharp as CGLS and FDK.](../../../docs/images/sirt-momentum.png)

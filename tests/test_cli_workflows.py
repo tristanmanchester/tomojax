@@ -810,8 +810,9 @@ def test_reconstruct_help_defaults_config_keys_and_boolean_overrides(
     assert f"mlem {MLEMConfig().iterations}" in help_text
     assert CGLSConfig().iterations is None
     assert SIRTConfig().iterations is None
-    assert f"fista {FISTAConfig().iterations}" in help_text
-    assert f"spdhg {SPDHGConfig().iterations}" in " ".join(help_text.split())
+    assert f"fista up to {FISTAConfig().iterations}" in " ".join(help_text.split())
+    assert SPDHGConfig().iterations is None
+    assert "spdhg one block per update" in " ".join(help_text.split())
 
     with pytest.raises(SystemExit) as keys_exit:
         main(["reconstruct", "--method", "fista", "--config-keys"])

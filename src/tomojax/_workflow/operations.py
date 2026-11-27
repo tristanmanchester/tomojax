@@ -554,8 +554,8 @@ def reconstruct(
         with both ``iterations`` and ``acceleration`` from ``info``.
     ``spdhg``
         The same objective as ``fista`` by stochastic primal-dual updates:
-        fixed budget of ``iterations`` (default 600), each updating one block of
-        views in an order drawn with ``seed`` (``termination="iteration_limit"``,
+        one block of views per update, in an order drawn with ``seed``.
+        The default runs ceil(200 × √B) updates for B blocks (``termination="iteration_limit"``,
         ``early_stop=False``).
 
     ``mlem`` is linear Poisson MLEM/OSEM (fixed sweep budget, default 50,

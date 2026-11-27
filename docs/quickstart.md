@@ -261,13 +261,15 @@ Unregularized iterative solvers (CGLS and SIRT) fit noise and discretization err
 | `cgls` | Projection residual RMS falls below estimated detector noise plus sampling error (when unpenalized and `tolerance=None`) | Up to 50 updates | Pass `iterations=N`, explicit tolerance, or `damping` / `gradient_damping` |
 | `sirt` (full data, `subsets=1`) | Same projection-discrepancy stop, with FISTA momentum enabled when `relaxation <= 1` | Up to 50 sweeps | Pass `iterations=N` (plain sweeps; add `SIRTConfig(acceleration=True)` for momentum) or `SIRTConfig(acceleration=False)` for plain automatic SIRT |
 | `sirt` (`subsets > 1`), `mlem` | Fixed sweep budget (no momentum) | 50 sweeps | Pass `iterations=N` |
-| `spdhg` | Fixed stochastic block-update budget | 600 block updates | Pass `iterations=N` |
+| `spdhg` | Block budget scales with view count | ceil(200 × √B) updates for B blocks | Pass `iterations=N` |
 
 Check `recon.info`, the JSON `--manifest`, or the closing line of `tomojax reconstruct` after an iterative run:
 
 - `termination` names why the solve ended: `"projection_discrepancy"` (CGLS/SIRT) or `"noise_score"` (FISTA) when the solver stopped at the estimated error level, `"objective_tolerance"` (FISTA with an explicit `tolerance`), `"converged"`, `"roundoff_limit"`, or `"numerical_breakdown"` (CGLS), or `"iteration_limit"` when the budget ran out. `early_stop` is `False` when the budget was exhausted.
 - `effective_iterations` gives the completed updates or sweeps, `measurement_noise_rms` gives the estimated detector noise SD, and `projection_error_rms` gives the total discrepancy threshold in projection units.
 - CGLS reports the final `residual_rms`; SIRT reports `pre_update_residual_rms` (measured at the point projected for the last sweep, including momentum when accelerated) and the resolved `acceleration` flag. On independent axial SIRT slabs, `slab_stopping` lists each slab's range, sweep count, and residual, while top-level `effective_iterations` is the largest sweep count across slabs.
+
+The discrepancy test measures RMS over detector samples. Different spatial frequencies converge at different updates, so reaching this RMS does not imply that every feature has recovered its full contrast.
 
 On real scans, motion, scatter, calibration bias, and correlated detector errors often keep the projection residual above the local noise-and-sampling estimate past 50 updates, so `termination="iteration_limit"` is common. That result means the cap ended the solve without detecting the scan's noise floor. Inspect the slices, pass an explicit `iterations=` if structure is still under-resolved, or switch to `fista` when noise needs explicit TV regularization. To replay an automatic run identically, pass `iterations=recon.info["effective_iterations"]` for CGLS, and pass both `iterations` and `acceleration` from `recon.info` for SIRT.
 

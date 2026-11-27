@@ -775,7 +775,7 @@ class tomojax.recon.SIRTConfig(
     .accelerated
 class tomojax.recon.SPDHGConfig(
         *,
-        iterations: int = 600,
+        iterations: int | None = None,
         tv_weight: float | None = None,
         data_term: Literal['absolute', 'per_view_contrast'] = 'absolute',
         regularizer: Literal['tv', 'huber_tv'] = 'tv',

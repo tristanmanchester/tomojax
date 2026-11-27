@@ -153,7 +153,7 @@ class FISTAConfig(Record, tag="FISTAConfig"):
 class SPDHGConfig(Record, tag="SPDHGConfig"):
     """Wire fields of SPDHGConfig."""
 
-    iterations: int = 600
+    iterations: int | None = None
     tv_weight: float | None = None
     data_term: Literal["absolute", "per_view_contrast"] = "absolute"
     regularizer: Literal["tv", "huber_tv"] = "tv"

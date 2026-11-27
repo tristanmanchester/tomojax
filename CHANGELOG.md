@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- SPDHG now takes about 200 × √B updates for B measured-data blocks. Its TV
+  penalty uses the same noise calibration as FISTA, and its stochastic step
+  sizes scale with the probability of selecting a block. An explicit iteration
+  count still fixes the work budget.
+
 - Flat sets taken before and after a scan are weighted by what the scan's views show of
   each, instead of by each view's position between them. A set taken with something in
   the beam is left out where the other set matches the views, a blend that matches

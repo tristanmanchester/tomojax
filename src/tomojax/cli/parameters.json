@@ -1807,9 +1807,16 @@
           ]
         },
         "iterations": {
-          "type": "integer",
-          "default": 600,
-          "description": "Number of sampled data-block updates, each with a TV update (not full sweeps through the data). Default is 600."
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Number of sampled data-block updates, each with a TV update. None uses ceil(200 * sqrt(number of blocks)). An explicit count fixes the budget."
         },
         "tv_weight": {
           "anyOf": [
@@ -1821,7 +1828,7 @@
             }
           ],
           "default": null,
-          "description": "Dimensionless physical-TV strength. None (default) estimates the noise from measured projections and raises a fixed 0.00005 minimum using one contrast-noise gradient probe. Explicit positive values bypass this estimate; zero disables TV."
+          "description": "Dimensionless physical-TV strength. None estimates the score of detector noise from the measured pixels and calibrates the penalty per isolated voxel against that score. An explicit zero disables TV."
         },
         "data_term": {
           "enum": [
