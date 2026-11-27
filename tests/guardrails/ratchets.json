@@ -60,13 +60,13 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5591,
+    "reportAny": 5597,
     "reportMissingImports": 61,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 892,
-    "reportUnknownMemberType": 1703,
-    "reportUnknownVariableType": 1000,
-    "reportUnusedCallResult": 155
+    "reportUnknownArgumentType": 878,
+    "reportUnknownMemberType": 1682,
+    "reportUnknownVariableType": 994,
+    "reportUnusedCallResult": 156
   },
   "explicit_any": 425,
   "type_casts": 84,
@@ -154,7 +154,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 66,
+    "tiny": 65,
     "forwarders": 9,
     "chained": 7
   },
