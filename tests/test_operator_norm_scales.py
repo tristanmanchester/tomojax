@@ -79,10 +79,18 @@ def test_spdhg_uses_exact_active_gradient_norm_and_keeps_explicit_steps(shape, t
     )
     expected_norm = _dense_gradient_norm(shape) if tv_weight else 0
     np.testing.assert_allclose(info["grad_norm"], expected_norm, rtol=3e-6)
-    np.testing.assert_allclose(info["sigma_tv"], 0.99 * 3 * tv_weight, rtol=3e-6)
+    # Overriding both data steps must preserve the independent automatic TV step.
+    _, automatic = spdhg(
+        geometry,
+        grid,
+        detector,
+        jnp.zeros((1, 2, 3)),
+        config=SPDHGConfig(iterations=0, tv_weight=tv_weight),
+    )
+    np.testing.assert_allclose(info["sigma_tv"], automatic["sigma_tv"], rtol=3e-6)
     assert info["tau"] == 0.2
     assert info["sigma_data"] == 0.3
-    assert info["A_norm"] is None
+    assert info["A_norm"] == (automatic["A_norm"] if tv_weight else None)
 
 
 @pytest.mark.numerical
