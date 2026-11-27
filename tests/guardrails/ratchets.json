@@ -34,8 +34,8 @@
   "cli_flags": {
     "inspect": 7,
     "correct": 35,
-    "reconstruct": 21,
-    "align": 20,
+    "reconstruct": 22,
+    "align": 21,
     "export": 7,
     "simulate": 20,
     "serve": 1,
@@ -45,13 +45,14 @@
   },
   "long_files": {
     "src/tomojax/_loading/loader.py": 821,
-    "src/tomojax/alignment/_joint/_solver.py": 962,
+    "src/tomojax/alignment/_joint/_solver.py": 1014,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 169,
     "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
-    "src/tomojax/cli/reconstruct.py::build_parser": 101,
+    "src/tomojax/cli/align.py::build_parser": 101,
+    "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
     "src/tomojax/corrections/_engine.py::correct_frames": 119,
     "src/tomojax/recon/_cgls_jax.py::_solve": 146,
@@ -61,12 +62,12 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 115
   },
   "pyright_warnings": {
-    "reportAny": 5306,
+    "reportAny": 5348,
     "reportMissingImports": 57,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 867,
-    "reportUnknownMemberType": 1593,
-    "reportUnknownVariableType": 977,
+    "reportUnknownArgumentType": 865,
+    "reportUnknownMemberType": 1601,
+    "reportUnknownVariableType": 981,
     "reportUnusedCallResult": 141
   },
   "explicit_any": 456,
@@ -134,6 +135,7 @@
   },
   "complex_functions": [
     "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
+    "src/tomojax/alignment/_joint/_solver.py::C901::_descend",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
     "src/tomojax/cli/_adapters.py::C901::durable",
     "src/tomojax/cli/_adapters.py::C901::execute",
@@ -165,5 +167,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 126
+  "test_private_imports": 128
 }
