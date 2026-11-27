@@ -137,6 +137,7 @@ Direct `tj.align(scan, fit="center")` on unposed axial parallel half-turns (CPU)
 
 | Correction | Measured effect | Cost and limit |
 | --- | --- | --- |
-| Truncated scans (`exterior="cylinder"`) | Analytic phantoms: offset 4–99% → 0.1–6%, rim 60–1024% → 0.3–6%. Cropped Walnut 1 FDK rim: 548% → 23% | Negligible on V100S, up to 5% on Blackwell. Non-cylindrical exteriors keep partial cupping; iterative solvers omit exterior material |
+| Analytic cylinder continuation | On truncated phantoms, offset 4–99% → 0.1–6%, rim 60–1024% → 0.3–6%. Cropped Walnut 1 FDK rim: 548% → 23% | Negligible on V100S, up to 5% on Blackwell. Non-cylindrical exteriors keep partial cupping |
+| Iterative cylinder exterior | On two 16-row DIAD bands, SPDHG central ROI NRMSE fell from 0.240 to 0.160 and from 0.733 to 0.400 | Gaussian solvers subtract the exterior estimate once per fit. On the first band, each subsequent SIRT update took 0.53 s on V100S and 0.125 s on Blackwell with either exterior setting. MLEM includes the estimate in each Poisson update |
 | Bracketing flat fields (`flat_weights="views"`) | Halves RMS error on stage-shadowed DIAD flats while leaving clean scans unchanged. Beat position interpolation in 618 of 1,056 fault simulations (355 ties, 83 losses) | Adds ~2 s on an 8,000-view DIAD scan. Worst loss (0.34 SD) occurs under broad shadows with little open beam |
 | Ring correction (`Rings()`) | Halves median fine-ring RMS on DIAD half-turns (0.29 → 0.13) and I13 full-turns (0.27 → 0.14). Alters off-axis structure far less than Algotom 1.7 | Adds ~10 s (half turn) or ~20 s (full turn) on V100S, 15 MiB VRAM. Swirls remain; features within 15 px of the axis are ambiguous with detector offsets |
