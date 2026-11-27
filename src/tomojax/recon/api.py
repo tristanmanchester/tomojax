@@ -674,15 +674,16 @@ def reconstruct_arrays(
     det_grid = _detector_grid(geometry, detector)
     if out is not None:
         _ = validate_host_arrays(projections, out, grid.shape, method, device_input=True)
-    background, share = outside_data(geometry, grid, detector, projections, cfg)
-    treatment = Treatment.record(cfg.method, share, applied=background is not None)
-    warm_data = projections if warm_start and background is not None else None
-    if background is not None and cfg.method != "mlem":
-        projections = subtract_background(projections, background)
-        background = None
     with progress.task(
         "reconstruct", method, 50 if cfg.iterations is None else cfg.iterations, "iterations"
     ):
+        with progress.preparing("estimate exterior projection"):
+            background, share = outside_data(geometry, grid, detector, projections, cfg)
+            treatment = Treatment.record(cfg.method, share, applied=background is not None)
+            warm_data = projections if warm_start and background is not None else None
+            if background is not None and cfg.method != "mlem":
+                projections = subtract_background(projections, background)
+                background = None
         volume, record = _iterative_result(
             geometry,
             grid,
@@ -759,7 +760,7 @@ def _iterative_result(
             result = axial_slabs(
                 geometry, grid, detector, projections, initial=None, support=support,
                 config=algebraic,
-                solve=solve, summarize=summary,
+                solve=solve, summarize=summary, additive=background is not None,
             )  # fmt: skip
             if result is not None:
                 volume, record = result

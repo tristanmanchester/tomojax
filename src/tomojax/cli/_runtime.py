@@ -50,8 +50,10 @@ def beyond_detector(info: Mapping[str, object]) -> str | None:
     parts = []
     if isinstance(fraction, float) and fraction >= 0.005:
         parts.append(f"{fraction:.0%} of attenuation beyond the detector")
-    if record.get("data_model") == "continued_exterior":
-        parts.append("modeled exterior in the projection fit")
+    if record.get("background_treatment") == "subtracted":
+        parts.append("modeled exterior subtracted from fit data")
+    elif record.get("background_treatment") == "additive_poisson":
+        parts.append("modeled exterior added to the Poisson mean")
     return ", ".join(parts) or None
 
 

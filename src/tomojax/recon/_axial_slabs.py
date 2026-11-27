@@ -40,7 +40,9 @@ def independent_planes(geometry: Geometry, grid: Grid, detector: Detector) -> bo
     )
 
 
-def axial_workspace(cfg: SIRTConfig | MLEMConfig, volume: int, projections: int) -> float:
+def axial_workspace(
+    cfg: SIRTConfig | MLEMConfig, volume: int, projections: int, *, additive: bool = False
+) -> float:
     """FP32 workspace in bytes for SIRT or EM over the given volume and projections."""
     from .sirt import SIRTConfig
 
@@ -49,7 +51,7 @@ def axial_workspace(cfg: SIRTConfig | MLEMConfig, volume: int, projections: int)
             2 + 2 / cfg.subsets
         ) * projections
     # EM holds observations, the additive exterior and ratio workspace beside four volumes.
-    return 4 * volume + 3 * projections
+    return 4 * volume + (2 + int(additive)) * projections
 
 
 def axial_slab_depth(
@@ -59,11 +61,15 @@ def axial_slab_depth(
     views: int,
     cfg: SIRTConfig | MLEMConfig,
     free: int | None,
+    *,
+    additive: bool = False,
 ) -> int | None:
     """Depth of independent z slabs under the half-memory policy, or None for a resident solve."""
     if free is None or grid.nz < 2 or not independent_planes(geometry, grid, detector):
         return None
-    per_row = axial_workspace(cfg, 4 * grid.nx * grid.ny, 4 * views * detector.nu)
+    per_row = axial_workspace(
+        cfg, 4 * grid.nx * grid.ny, 4 * views * detector.nu, additive=additive
+    )
     if per_row * grid.nz <= 0.5 * free:
         return None
     fitting = max(1, int(0.5 * free / per_row))
@@ -80,6 +86,7 @@ def axial_slabs(
     support: Array | None,
     config: SIRTConfig | MLEMConfig,
     solve: Solve,
+    additive: bool = False,
     summarize: Callable[[checkpoint.Slabs], dict[str, object]] | None = None,
 ) -> tuple[np.ndarray, dict[str, object]] | None:
     """Solve in slabs if storage is large and Joseph planes are independent.
@@ -94,7 +101,13 @@ def axial_slabs(
     from tomojax.backends import device_free_memory_bytes
 
     depth = axial_slab_depth(
-        geometry, grid, detector, data.shape[0], config, device_free_memory_bytes()
+        geometry,
+        grid,
+        detector,
+        data.shape[0],
+        config,
+        device_free_memory_bytes(),
+        additive=additive,
     )
     if summarize is not None and checkpoint.active():
         # Statistical stops depend on the rows solved together. Restore that

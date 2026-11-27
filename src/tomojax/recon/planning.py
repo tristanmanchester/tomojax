@@ -155,7 +155,12 @@ def _algebraic_slabs(
     grid, detector = geometry.grid, geometry.detector
     model = cone_model(geometry, detector)
     if model is None:
-        return axial_slab_depth(geometry, grid, detector, views, cfg, free) is not None
+        return (
+            axial_slab_depth(
+                geometry, grid, detector, views, cfg, free, additive=cfg.method == "mlem"
+            )
+            is not None
+        )
     if (
         not gpu
         or not needs_volume_sweeps(grid, cfg, free)
@@ -221,7 +226,9 @@ def _recon_bytes(
         case "sirt" | "mlem":
             from ._axial_slabs import axial_workspace
 
-            return int(axial_workspace(config, volume, projections))
+            return int(
+                axial_workspace(config, volume, projections, additive=config.method == "mlem")
+            )
         case "spdhg":
             return (3 + 3 * (config.tv_weight != 0)) * volume + 2 * projections
         case "fista":

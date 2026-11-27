@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 import math
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, cast
 
 import numpy as np
 
@@ -100,33 +100,41 @@ def _unseen(
                 )
                 columns: Float64Array = (hit - center) @ horizontal / own.du
             # A box crossing the source plane has no bounded detector silhouette.
-            crossing = np.logical_and(np.any(depth <= 0, axis=1), np.any(depth >= 0, axis=1))
+            ordered = np.sort(depth, axis=1)
+            crossing = (ordered[:, 0] <= 0) & (ordered[:, -1] >= 0)
             columns[crossing, :2] = [-np.inf, np.inf]
             u[first:last] = columns
             first = last
     column = np.arange(detector.nu, dtype=np.float64) - (detector.nu - 1) / 2
-    return np.all(column[None, None, :] + 0.5 < u[..., None], axis=1) | np.all(
-        column[None, None, :] - 0.5 > u[..., None], axis=1
-    )
+    bounds = np.sort(u, axis=1)
+    return (column[None, :] + 0.5 < bounds[:, :1]) | (column[None, :] - 0.5 > bounds[:, -1:])
+
+
+class _Binning(NamedTuple):
+    factor: int
 
 
 @dataclass(frozen=True)
 class _Sampling:
     detector: Detector
     grid: Grid
+    binning: int
 
     @classmethod
-    def for_scan(cls, grid: Grid, detector: Detector, reach: float) -> _Sampling:
+    def for_scan(cls, grid: Grid, detector: Detector, reach: float, binning: int = 1) -> _Sampling:
         # The exterior determines a smooth background. Resolve at least 64 columns
         # on small scans; bound the auxiliary lattice independently of the fine grid.
         cols = min(detector.nu, max(64, min(128, math.ceil(detector.nu / 4))))
+        cols = max(1, cols // binning)
         ratio = detector.nu / cols
         rows = min(detector.nv, max(8, min(128, math.ceil(detector.nv / ratio))))
+        rows = max(1, rows // binning)
         coarse = replace(
             detector, nu=cols, nv=rows, du=detector.du * ratio, dv=detector.dv * detector.nv / rows
         )
         vx, vy = max(grid.vx * ratio, reach / 192), max(grid.vy * ratio, reach / 192)
         nz = min(grid.nz, max(8, min(128, math.ceil(grid.nz / ratio))))
+        nz = max(1, nz // binning)
         oz = grid_volume_origin(grid)[2]
         wide = Grid(
             2 * math.ceil(reach / vx),
@@ -137,7 +145,26 @@ class _Sampling:
             grid.vz * grid.nz / nz,
             vol_center=(0.0, 0.0, oz + (grid.nz - 1) * grid.vz / 2),
         )
-        return cls(coarse, wide)
+        return cls(coarse, wide, binning)
+
+    @classmethod
+    def fitting(
+        cls, geometry: Geometry, grid: Grid, detector: Detector, views: int, room: int | None
+    ) -> _Sampling:
+        """Use the finest auxiliary lattice that fits beside the solver's counting buffers."""
+        reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
+        binning = 1
+        while True:
+            sample = cls.for_scan(grid, detector, reach, binning)
+            d, wide = sample.detector, sample.grid
+            fitted = len(range(0, views, _stride(geometry, wide)))
+            if room is None or resident_bytes(wide, (fitted, d.nv, 3 * d.nu)) <= room:
+                return sample
+            if (d.nu, d.nv, wide.nz) == (1, 1, 1):
+                raise MemoryError(
+                    "continued projections for one auxiliary voxel do not fit on the device"
+                )
+            binning *= 2
 
     def completed(self, geometry: Geometry, data: np.ndarray | jax.Array) -> Float32Array:
         d = self.detector
@@ -180,7 +207,9 @@ class _Sampling:
         return volume * (1 - inside.astype(np.float32))
 
 
-def storage(geometry: Geometry, grid: Grid, detector: Detector, views: int) -> tuple[int, int]:
+def storage(
+    geometry: Geometry, grid: Grid, detector: Detector, views: int, room: int | None = None
+) -> tuple[int, int]:
     """Peak auxiliary host and device bytes, including the private projection stack."""
     from ._axial_slabs import independent_planes
 
@@ -188,8 +217,7 @@ def storage(geometry: Geometry, grid: Grid, detector: Detector, views: int) -> t
     if independent_planes(geometry, grid, detector) and grid.nz > 1:
         grid = replace(grid, nz=1)
         detector = replace(detector, nv=1)
-    distance = axis_distance(geometry, detector, detector.nu)
-    sample = _Sampling.for_scan(grid, detector, max_float(np.abs(distance)))
+    sample = _Sampling.fitting(geometry, grid, detector, views, room)
     d, wide = sample.detector, sample.grid
     shape = (views, d.nv, 3 * d.nu)
     measured = 4 * views * detector.nv * detector.nu
@@ -197,16 +225,17 @@ def storage(geometry: Geometry, grid: Grid, detector: Detector, views: int) -> t
     volume = 4 * math.prod(wide.shape)
     # Completed rows and their measured-column residual survive through reprojection.
     # A streamed host result and the extended exterior lattice can coexist.
+    block = min(views, max(1, min(64, (16 << 20) // (4 * detector.nv * detector.nu))))
+    images = 4 * block * detector.nv * detector.nu
+    project = 4 * (wide.nz + 2) * wide.ny * wide.nx + images
     host = (
         full_data
         + (measured if measured < full_data else 0)
         + completed
         + completed // 3
         + 3 * volume
-        + (64 << 20)
+        + 4 * images
     )
-    block = min(views, max(1, min(64, (16 << 20) // (4 * detector.nv * detector.nu))))
-    project = 4 * (wide.nz + 2) * wide.ny * wide.nx + 4 * block * detector.nv * detector.nu
     fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
     return host, max(resident_bytes(wide, fitted_shape), project)
 
@@ -276,8 +305,6 @@ def _project(
                 operator = JosephCUDA(poses[part], grid, detector, views_per_batch=batch)
                 yield part, numpy_float32_array(operator.forward(device_volume).get())
         return
-    import jax.numpy as jnp
-
     from tomojax.core.cone import ConeModel, cone_project
     from tomojax.core.joseph import forward_project_planes, plane_coefficients
     from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
@@ -288,13 +315,16 @@ def _project(
     model, backend = resolve_geometry_projector(
         geometry, config.backend, detector=detector, det_grid=lattice, context="reconstruct"
     )
-    pose = jnp.asarray(poses)
+    import jax.numpy as jnp
+
+    place = cast("Callable[[Float32Array], jax.Array]", jnp.asarray)
+    pose = place(poses)
     coeff = (
         model.coefficients(pose, grid)
         if isinstance(model, ConeModel)
         else plane_coefficients(pose, grid, detector, lattice)
     )
-    device = jnp.asarray(volume)
+    device = place(volume)
     for first in range(0, len(poses), batch):
         part = slice(first, first + batch)
         if isinstance(model, ConeModel):
@@ -338,6 +368,21 @@ def outside_data(
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
 ) -> tuple[np.ndarray | None, float]:
     """Estimate an additive ray background and its share of measured attenuation."""
+    from ._fbp_storage import first_device
+
+    # Every fine device fits the same fixed exterior. Consult the first selected
+    # allocator before fitting independent rows or the coupled volume.
+    with first_device(config) if getattr(config, "devices", None) is not None else nullcontext():
+        return _background(geometry, grid, detector, data, config)
+
+
+def _background(
+    geometry: Geometry,
+    grid: Grid,
+    detector: Detector,
+    data: np.ndarray | jax.Array,
+    config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
+) -> tuple[np.ndarray | None, float]:
     from ._axial_slabs import independent_planes
 
     if (
@@ -394,6 +439,25 @@ class _LinearAxis:
         return numpy_float32_array(left + (right - left) * self.fraction)
 
 
+def _room(geometry: Geometry, data: np.ndarray | jax.Array, coarse: CGLSConfig) -> int | None:
+    """Room for the auxiliary solve on the selected accelerator."""
+    from tomojax.core import backend_policy
+
+    from ._cgls_cuda import array_module, available, native_device
+
+    # The native path can query its own allocator without initializing JAX.
+    if available(geometry, data, coarse, host_initial=True, canonical=True):
+        cp = array_module()
+        if cp.cuda.is_available():
+            with native_device(cp):
+                return backend_policy.cupy_available_bytes()
+    elif backend_policy.cuda_backend():
+        from tomojax.backends import device_free_memory_bytes
+
+        return max(backend_policy.cupy_available_bytes(), device_free_memory_bytes() or 0)
+    return None
+
+
 def _model(
     geometry: Geometry,
     grid: Grid,
@@ -401,14 +465,30 @@ def _model(
     data: np.ndarray | jax.Array,
     config: CGLSConfig | FISTAConfig | SIRTConfig | MLEMConfig | SPDHGConfig,
 ) -> tuple[np.ndarray | None, float]:
-    from ._fbp_storage import first_device
-
     views, nv, nu = data.shape
-    distance = axis_distance(geometry, detector, nu)
-    sample = _Sampling.for_scan(grid, detector, max_float(np.abs(distance)))
+    coarse = CGLSConfig(iterations=50)
+    with checkpoint.loop("exterior-sampling") as sampling:
+        if sampling.saved is None:
+            sample = _Sampling.fitting(
+                geometry, grid, detector, views, _room(geometry, data, coarse)
+            )
+            sampling.save((), _Binning(sample.binning))
+        else:
+            reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
+            sample = _Sampling.for_scan(
+                grid, detector, reach, sampling.saved.scalars(_Binning).factor
+            )
+
     d, wide = sample.detector, sample.grid
     complete = replace(d, nu=3 * d.nu)
     poses = _poses(geometry, views)
+    # With a single ray family, virtual and measured rays never intersect
+    # inside the object. The extension adds no observations of the measured paths.
+    if (
+        np.array_equal(poses, np.broadcast_to(poses[:1], poses.shape))
+        and cone_parts(geometry, detector) is None
+    ):
+        return None, 0.0
     mask = _unseen(geometry, complete, grid, poses)
     mask[:, d.nu : 2 * d.nu] = False
     if not mask.any():
@@ -431,44 +511,36 @@ def _model(
         return None, 0.0
     # The completed stack includes correlated, synthetic rays. Its residual
     # does not have the measured scan's noise law.
-    coarse = CGLSConfig(
-        iterations=50, backend=config.backend, devices=getattr(config, "devices", None)
-    )
-    with first_device(coarse) if coarse.devices is not None else nullcontext():
-        volume, native = _fit(geometry, wide, complete, full, coarse)
-        predicted: Float64Array = np.zeros(d.nv)
-        residual: Float32Array = host_array((views, d.nv, d.nu))
-        for part, block in _project(geometry, complete, wide, poses, volume, coarse, native=native):
-            predicted += (
-                np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
-            )
-            residual[part] = (full[part] - block)[..., d.nu : 2 * d.nu]
-        scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
-        if not scale.any():
-            return None, 0.0
-        outside = sample.exterior(volume, grid)
-        # A coarsened z lattice interpolates the edge row through a half-cell
-        # beyond its end centres. At native z sampling the known grid extent
-        # already defines the footprint, including diverging cone rays.
-        if wide.nz < grid.nz:
-            outside = np.concatenate([outside[:1], outside, outside[-1:]])
-            wide = replace(wide, nz=wide.nz + 2)
-        row = (np.arange(nv) + 0.5) * d.nv / nv - 0.5
-        amplitude = np.interp(row, np.arange(d.nv), scale).astype(np.float32)[:, None]
-        vertical, horizontal = _LinearAxis.cells(d.nv, nv), _LinearAxis.cells(d.nu, nu)
-        source: Float32Array = host_array(data.shape, copies=2)
-        removed = 0.0
-        for part, block in _project(
-            geometry, detector, wide, poses, outside, coarse, native=native
-        ):
-            progress.check_canceled()
-            across = horizontal.interpolate(residual[part])
-            mismatch = vertical.interpolate(across.swapaxes(1, 2)).swapaxes(1, 2)
-            source[part] = (block + mismatch) * amplitude
-            if config.method == "mlem":
-                _ = np.clip(source[part], 0, None, out=source[part])
-            removed += sum_float64(source[part])
-        return source, removed
+    volume, native = _fit(geometry, wide, complete, full, coarse)
+    predicted: Float64Array = np.zeros(d.nv)
+    residual: Float32Array = host_array((views, d.nv, d.nu))
+    for part, block in _project(geometry, complete, wide, poses, volume, coarse, native=native):
+        predicted += np.sum(block, axis=(0, 2), where=mask[part, None, :], dtype=np.float64) / views
+        residual[part] = (full[part] - block)[..., d.nu : 2 * d.nu]
+    scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
+    if not scale.any():
+        return None, 0.0
+    outside = sample.exterior(volume, grid)
+    # A coarsened z lattice interpolates the edge row through a half-cell
+    # beyond its end centres. At native z sampling the known grid extent
+    # already defines the footprint, including diverging cone rays.
+    if wide.nz < grid.nz:
+        outside = np.concatenate([outside[:1], outside, outside[-1:]])
+        wide = replace(wide, nz=wide.nz + 2)
+    row = (np.arange(nv) + 0.5) * d.nv / nv - 0.5
+    amplitude = np.interp(row, np.arange(d.nv), scale).astype(np.float32)[:, None]
+    vertical, horizontal = _LinearAxis.cells(d.nv, nv), _LinearAxis.cells(d.nu, nu)
+    source: Float32Array = host_array(data.shape, copies=2)
+    removed = 0.0
+    for part, block in _project(geometry, detector, wide, poses, outside, coarse, native=native):
+        progress.check_canceled()
+        across = horizontal.interpolate(residual[part])
+        mismatch = vertical.interpolate(across.swapaxes(1, 2)).swapaxes(1, 2)
+        source[part] = (block + mismatch) * amplitude
+        if config.method == "mlem":
+            _ = np.clip(source[part], 0, None, out=source[part])
+        removed += sum_float64(source[part])
+    return source, removed
 
 
 def subtract_background(

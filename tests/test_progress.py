@@ -827,7 +827,9 @@ def test_slab_task_spans_the_open_iterator(end):
                         next(slabs)
                 elif end == "last":
                     assert [part for part, _ in slabs] == [slice(8, 11)]
-            assert not any(isinstance(e, progress.Finished) for e in events)
+            assert not any(
+                isinstance(e, progress.Finished) and e.task == events[0].task for e in events
+            )
         validate_tree(events)
     assert [e.done for e in events if isinstance(e, progress.Advanced)] == {
         "cancel": [1],

@@ -91,6 +91,23 @@ def test_iterative_fit_recovers_the_attenuation_and_flat_interior(scan_factory, 
     np.testing.assert_array_equal(scan.projections, original)
 
 
+@pytest.mark.parametrize("method", ["cgls", "fista"])
+def test_view_sharing_uses_the_same_exterior_on_each_device(method) -> None:
+    import jax
+
+    devices = jax.devices()
+    if len(devices) < 2:
+        pytest.skip("requires two devices")
+    scan = _parallel(rows=1)
+    # Isolate the order of the shared backprojection from automatic stopping.
+    options = {"iterations": 5, "tv_weight": 0.0} if method == "fista" else {"iterations": 5}
+    single = tj.reconstruct(scan, method, devices=devices[:1], **options)
+    shared = tj.reconstruct(scan, method, devices=devices[:2], **options)
+    assert shared.info["truncation"] == single.info["truncation"]
+    assert shared.info["truncation"]["outside_grid"] > 0
+    np.testing.assert_allclose(shared.volume, single.volume, rtol=1e-4, atol=1e-5)
+
+
 def test_checkpoint_preserves_the_exterior_during_the_final_fit(tmp_path) -> None:
     from tomojax import progress
     from tomojax.errors import Canceled
@@ -179,7 +196,7 @@ def test_every_method_carries_the_record() -> None:
     )
 
 
-@pytest.mark.parametrize("method", ["fbp", "cgls"])
+@pytest.mark.parametrize("method", ["fbp", "cgls", "mlem"])
 @pytest.mark.parametrize(("radius", "beyond"), [(RADIUS, True), (0.7, False)])
 def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
     method, radius, beyond, tmp_path, capsys
@@ -199,7 +216,7 @@ def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
     assert (share in summary) is beyond
     assert ("beyond the detector" in line + summary) is beyond
     assert ("modeled exterior" in line and "modeled exterior" in summary) == (
-        method == "cgls" and beyond
+        method in {"cgls", "mlem"} and beyond
     )
 
 

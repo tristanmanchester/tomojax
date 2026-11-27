@@ -824,7 +824,7 @@ def task(name: _Name, label: str, total: int | None, unit: str) -> Iterator[None
     if (
         name == "reconstruct"
         and parent is not None
-        and parent.name in {"reconstruct", "level", "refine"}
+        and parent.name in {"reconstruct", "level", "refine", "prepare"}
     ):
         yield
         return
