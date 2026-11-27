@@ -198,7 +198,7 @@ class ScanSample:
     """Collect each globally sampled detector row once, including overlapping slab footprints."""
 
     def __init__(self, geometry: ScanGeometry, detector: Detector) -> None:
-        distance = _axis_distance(geometry, detector, continued_columns(detector.nu))
+        distance = axis_distance(geometry, detector, continued_columns(detector.nu))
         self.coordinates = distance.tobytes()
         self.outer_only = bool(detector.center[0]) and full_parallel_turn(geometry)
         self.views, self.rows = _record_indices(len(geometry.angles), detector.nv)
