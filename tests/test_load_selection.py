@@ -13,7 +13,7 @@ import tomojax as tj
 from tomojax._loading.loader import projection_frames
 from tomojax.io.dataset_paths import DATASET_PATHS
 
-from .test_esrf_readers import _edf_scan, _write_bliss_sequence
+from .test_esrf_readers import _edf, _edf_scan, _write_bliss_sequence
 from .test_psi_reader import _write_v73
 from .test_zeiss import _streams, write_ole
 
@@ -101,6 +101,40 @@ def test_saved_selections_control_eager_and_lazy_pixels_angles_and_views(
     np.testing.assert_allclose(scan.poses[:, 3], np.array([0.0, 0.2, 0.4])[kept])
 
 
+def test_selected_saved_zeiss_views_keep_effective_geometry(tmp_path):
+    from dataclasses import replace
+
+    acquisition, counts = input_family(tmp_path, "zeiss_ole")
+    scan = tj.load(acquisition, darks=0)
+    poses = np.zeros((3, 6))
+    poses[:, 0] = [0.25, -0.75, 1.25]
+    before = replace(scan.with_poses(poses), view_positions=[0.5, 1.5, 10.5])
+    path = tmp_path / "fitted.nxs"
+    tj.save(path, before)
+    with h5py.File(path, "a") as file:
+        file["alternate/data"] = np.broadcast_to(np.arange(3)[:, None, None], counts.shape)
+        file["alternate/key"] = [0, 3, 0]
+
+    options = {
+        "detector": before.detector,
+        "data_path": "/alternate/data",
+        "image_key_path": "/alternate/key",
+    }
+    eager = tj.load(path, **options)
+    lazy, raw = projection_frames(path, **options)
+    assert not raw
+    for item, pixels in ((eager, eager.projections), (lazy, lazy.counts[:])):
+        np.testing.assert_array_equal(pixels[:, 0, 0], [0, 2])
+        np.testing.assert_array_equal(item.view_positions, [0.5, 10.5])
+        for i, original in enumerate((0, 2)):
+            np.testing.assert_allclose(
+                item.geometry.pose_matrix(i), before.geometry.pose_matrix(original)
+            )
+    for load in (tj.load, projection_frames):
+        with pytest.raises(ValueError, match="original acquisition"):
+            load(path, apply_poses=False, **options)
+
+
 def tiff_family(root, family, counts):
     for i, image in enumerate(counts):
         tifffile.imwrite(root / f"part_{i + 1:04d}.tif", image.astype(np.uint16))
@@ -143,6 +177,15 @@ def input_family(root, family):
         write_ole(path, _streams(counts, np.full((8, 12), 101, "<f4")))
     elif family == "esrf_bliss":
         counts = _write_bliss_sequence(path, "measurement/hrsrot")
+    elif family == "esrf_pyhst":
+        path = root / "input.par"
+        for i, image in enumerate(counts):
+            _edf(root / f"part{i:04}.edf", image)
+        path.write_text(
+            "FILE_PREFIX=part\nNUM_FIRST_IMAGE=0\nNUM_LAST_IMAGE=2\nLENGTH_OF_NUMERICAL_PART=4\n"
+            "NUM_IMAGE_1=4\nNUM_IMAGE_2=2\nIMAGE_PIXEL_SIZE_1=10\nIMAGE_PIXEL_SIZE_2=10\n"
+            "ROTATION_AXIS_POSITION=1.5\nANGLE_BETWEEN_PROJECTIONS=60\n"
+        )
     elif family == "esrf_edf":
         path = _edf_scan(root)
         counts = np.stack(
@@ -154,25 +197,29 @@ def input_family(root, family):
     elif family in {"nikon_xtekct", "tiff", "skyscan"}:
         path = tiff_family(root, family, counts)
     elif family in HDF:
-        with h5py.File(path, "w") as file:
-            if family == "data_exchange":
-                file["exchange/data"] = counts
-                file["exchange/theta"] = [0, 60, 120]
-            elif family == "nxtomo":
-                file["entry/definition"] = "NXtomo"
-                file["entry/instrument/detector/data"] = counts
-                file["entry/instrument/detector/image_key"] = [0, 0, 0]
-                file["entry/sample/rotation_angle"] = [0, 60, 120]
-            elif family == "nexus":
-                entry = file.create_group("experiment")
-                file.attrs["default"] = "experiment"
-                entry.attrs.update(NX_class="NXentry", default="plot")
-                plot = entry.create_group("plot")
-                plot.attrs.update(NX_class="NXdata", signal="pixels")
-                plot["pixels"] = counts
+        write_hdf_family(path, family, counts)
     else:
         pytest.fail(f"Add a load-contract fixture for {family}")
     return path, counts
+
+
+def write_hdf_family(path, family, counts):
+    with h5py.File(path, "w") as file:
+        if family == "data_exchange":
+            file["exchange/data"] = counts
+            file["exchange/theta"] = [0, 60, 120]
+        elif family == "nxtomo":
+            file["entry/definition"] = "NXtomo"
+            file["entry/instrument/detector/data"] = counts
+            file["entry/instrument/detector/image_key"] = [0, 0, 0]
+            file["entry/sample/rotation_angle"] = [0, 60, 120]
+        elif family == "nexus":
+            entry = file.create_group("experiment")
+            file.attrs["default"] = "experiment"
+            entry.attrs.update(NX_class="NXentry", default="plot")
+            plot = entry.create_group("plot")
+            plot.attrs.update(NX_class="NXdata", signal="pixels")
+            plot["pixels"] = counts
 
 
 @pytest.mark.parametrize("family", sorted(DATASET_PATHS))
@@ -212,14 +259,18 @@ def test_load_arguments_by_input_family(tmp_path, family):
         assert raw == (family != "phase")
         np.testing.assert_allclose(scan.projections, expected, rtol=2e-5, atol=1e-6)
         np.testing.assert_allclose(lazy.counts[:], counts)
-        for geom in (scan.geometry, lazy.geometry):
-            np.testing.assert_array_equal(geom.angles, angles)
-            assert geom.grid == grid and (geom.detector.du, geom.detector.dv) == (0.4, 0.8)
+        geometries = [scan.geometry, lazy.geometry]
         assert scan.poses is None
         if raw:
             frames = tj.load_frames(path, **fields, **options)
+            np.testing.assert_array_equal(frames.counts[:], counts)
             np.testing.assert_array_equal(frames.flats[0], fields["flats"])
+            np.testing.assert_array_equal(frames.darks[0], 1)
             assert frames.exposure_times == 2 and frames.flat_exposure_times == 1
+            geometries.append(frames.geometry)
+        for geom in geometries:
+            np.testing.assert_array_equal(geom.angles, angles)
+            assert geom.grid == grid and (geom.detector.du, geom.detector.dv) == (0.4, 0.8)
     if family in HDF:
         check_alternative_datasets(path, counts.shape, fields, detector)
     for name in selectors:
@@ -229,6 +280,17 @@ def test_load_arguments_by_input_family(tmp_path, family):
             for load in (tj.load, tj.load_frames, projection_frames):
                 with pytest.raises((ValueError, KeyError), match=name):
                     load(path, **fields, **{name: "/entry/absent"})
+
+
+@pytest.mark.parametrize("selector", ["data_path", "image_key_path", "angles_path"])
+def test_incompatible_dataset_names_the_selector(tmp_path, selector):
+    path = tmp_path / "scan.nxs"
+    write_scan(path)
+    with h5py.File(path, "a") as file:
+        file["scalar"] = 1.0
+    for load in (tj.load, tj.load_frames, projection_frames):
+        with pytest.raises(ValueError, match=selector):
+            load(path, **{selector: "/scalar"})
 
 
 def check_alternative_datasets(path, shape, fields, detector):

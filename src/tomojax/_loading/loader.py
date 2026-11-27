@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from tomojax._loading.geometry import DeclaredGeometry
     from tomojax.corrections import Correction
     from tomojax.io import ProjectionDataset
-    from tomojax.io.projection_layout import ProjectionPixels
+    from tomojax.io.projection_layout import ProjectionPixels, SelectedStorage
 else:
     corrections = AnnotationModule("tomojax.corrections")
 
@@ -262,7 +262,6 @@ def resolve_input(
     *,
     layout_only: bool,
     require_raw: bool = False,
-    check_calibration: bool = True,
     flats: np.ndarray | float | str | PathLike[str] | None = None,
     darks: np.ndarray | float | str | PathLike[str] | None = None,
     exposure_times: np.ndarray | float | None = None,
@@ -275,9 +274,6 @@ def resolve_input(
     **overrides: Unpack[_FrameOverrides],
 ) -> Frames | _StoredScan:
     """Resolve the file selection, geometry and measurement domain for all consumers."""
-    from tomojax.corrections.calibration import check_calibration_layout
-
-    center, overrides["declared"] = center_of(overrides.get("declared"))
     check_geometry_options(angles_path, angles, overrides)
     selected = select_storage(
         file,
@@ -286,9 +282,42 @@ def resolve_input(
         image_key_path=image_key_path,
         angles_path=angles_path,
     )
-    calibration = _Calibration(flats, darks, exposure_times, flat_exposure_times)
+    return resolve_measurements(
+        selected,
+        _Calibration(flats, darks, exposure_times, flat_exposure_times),
+        require_raw=require_raw,
+        angles=angles,
+        apply_poses=apply_poses,
+        **overrides,
+    )
+
+
+def loading_record(file: Path) -> ProjectionDataset | None:
+    """Read saved metadata directly. Raw inputs need their acquisition geometry resolved."""
+    selected = select_storage(file, layout_only=True)
+    calibration = _Calibration()
+    if isinstance(selected, ProjectionStorage) and not calibration.counts(
+        selected, require_raw=False
+    ):
+        return selected.record
+    item = resolve_measurements(selected, calibration, check_calibration=False)
+    return item.source if isinstance(item, Frames) else item.scan.source
+
+
+def resolve_measurements(
+    selected: SelectedStorage,
+    calibration: _Calibration,
+    *,
+    require_raw: bool = False,
+    check_calibration: bool = True,
+    angles: Sequence[float] | np.ndarray | None = None,
+    apply_poses: bool = True,
+    **overrides: Unpack[_FrameOverrides],
+) -> Frames | _StoredScan:
+    """Bind the requested geometry and calibration to the selected measurements."""
+    center, overrides["declared"] = center_of(overrides.get("declared"))
     if isinstance(selected, Path):
-        frames = tiff_frames(file, angles=angles, **overrides)
+        frames = tiff_frames(selected, angles=angles, **overrides)
     elif isinstance(selected, ProjectionStorage):
         raw = calibration.counts(selected, require_raw=require_raw)
         with discard_failed_outputs() as outputs:
@@ -324,6 +353,8 @@ def resolve_input(
         )
     frames = calibration.apply(frames)
     if check_calibration:
+        from tomojax.corrections.calibration import check_calibration_layout
+
         issues = calibration_issues(frames.flats, frames.darks, frames.white_level)
         if issues:
             raise ValueError(issues[0])

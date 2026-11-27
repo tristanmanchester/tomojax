@@ -347,7 +347,9 @@ def locate_frames(
             file, path, frames, (key_at, key_by_name), (angles_at, angles_by_name)
         )
         read = min(counts.values())
-        key = None if raw_key is None else checked_image_key(raw_key, frames=read, path=path)
+        key = raw_key
+        if key is not None:
+            key = checked_image_key(key, frames=read, path=f"{path} image_key_path {key_at!r}")
         control = (
             _dataset(file, f"{key_at.rsplit('/', 1)[0]}/image_key_control") if key_at else None
         )
@@ -381,7 +383,7 @@ def locate_frames(
                 file,
                 angles_at,
                 raw_angles,
-                path,
+                f"{path} angles_path {angles_at!r}",
                 frames=read,
                 key=key,
                 units_override=units_override,
@@ -429,6 +431,8 @@ def _stack(
     if data_path is not None and stack is None:
         raise KeyError(f"data_path: {path} has no dataset {data_path!r}")
     if where is not None and stack is not None:
+        if stack.ndim not in (2, 3):
+            raise ValueError(f"{path}: data_path {where!r} must name a 2-D sinogram or 3-D stack")
         return where, stack, gda
     missing: list[str] = []
     for name in file:
@@ -471,7 +475,10 @@ def _records(
         if values is None:
             continue
         if values.ndim != 1 or (by_name and values.shape != (frames,)):
-            raise ValueError(f"{path}: {name} must have shape ({frames},), not {values.shape}")
+            raise ValueError(
+                f"{path} {name}_path {where!r}: {name} must have shape ({frames},), "
+                f"not {values.shape}"
+            )
         counts[name] = len(values)
     read = min(counts.values())
     if len(set(counts.values())) > 1:

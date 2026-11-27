@@ -160,9 +160,10 @@ def hdf_projection_storage(
     return record, located.stack, True
 
 
-def select_storage(
-    path: Path, *, layout_only: bool, **paths: str | None
-) -> RawAcquisition | ProjectionStorage | Path:
+type SelectedStorage = RawAcquisition | ProjectionStorage | Path
+
+
+def select_storage(path: Path, *, layout_only: bool, **paths: str | None) -> SelectedStorage:
     """Select the acquisition, TIFF stack or stored projection dataset named by the caller."""
     if not path.exists():
         raise FileNotFoundError(f"no such file: {path}")

@@ -10,7 +10,16 @@ DATASET_PATHS: dict[str, frozenset[str]] = {
     "saved.nxs": _HDF_PATHS,
     "esrf_bliss": frozenset(("data_path",)),
     **dict.fromkeys(
-        ("nikon_xtekct", "zeiss_ole", "skyscan", "esrf_edf", "tiff", "phase", "saved.npz"),
+        (
+            "nikon_xtekct",
+            "zeiss_ole",
+            "skyscan",
+            "esrf_edf",
+            "esrf_pyhst",
+            "tiff",
+            "phase",
+            "saved.npz",
+        ),
         frozenset[str](),
     ),
 }
