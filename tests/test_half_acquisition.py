@@ -102,6 +102,7 @@ def test_selected_views_reopen_on_the_saved_grid_before_the_next_detector_edit(
     tj.save(saved, half_turn)
     loaded = tj.load(saved)
     assert loaded.grid.shape == (1, 115, 115)
+    assert tj.load(saved, detector=loaded.detector, angles=loaded.angles).grid == loaded.grid
     assert loaded.cropped(slice(None), slice(0, 48)).grid.shape == (1, 48, 48)
 
 

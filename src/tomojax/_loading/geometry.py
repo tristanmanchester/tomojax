@@ -261,9 +261,13 @@ def frame_geometry(
         detector=detector,
         pixel_size=pixel_size,
     )
+    view_angles = record.angles if angles is None else np.asarray(angles, np.float32)
+    sampling_changed = (detector is not None and detector != record.detector) or (
+        angles is not None and not np.array_equal(view_angles, record.angles)
+    )
     record = replace_dataset(
         record,
-        angles=record.angles if angles is None else np.asarray(angles, np.float32),
+        angles=view_angles,
         grid=grid or record.grid,
         geometry_metadata=meta,
     )
@@ -282,7 +286,7 @@ def frame_geometry(
     if geometry is not None:
         return record, geometry
     resolved = geometry_of(record, apply_poses=apply_poses)
-    if record.grid is not None and (detector is not None or angles is not None):
+    if record.grid is not None and sampling_changed:
         resolved = frame_output_grid(resolved, record)
     return record, resolved
 
