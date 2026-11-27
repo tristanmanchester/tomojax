@@ -15,7 +15,9 @@
   model. Voxels outside the field of view hold the reconstruction of the continued scan,
   and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
   Every reconstruction's `info["truncation"]` records `edge_ratio`, `outside_fraction`,
-  `interior_shift`, `radius`, and `field_of_view_radius`. The iterative solvers are
+  `interior_shift`, `radius`, and `field_of_view_radius`; each slab of
+  `tj.reconstruct_slabs` has the record of its own rows, and `tomojax reconstruct` and the
+  MCP summary say what share of the attenuation lies beyond the detector. The iterative solvers are
   unchanged: they fit the grid to the measured rays and do not model material outside it.
 - Multi-GPU iterative reconstruction scales faster on CUDA (`devices=` on `cgls` and `fista`).
   The axial parallel-beam CUDA backprojector now schedules neighboring threads along the middle

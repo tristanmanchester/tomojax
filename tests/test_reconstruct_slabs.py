@@ -56,6 +56,7 @@ def test_raw_slabs_match_corrected_scan_and_remain_reconstructible(tmp_path, met
         assert item.scan.corrections == independent.corrections
         again = tj.reconstruct(item.scan, method, config=cfg)
         np.testing.assert_allclose(again.volume, item.volume, rtol=3e-5, atol=2e-6)
+        assert item.info["truncation"] == pytest.approx(again.info["truncation"])
     tj.save(tmp_path / "slab.npz", collected[0][1])
     reloaded = tj.load_reconstruction(tmp_path / "slab.npz")
     np.testing.assert_array_equal(reloaded.volume, collected[0][1].volume)
@@ -185,7 +186,8 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
     requests = []
     frames = replace(eager, counts=Windowed(raw, requests))
     cfg, step = FBPConfig(backend=backend), Rings()
-    expected = tj.reconstruct(eager.corrected(step), "fbp", config=cfg).volume
+    direct = tj.reconstruct(eager.corrected(step), "fbp", config=cfg)
+    expected, whole = direct.volume, direct.info["truncation"]
     with tj.reconstruct_slabs(frames, "fbp", config=cfg, corrections=[step]) as slabs:
         collected = list(slabs)
     assert len(collected) == 2
@@ -202,6 +204,10 @@ def test_cone_raw_slabs_preserve_acquisition_weights_and_owned_rows(backend):
         assert isinstance(recon.scan.projections, np.ndarray)
         np.testing.assert_allclose(recon.scan.projections, independent.projections, atol=1e-6)
         assert recon.scan.corrections == independent.corrections
+        # A slab's record is of its own rows, over the scan's detector as its FDK is.
+        record = recon.info["truncation"]
+        assert record["field_of_view_radius"] == pytest.approx(whole["field_of_view_radius"])
+        assert record["outside_fraction"] == pytest.approx(whole["outside_fraction"], rel=0.1)
         np.testing.assert_allclose(
             grid_volume_origin(recon.grid)[2],
             grid_volume_origin(grid)[2] + section.start * grid.vz,

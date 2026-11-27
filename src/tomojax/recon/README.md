@@ -189,7 +189,8 @@ low frequency. Filtered rows are kept as far as the output grid projects, in
 FDK as in parallel `fbp`, so voxels outside the detector's inscribed field of
 view hold the reconstruction of the continued scan. `info["truncation"]` records
 what the rows' edges say (`edge_ratio`, `outside_fraction`, `interior_shift`,
-`radius`, `field_of_view_radius`).
+`radius`, `field_of_view_radius`); each slab of `reconstruct_slabs` has the
+record of its own rows.
 
 Direct FBP pads, filters and backprojects one view batch at a time. An internal
 512 MiB FFT-workspace estimate selects a power-of-two batch for large stacks;

@@ -434,14 +434,17 @@ def reconstruct_slabs[T](
             if is_cone_beam(geometry):
                 from .fdk import fdk_slabs
 
-                return fdk_slabs(geometry, grid, detector, read, config=fdk_config(cfg))
+                slabs = fdk_slabs(geometry, grid, detector, read, config=fdk_config(cfg))
+                return _with_truncation(slabs, geometry, detector)
             from .fbp_host import fbp_slabs
 
-            return fbp_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+            slabs = fbp_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+            return _with_truncation(slabs, geometry, detector)
         case "fourier":
             from ._fourier_stream import fourier_slabs
 
-            return fourier_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+            slabs = fourier_slabs(_parallel(geometry), grid, detector, read, config=cfg)
+            return _with_truncation(slabs, geometry, detector)
         case "sirt" | "mlem":
             from ._iterative_slabs import iterative_slabs
 
@@ -450,6 +453,20 @@ def reconstruct_slabs[T](
             )
         case _:
             raise ValueError("reconstruct_slabs supports FBP/Fourier/SIRT/MLEM")
+
+
+def _with_truncation[T](
+    slabs: Generator[ReconstructionSlab[T], None, None], geometry: Geometry, detector: Detector
+) -> Generator[ReconstructionSlab[T], None, None]:
+    """Give each analytic slab the truncation record of its rows, as a whole volume has."""
+    from contextlib import closing
+
+    from ._truncation import truncation_record
+
+    with closing(slabs):
+        for slab in slabs:
+            slab.info["truncation"] = truncation_record(geometry, detector, slab.projections)
+            yield slab
 
 
 def _parallel(geometry: Geometry) -> ParallelGeometry:
