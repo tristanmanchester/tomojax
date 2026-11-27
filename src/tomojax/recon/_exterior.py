@@ -196,12 +196,10 @@ class _Sampling:
         for i in range(0, views, batch):
             progress.check_canceled()
             block = data[i : i + batch]
-            # The continuation and the reference detector averages are on the host.
-            # The same FP32 reduction tree matters to the auxiliary Krylov directions.
             if not isinstance(block, np.ndarray) and not hasattr(block, "devices"):
-                from ._cgls_cuda import array_module
+                from ._exterior_cuda import host_detector_block
 
-                block = array_module().asnumpy(block)
+                block = host_detector_block(block, d.nu)
             host = np.asarray(block, dtype=np.float32)
             middle[i : i + batch] = _bin(_bin(host, d.nu, -1), d.nv, -2)
         fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu)

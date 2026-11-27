@@ -298,6 +298,27 @@ def test_zero_exterior_fits_measured_rays_from_the_zero_padded_warm_start(method
 
 
 @pytest.mark.gpu
+def test_device_detector_means_preserve_host_rounding_for_every_leaf_width():
+    from tomojax.recon._cgls_cuda import array_module
+    from tomojax.recon._exterior_cuda import host_detector_block
+
+    cp = array_module()
+    rng = np.random.default_rng(28)
+    columns = 9
+    for length in [*range(columns, 130 * columns, columns), 31]:
+        data = rng.standard_normal((3, 4, length), dtype=np.float32)
+        data[:, 0] = -0.0
+        device = cp.asarray(data)
+        for sample in (slice(None), slice(1, 3), slice(None, None, -1)):
+            expected = np.ascontiguousarray(data[:, sample])
+            width, remainder = divmod(length, columns)
+            if not remainder and 2 <= width <= 128:
+                expected = expected.reshape(*expected.shape[:-1], columns, width).mean(axis=-1)
+            actual = host_detector_block(device[:, sample], columns)
+            np.testing.assert_array_equal(actual.view(np.uint32), expected.view(np.uint32))
+
+
+@pytest.mark.gpu
 def test_binned_detector_has_the_same_exterior_on_host_and_device():
     import jax
 

@@ -25,6 +25,47 @@ if TYPE_CHECKING:
     from .cgls import CGLSConfig
 
 
+@cache
+def _detector_means() -> CuPyValue:
+    # A contiguous NumPy float32 reduction accumulates eight lanes per leaf of
+    # up to 128 elements. Changing this order changes the coarse CGLS directions.
+    return array_module().ElementwiseKernel(
+        "raw float32 samples, int32 width",
+        "float32 mean",
+        """
+        ptrdiff_t start = (ptrdiff_t)i * width;
+        float sum = 0.f;
+        int j = 0;
+        if (width >= 8) {
+            float lane[8];
+            #pragma unroll
+            for (int k = 0; k < 8; ++k) lane[k] = samples[start+k];
+            for (j = 8; j + 7 < width; j += 8) {
+                #pragma unroll
+                for (int k = 0; k < 8; ++k) lane[k] += samples[start+j+k];
+            }
+            sum = ((lane[0]+lane[1])+(lane[2]+lane[3]))
+                + ((lane[4]+lane[5])+(lane[6]+lane[7]));
+        }
+        for (; j < width; ++j) sum += samples[start+j];
+        mean = sum == 0.f ? 0.f : __fdiv_rn(sum, (float)width);
+        """,
+        "exterior_detector_means",
+    )
+
+
+def host_detector_block(block: CuPyValue, columns: int) -> Float32Array:
+    """Average single-leaf bins before transfer and leave other widths to the host."""
+    width, remainder = divmod(block.shape[-1], columns)
+    if remainder or not 2 <= width <= 128:
+        return numpy_float32_array(block.get())
+    shape = (*block.shape[:-1], columns)
+    means = _detector_means()(
+        block.astype(np.float32, copy=False), np.int32(width), size=block.size // width
+    )
+    return numpy_float32_array(means.reshape(shape).get())
+
+
 class DeviceRows:
     """Keep fine samples and their private background on the input device."""
 
