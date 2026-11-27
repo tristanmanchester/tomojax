@@ -445,15 +445,14 @@ def _prepare_spdhg_runtime(
     cfg = SPDHGConfig() if config is None else config
     validate_spdhg_config(cfg)
     regularizer = validate_regularizer(cfg.regularizer, cfg.huber_delta, context="spdhg_tv config")
-    huber_delta = float(cfg.huber_delta)
 
-    n_views, nv, nu = validate_projection_stack(
+    expected_proj_shape = validate_projection_stack(
         projections,
         detector,
         geometry=geometry,
         context="spdhg_tv projections",
     )
-    expected_proj_shape = (n_views, nv, nu)
+    n_views, nv, nu = expected_proj_shape
     _ = validate_optional_same_shape(
         weights,
         expected_proj_shape,
@@ -493,20 +492,18 @@ def _prepare_spdhg_runtime(
     if support is not None:
         support = pack_volume(support.reshape((1,) * (3 - support.ndim) + support.shape), model)
     resolved_tv_weight = cfg.tv_weight
-    if cfg.tv_weight is None:
+    if resolved_tv_weight is None:
         initial_factor = float(metric.weight_over_contrast)
         rms = 0.0
         if nv * nu > 1:
-            noise = detector_error_scale(projections, weights=weights)
             source = (
                 host_source(np.asarray(weights))
                 if stream and weights is not None
                 else contextlib.nullcontext(None)
             )
             with source as key:
-                rms = (
-                    noise
-                    * _spdhg_noise_rms(
+                rms = float(
+                    _spdhg_noise_rms(
                         grid,
                         detector,
                         poses,
@@ -516,20 +513,14 @@ def _prepare_spdhg_runtime(
                         None if support is None else support.astype(jnp.float32),
                         projector=projector,
                         views_per_batch=cfg.views_per_block,
-                    ).block_until_ready()
-                )
+                    )
+                ) * float(detector_error_scale(projections, weights=weights))
         metric = voxel_noise_weight(metric, rms, grid.shape, cfg.support)
         resolved_tv_weight = float(metric.weight_over_contrast) / (initial_factor or 1)
     # A zero TV weight is identically zero, including a flat input's zero delta.
     huber_delta = float(metric.delta) if float(metric.weight) > 0 else 1.0
     step_sizes = resolve_spdhg_step_sizes(
-        grid,
-        detector,
-        poses,
-        cfg,
-        det_grid,
-        projector,
-        metric=metric,
+        grid, detector, poses, cfg, det_grid, projector, metric=metric
     )
 
     return _SPDHGRuntime(
@@ -606,7 +597,7 @@ def _sweep(
     full = (nz - 1) // depth  # slabs whose next plane exists
     cx, cy, cz = runtime.storage_scales
 
-    def divergence(p: tuple, below: jnp.ndarray) -> jnp.ndarray:
+    def divergence(p: tuple[jax.Array, ...], below: jnp.ndarray) -> jnp.ndarray:
         # A Neumann edge starts at zero. Its forward difference is always zero,
         # and the isotropic proximal scales it, so the outer normal flux stays zero.
         z = p[2] - jnp.concatenate([below, p[2][:-1]])

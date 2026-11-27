@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 import functools
+import math
 from typing import TYPE_CHECKING
 
 import jax
@@ -69,7 +70,7 @@ def _block_row_column_bounds(
     detector: Detector,
     projector: tuple[Model, str],
     views_per_batch: int,
-) -> tuple[jnp.ndarray, jnp.ndarray]:
+) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
     n = poses.shape[0]
     batch = min(views_per_batch, n)
     project, backproject = make_spdhg_chunk_operators(
@@ -83,7 +84,7 @@ def _block_row_column_bounds(
     shape = volume_shape(projector[0], grid)
     zero, one = jnp.zeros(shape, jnp.float32), jnp.ones(shape, jnp.float32)
 
-    def bound(block: jax.Array, maxima: tuple[jax.Array, jax.Array]) -> tuple[jax.Array, jax.Array]:
+    def bound(block: jax.Array, bounds: tuple[jax.Array, ...]) -> tuple[jax.Array, ...]:
         start = block * batch
         valid = jnp.minimum(batch, n - start)
         shifted = jnp.minimum(start, n - batch)
@@ -96,9 +97,13 @@ def _block_row_column_bounds(
         # be excluded from the column sum of the actual partial block.
         rows = project(one, shifted, chunk)
         columns = backproject(mask, shifted, chunk, zero)
-        return jnp.maximum(maxima[0], jnp.max(rows)), jnp.maximum(maxima[1], jnp.max(columns))
+        return (
+            jnp.maximum(bounds[0], jnp.max(rows)),
+            jnp.maximum(bounds[1], jnp.max(columns)),
+            bounds[2] + jnp.mean(columns, dtype=columns.dtype),
+        )
 
-    return jax.lax.fori_loop(0, (n + batch - 1) // batch, bound, (jnp.float32(0), jnp.float32(0)))
+    return jax.lax.fori_loop(0, (n + batch - 1) // batch, bound, (jnp.float32(0),) * 3)
 
 
 def resolve_spdhg_step_sizes(
@@ -121,7 +126,7 @@ def resolve_spdhg_step_sizes(
     ratio = float(metric.weight_over_contrast)
     data_norm = None
     if config.tau is None or config.sigma_data is None:
-        row, column = _block_row_column_bounds(
+        bounds = _block_row_column_bounds(
             poses,
             det_grid,
             grid=grid,
@@ -129,27 +134,25 @@ def resolve_spdhg_step_sizes(
             projector=projector,
             views_per_batch=config.views_per_block,
         )
-        row, column = float(row), float(column)
+        row, column, total_sensitivity = map(float, bounds)
         batch = min(config.views_per_block, poses.shape[0])
         blocks = (poses.shape[0] + batch - 1) // batch
         observed = float(metric.observed_count)
         mean_weight = float(metric.weight_sum) / observed if observed else 1.0
-        # For an axial ray crossing R/h cells, the column sensitivity among
-        # the resolved modes is about h/R times the full spectral radius.
-        # A uniform block update visits each primal datum with probability p.
-        # The block time scale is sqrt(1/p) and the sampled dual moves only
-        # with probability p. This gives sigma/w ~ sqrt((h/R)/p).
-        # Use the same reciprocal rescaling for the data and TV steps, so it
-        # preserves their Schur stability products even at nonunit spacing.
+        # h * mean(A.T @ 1) estimates the summed image sensitivity to one
+        # independent unit noise realization before detector/voxel interpolation.
+        # Relative to the largest block bound R, S this gives the typical mode
+        # frequency sigma/w ~ sqrt(h * mean(A.T @ 1) / (R*S)). The calibration
+        # is approximate; the Schur stability bound below is unchanged.
         h = (grid.vx * grid.vy * grid.vz) ** (1 / 3)
         path = row or h
-        length = blocks * np.sqrt(blocks * path * h)
+        length = blocks * math.sqrt(path * h * (total_sensitivity or 1) / (column or 1))
         # Schur: ||A_i||² <= R*B. Together with ||G||² <=4*max(c)*sum(c),
         # tau*(sigma_data/p*A_i.T*A_i + sigma_tv*G.T*G) <= rho² I.
         sigma_data = rho * length * mean_weight / (blocks * path)
         denominator = length * (mean_weight * column + 2 * sum(c) * ratio)
         tau = rho / (denominator or length**2)
-        data_norm = float(np.sqrt(blocks * row * column))
+        data_norm = math.sqrt(blocks * row * column)
     else:
         tau, sigma_data = config.tau, config.sigma_data
     sigma_tv = rho * length * ratio / (2 * max(c))

@@ -802,7 +802,7 @@ def test_spdhg_custom_grid_schur_bound_and_noise_follow_the_shifted_lattice():
         [np.asarray(forward(jnp.asarray(basis.reshape(2, 2, 3)))).ravel() for basis in np.eye(12)],
         axis=1,
     )
-    row, column = _block_row_column_bounds(
+    row, column, coverage = _block_row_column_bounds(
         poses,
         coordinates,
         grid=grid,
@@ -813,6 +813,7 @@ def test_spdhg_custom_grid_schur_bound_and_noise_follow_the_shifted_lattice():
     assert float(row) >= np.abs(matrix).sum(axis=1).max() * (1 - 2e-6)
     columns = [np.abs(matrix[first : first + 24]).sum(axis=0).max() for first in (0, 24, 48)]
     assert float(column) >= max(columns) * (1 - 2e-6)
+    np.testing.assert_allclose(float(coverage), np.abs(matrix).sum(axis=0).mean(), rtol=2e-6)
     # Automatic regularization uses A.T on the same lattice.
     from tomojax.recon.spdhg_tv import _spdhg_noise_rms
 
