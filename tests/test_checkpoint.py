@@ -482,7 +482,7 @@ def test_slabs_from_frames_left_early_keep_their_checkpoint(tmp_path: Path) -> N
 @pytest.mark.usefixtures("every_boundary")
 @pytest.mark.parametrize(
     ("saves", "of"),
-    [(2, "level-0/steps"), (1, "level-1/steps"), (1, "refine")],
+    [(1, "level-0/steps"), (1, "level-1/steps"), (1, "refine")],
     ids=["first-level", "second-level", "refinement"],
 )
 def test_a_stopped_alignment_resumes_to_the_uninterrupted_fit(
