@@ -132,15 +132,24 @@ def _write_block(key: np.ndarray, start: np.ndarray, block: np.ndarray) -> np.in
 
 
 def read_block(
-    key: jax.Array, start: int | jax.Array, shape: tuple[int, ...], dtype: DTypeLike = np.float32
+    key: jax.Array,
+    start: int | jax.Array,
+    shape: tuple[int, ...],
+    dtype: DTypeLike = np.float32,
+    *,
+    immutable: bool = False,
 ) -> jax.Array:
     """Read rows of a registered buffer, ordered after earlier writes.
 
     ``shape`` is the block's (rows first) and ``dtype`` the buffer's: a float16 buffer is
-    read as float16, not converted on the host.
+    read as float16, not converted on the host. A completed buffer held immutable
+    for a sharded solve can be read independently on each device.
     """
     out = jax.ShapeDtypeStruct(shape, dtype)
-    return io_callback(partial(_read_block, size=shape[0]), out, key, start, ordered=True)
+    read = partial(_read_block, size=shape[0])
+    if immutable:
+        return jax.pure_callback(read, out, key, start)
+    return io_callback(read, out, key, start, ordered=True)
 
 
 def write_block(key: jax.Array, start: jax.Array, block: jax.Array) -> jax.Array:

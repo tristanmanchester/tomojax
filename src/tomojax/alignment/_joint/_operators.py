@@ -269,9 +269,9 @@ class Operators:
         self.objective = jax.jit(self._objective)
         self.common_images = owned(self._common_images, donate_argnums=(2,))
         self.shared_data = jax.jit(self._shared_data)
-        self._weighted_forward = jax.jit(self._weighted_forward, donate_argnums=(5,))
+        self.forward_scores = jax.jit(self.forward_scores, donate_argnums=(5,))
         self.view_summary = jax.jit(self._view_summary)
-        self._weighted_back = jax.jit(self._weighted_back)
+        self.back_rows = jax.jit(self.back_rows)
         self._pose_back = jax.jit(self._pose_back)
 
     def stack_specs(self, precision: np.ndarray | jax.Array | None) -> dict[str, StackSpec]:
@@ -295,9 +295,11 @@ class Operators:
         array = jnp.asarray(array)
         return Stack(array, host=False, shape=array.shape, dtype=array.dtype, batch=self.batch)
 
-    def batch_of(self, stack: ArrayStack | None, i: int | jax.Array) -> jax.Array | None:
+    def batch_of(
+        self, stack: ArrayStack | None, i: int | jax.Array, first: jax.Array | None = None
+    ) -> jax.Array | None:
         """Batch ``i`` of a stack, or None for uniform precision."""
-        return None if stack is None else stack.read(i)
+        return None if stack is None else stack.read(i, first)
 
     def pad_poses(self, q: jax.Array | np.ndarray) -> jax.Array:
         """Expand a compact state, then pad its per-view rows with zero-weight views."""
@@ -326,7 +328,7 @@ class Operators:
 
     def batches[Tree](self, a: Tree) -> Tree:
         """Reshape a padded per-view array tree into (batches, batch, ...)."""
-        return jax.tree.map(lambda x: x.reshape((self.nb, self.batch, *x.shape[1:])), a)
+        return jax.tree.map(lambda x: x.reshape((-1, self.batch, *x.shape[1:])), a)
 
     def prepare(self, q: jax.Array | Coefficients) -> Coefficients:
         """Freeze geometry for the image-only loops."""
@@ -387,7 +389,8 @@ class Operators:
         ``precision`` the data precision it used (None: uniform). ``r`` is donated
         and returned holding the projections.
         """
-        return self._weighted_forward(self.prepare(q), x, sw, j, precision, r)
+        r, rows = self.forward_scores(self.prepare(q), x, sw, j, precision, r)
+        return r, self.parameters.reduce_score(rows[: self.n])
 
     def weighted_back(
         self,
@@ -403,7 +406,7 @@ class Operators:
 
         ``active`` (``projection.active``) may skip voxels the caller discards.
         """
-        return self._weighted_back(self.prepare(q), r, sw, j, p, active, precision)
+        return self.back_rows(self.prepare(q), r, sw, j, self.pad_poses(p), active, precision)
 
     def pose_back(
         self,
@@ -779,7 +782,7 @@ class Operators:
     def _transpose(self, image: jax.Array, s0: jax.Array, rho: jax.Array) -> jax.Array:
         return s0 * profile(rho * image, s0)
 
-    def _weighted_forward(
+    def forward_scores(
         self,
         q: Coefficients,
         x: jax.Array,
@@ -787,6 +790,7 @@ class Operators:
         j: ArrayStack,
         precision: ArrayStack | None,
         r: ArrayStack,
+        first: jax.Array | None = None,
     ) -> tuple[ArrayStack, jax.Array]:
         """Project one image through all batches, storing its weighted rays and pose scores.
 
@@ -797,36 +801,47 @@ class Operators:
 
         def step(r: ArrayStack, z: tuple[jax.Array, Coefficients]) -> tuple[ArrayStack, jax.Array]:
             i, cf = z
-            s, jb, wb = sw.read(i), j.read(i), self.batch_of(precision, i)
+            s, jb, wb = sw.read(i, first), j.read(i, first), self.batch_of(precision, i, first)
             s0, rho = self._split(s, wb, cf.valid)
             image = self.project(cf, x, precision=wb, z_fast=self.z_fast)
             out = jax.lax.optimization_barrier(rho * profile(image * s0, s0))
             return r.write(i, out), column_score(jb, out)
 
-        r, p = jax.lax.scan(step, r, (jnp.arange(self.nb), self.batches(q)))
-        return r, self.parameters.reduce_score(p.reshape(self.padded_n, self.dofs)[: self.n])
+        batches = self.batches(q)
+        r, p = jax.lax.scan(step, r, (jnp.arange(len(batches.valid)), batches))
+        return r, p.reshape(-1, self.dofs)
 
-    def _weighted_back(
+    def back_rows(
         self,
         q: Coefficients,
         r: ArrayStack,
         sw: ArrayStack,
         j: ArrayStack,
-        p: jax.Array,
+        rows: jax.Array,
         active: tuple[jax.Array, ...] | None,
         precision: ArrayStack | None,
+        accumulator: jax.Array | None = None,
+        first: jax.Array | None = None,
     ) -> jax.Array:
+        """Apply the weighted image transpose to a share of views and their expanded pose rows."""
+
         def step(
             a: jax.Array, z: tuple[jax.Array, Coefficients, jax.Array]
         ) -> tuple[jax.Array, None]:
             i, cf, pb = z
-            rb, s, jb, wb = r.read(i), sw.read(i), j.read(i), self.batch_of(precision, i)
+            rb, s, jb, wb = (
+                r.read(i),
+                sw.read(i, first),
+                j.read(i, first),
+                self.batch_of(precision, i, first),
+            )
             s0, rho = self._split(s, wb, cf.valid)
             image = self._transpose(rb - _apply_columns(jb, pb), s0, rho)
             return self.projection.back(a, cf, image, precision=wb, active=active), None
 
-        batches = (jnp.arange(self.nb), self.batches(q), self.batches(self.pad_poses(p)))
-        return jax.lax.scan(step, self._zeros(), batches)[0]
+        packet = self.batches(q)
+        batches = (jnp.arange(len(packet.valid)), packet, self.batches(rows))
+        return jax.lax.scan(step, self._zeros() if accumulator is None else accumulator, batches)[0]
 
     def _pose_back(
         self,

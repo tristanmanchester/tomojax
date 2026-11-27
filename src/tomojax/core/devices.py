@@ -65,7 +65,13 @@ class ViewSplit:
         """Which of the :attr:`total` views count: all but the padding."""
         return jnp.arange(self.total) < self.n
 
-    def place(self, stack: jax.Array | np.ndarray, *, repeat: bool = False) -> jax.Array:
+    def place(
+        self,
+        stack: jax.Array | np.ndarray,
+        *,
+        repeat: bool = False,
+        dtype: np.dtype | type[np.generic] = np.float32,
+    ) -> jax.Array:
         """``stack`` of ``n`` views, padded and laid out with each device's views on it.
 
         The padding views are zeros, or with ``repeat`` copies of the last view
@@ -78,15 +84,15 @@ class ViewSplit:
         def views(index: tuple[slice, ...] | None) -> np.ndarray | jax.Array:
             assert index is not None
             start, stop, _ = index[0].indices(self.total)
-            part = xp.asarray(stack[start : min(stop, self.n)], xp.float32)
+            part = xp.asarray(stack[start : min(stop, self.n)], dtype)
             missing = stop - start - int(part.shape[0])
             if not missing:
                 return part
             if repeat:
-                last = xp.asarray(stack[self.n - 1 : self.n], xp.float32)
+                last = xp.asarray(stack[self.n - 1 : self.n], dtype)
                 filler = xp.repeat(last, missing, axis=0)
             else:
-                filler = xp.zeros((missing, *stack.shape[1:]), xp.float32)
+                filler = xp.zeros((missing, *stack.shape[1:]), dtype)
             return xp.concatenate([part, filler])
 
         sharding = NamedSharding(self.mesh, PartitionSpec(VIEWS))

@@ -29,8 +29,8 @@ from tomojax.core.registration import planes
 from tomojax.wire.metrics import Metric
 
 from . import _common, _tv as tv
-from ._krylov import solve as krylov_solve
 from ._operators import profiled_residual, robust_value
+from ._schur import ImageSolve, SchurOperands
 from ._stacks import Stack, level_stacks, temporaries, transient_reserve, unplaced
 from ._visibility import visibility_gradient
 
@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from ._krylov import KrylovResult
     from ._operators import Coefficients, Operators
-    from ._pose import FactorShape, MotionPrior, PoseFactor, PoseWeight
+    from ._pose import FactorShape, MotionPrior, PoseWeight
     from ._stacks import ArrayStack, LevelStacks, Place, StackSpec, StorageRecord, VolumeName
 
 type _StepMetric = float | int | str | None
@@ -95,21 +95,6 @@ class _AcceptedStep(NamedTuple):
 type _FistaState = tuple[jax.Array, jax.Array, jax.Array]
 type _StartOperands = tuple[
     Coefficients, ArrayStack, ArrayStack | None, float | jax.Array, jax.Array, jax.Array, jax.Array
-]
-type _SchurOperands = tuple[
-    Coefficients,
-    ArrayStack,
-    ArrayStack,
-    PoseFactor,
-    jax.Array,
-    jax.Array | None,
-    tuple[jax.Array, jax.Array],
-    float,
-    jax.Array,
-    jax.Array,
-    ArrayStack | None,
-    _common.Common,
-    _common.PoseSolve,
 ]
 type _Shape = jax.ShapeDtypeStruct
 type _SchurShapes = tuple[
@@ -402,42 +387,7 @@ class _Level:
             )
         )
 
-        @partial(jax.jit, donate_argnums=(8, 13))
-        def schur(
-            q: Coefficients,
-            sw: ArrayStack,
-            j: ArrayStack,
-            factor: PoseFactor,
-            free: jax.Array,
-            d: jax.Array | None,
-            damping: tuple[jax.Array, jax.Array],
-            lm: float,
-            rhs: jax.Array,
-            invdiag: jax.Array,
-            precision: ArrayStack | None,
-            common: _common.Common,
-            poses: _common.PoseSolve,
-            r: ArrayStack,
-        ) -> tuple[KrylovResult, ArrayStack]:
-            # Fixed voxels' transpose is discarded: the gather may skip them.
-            active = ops.projection.active(free)
-
-            def matvec(v: jax.Array, r: ArrayStack) -> tuple[jax.Array, ArrayStack]:
-                v = v * free
-                r, jr = ops.weighted_forward(q, v, sw, j, precision, r)
-                bv = common.of_image(v)
-                p = poses(prior.solve, factor, common, jr + common.poses.T @ (common.inverse @ bv))
-                out = ops.weighted_back(q, r, sw, j, p, active, precision)
-                out = out + common.image(common.inverse @ (bv - common.poses @ p))
-                if d is not None:
-                    out = out + jnp.float32(lam) * tv.diffusion(v, d, scales)
-                diagonal, floor = damping
-                out = out + (jnp.float32(lm) * jnp.maximum(diagonal, floor)) * v
-                return out * free, r
-
-            return krylov_solve(matvec, rhs, invdiag, inner, rtol=image_tolerance, work=r)
-
-        self._schur = schur
+        self.image_solve = ImageSolve(ops, prior, lam, scales, inner, image_tolerance)
 
     def place(
         self,
@@ -459,7 +409,10 @@ class _Level:
         ops, prior = self.ops, self.prior
         specs = ops.stack_specs(precision)
         shapes = self._schur_shapes(specs, precision is not None)
-        self.transients = {"schur": temporaries(self._schur, *shapes), "prior": prior.temporaries()}
+        self.transients = {
+            "schur": temporaries(self.image_solve.single, *shapes),
+            "prior": prior.temporaries(),
+        }
         if x0 is None:
             start = temporaries(_shared_gram, jax.ShapeDtypeStruct((2, *ops.shape), jnp.float32))
         else:
@@ -512,13 +465,13 @@ class _Level:
         self.stacks.update([(name, out)])
         return out
 
-    def schur(self, *args: *_SchurOperands) -> KrylovResult:
+    def schur(self, *args: *SchurOperands) -> KrylovResult:
         """Solve into the donated right-hand side and weighted-projection stack.
 
         The step volume holds the right-hand side on entry, the solution on return
         and the clipped step when the caller imposes nonnegativity.
         """
-        result, r = self._schur(*args, self.stacks["r"])
+        result, r = self.image_solve(self.stacks["r"], *args)
         self.stacks.update([("r", r), ("step", result.solution)])
         return result
 
