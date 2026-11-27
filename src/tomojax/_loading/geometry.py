@@ -9,12 +9,14 @@ with ``detector_center_status="not_recorded"``; fit a center explicitly with
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+import logging
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol, cast, get_args
 
 import numpy as np
 
 from tomojax._parameters import GeometryName, TiltAbout
 from tomojax._scan.model import frame_output_grid, geometry_of
+from tomojax._typed_arrays import object_mapping
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import (
     ConeBeam,
@@ -37,6 +39,8 @@ if TYPE_CHECKING:
 
     from tomojax.geometry import ScanGeometry
     from tomojax.io import ProjectionDataset
+
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -222,6 +226,12 @@ def _updated_geometry_metadata(
                 "geometry_status": "provided",
                 "geometry_note": "Geometry supplied explicitly by caller.",
             }
+    elif object_mapping(meta.get("acquisition")).get("geometry_status") == "not_recorded":
+        LOG.warning(
+            "%s records no rotation axis or pixel scale: declare the geometry when loading "
+            "to reconstruct or align it",
+            record.source_path,
+        )
     return detector, meta
 
 

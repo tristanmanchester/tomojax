@@ -10,7 +10,8 @@ if TYPE_CHECKING:
         AnglesReport,
         DetectorMetadataReport,
         FlatsDarksReport,
-        InspectionReport,
+        Inspection,
+        LoadingReport,
         MemoryEstimatesReport,
         ProjectionReport,
         VolumeReport,
@@ -25,15 +26,15 @@ def _fmt_value(value: object, *, precision: int = 6) -> str:
     return str(value)
 
 
-def format_inspection_report(report: InspectionReport) -> str:
+def format_inspection_report(report: Inspection) -> str:
     """Format an inspection report for terminal output.
 
     Sections hold ``key: value`` lines, so the text is never cut or wrapped.
 
     Parameters
     ----------
-    report : InspectionReport
-        Structured dataset inspection report.
+    report : Inspection
+        Structured dataset inspection report, as :func:`tomojax.inspect` returns it.
 
     Returns
     -------
@@ -60,12 +61,30 @@ def format_inspection_report(report: InspectionReport) -> str:
         ("Memory", _memory_rows(report["memory_estimates"])),
         ("Volume", [("saved volume", _volume_text(report["volume"]))]),
     ]
+    if report["loading"] is not None:
+        sections.insert(1, ("Loading", _loading_rows(report["loading"])))
     lines: list[str] = []
     for title, rows in sections:
         width = max(len(key) for key, _ in rows)
         lines.append(title)
         lines.extend(f"  {key + ':':<{width + 1}} {value}" for key, value in rows)
     return "\n".join(lines)
+
+
+def _loading_rows(loading: LoadingReport) -> list[tuple[str, str]]:
+    if loading["message"] is not None:
+        return [("as a scan", f"needs more: {loading['message']}")]
+    rows = [("as a scan", "loads with no further arguments")]
+    if loading["geometry"] == "not_recorded":
+        rows.append(("geometry", "not recorded: declare geometry to reconstruct or align"))
+    if loading["center"] == "not_recorded":
+        rows.append(("rotation center", "not recorded: the detector middle until fitted"))
+    if loading["length_unit"] == "pixel":
+        rows.append(("lengths", "in detector pixels (no pixel size recorded)"))
+    if records := loading["frame_records"]:
+        counts = ", ".join(f"{count} {name}" for name, count in records.items())
+        rows.append(("stopped early", f"{counts}: reads the first {min(records.values())} frames"))
+    return rows
 
 
 def _projection_rows(projection: ProjectionReport) -> list[tuple[str, str]]:

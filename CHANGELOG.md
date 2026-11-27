@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Every surface reports what the reader found and how a solve ended. `tj.inspect` (and
+  `tomojax inspect`, the worker's `inspect` and the MCP `inspect` tool) adds `loading`: the
+  length unit, where the rotation center comes from, whether the geometry is recorded, the
+  frame counts a stopped scan was cut to, or the message naming the argument a file needs.
+  Worker and MCP results add `detector_center_status`, `geometry_status` and `frame_records`
+  to their `geometry`. MCP results carry every scalar the solver reports (`early_stop`,
+  `termination`, `resolved_tv_weight`, `noise_score_rms`, `measurement_noise_rms`, ...) and
+  an alignment's `diagnostics`; their text and `tomojax reconstruct`'s last line say how an
+  iterative solve ended, as in "78 updates, stopped at the estimated noise level; automatic
+  TV weight 4.75e-05". FISTA's `info` adds `termination` (`"noise_score"`,
+  `"objective_tolerance"` or `"iteration_limit"`), as the other iterative methods report.
+- Loading a file that records no rotation axis or pixel scale warns that the geometry must be
+  declared, and reconstruction and alignment of such a scan say how to declare it from
+  Python, the command line and the worker or MCP server. A log message repeated within one
+  operation (such as a stopped scan's warning, once per reader) is reported once.
+
 - "Checkpoint" now means saved state only. The points where a running job can pause or
   cancel are work boundaries everywhere: `progress.Control.checkpoint()` is now
   `Control.boundary()`, the CLI prints "canceling at the next work boundary", the

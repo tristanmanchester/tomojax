@@ -172,8 +172,8 @@ class FISTAConfig:
     ``info`` reports ``resolved_tv_weight`` (dimensionless),
     ``effective_tv_weight`` (dimensional), ``noise_score_rms`` (estimated voxel
     noise-score SD in data-gradient units, or ``None`` for an explicit weight),
-    ``effective_iterations``, and ``early_stop``. Pass ``resolved_tv_weight``
-    and ``effective_iterations`` to replay an automatic run.
+    ``effective_iterations``, ``early_stop`` and ``termination``. Pass
+    ``resolved_tv_weight`` and ``effective_iterations`` to replay an automatic run.
 
     Against synthetic truth FISTA-TV is more accurate than FBP. On phase-contrast
     data it renders propagation fringes as smooth bands where FBP keeps them.
@@ -698,8 +698,9 @@ def fista(
     info : dict
         Solver diagnostics and effective work, including ``resolved_tv_weight``,
         ``effective_tv_weight``, ``noise_score_rms``, ``effective_iterations``,
-        and ``early_stop``. Reaching the iteration cap or a small residual does
-        not establish reconstruction accuracy.
+        ``early_stop`` and ``termination`` (``"noise_score"``,
+        ``"objective_tolerance"`` or ``"iteration_limit"``). Reaching the
+        iteration cap or a small residual does not establish reconstruction accuracy.
 
     Raises
     ------
@@ -773,8 +774,15 @@ def fista(
         resolved_weight = float(metric.weight_over_contrast) / (
             float(runtime.metric.weight_over_contrast) or 1
         )
+    stopped = info["early_stop"] is True
     info.update(
         {
+            # The relative-objective test replaces the noise-score stop when tolerance is set.
+            "termination": "iteration_limit"
+            if not stopped
+            else "noise_score"
+            if runtime.config.tolerance is None
+            else "objective_tolerance",
             "data_term": runtime.config.data_term,
             "background_profiled": runtime.config.data_term == "per_view_contrast",
             "tv_weight": runtime.config.tv_weight,

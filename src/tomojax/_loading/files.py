@@ -17,6 +17,7 @@ from tomojax import progress
 from tomojax._loading.stack_files import slice_name, tiff_stack_entry
 from tomojax._scan.model import Alignment, Reconstruction
 from tomojax._scan.simulation import Simulation
+from tomojax._typed_arrays import object_mapping
 from tomojax.io.api import Inspection
 
 if TYPE_CHECKING:
@@ -29,10 +30,13 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     Reads metadata and a bounded sample of the frames, never the whole stack: the
     projections' shape, type and statistics, the angles, geometry, detector,
     flats and darks, the corrections recorded, saved poses, memory estimates and a
-    saved volume. ``valid`` is True when the checks performed for that format
-    find no issues in ``issues`` (frame layout, angles, sample frames, and raw
-    calibration for recognized acquisitions). A generic HDF5 stack can still
-    require explicit geometry or pixel size on load even when ``valid`` is True.
+    saved volume, and what loading the file as a scan reads (``loading``: its
+    length unit, where its rotation center comes from, frames a stopped scan
+    leaves out, or the argument it needs). ``valid`` is True when the checks
+    performed for that format find no issues in ``issues`` (frame layout, angles,
+    sample frames, and raw calibration for recognized acquisitions). A file that
+    records no rotation axis (``loading["geometry"] == "not_recorded"``) is valid
+    but needs ``geometry`` declared before reconstruction or alignment.
 
     Parameters
     ----------
@@ -63,7 +67,50 @@ def inspect(path: str | PathLike[str]) -> Inspection:
     with progress.task("inspect", Path(path).name, None, ""):
         issues = validate_dataset(Path(path))["issues"]
         report = inspect_dataset(Path(path))
-        return cast("Inspection", {**report, "valid": not issues, "issues": issues})
+        loading = _loading(Path(path)) if report["projection"]["found"] else None
+        return cast(
+            "Inspection", {**report, "loading": loading, "valid": not issues, "issues": issues}
+        )
+
+
+def _loading(path: Path) -> dict[str, object]:
+    """What :func:`tomojax.load` reads from ``path`` alone, or why it needs more.
+
+    Calibration (flats and darks) is the dataset check's to report, in ``issues``.
+    """
+    from tomojax._loading.loader import discover_frames, stored_frames
+    from tomojax.io.projection_layout import saved_projection_layout
+
+    try:
+        frames, located = discover_frames(path, apply_poses=True, layout_only=True, angles=None)
+        if frames is None:
+            try:  # a saved dataset records what its loading found
+                record = saved_projection_layout(path)[0]
+            except KeyError:
+                stored, _ = stored_frames(
+                    path, located, require_raw=True, apply_poses=True, angles=None
+                )
+                record = stored.source
+        else:
+            record = frames.source
+    except (ValueError, KeyError) as err:  # the reader names the argument to supply
+        message = err.args[0] if isinstance(err, KeyError) and err.args else str(err)
+        return {
+            "message": str(message),
+            "length_unit": None,
+            "center": None,
+            "geometry": None,
+            "frame_records": None,
+        }
+    metadata = object_mapping(record.geometry_metadata if record is not None else None)
+    acquisition = object_mapping(metadata.get("acquisition"))
+    return {
+        "message": None,
+        "length_unit": metadata.get("length_unit"),
+        "center": metadata.get("detector_center_status"),
+        "geometry": acquisition.get("geometry_status"),
+        "frame_records": acquisition.get("frame_records"),
+    }
 
 
 def saved_volume_grid(

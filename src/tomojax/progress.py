@@ -430,6 +430,7 @@ class _Watch:
         self.start = monotonic()
         self.lock = RLock()
         self.error: BaseException | None = None
+        self.logged: set[tuple[int, str]] = set()  # each log message is one note per watch
 
     def emit(self, kind: Callable[..., Event], *args: object, **kwargs: object) -> None:
         with self.lock:
@@ -687,11 +688,18 @@ class _LogNotes(logging.NullHandler):
             if fallback is not None and record.levelno >= fallback.level:
                 fallback.handle(record)
         watcher = _watch.get()
+        message = record.getMessage()
+        # Readers that open a file more than once in one operation log the same finding.
         if watcher is not None and _logging_watch.get() is not watcher:
+            with watcher.lock:
+                repeated = (record.levelno, message) in watcher.logged
+                watcher.logged.add((record.levelno, message))
+            if repeated:
+                return True
             token = _logging_watch.set(watcher)
             try:
                 level = min(5, max(1, record.levelno // 10))
-                note(_LEVELS[level - 1], record.getMessage())
+                note(_LEVELS[level - 1], message)
             finally:
                 _logging_watch.reset(token)
         return True

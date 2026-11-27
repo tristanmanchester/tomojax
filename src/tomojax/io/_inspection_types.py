@@ -170,17 +170,50 @@ class InspectionReport(TypedDict):
     volume: VolumeReport
 
 
+class LoadingReport(TypedDict):
+    """What loading the file as a scan reads, with no arguments beyond its path.
+
+    Attributes
+    ----------
+    message : str or None
+        Why the file does not load as it is, naming the argument to supply; None
+        when it loads.
+    length_unit : str or None
+        Unit of the geometry's lengths: ``"pixel"`` when the file records no pixel size.
+    center : str or None
+        Where the rotation center comes from (``detector_center_status``):
+        ``"recorded"``, ``"provided"``, ``"inferred"``, ``"nominal"``, or
+        ``"not_recorded"``, the detector middle until a center is fitted.
+    geometry : str or None
+        ``"not_recorded"`` when the file records no rotation axis or pixel scale:
+        reconstruction and alignment need ``geometry`` declared when loading.
+    frame_records : dict or None
+        The lengths of the frames, ``image_key`` and angles when they differ, as
+        when a scan stopped early; loading reads the frames all of them cover.
+    """
+
+    message: str | None
+    length_unit: str | None
+    center: str | None
+    geometry: str | None
+    frame_records: dict[str, int] | None
+
+
 class Inspection(InspectionReport):
     """A dataset's inspection report and its check (:func:`tomojax.inspect`).
 
     Attributes
     ----------
+    loading : dict or None
+        What loading the file as a scan reads (:class:`LoadingReport`); None when
+        the file holds no projections.
     valid : bool
         Whether the check found no issue.
     issues : list of str
         What the check found: missing calibration, angles or frames.
     """
 
+    loading: LoadingReport | None
     valid: bool
     issues: list[str]
 
@@ -194,6 +227,7 @@ __all__ = [
     "GeometryReport",
     "Inspection",
     "InspectionReport",
+    "LoadingReport",
     "MemoryEstimatesReport",
     "NonfiniteReport",
     "ProjectionReport",

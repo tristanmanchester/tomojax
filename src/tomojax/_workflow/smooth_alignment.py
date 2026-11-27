@@ -9,7 +9,7 @@ import numpy as np
 
 from tomojax._parameters import method_fit
 from tomojax._scan.model import Reconstruction, describe, record_of, with_grid
-from tomojax._workflow.planning import resolve_grid
+from tomojax._workflow.planning import UNDECLARED_GEOMETRY, resolve_grid
 from tomojax.alignment._integration import (
     CenterSelection,
     angular_focus,
@@ -170,10 +170,7 @@ def resolve_alignment(
         {} if scan.source is None else scan.source.geometry_metadata.get("acquisition", {})
     )
     if acquisition.get("geometry_status") == "not_recorded":
-        raise ValueError(
-            "alignment requires declared acquisition geometry: this file records no rotation "
-            "axis; pass geometry=... to tomojax.load"
-        )
+        raise ValueError(f"alignment {UNDECLARED_GEOMETRY}")
     names = parse_fit(method_fit(method, fit))
     if (
         method is None

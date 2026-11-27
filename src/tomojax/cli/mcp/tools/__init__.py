@@ -17,7 +17,9 @@ from mcp_types import CallToolResult, ImageContent, ResourceLink, TextContent
 import msgspec
 
 from tomojax._parameters import method_fit
+from tomojax._typed_arrays import object_mapping
 from tomojax.cli import operations as op, wire_options as w
+from tomojax.cli._runtime import solve_summary
 from tomojax.cli.mcp.guidance import operation_parameters
 from tomojax.cli.mcp.supervisor import WorkerError, activity
 from tomojax.cli.mcp.tools import seeing
@@ -230,17 +232,18 @@ def inspect_directory(path: Path) -> CallToolResult:
 
 def summary_text(data: Object) -> str:
     """One readable line: identity, shape, method, geometry, files, devices and time."""
-    summary = [str(data.get("handle") or "Saved"), data["kind"]]
+    summary: list[str] = [str(data.get("handle") or "Saved"), str(data["kind"])]
     if data.get("shape"):
         summary.append(" x ".join(map(str, data["shape"])) + " " + str(data["unit"]))
+    summary.extend(f"{key} {data[key]}" for key in ("method",) if key in data)
+    if stopped := solve_summary(data):
+        summary.append(stopped)
     summary.extend(
         f"{key} {data[key]}"
         for key in (
-            "method",
-            "effective_iterations",
-            "termination",
             "geometry",
             "calibration",
+            "checkpoint",
             "slice_count",
             "first_file",
             "last_file",
@@ -315,6 +318,7 @@ class Tools:
                     "input_path",
                     "valid",
                     "issues",
+                    "loading",
                     "projection",
                     "volume",
                     "geometry",
@@ -341,7 +345,11 @@ class Tools:
             )
         shape = data.get("projection", {}).get("shape") or data.get("volume", {}).get("shape")
         issues = "; ".join(data.get("issues", []))
-        reply = result(data, text=f"{path.name}, shape {shape}. {issues or 'Inspection passed.'}")
+        text = f"{path.name}, shape {shape}. {issues or 'Inspection passed.'}"
+        if loading := object_mapping(data.get("loading")):
+            found = [f"{k} {v}" for k, v in loading.items() if v is not None and k != "message"]
+            text += f" Loading: {loading['message'] or ', '.join(found) or 'as recorded'}."
+        reply = result(data, text=text)
         if args.preview:
             reply.content.append(await asyncio.to_thread(preview_image, path))
         return reply
@@ -487,7 +495,7 @@ class Tools:
         value = output["value"]
         kind: str = value["type"]
         array = value.get(PRIMARY.get(kind, kind)) or value.get("poses") or {}
-        info = output["info"]["summary"]
+        info = object_mapping(output["info"]["summary"])
         summary = {
             "kind": kind,
             "shape": array.get("shape"),
@@ -499,11 +507,9 @@ class Tools:
         for key in (
             "method",
             "calibration",
+            "diagnostics",
             "geometry",
             "automatic",
-            "effective_iterations",
-            "termination",
-            "converged",
             "placement",
             "name",
             "voxels",
@@ -514,6 +520,10 @@ class Tools:
         ):
             if key in value or key in info:
                 summary[key] = value.get(key, info.get(key))
+        # Every scalar the solver reports: its stopping status, chosen weights, noise levels.
+        for key, item in info.items():
+            if key not in summary and (item is None or isinstance(item, str | bool | int | float)):
+                summary[key] = item
         record = {
             "kind": kind,
             "summary": summary,

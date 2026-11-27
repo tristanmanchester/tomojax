@@ -529,7 +529,8 @@ def reconstruct(
         the backprojector, and stops when the proximal gradient mapping falls
         below the estimated noise level or reaches ``iterations``. ``info``
         reports ``resolved_tv_weight``, ``effective_tv_weight``,
-        ``noise_score_rms``, ``effective_iterations``, and ``early_stop``. An
+        ``noise_score_rms``, ``effective_iterations``, ``early_stop`` and
+        ``termination`` (``"noise_score"`` when it stopped at the noise level). An
         explicit positive ``tv_weight`` bypasses calibration and runs to
         ``iterations``; zero disables TV.
     ``sirt``

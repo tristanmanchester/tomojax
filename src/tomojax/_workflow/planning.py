@@ -19,6 +19,14 @@ if TYPE_CHECKING:
     from tomojax.geometry import Grid
 
 
+UNDECLARED_GEOMETRY = (
+    "requires declared acquisition geometry: this file records no rotation axis or pixel "
+    "scale. Declare it when loading: geometry= a ParallelGeometry (or another) in Python, "
+    '--geometry parallel on tomojax correct, or geometry {"kind": "parallel"} in the '
+    "worker's or MCP server's open"
+)
+
+
 @dataclass(frozen=True)
 class ResolvedReconstruction:
     """Acquisition, support and numerical configuration consumed by the solver."""
@@ -185,10 +193,7 @@ def _select_automatic_method(scan: Scan) -> tuple[Method, str, str | None]:
         isinstance(acquisition, dict) and acquisition.get("geometry_status") == "not_recorded"
     )
     if unknown_axis:
-        raise ValueError(
-            "reconstruction requires declared acquisition geometry: this file records no "
-            "rotation axis; pass geometry=... to tomojax.load"
-        )
+        raise ValueError(f"reconstruction {UNDECLARED_GEOMETRY}")
     method, reason = "fbp", "Filtered backprojection supports the declared acquisition geometry."
     if isinstance(base, ConeSegments):
         # Segments with detector offsets can still belong to one circular orbit.

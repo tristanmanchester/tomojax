@@ -366,7 +366,7 @@ def _run(
 ) -> Result | None:
     import tomojax as tj
     from tomojax import progress
-    from tomojax.cli._runtime import report_automatic
+    from tomojax.cli._runtime import report_automatic, solve_summary
 
     config = args.validate(parser, metadata["settings"])
     progress.check_canceled()
@@ -421,7 +421,9 @@ def _run(
 
         outputs = tuple(str(p) for p in (args.out, args.preview, args.manifest) if p is not None)
         return saved_result(args.out, result, outputs=outputs, include_scan=args.include_scan)
-    print(f"wrote {args.out}: {result.method} volume {tuple(np.shape(result.volume))}")
+    stopped = solve_summary(result.info)
+    ended = "" if stopped is None else f"; {stopped}"
+    print(f"wrote {args.out}: {result.method} volume {tuple(np.shape(result.volume))}{ended}")
     return None
 
 

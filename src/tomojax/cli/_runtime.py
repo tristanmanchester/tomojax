@@ -45,3 +45,26 @@ def report_automatic(info: Mapping[str, object]) -> None:
     if automatic.get("status") == "limited":
         reasons = object_list(automatic.get("reasons"))
         LOG.warning("Automatic workflow is limited: %s", "; ".join(map(str, reasons)))
+
+
+_STOPS = {
+    "projection_discrepancy": "stopped at the estimated projection discrepancy",
+    "noise_score": "stopped at the estimated noise level",
+    "objective_tolerance": "stopped at the objective tolerance",
+    "converged": "converged",
+    "roundoff_limit": "stopped at the float32 roundoff limit",
+    "numerical_breakdown": "stopped at a numerical breakdown",
+    "iteration_limit": "ran to the iteration limit",
+}
+
+
+def solve_summary(info: Mapping[str, object]) -> str | None:
+    """How an iterative solve ended and the TV weight it chose, or None for a direct method."""
+    count, reason = info.get("effective_iterations"), info.get("termination")
+    if not isinstance(count, int) or not isinstance(reason, str):
+        return None
+    text = f"{count} updates, {_STOPS.get(reason, reason.replace('_', ' '))}"
+    weight = info.get("resolved_tv_weight")
+    if info.get("tv_weight") is None and isinstance(weight, float):
+        text += f"; automatic TV weight {weight:.3g}"
+    return text

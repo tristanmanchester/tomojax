@@ -21,6 +21,7 @@ from tomojax._loading.loader import (
 )
 from tomojax._scan.model import combined_geometry, describe
 from tomojax._scan.simulation import build_sim_config, simulate_config
+from tomojax._typed_arrays import object_mapping
 from tomojax._workflow.operations import (
     align_resolved,
     alignment_from_record,
@@ -169,6 +170,14 @@ def geometry_summary(item: Root, *, measured_angles: bool = True) -> dict[str, A
     if measured_angles:
         summary["angle_range_degree"] = [float(angles.min()), float(angles.max())]
     metadata = scan.source.geometry_metadata if scan is not None and scan.source else {}
+    # What the reader found: a center or geometry the file does not record, a cut stack.
+    acquisition = object_mapping(object_mapping(metadata).get("acquisition"))
+    found = {
+        "detector_center_status": object_mapping(metadata).get("detector_center_status"),
+        "geometry_status": acquisition.get("geometry_status"),
+        "frame_records": acquisition.get("frame_records"),
+    }
+    summary.update({key: value for key, value in found.items() if value is not None})
     info = (
         item.info
         if isinstance(item, tj.Alignment | tj.Reconstruction)
