@@ -19,7 +19,7 @@ class DisturbedViews(TypedDict):
 
     score: list[float | None]
     ranges: list[list[int]]
-    angles_deg: list[list[float]]
+    angles: list[list[float]]
     message: str
 
 
@@ -110,6 +110,6 @@ def disturbed_report(
     return {
         "score": [float(s) if np.isfinite(s) else None for s in scores],
         "ranges": ranges,
-        "angles_deg": degrees,
+        "angles": degrees,
         "message": message,
     }

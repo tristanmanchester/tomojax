@@ -56,7 +56,7 @@ def test_row_common_shadow_report_is_distinct_from_specimen_slip():
     data[affected] += shadow[:, None, :]
     report = disturbed_views(data.astype("f4"), geometry)
     assert report["ranges"] == [[61, 70]]
-    assert report["angles_deg"] == [[angles[61], angles[69]]]
+    assert report["angles"] == [[angles[61], angles[69]]]
     assert "crosses the field of view" in report["message"]
     assert "Inspect" in report["message"]
 

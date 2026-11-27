@@ -123,7 +123,7 @@ def _select_views(data: tj.Scan | tj.Frames, ids: np.ndarray, *, raw: bool) -> t
     source = data.counts if isinstance(data, tj.Frames) else data.projections
     if raw and hasattr(source, "frames_at"):
         return data.selected(ids)
-    target = selected_stack(source, ids)
+    target = selected_stack(source, ids, batch_bytes=_PARTITION_BYTES)
     if isinstance(data, tj.Scan):
         return selected_scan(data, ids, target)
     fields = selected_frames(data, ids, target)

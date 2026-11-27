@@ -192,11 +192,14 @@ def host_array(
 
 
 def selected_stack(
-    source: _ViewSource, ids: np.ndarray[tuple[int, ...], np.dtype[np.int64]]
+    source: _ViewSource,
+    ids: np.ndarray[tuple[int, ...], np.dtype[np.int64]],
+    *,
+    batch_bytes: int = 32 << 20,
 ) -> np.ndarray:
     """Copy selected frames in acquisition order, bounding resident and temporary memory."""
     target = host_array((len(ids), *source.shape[1:]), dtype=source.dtype)
-    batch = max(1, (32 << 20) // (math.prod(source.shape[1:]) * source.dtype.itemsize))
+    batch = max(1, batch_bytes // (math.prod(source.shape[1:]) * source.dtype.itemsize))
     for first in range(0, len(ids), batch):
         progress.check_canceled()
         group = ids[first : first + batch]

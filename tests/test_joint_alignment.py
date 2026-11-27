@@ -377,7 +377,13 @@ def test_public_joint_alignment_composes_saved_nested_poses(monkeypatch, tmp_pat
     assert aligned.scan.projections is scan.projections
     assert aligned.scan.detector == detector and aligned.scan.grid == grid
     assert aligned.info == {
-        **record,
+        **{key: value for key, value in record.items() if key != "disturbance_score"},
+        "disturbed_views": {
+            "score": [0.0] * len(angles),
+            "ranges": [],
+            "angles": [],
+            "message": "No crossing detected in the assessed views.",
+        },
         "method": "joint_volume_pose",
         "calibration": {},
         "placement": {"devices": (), "strategy": "resident", "retries": {}},

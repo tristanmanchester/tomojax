@@ -218,7 +218,7 @@ The CLI prints shared corrections (such as `center` in native pixels or angles i
 
 ### Inspect an object crossing the field of view
 
-Every joint fit returns `result.info["disturbed_views"]`. It compares unexpected attenuation along columns at the top and bottom of the detector, using the coarsest measurements already read by the fit. A score above 0.5 means the signal shared by the two bands exceeds both their disagreement and the estimated pixel noise. `angles_deg` gives the angles of the first and last flagged exposures in each run. `ranges` gives the corresponding zero-based input indices as half-open intervals. A score of `None` means there were too few paired measurements or you excluded that exposure. The fit uses all views by default.
+Every joint fit returns `result.info["disturbed_views"]`. It compares unexpected attenuation along columns at the top and bottom of the detector, using the coarsest measurements already read by the fit. A score above 0.5 means the signal shared by the two bands exceeds both their disagreement and the estimated pixel noise. `angles` gives the angles of the first and last flagged exposures in each run. `ranges` gives the corresponding zero-based input indices as half-open intervals. A score of `None` means there were too few paired measurements or you excluded that exposure. The fit uses all views by default.
 
 To screen a corrected scan before solving for a volume or poses, run this from Python. The preflight reads the native detector once and uses the default joint resolution schedule. Pass the intended `resolution` when you change its default.
 

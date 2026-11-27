@@ -67,7 +67,17 @@ def test_automatic_route_keeps_native_data_and_declared_geometry(explicit, monke
         assert fit == ("translations",) and frames is None and detector_roll == 0
         volume = np.zeros((g.nz, g.ny, g.nx), np.float32)
         report = {"isolated_views": [], "unusual_views": [], "advisories": []}
-        return volume, g, table, {"fit": ["translations"], "calibration": {}, "report": report}
+        return (
+            volume,
+            g,
+            table,
+            {
+                "fit": ["translations"],
+                "calibration": {},
+                "report": report,
+                "disturbance_score": [0.0] * len(nominal),
+            },
+        )
 
     monkeypatch.setattr(automatic, "fit_poses", fit)
     result = tj.align(scan, grid=supplied)

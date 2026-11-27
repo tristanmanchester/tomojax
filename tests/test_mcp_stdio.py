@@ -451,7 +451,7 @@ def test_joint_alignment_reports_disturbances_and_explicit_exclusions(tmp_path):
         assert report["ranges"] == [[61, 69]]
         # NeXus stores encoder angles in float32.
         np.testing.assert_allclose(
-            report["angles_deg"],
+            report["angles"],
             [[angles[61], angles[68]]],
             rtol=0,
             atol=np.spacing(np.float32(180)),
