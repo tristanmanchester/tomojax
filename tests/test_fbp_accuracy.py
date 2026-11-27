@@ -82,7 +82,7 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
     geometry = ParallelGeometry(grid, detector, angles)
     data = np.random.default_rng(901).uniform(0.1, 2.0, size=(3, 1, nu)).astype(np.float32)
     # Rows that end above zero continue one detector width past each edge.
-    radius2 = row_filter("ramp", detector, data).radius2
+    radius2 = row_filter("ramp", detector, data, exterior="cylinder").radius2
     continued = np.asarray(continued_rows(jnp.asarray(data), detector, radius2), np.float64)[:, 0]
     x = (np.arange(9) - 4) * 0.8 + 1.7
     y = (np.arange(7) - 3) * 1.2 - 2.3
@@ -105,7 +105,8 @@ def test_fbp_keeps_filtered_tails_at_shifted_volume_corners(
             kernel[odd] = -1 / (np.pi**2 * offset[odd] ** 2 * 0.7)
             expected += view_weight * weight * np.sum(kernel * row, axis=-1)
     assert outside_samples > expected.size
-    actual = np.asarray(fbp(geometry, grid, detector, data, config=FBPConfig(backend=backend)))[0]
+    config = FBPConfig(backend=backend, exterior="cylinder")
+    actual = np.asarray(fbp(geometry, grid, detector, data, config=config))[0]
     np.testing.assert_allclose(actual, expected, rtol=4e-5, atol=2e-6)
 
 
@@ -525,7 +526,7 @@ def _field_of_view(nu: int, center: float = 0.0) -> tuple[Detector, np.ndarray]:
 def _continue(rows: np.ndarray, detector: Detector) -> tuple[np.ndarray, np.ndarray]:
     """``rows``, one view each of one detector row, continued; and that row's squared radius."""
     stack = jnp.asarray(rows, jnp.float32)[:, None, :]
-    radius2 = row_filter("ramp", detector, stack).radius2
+    radius2 = row_filter("ramp", detector, stack, exterior="cylinder").radius2
     return np.asarray(continued_rows(stack, detector, radius2))[:, 0], np.asarray(radius2)
 
 

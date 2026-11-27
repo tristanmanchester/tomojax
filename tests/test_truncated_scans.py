@@ -65,9 +65,9 @@ def _level_and_bowl(volume: np.ndarray) -> tuple[float, float]:
 @pytest.mark.parametrize(
     ("method", "config"),
     [
-        ("fbp", None),
-        ("fourier", FourierConfig(backend="numpy")),
-        ("fourier", FourierConfig(backend="numpy", filter="ramp")),
+        ("fbp", FBPConfig(exterior="cylinder")),
+        ("fourier", FourierConfig(backend="numpy", exterior="cylinder")),
+        ("fourier", FourierConfig(backend="numpy", filter="ramp", exterior="cylinder")),
     ],
 )
 def test_parallel_methods_recover_a_cylinder_wider_than_the_detector(method, config) -> None:
@@ -78,7 +78,8 @@ def test_parallel_methods_recover_a_cylinder_wider_than_the_detector(method, con
 
 
 def test_fdk_recovers_a_cylinder_wider_than_the_detector() -> None:
-    level, bowl = _level_and_bowl(tj.reconstruct(_cone(), "fbp").volume)
+    rec = tj.reconstruct(_cone(), "fbp", config=FBPConfig(exterior="cylinder"))
+    level, bowl = _level_and_bowl(rec.volume)
     assert level == pytest.approx(MU, rel=0.04)
     assert abs(bowl) < 0.04 * MU
 

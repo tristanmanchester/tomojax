@@ -32,13 +32,16 @@ def test_nondivisible_view_batches(method, host, devices, cancel, monkeypatch):
             import_module("tomojax.recon.fbp"), "parallel_filter_batch_size", lambda *_: 3
         )
         geometry = ParallelGeometry(grid, detector, np.linspace(0, 180, 19, endpoint=False))
-        solve, config = fbp, FBPConfig(devices=placement, backend="jax")
+        solve, config = fbp, FBPConfig(devices=placement, backend="jax", exterior="cylinder")
         sample = [0.02850862, 0.11065112, 0.03739797, -0.22521386, -0.00283955]
     else:
         geometry = ConeGeometry(
             grid, detector, np.linspace(0, 360, 19, endpoint=False), ConeBeam(19, 34)
         )
-        solve, config = fdk, FDKConfig(devices=placement, views_per_batch=3, backend="jax")
+        solve, config = (
+            fdk,
+            FDKConfig(devices=placement, views_per_batch=3, backend="jax", exterior="cylinder"),
+        )
         sample = [0.00213336, 0.18044995, -0.03095098, 0.28804696, 0.08832941]
     reference = np.asarray(solve(geometry, grid, detector, data, config=config))
     # Voxel samples from the whole stack in one batch on the CPU; the rows of this random
