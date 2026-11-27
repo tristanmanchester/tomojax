@@ -109,25 +109,66 @@ Pass `include_scan=True` to `tj.save` if you also want the corrected projections
 
 ## Half-acquisition with an offset parallel detector
 
-An axial parallel scan can cover a specimen wider than the detector by rotating through 360° with the axis near one detector edge. Keep all views and the original detector coordinates. For example, a 2,560-column detector with the axis 64 pixels from its nearer edge measures 128 columns twice and covers a diameter of 4,992 pixels. Pixel distances here start at the detector edge, half a pixel outside its first pixel center.
+An axial parallel scan can cover a specimen nearly twice as wide as the detector by placing the rotation axis near one detector edge and rotating through 360°. Opposing views then cover opposite sides of the specimen and share an overlapping strip around the axis. For example, a 2,560-column detector with the axis 64 pixels inside its nearer edge measures a 128-pixel strip twice and covers a 4,992-pixel diameter. Pixel distances are measured from the outer detector edge, half a pixel outside the first pixel center.
+
+Keep all 360° views and the original detector coordinates when loading. On a raw acquisition that fits in memory, load the scan, fit the rotation center from the shared strip, remove rings, and reconstruct:
 
 ```python
 import tomojax as tj
 from tomojax.corrections import Rings
 
 scan = tj.load("full-turn.nxs")
-aligned = tj.align(scan, fit="center").scan
-print(aligned.grid.shape)             # (z, y, x)
-volume = tj.reconstruct(aligned.corrected(Rings()))
+fit = tj.align(scan, fit="center")
+print(fit.info["diagnostics"])          # overlap_px, pairs, rows
+aligned = fit.scan
+print(aligned.grid.shape)               # (z, y, x), expanded to the far edge
+recon = tj.reconstruct(aligned.corrected(Rings()))
+tj.save("half-acq-recon.nxs", recon)
 ```
 
-The fit matches changes in attenuation across the turn in the strip shared by opposite views. A detector-derived grid expands to the far edge and stays centered on the rotation axis. An explicit reconstruction grid keeps its requested extent. Fourier inversion and FBP weight conjugate rays across the overlap before filtering. Iterative methods use the original measured rays. If the specimen reaches the far edge, the default cylinder continuation estimates the direct methods' missing exterior from that edge.
+On the command line:
 
-Use `tomojax inspect full-turn.nxs` or the MCP `inspect` tool to check the orbit. When the file records the axis, inspection also reports the axis-to-edge distance, overlap and complete field diameter in detector pixels. With an unknown axis, inspect the saved aligned scan for those dimensions. If the axis lies outside the detector, inspection gives the diameter of the central disk missed by every ray. Any change in attenuation confined to that disk produces identical measurements.
+```bash
+tomojax align full-turn.nxs -o aligned.nxs --fit center
+tomojax inspect aligned.nxs
+tomojax reconstruct aligned.nxs -o half-acq-recon.nxs
+```
 
-With a rolled detector, the overlap and completed field can vary with height. The direct methods weight each horizontal detector line over its own measured interval. The default grid encloses all those lines. Inspection gives a single overlap and diameter when the horizontal intervals are the same at every height.
+On an unposed, unrolled axial full turn, `tj.align(scan, fit="center")` locates the axis by matching how attenuation changes across opposing view pairs in their shared strip, and records `overlap_px`, `pairs`, and `rows` in `fit.info["diagnostics"]`. When the input file records no grid, the aligned scan's grid expands to the far detector edge while staying centered on the rotation axis. If you saved a scan before aligning (for example after `tomojax correct`), the file already carries the narrower grid; either run `tomojax align` directly on the raw acquisition, pass the fitted `--detector-center U V` to `tomojax correct`, or pass an explicit `grid=` to `tj.reconstruct`.
 
-At 0.54 µm pitch, a 4,992 × 4,992 × 2,160 float32 volume occupies 215.3 GB. Fit the center on a representative band before correcting the whole acquisition. Pass the fitted `detector_center` when opening the full frames in the CLI or worker. In Python pass a full-height `detector` with the fitted horizontal center to `load_frames`, then consume `tj.reconstruct_slabs` one slab at a time. The [gallery](gallery.md#parallel-half-acquisition) shows the overlap and reconstructed field.
+Both `fourier` and `fbp` weight conjugate rays smoothly across the overlap before filtering so rays seen once keep full weight and rays seen twice sum to the same scale. Iterative methods (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) use the original measured rays directly. If the specimen extends past the far detector edge, default cylinder continuation (`exterior="cylinder"`) estimates the exterior from that outer edge only (`recon.info["truncation"]["field_of_view_radius"]` is the distance from the axis to the far edge).
+
+Inspecting the scan (`tomojax inspect`, `tj.inspect`, or MCP `inspect`) reports `full_turn: true` under `loading`. When the rotation axis is known (recorded in the file, or after saving `aligned.nxs`) and the detector is unrolled or rotated by a multiple of 90°, inspection also reports `axis_to_edge_px`, `field_of_view_px`, and `overlap_px` in detector pixels. If the axis lies outside the detector (`axis_to_edge_px < 0`), `overlap_px` is `0` and `central_gap_px` gives the diameter of the unmeasured central disk. Attenuation confined to that disk produces no signal in any view.
+
+On a rolled detector whose roll is not a multiple of 90°, the overlap and completed field vary with height. Direct reconstruction weights each horizontal detector line over its own measured interval and sizes a detector-derived grid to enclose all of them; inspection omits the single-number overlap and field diameter because no single interval applies to every row. The direct center fit requires an unrolled detector.
+
+Because an offset full turn nearly quadruples the slice area, full-height volumes can exceed host RAM (a 4,992 × 4,992 × 2,160 `float32` volume at 0.54 µm pitch is 215.3 GB). For large scans, fit the center on a narrow row band, then stream the full raw frames straight to disk with the calibrated detector:
+
+```python
+from dataclasses import replace
+import numpy as np
+import tomojax as tj
+from tomojax.corrections import Rings
+
+frames = tj.load_frames("full-turn.nxs")
+mid = frames.counts.shape[1] // 2
+band = frames.cropped(slice(mid - 8, mid + 8), slice(None)).corrected()
+center_u = tj.align(band, fit="center").info["calibration"]["center"]["value"]
+
+d = frames.geometry.detector
+calibrated = tj.load_frames(
+    "full-turn.nxs",
+    detector=replace(d, center=(center_u, d.center[1])),
+)
+g = calibrated.geometry.grid  # or construct a smaller tj.Grid explicitly
+volume = np.lib.format.open_memmap("volume.npy", mode="w+", dtype=np.float32, shape=g.shape)
+with tj.reconstruct_slabs(calibrated, "fourier", corrections=[Rings()]) as slabs:
+    for z_slice, block in slabs:
+        volume[z_slice] = block.volume
+volume.flush()
+```
+
+On the CLI, pass `--detector-center U V` to `tomojax correct`; in the worker or MCP server, pass `geometry={"detector_center": [U, V]}` to `open` (with `kind="frames"`) before calling `reconstruct_slabs`. See [stream raw frames directly into slabs](large-scans.md#stream-raw-frames-directly-into-slabs) for disk and memory placement, and the [gallery](gallery.md#parallel-half-acquisition) for a coverage map and comparison against a full-width detector.
 
 ## Diamond I13 NXtomo acquisition
 

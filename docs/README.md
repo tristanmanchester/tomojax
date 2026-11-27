@@ -30,7 +30,7 @@ Median seconds of three fresh worker launches reconstructing a full Diamond K11 
 | Install CPU, CUDA 12, MCP, or Studio dependencies | [Installation](installation.md) |
 | Manage persistent projects, queue work, and explore 3D results in the native GUI | [TomoJAX Studio](../studio/README.md) |
 | Load, correct, and reconstruct NXtomo, Data Exchange, Nikon, or TIFF scans | [Quickstart](quickstart.md) |
-| Run first-slice recipes for ESRF, TOMCAT, SYRMEP, cSAXS, and Diamond I13 | [Beamline exports](beamline-exports.md) |
+| Run first-slice recipes for ESRF, TOMCAT, SYRMEP, cSAXS, Diamond I13, and offset-detector half-acquisition | [Beamline exports](beamline-exports.md) |
 | Simulate data or script the Python API | [Synthetic tomography](synthetic-tomography.md), [examples](../examples/README.md) |
 | Supply measured geometry for parallel or laminography scans, including TIFF stacks | [Real parallel and laminography scans](real-laminography.md) |
 | Import, calibrate, and reconstruct lab cone-beam CT, including multi-orbit scans | [Lab cone-beam CT](lab-ct.md) |

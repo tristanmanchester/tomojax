@@ -77,7 +77,7 @@ uv run python examples/gallery/rock_few_views.py rock-few-views.png
 
 ![Parallel-beam diagrams and coverage maps for a centered half turn and an offset full turn, above the porous phantom and its two reconstructions.](../images/gallery/parallel-offset-detector.png)
 
-A 256-column detector with 32 overlapping columns covers a 480-pixel diameter. The centered reference uses 512 columns and 480 views. The offset scan uses 960 views over a full turn. Both Fourier inversions use analytic line integrals and the same display range.
+A 256-column detector with 32 overlapping columns covers a 480-pixel diameter. The centered reference uses 512 columns and 480 views over a half turn, while the offset scan uses 960 views over a full turn. Both Fourier inversions use analytic line integrals and the same display range. See [half-acquisition with an offset parallel detector](beamline-exports.md#half-acquisition-with-an-offset-parallel-detector) for the full workflow.
 
 ```bash
 uv run python examples/gallery/parallel_offset_detector.py parallel-offset-detector.png
