@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+from itertools import product
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,7 +49,8 @@ def write_zarr(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
     assert isinstance(encoding, dict)
     levels = encoding["levels"]
     axes = []
-    scale, origin = [], []
+    scale: list[float] = []
+    origin: list[float] = []
     for axis in blocks.selection.axes:
         coordinates = axis.coordinates
         assert isinstance(coordinates, Uniform)
@@ -61,7 +63,8 @@ def write_zarr(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
 
     group = zarr.open_group(path, mode="w", zarr_format=3)
     datasets = []
-    arrays = []
+    arrays: list[Array] = []
+    slab_depth = blocks.selection.block_depth
     for i, shape in enumerate(levels):
         if i:
             factors = [2 if n > 1 else 1 for n in levels[i - 1]]
@@ -76,11 +79,15 @@ def write_zarr(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
                 ],
             }
         )
+        # Keep chunks within a source slab as the pyramid halves its depth.
+        # A transposed slab still advances on the source's first axis.
+        tile = (min(32, max(1, slab_depth >> i)), 256, 256)
+        chunks = tuple(min(tile[d], n) for d, n in zip(blocks.selection.order, shape, strict=True))
         arrays.append(
             group.create_array(
                 str(i),
                 shape=tuple(shape),
-                chunks=tuple(min(c, n) for c, n in zip((32, 256, 256), shape, strict=True)),
+                chunks=chunks,
                 dtype=blocks.values.dtype if i == 0 else "float32",
                 dimension_names=[a["name"] for a in axes],
                 compressors=[ZstdCodec()] if encoding["compress"] else None,
@@ -106,6 +113,29 @@ def write_zarr(path: Path, blocks: Blocks, record: dict[str, object]) -> None:
     )
 
 
+def _write_slab(
+    target: Array, block: np.ndarray[tuple[int, ...], np.dtype], axis: int, first: int
+) -> None:
+    """Submit one chunk intersection at a time, including for transposed slabs."""
+    # Zarr may decode, merge and recompress a full chunk for a partial write.
+    # Handing it the whole slab multiplies those buffers by its codec concurrency.
+    starts = [0, 0, 0]
+    starts[axis] = first
+    spans: list[list[slice[int, int, None]]] = []
+    for start, size, chunk in zip(starts, block.shape, target.chunks, strict=True):
+        stop = start + size
+        spans.append(
+            [
+                slice(max(start, lo), min(stop, lo + chunk))
+                for lo in range(start - start % chunk, stop, chunk)
+            ]
+        )
+    for dest in product(*spans):
+        source = list(dest)
+        source[axis] = slice(dest[axis].start - first, dest[axis].stop - first)
+        target[dest] = block[tuple(source)]
+
+
 def write_levels(arrays: list[Array], blocks: Blocks) -> None:
     """Fill each registered level in one forward pass of the source."""
     # Consume the same storage-order slabs as the other writers. An odd plane
@@ -117,9 +147,7 @@ def write_levels(arrays: list[Array], blocks: Blocks) -> None:
         block = source_block
         for i, target in enumerate(arrays):
             n = block.shape[stream_axis]
-            region = [slice(None)] * 3
-            region[stream_axis] = slice(written[i], written[i] + n)
-            target[tuple(region)] = block
+            _write_slab(target, block, stream_axis, written[i])
             written[i] += n
             if i == len(arrays) - 1:
                 break

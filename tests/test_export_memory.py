@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import resource
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pytest
@@ -57,7 +59,8 @@ def check_last(path: Path, recon: tj.Reconstruction, axis: str) -> None:
 
 def run(mode: str, folder: str, name: str, axis: str) -> None:
     base = Path(folder)
-    recon = mapped_result(base / "source", 512)
+    source = base / "source"
+    recon = mapped_result(source, source.stat().st_size // (4 * MIB))
     path = base / name
     before = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
     if mode == "write":
@@ -70,14 +73,18 @@ def run(mode: str, folder: str, name: str, axis: str) -> None:
     )
 
 
+def write_noise(path: Path, depth: int) -> None:
+    rng = np.random.default_rng(42)
+    with path.open("wb") as stream:
+        for _ in range(depth):
+            rng.random((1024, 1024), np.float32).tofile(stream)
+
+
 @pytest.mark.slow
 def test_two_gibibytes_stay_bounded_across_formats_and_stack_axes(tmp_path):
     import shutil
 
-    rng = np.random.default_rng(42)
-    with (tmp_path / "source").open("wb") as stream:
-        for _ in range(512):
-            rng.random((1024, 1024), np.float32).tofile(stream)
+    write_noise(tmp_path / "source", 512)
     for axis in ("z", "x"):
         for name in ("volume.tif", "slices", "volume.raw", "lzw.tif", "volume.h5", "volume.zarr"):
             for mode in ("write", "read"):
@@ -91,6 +98,17 @@ def test_two_gibibytes_stay_bounded_across_formats_and_stack_axes(tmp_path):
                 path.unlink()
             (tmp_path / "volume.raw.json").unlink(missing_ok=True)
     (tmp_path / "source").unlink()
+
+
+@pytest.mark.slow
+def test_transposed_zarr_stays_bounded_with_concurrent_codecs(tmp_path):
+    # A transposed slab used to touch 128 partial chunks in one assignment.
+    env = {**os.environ, "ZARR_ASYNC__CONCURRENCY": "64", "ZARR_CODEC_PIPELINE__BATCH_SIZE": "16"}
+    with TemporaryDirectory(dir=tmp_path) as folder:
+        write_noise(Path(folder) / "source", 128)
+        args = [folder, "volume.zarr", "x"]
+        subprocess.run([sys.executable, __file__, "write", *args], env=env, check=True)
+        subprocess.run([sys.executable, __file__, "read", *args], check=True)
 
 
 @pytest.mark.slow

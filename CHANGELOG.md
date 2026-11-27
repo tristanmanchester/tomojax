@@ -17,6 +17,7 @@
   output names and checkpoint directories that would replace an input, including aliases.
   Validation releases its input files on return or error.
 - Export a registered array to a NeXus NXdata signal at a chosen HDF5 path, or export a volume to an OME-Zarr 0.5 pyramid with `tomojax[zarr]`. Both preserve the physical coordinates of the written axes.
+- OME-Zarr exports write one chunk at a time at each pyramid level, bounding codec memory when many CPU workers are available or the stack axis changes.
 
 - `tj.save` writes NeXus format 2 with read-only, memory-mappable arrays,
   physical coordinate vectors and a processing record at `/entry/record`.
