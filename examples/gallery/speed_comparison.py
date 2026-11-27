@@ -147,7 +147,7 @@ def main() -> None:
                 # Keep labels inside narrow panels at both ends of the time axis.
                 left = median > 300
                 ax.annotate(
-                    f"{median:.2f}",
+                    f"{median:#.4g}".rstrip("."),  # four significant figures
                     (low if left else high, y),
                     xytext=(-4 if left else 4, 0),
                     textcoords="offset points",
