@@ -596,9 +596,10 @@ def test_gda_rotation_without_a_unit_label_is_read_in_degrees(tmp_path):
     assert acquisition["angle_units_recorded"] == "" and acquisition["angle_units"] == "degree"
 
 
+@pytest.mark.parametrize("command_name", ["smaract_zrot_value_set", "smaract_psi_value_set"])
 @pytest.mark.parametrize("same_frames", [True, False])
 def test_an_nxtomo_entry_without_angles_takes_the_gda_command_for_the_same_frames(
-    tmp_path, same_frames
+    tmp_path, same_frames, command_name
 ):
     # Newer GDA exports write an NXtomo entry for the frames with no rotation angles, beside
     # the GDA layout whose rotation command has them. Only when both describe the same frames
@@ -610,7 +611,7 @@ def test_an_nxtomo_entry_without_angles_takes_the_gda_command_for_the_same_frame
         frames = handle.create_dataset("entry/imaging/data", data=stack)
         handle.create_dataset("entry/instrument/EtherCAT/image_key", data=key)
         command = handle.create_dataset(
-            "entry/imaging/smaract_zrot_value_set", data=[0.0, 0.0, 0.0, 90.0, 0.0]
+            f"entry/imaging/{command_name}", data=[0.0, 0.0, 0.0, 90.0, 0.0]
         )
         command.attrs["units"] = "mm"
         entry = handle.create_group("entry/tomo_entry")
@@ -630,7 +631,7 @@ def test_an_nxtomo_entry_without_angles_takes_the_gda_command_for_the_same_frame
     scan = tj.load(path, detector=tiny_detector(nu=3))
     np.testing.assert_array_equal(scan.angles, [0, 90])
     acquisition = scan.source.geometry_metadata["acquisition"]
-    assert acquisition["angles_path"] == "/entry/imaging/smaract_zrot_value_set"
+    assert acquisition["angles_path"] == f"/entry/imaging/{command_name}"
     assert acquisition["nxtomo_angles"] == "not_recorded"
     assert acquisition["angle_units_recorded"] == "mm"
 

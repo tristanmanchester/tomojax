@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- NXtomo files written by GDA with a SmarAct ψ rotation command now load their projection angles when the NXtomo entry omits them.
+
 - Inner feature bands include the rim at volume faces, edges and corners. A full 10 × 10 × 10 box has 488 voxels in its one-voxel inner rim.
 
 - Feature bands, overlays, grid comparisons and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.

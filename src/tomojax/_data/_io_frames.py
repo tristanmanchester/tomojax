@@ -141,6 +141,7 @@ def _gda_paths(file: h5py.File) -> tuple[str, str, str] | None:
                 f"{prefix}/{p}"
                 for p in (
                     "imaging/smaract_zrot_value_set",
+                    "imaging/smaract_psi_value_set",
                     "imaging_sum/smaract_zrot_value_set",
                     "imaging_sum/smaract_zrot",
                 )
@@ -175,8 +176,12 @@ def _gda_metadata(
         units = file[angles_at].attrs.get("units", "")
         units = units.decode() if isinstance(units, bytes) else str(units)
         # GDA's SmarAct angular command can inherit the positioner's linear
-        # unit label. Only this identified rotation command has that quirk.
-        if angles_at == gda[2] and angles_at.endswith("/smaract_zrot_value_set") and units == "mm":
+        # unit label. Restrict this correction to recognized rotation commands.
+        if (
+            angles_at == gda[2]
+            and angles_at.endswith(("/smaract_zrot_value_set", "/smaract_psi_value_set"))
+            and units == "mm"
+        ):
             units_override = "degree"
             acquisition.update(angle_units_recorded=units, angle_units="degree")
             logging.getLogger(__name__).warning(

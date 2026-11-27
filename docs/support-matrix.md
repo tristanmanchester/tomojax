@@ -43,6 +43,8 @@ This page lists supported workflows, acquisition formats, and numerical backends
 
 `tj.load_frames` recognizes supported raw exports by file content, even if renamed. Physical pitches are normalized to millimeters.
 
+NXtomo files written by GDA can store the commanded rotation in the imaging group. If the NXtomo entry omits its angles, TomoJAX reads the SmarAct ψ or z-rotation command for the same frame dataset. It records the angle source and warns when a recognized angular command carries the positioner’s millimeter label. A missing physical pitch leaves lengths in detector pixels.
+
 | Format | Frames and calibration | Angles and geometry metadata |
 | --- | --- | --- |
 | External NXtomo (ESRF, Diamond, generic) | Group declaring `NXtomo` (`instrument/detector/data`, `image_key`); ESRF return frames (`image_key_control = -1`) excluded; single-row `(view, u)` sinograms stay lazy as `(view, 1, u)`; scans stopped early read the common prefix covered by frames, `image_key`, and angles with a warning and record original counts in `frame_records` | `sample/rotation_angle` (or `sample/transformations/rotation_angle`) with units (default degrees); `x_pixel_size`/`y_pixel_size` with length units |
