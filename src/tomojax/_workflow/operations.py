@@ -53,7 +53,6 @@ from tomojax._scan.model import (
     rebuild,
     record_of,
     source_of,
-    with_grid,
 )
 from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import Device
@@ -1382,17 +1381,15 @@ def align_resolved(
             "host" in level["stacks"]["placement"].values()
             for level in cast("Sequence[dict[str, Any]]", result.info.get("levels", ()))
         )
-        grid, cylinder = plan.grid, plan.cylinder
+        cylinder = plan.cylinder
         assert result.scan is not None  # the alignment's corrected scan
         image = result.volume
         if cylinder is not None and image is not None and result.grid is not None:
             from tomojax._workflow.field_of_view import zero_outside_cylinder
 
             image = zero_outside_cylinder(image, result.grid, cylinder, in_place=True)
-        # The fit's working grid belongs to its image; the scan keeps the caller's grid.
-        corrected = with_grid(result.scan, scan.grid if grid is None else grid)
         info = {**result.info, **plan.info, "placement": actual.record(slabbed=slabbed)}
-        return Alignment(corrected, info, image, result.grid)
+        return Alignment(result.scan, info, image, result.grid)
 
 
 def _align_center(scan: Scan, selection: CenterSelection) -> Alignment:

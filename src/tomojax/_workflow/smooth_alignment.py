@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 
 from tomojax._parameters import method_fit
-from tomojax._scan.model import Reconstruction, describe, record_of, with_grid
+from tomojax._scan.model import Reconstruction, describe, rebuild, record_of, with_grid
 from tomojax._workflow.planning import UNDECLARED_GEOMETRY, resolve_grid
 from tomojax.alignment._integration import (
     CenterSelection,
@@ -124,7 +124,6 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
         for name in ("isolated_views", "unusual_views"):
             record["report"][name] = kept[np.asarray(record["report"][name], dtype=int)].tolist()
     corrected, values = publish_calibration(original, fitted, changes, native_pixel_size=native)
-    corrected = with_grid(corrected, working)
     calibration = {name: {"value": values[name], "change": changes[name]} for name in changes}
     info = {**record, "method": "joint_volume_pose", "calibration": calibration}
     scores = np.full(len(segments), np.nan)
@@ -140,7 +139,9 @@ def align_poses(scan: Scan, plan: JointSelection) -> Reconstruction:
     source = record_of(corrected)
     source.geometry_metadata["alignment_info"] = info
     corrected = replace(corrected, source=source)
-    return Reconstruction(volume, corrected.geometry, "joint_volume_pose", info, corrected)
+    return Reconstruction(
+        volume, rebuild(corrected.geometry, grid=working), "joint_volume_pose", info, corrected
+    )
 
 
 def _warn_about_views(report: dict) -> None:

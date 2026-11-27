@@ -179,12 +179,15 @@ def _updated_geometry_metadata(
     record: ProjectionDataset,
     *,
     geometry: ScanGeometry | None,
+    grid: Grid | None,
     declares_geom: bool,
     detector: Detector | None,
     pixel_size: float | tuple[float, float] | None,
 ) -> tuple[Detector | None, dict[str, Any]]:
     """Update detector and provenance flags from explicit caller overrides."""
     meta = dict(record.geometry_metadata)
+    if grid is not None:
+        meta.pop("grid_follows_detector", None)
     if pixel_size is not None:  # the shape from the frames, the center from the file or the middle
         du, dv = np.broadcast_to(np.asarray(pixel_size, np.float64), (2,)).tolist()
         _, nv, nu = cast("np.ndarray", record.projections).shape  # frames: always present
@@ -249,9 +252,11 @@ def frame_geometry(
         and (message := offsets.dropped_message())
     ):
         warn(message, stacklevel=4)
+    grid = geometry.grid if geometry is not None else grid
     detector, meta = _updated_geometry_metadata(
         record,
         geometry=geometry,
+        grid=grid,
         declares_geom=declares_geom,
         detector=detector,
         pixel_size=pixel_size,
@@ -259,7 +264,7 @@ def frame_geometry(
     record = replace_dataset(
         record,
         angles=record.angles if angles is None else np.asarray(angles, np.float32),
-        grid=geometry.grid if geometry is not None else grid or record.grid,
+        grid=grid or record.grid,
         geometry_metadata=meta,
     )
     if detector is not None:
@@ -274,8 +279,12 @@ def frame_geometry(
         assert declared is not None
         record, resolved = _declared_geometry(record, declared, grid=grid)
         return record, frame_output_grid(resolved, record)
-    resolved = geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses)
-    return record, frame_output_grid(resolved, record)
+    if geometry is not None:
+        return record, geometry
+    resolved = geometry_of(record, apply_poses=apply_poses)
+    if record.grid is not None and (detector is not None or angles is not None):
+        resolved = frame_output_grid(resolved, record)
+    return record, resolved
 
 
 class Located(Protocol):

@@ -134,7 +134,7 @@ tomojax inspect aligned.nxs
 tomojax reconstruct aligned.nxs -o half-acq-recon.nxs
 ```
 
-On an unposed, unrolled axial full turn, `tj.align(scan, fit="center")` locates the axis by matching how attenuation changes across opposing view pairs in their shared strip, and records `overlap_px`, `pairs`, and `rows` in `fit.info["diagnostics"]`. When the input file records no grid, the aligned scan's grid expands to the far detector edge while staying centered on the rotation axis. If you saved a scan before aligning (for example after `tomojax correct`), the file already carries the narrower grid; either run `tomojax align` directly on the raw acquisition, pass the fitted `--detector-center U V` to `tomojax correct`, or pass an explicit `grid=` to `tj.reconstruct`.
+On an unposed, unrolled axial full turn, `tj.align(scan, fit="center")` locates the axis by matching how attenuation changes across opposing view pairs in their shared strip, and records `overlap_px`, `pairs`, and `rows` in `fit.info["diagnostics"]`. A detector-derived grid expands to the far edge and stays centered on the rotation axis, including when you save the corrected scan before aligning it. A grid supplied by the file or the caller keeps its extent.
 
 Both `fourier` and `fbp` weight conjugate rays smoothly across the overlap before filtering so rays seen once keep full weight and rays seen twice sum to the same scale. Iterative methods (`cgls`, `fista`, `sirt`, `spdhg`, `mlem`) use the original measured rays directly. If the specimen extends past the far detector edge, default cylinder continuation (`exterior="cylinder"`) estimates the exterior from that outer edge only (`recon.info["truncation"]["field_of_view_radius"]` is the distance from the axis to the far edge).
 

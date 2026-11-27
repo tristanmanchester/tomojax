@@ -5,7 +5,7 @@
 - FDK, parallel FBP, and Fourier inversion filter rolled measurements along physical horizontal detector lines. Quarter turns exchange rows and columns without interpolation.
 - FDK computes angular weights, repeated-view grouping, and short-scan coverage from the effective source orbit, including pose-carried angles. Fourier inversion accepts per-view axial rotations about `z`.
 - NXtomo files written by GDA with a SmarAct ψ or z-rotation command load their projection angles when the NXtomo entry omits them, warning and reading degrees if the command carries a millimeter unit label.
-- Parallel half-acquisition scans use their full-turn overlap for the rotation-center fit, detector-derived volume size and direct reconstruction. Inspection reports the complete field and overlap when the axis is known.
+- Parallel half-acquisition scans use their full-turn overlap for the rotation-center fit, detector-derived volume size and direct reconstruction. A corrected scan saved before the fit retains automatic grid sizing when reopened. Older files that record only the grid dimensions and pitches keep their saved extent. Inspection reports the complete field and overlap when the axis is known.
 - File writers protect the files behind live scans, including linked HDF5 detector data,
   vendor frame files and separate calibration. The worker, MCP, CLI and Python reject
   output names and checkpoint directories that would replace an input, including aliases.

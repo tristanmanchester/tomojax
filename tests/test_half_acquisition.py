@@ -31,7 +31,8 @@ def test_full_turn_resolves_the_axis_and_outer_field(method, side):
         assert np.linalg.norm((volume - truth)[mask]) < 0.035 * np.linalg.norm(truth[mask])
 
 
-def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(tmp_path):
+@pytest.fixture
+def offset_acquisition(tmp_path):
     import h5py
 
     # Analytic line integrals on a 64-column camera with the axis at column 6.25.
@@ -53,6 +54,13 @@ def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(tmp_path)
                 f"measurement/instrument/detector/actual_pixel_size_{axis}", data=0.7
             )
             d.attrs["units"] = "mm"
+    return path
+
+
+def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(
+    tmp_path, offset_acquisition
+):
+    path = offset_acquisition
     initial = tj.inspect(path)["loading"]
     assert initial["full_turn"] and "axis_to_edge_px" not in initial
     aligned = tj.align(tj.load(path), fit="center")
@@ -68,6 +76,33 @@ def test_fitted_field_follows_the_measured_axis_and_keeps_world_origin(tmp_path)
     assert record["loading"]["axis_to_edge_px"] == pytest.approx(6.75, abs=0.15)
     assert record["loading"]["overlap_px"] == pytest.approx(13.5, abs=0.3)
     assert record["memory_estimates"]["reconstruction_grid_shape"] == [115, 115, 1]
+
+
+@pytest.mark.parametrize("suffix", ["nxs", "npz"])
+def test_corrected_grid_still_follows_the_axis_after_saving(tmp_path, offset_acquisition, suffix):
+    corrected = tmp_path / f"corrected.{suffix}"
+    scan = tj.load_frames(offset_acquisition).corrected()
+    tj.save(corrected, scan)
+    fit = tj.align(tj.load(corrected), fit="center")
+    assert fit.scan.grid == tj.align(scan, fit="center").scan.grid
+    assert tj.reconstruct(fit.scan).volume.shape == (1, 115, 115)
+    # An explicit grid may have exactly the same dimensions as the initial default.
+    fixed = tj.load(corrected, grid=scan.grid)
+    copy = tmp_path / f"fixed.{suffix}"
+    tj.save(copy, fixed)
+    assert tj.align(tj.load(copy), fit="center").scan.grid == scan.grid
+
+
+def test_selected_views_reopen_on_the_saved_grid_before_the_next_detector_edit(
+    tmp_path, offset_acquisition
+):
+    fitted = tj.align(tj.load(offset_acquisition), fit="center").scan
+    half_turn = fitted.selected(slice(0, 151))
+    saved = tmp_path / "selected.nxs"
+    tj.save(saved, half_turn)
+    loaded = tj.load(saved)
+    assert loaded.grid.shape == (1, 115, 115)
+    assert loaded.cropped(slice(None), slice(0, 48)).grid.shape == (1, 48, 48)
 
 
 @pytest.mark.parametrize("method", ["fbp", "fourier"])

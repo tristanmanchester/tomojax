@@ -55,6 +55,7 @@ GEOMETRY_KEYS = frozenset(
         "tilt_about",
         "axis_unit_lab",
         "detector_roll",
+        "grid_follows_detector",
     }
 )
 
@@ -709,6 +710,8 @@ def geometry_record(
 
     geometry_type, meta, poses, _ = describe(geometry)
     kept = {} if source is None else _source_provenance(source.geometry_metadata)
+    if grid is None and grid_follows_detector(source):
+        meta["grid_follows_detector"] = True
     fields: dict[str, Any] = {
         "projections": None,
         "angles": np.asarray(geometry.angles, np.float32),  # pyright: ignore[reportAttributeAccessIssue]
@@ -738,9 +741,7 @@ def scan_from_record(
     assert record.projections is not None  # tj.load refuses a file without them
     return Scan(
         projections=record.projections,
-        geometry=geometry
-        if geometry is not None
-        else frame_output_grid(geometry_of(record, apply_poses=apply_poses), record),
+        geometry=geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,
@@ -785,7 +786,8 @@ def geometry_of(record: ProjectionDataset, *, apply_poses: bool) -> ScanGeometry
     _, _, geometry = build_geometry_from_dataset_metadata(
         record.geometry_inputs(), apply_poses=apply_poses
     )
-    return geometry
+    # A saved grid is the exact lattice at save time, even after selecting part of a turn.
+    return geometry if record.grid is not None else frame_output_grid(geometry, record)
 
 
 def rebuild(
@@ -880,6 +882,13 @@ def _combined(scans: Sequence[Scan]) -> tuple[Correction, ...]:
     return (*shared, record)
 
 
+def grid_follows_detector(source: ProjectionDataset | None) -> bool:
+    """Whether detector edits resize this scan, including a saved detector-derived grid."""
+    return source is not None and (
+        source.grid is None or source.geometry_metadata.get("grid_follows_detector") is True
+    )
+
+
 def frame_output_grid(
     geometry: ScanGeometry, source: ProjectionDataset | None, *, binning: int = 1
 ) -> ScanGeometry:
@@ -889,7 +898,7 @@ def frame_output_grid(
     Other models retain their physical output box, resampling it when binned.
     This is a numerical grid policy, not a change to acquired ray geometry.
     """
-    if source is None or source.grid is not None:
+    if not grid_follows_detector(source):
         return geometry
     if isinstance(geometry, ParallelGeometry):
         from tomojax.geometry.coverage import full_parallel_turn, horizontal_detector, panel_field
@@ -947,10 +956,17 @@ def _binned_detector(detector: Detector, factor: int) -> Detector:
 
 
 def with_grid(scan: Scan, grid: Grid) -> Scan:
-    """``scan`` reconstructed on ``grid`` instead of its own."""
-    if grid == scan.grid:
+    """Bind the scan to a specified grid, even when it matches the current default."""
+    from tomojax.io.api import replace_dataset
+
+    source = scan.source
+    if source is not None and grid_follows_detector(source):
+        meta = dict(source.geometry_metadata)
+        meta.pop("grid_follows_detector", None)
+        source = replace_dataset(source, grid=grid, geometry_metadata=meta)
+    elif grid == scan.grid:
         return scan
-    return replace(scan, geometry=rebuild(scan.geometry, grid=grid))
+    return replace(scan, geometry=rebuild(scan.geometry, grid=grid), source=source)
 
 
 @dataclass(frozen=True)
