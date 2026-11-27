@@ -28,14 +28,14 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 40,
+    "tomojax.io.api": 41,
     "tomojax.alignment.api": 5
   },
   "cli_flags": {
     "inspect": 7,
     "correct": 36,
-    "reconstruct": 21,
-    "align": 20,
+    "reconstruct": 22,
+    "align": 21,
     "export": 12,
     "simulate": 20,
     "serve": 1,
