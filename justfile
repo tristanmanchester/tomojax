@@ -15,9 +15,9 @@ studio_toolchain := "1.99.1"
 # (tests/conftest.py) and handed one test at a time, the slow ones first.
 parallel := "-n " + `echo $(( ($(nproc) + 1) / 2 ))` + " --maxschedchunk 1"
 
-# GPU tests run on one worker per 1.3 GB of the first GPU's memory: a worker's CUDA
-# context takes 0.3 GB and its JAX pool is capped at its share of the rest (tests/conftest.py).
-gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk 'NR == 1 { print int($1 / 1300) }'` + " --maxschedchunk 1"
+# Each GPU worker needs a CPU and about 1.3 GiB on the first card.
+# tests/conftest.py pins each worker and caps its JAX pool.
+gpu_parallel := "-n " + `(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null || echo 0) | awk -v cpus="$(nproc)" 'NR == 1 { by_mem = int($1 / 1300); print (by_mem < cpus ? by_mem : cpus) }'` + " --maxschedchunk 1"
 
 setup *flags:
     ./tools/worktree_setup.sh {{flags}}

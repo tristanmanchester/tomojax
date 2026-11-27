@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fourier reconstruction uploads a view-group table only when angles repeat. This removes
+  an empty CUDA transfer associated with context loss during a later FBP on a shared GPU.
+  Reconstruction stops on an unspecified cuFFT plan failure and reports confirmed lost
+  contexts with instructions to restart the process.
+
 - Scans of an object larger than the field of view reconstruct without the bright rim and
   bowl: `fourier`, `fbp`, and cone-beam FDK continue each detector row past both detector
   edges before filtering, as the projection of a uniform cylinder about the rotation axis.

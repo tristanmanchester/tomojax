@@ -37,7 +37,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 | `just examples` | Run the public projection and reconstruction example |
 | `just package` | Build sdist and wheel, run `twine check --strict`, and smoke-test the installed wheel |
 | `just ci` | CPU gate: static checks, package build and smoke test, example, the CPU tests except those marked `slow`, and small analytic benchmarks |
-| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it. A per-user lock makes a second run wait for the first |
+| `just test-cuda` | Require CUDA, then run every test with the GPU visible, the `slow` ones included: first the tests that need the GPU to themselves, then the rest on workers that share it, up to one per available CPU and one per 1,300 MiB of GPU memory. A per-user lock makes a second run wait for the first |
 | `just guardrails` | Update the public API and code-health ratchet records after an intentional change |
 | `just studio-check` | Studio's `cargo fmt --check`, Clippy with `-D warnings`, and `cargo test` on Rust 1.99.1 |
 | `just studio-verify` | Build Studio and capture each workspace headless into `.artifacts/studio-snap/`, failing on a missing or blank image |
