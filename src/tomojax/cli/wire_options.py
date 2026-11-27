@@ -100,6 +100,7 @@ class FBPConfig(Record, tag="FBPConfig"):
     scale: float | None = None
     backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: tuple[Id, ...] | None = None
+    exterior: Literal["cylinder", "zero"] = "cylinder"
 
 
 class FourierConfig(Record, tag="FourierConfig"):
@@ -108,6 +109,7 @@ class FourierConfig(Record, tag="FourierConfig"):
     slices_per_batch: int | None = None
     filter: str | None = None
     backend: Literal["auto", "numpy", "cupy"] = "auto"
+    exterior: Literal["cylinder", "zero"] = "cylinder"
 
 
 class CGLSConfig(Record, tag="CGLSConfig"):

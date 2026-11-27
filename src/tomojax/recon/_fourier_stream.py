@@ -117,6 +117,7 @@ def fourier_slabs[T](
                     depth,
                     backend,
                     filter=config.filter,
+                    exterior=config.exterior,
                     async_transfers=backend == "cupy",
                     order=order,
                 )

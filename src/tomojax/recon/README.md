@@ -175,6 +175,7 @@ forward/transpose pair. This also applies to CGLS with streamed projections
 and a resident volume. Host-slab solvers and CPU execution use public storage;
 the private layout is not a user option or a different reconstruction model.
 
+The analytic configs accept `exterior="cylinder"` (default) or `exterior="zero"` to select the model beyond the detector. With the cylinder,
 `fbp`, FDK and `fourier` continue each measured detector row past the detector's
 edges before filtering it (`_continuation.py`): each side as the projection of a
 uniform cylinder about the rotation axis, `c sqrt(R² - s²)` at distance `s` from

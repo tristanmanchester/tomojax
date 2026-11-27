@@ -29,7 +29,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import check_backend, normalize_filter
 from tomojax.core import checkpoint
 from tomojax.core.cone import ConeModel
@@ -76,6 +76,9 @@ class FDKConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
+        the scan contains the object.
     filter : str, optional
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     backend : ProjectorBackend, optional
@@ -94,7 +97,10 @@ class FDKConfig:
     views_per_batch: int = 64
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
+
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "fdk")
         object.__setattr__(self, "filter", normalize_filter(self.filter))
         object.__setattr__(self, "devices", as_devices(self.devices))
@@ -327,7 +333,7 @@ def _fdk_batch(
     weights: jax.Array,
     kernel: jax.Array,
     operator: jax.Array | None,
-    radius2: jax.Array,
+    radius2: jax.Array | None,
     out: jax.Array,
     *,
     grid: Grid,
@@ -342,7 +348,7 @@ def _fdk_batch(
     coeff = jax.lax.dynamic_slice_in_dim(coeff, start, views.shape[0])
     weights = jax.lax.dynamic_slice_in_dim(weights, start, views.shape[0])
     nu = views.shape[-1]
-    wide = replace(detector, nu=nu + 2 * continued_columns(nu))
+    wide = replace(detector, nu=len(distance) or nu)
     cosine = _batch_cosines(cosine, start, views.shape[0], wide)
     rows = continued_rows(views, weights, cosine, radius2, distance)
     if operator is not None:
@@ -455,7 +461,8 @@ def _prepare(
     column_parts = cone_parts(geometry, columns)
     assert column_parts is not None
     padding = [_virtual_columns(beam, own) for _, beam, own in column_parts]
-    padding.append(grid_columns(column_parts, grid, poses))
+    if cfg.exterior == "cylinder":
+        padding.append(grid_columns(column_parts, grid, poses))
     pad_lo, pad_hi = np.max(padding, axis=0).tolist()
     # A shared detector-pitch ramp is linear in magnification. Fold each
     # view's remaining inverse magnification into its angular weight.
@@ -464,13 +471,13 @@ def _prepare(
     # The kernel spans the continued and the virtual row, so no column the
     # backprojection reads sees either wrap around.
     width = detector.nu + pad_lo + pad_hi
-    pad = continued_columns(detector.nu)
+    pad = continued_columns(detector.nu) if cfg.exterior == "cylinder" else 0
     kernel = get_fbp_filter_np(
-        cfg.filter, detector.nu + pad + max(pad_lo, pad_hi), du_iso, "float32"
+        cfg.filter, detector.nu + pad + max(pad_lo, pad_hi) if pad else width, du_iso, "float32"
     )
     operator = None
     if cuda and width <= _DENSE_FILTER_MAX:
-        operator = jax.device_put(filter_operator(kernel, detector.nu, pad_lo, pad_hi))
+        operator = jax.device_put(filter_operator(kernel, detector.nu, pad_lo, pad_hi, pad))
     # Cosine weights of the continued columns too: the same detector, wider.
     continued = tuple(
         (count, beam, replace(own, nu=own.nu + 2 * pad)) for count, beam, own in parts
@@ -487,7 +494,7 @@ def _prepare(
         views_per_batch=int(cfg.views_per_batch),
         pad_lo=pad_lo,
         pad_hi=pad_hi,
-        distance=tuple(cone_axis_distance(parts[0][1], parts[0][2], pad).tolist()),
+        distance=tuple(cone_axis_distance(parts[0][1], parts[0][2], pad).tolist()) if pad else (),
     )
 
 
@@ -576,8 +583,10 @@ def _accumulate(
     n_views = int(coeff.shape[0])
     virtual = prep.virtual(prep.detector)
     pad = continued_columns(prep.detector.nu)
-    radius2 = Continuation(np.asarray(prep.distance), prep.detector.nu, pad).stack_radius(
-        projections
+    radius2 = (
+        Continuation(np.asarray(prep.distance), prep.detector.nu, pad).stack_radius(projections)
+        if prep.distance
+        else None
     )
     # Physical placement is already in coeff. Equal-sized slabs share the
     # filtering/backprojection executable, rather than compiling every origin.

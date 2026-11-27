@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import jax.numpy as jnp
 
+from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
+
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
 from .filters import rfft_filter_array
 
@@ -28,10 +30,12 @@ class RowFilter(NamedTuple):
     """
 
     spectrum: jnp.ndarray
-    radius2: jnp.ndarray
+    radius2: jnp.ndarray | None
 
     def rows(self, first: int, stop: int) -> RowFilter:
         """The filter of detector rows ``first:stop``; rows outside the detector are zero."""
+        if self.radius2 is None:
+            return self
         count = self.radius2.shape[0]
         lo, hi = max(0, first), min(count, stop)
         if hi <= lo:
@@ -43,9 +47,16 @@ class RowFilter(NamedTuple):
 
 
 def row_filter(
-    filter: Filter, detector: Detector, projections: jnp.ndarray | np.ndarray
+    filter: Filter,
+    detector: Detector,
+    projections: jnp.ndarray | np.ndarray,
+    exterior: Exterior = DEFAULT_EXTERIOR,
 ) -> RowFilter:
     """The filter of the rows of a ``(views, nv, nu)`` stack, read over the filter ``detector``."""
+    if exterior == "zero":
+        return RowFilter(
+            rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32), None
+        )
     nu = projections.shape[-1]
     pad = continued_columns(nu)
     fits = Continuation(parallel_axis_distance(detector, nu, pad), nu, pad)
@@ -55,8 +66,12 @@ def row_filter(
     return RowFilter(spectrum, jnp.asarray(radius2))
 
 
-def continued_rows(rows: jnp.ndarray, detector: Detector, radius2: jnp.ndarray) -> jnp.ndarray:
+def continued_rows(
+    rows: jnp.ndarray, detector: Detector, radius2: jnp.ndarray | None
+) -> jnp.ndarray:
     """Measured rows continued along u past the detector's edges."""
+    if radius2 is None:
+        return rows
     nu = rows.shape[-1]
     pad = continued_columns(nu)
     fits = Continuation(parallel_axis_distance(detector, nu, pad), nu, pad)
@@ -64,10 +79,10 @@ def continued_rows(rows: jnp.ndarray, detector: Detector, radius2: jnp.ndarray) 
     return jnp.concatenate([before, rows, after], axis=-1)
 
 
-def detector_columns(filtered: jnp.ndarray, nu: int, detector: Detector) -> jnp.ndarray:
+def detector_columns(filtered: jnp.ndarray, nu: int, detector: Detector, pad: int) -> jnp.ndarray:
     """The filter detector's columns of filtered continued rows of transform length n_fft."""
     n_fft = filtered.shape[-1]
-    first = continued_columns(nu) - (detector.nu - nu) // 2
+    first = pad - (detector.nu - nu) // 2
     if first >= 0:
         return filtered[..., first : first + detector.nu]
     # A filter detector wider than the continuation reads the circular transform's tail.
@@ -82,4 +97,9 @@ def ramp_rows(rows: jnp.ndarray, filter: RowFilter, detector: Detector) -> jnp.n
     n_fft = 2 * (spectrum.shape[0] - 1)
     continued = continued_rows(rows, detector, filter.radius2)
     transformed = jnp.fft.rfft(continued, n=n_fft, axis=-1) * spectrum
-    return detector_columns(jnp.fft.irfft(transformed, n=n_fft, axis=-1), rows.shape[-1], detector)
+    return detector_columns(
+        jnp.fft.irfft(transformed, n=n_fft, axis=-1),
+        rows.shape[-1],
+        detector,
+        (continued.shape[-1] - rows.shape[-1]) // 2,
+    )

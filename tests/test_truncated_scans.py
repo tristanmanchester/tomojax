@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 import tomojax as tj
-from tomojax.recon import FourierConfig
+from tomojax.recon import FBPConfig, FourierConfig
 
 MU, RADIUS = 0.03, 1.6  # attenuation per length; cylinder radius over the field-of-view radius
 NU, VIEWS = 64, 96
@@ -154,3 +154,19 @@ def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
     assert (share in line) is beyond
     assert (share in summary) is beyond
     assert ("beyond the detector" in line + summary) is beyond
+
+
+@pytest.mark.parametrize(
+    ("scan", "config"),
+    [
+        (_parallel, FBPConfig(exterior="zero")),
+        (_parallel, FourierConfig(exterior="zero")),
+        (_cone, FBPConfig(exterior="zero")),
+    ],
+)
+def test_zero_exterior_keeps_the_truncated_cylinders_bright_rim(scan, config) -> None:
+    rec = tj.reconstruct(scan(), config.method, config=config)
+    level, bowl = _level_and_bowl(np.asarray(rec.volume))
+    assert level > 1.2 * MU
+    assert bowl > 0.2 * MU
+    assert rec.info["config"].exterior == "zero"

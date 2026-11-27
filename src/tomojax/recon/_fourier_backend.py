@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import numpy as np
 
 from tomojax import progress
-from tomojax._parameters import Filter
+from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 
@@ -91,6 +91,7 @@ class _Geometry:
         angles: tuple[float, ...] | np.ndarray,
         backend: Literal["numpy", "cupy"],
         filter: Filter | None = None,
+        exterior: Exterior = DEFAULT_EXTERIOR,
     ) -> None:
         self.cuda = backend == "cupy"
         if self.cuda:
@@ -116,15 +117,14 @@ class _Geometry:
         # Rows are continued past the detector's edges before their transform (see
         # _continuation). The Cartesian grid keeps the measured detector's field: at
         # twice its width, nothing within three field radii wraps into the field.
-        self.nfft = max(64, next_fast_len(2 * continued_width(detector.nu)))
+        width = continued_width(detector.nu) if exterior == "cylinder" else detector.nu
+        self.nfft = max(64, next_fast_len(2 * width))
         self.shape, self.crop = transform_grid(grid, detector)
         self.flipped = xp.asarray(flipped, dtype=xp.int8)
-        self.period_phase = complex(np.exp(2j * np.pi * (continued_width(detector.nu) - 1) / 2))
+        self.period_phase = complex(np.exp(2j * np.pi * (width - 1) / 2))
         real = xp.float32 if self.cuda else xp.float64
         complex_dtype = xp.complex64 if self.cuda else xp.complex128
-        phase, deapod, table = radial_coefficients(
-            continued_width(detector.nu), self.nfft, detector.du
-        )
+        phase, deapod, table = radial_coefficients(width, self.nfft, detector.du)
         self.projection_phase = xp.asarray(phase, dtype=complex_dtype)
         self.deapod = xp.asarray(deapod, dtype=real)
         self.table = xp.asarray(table, dtype=real)
@@ -248,12 +248,13 @@ def _cached_geometry(
     angles: tuple[float, ...],
     device: int,
     filter: Filter | None,
+    exterior: Exterior,
 ) -> tuple[_Geometry, CuPyValue]:
     """Retain small immutable geometry arrays; no mutable slab buffers."""
     import cupy
 
     with cupy.cuda.Device(device):
-        geometry = _Geometry(grid, detector, nviews, flipped, angles, "cupy", filter)
+        geometry = _Geometry(grid, detector, nviews, flipped, angles, "cupy", filter, exterior)
         ready = cupy.cuda.Event()
         ready.record()
     return geometry, ready
@@ -267,6 +268,7 @@ def _plan_geometry(
     angles: tuple[float, ...],
     backend: Literal["numpy", "cupy"],
     filter: Filter | None,
+    exterior: Exterior,
 ) -> _Geometry:
     """Acquire immutable geometry and make its initialization visible to this stream."""
     shape, _ = transform_grid(grid, detector)
@@ -281,10 +283,11 @@ def _plan_geometry(
             angles,
             cupy.cuda.runtime.getDevice(),
             filter,
+            exterior,
         )
         cupy.cuda.get_current_stream().wait_event(ready)
         return geometry
-    return _Geometry(grid, detector, nviews, flipped, angles, backend, filter)
+    return _Geometry(grid, detector, nviews, flipped, angles, backend, filter, exterior)
 
 
 _STREAMS_LOCK = Lock()
@@ -368,6 +371,7 @@ class FourierPlan:
         backend: Literal["numpy", "cupy"],
         *,
         filter: Filter | None = None,
+        exterior: Exterior = DEFAULT_EXTERIOR,
         async_transfers: bool = False,
         shifts: np.ndarray | None = None,
         order: np.ndarray | None = None,
@@ -405,12 +409,14 @@ class FourierPlan:
             progress.preparing("plan fourier transform"),
             self.compute if self.compute is not None else nullcontext(),
         ):
-            geometry = _plan_geometry(grid, detector, nviews, flipped, angles, backend, filter)
+            geometry = _plan_geometry(
+                grid, detector, nviews, flipped, angles, backend, filter, exterior
+            )
             self.shifts = None if shifts is None else xp.asarray(shifts, dtype=xp.float32)
             self.nviews = geometry.nviews
             self.groups, self.device_groups = geometry.groups, geometry.device_groups
             self.nfft = geometry.nfft
-            self.fits = row_fits(detector)
+            self.fits = row_fits(detector) if exterior == "cylinder" else None
             self.shape, self.crop = geometry.shape, geometry.crop
             self.flipped, self.period_phase = geometry.flipped, geometry.period_phase
             self.view_weights = geometry.view_weights
@@ -515,12 +521,17 @@ class FourierPlan:
 
     def _compute_volume(self, raw: np.ndarray | CuPyValue, count: int) -> np.ndarray | CuPyValue:
         xp = self.xp
-        fits, first, last = self.fits, raw[..., : self.fits.window], raw[..., -self.fits.window :]
-        place = partial(xp.asarray, dtype=raw.dtype)
-        radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
-        low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
-        before, after = fits.tails(place, low, high, radius2)
-        raw = xp.concatenate([before, raw, after], axis=-1)
+        if self.fits is not None:
+            fits, first, last = (
+                self.fits,
+                raw[..., : self.fits.window],
+                raw[..., -self.fits.window :],
+            )
+            place = partial(xp.asarray, dtype=raw.dtype)
+            radius2 = fits.radius(place, first[:, self.sharing], last[:, self.sharing])
+            low, high = self._angular_mean(*fits.amplitudes(place, first, last, radius2))
+            before, after = fits.tails(place, low, high, radius2)
+            raw = xp.concatenate([before, raw, after], axis=-1)
         if self.cuda:
             rows = self.depth * self.source_views
             self.mass_kernel(

@@ -1358,6 +1358,18 @@
           ],
           "default": null,
           "description": "JAX device or sequence of devices. None uses the current default; multiple devices divide the views and each hold the full volume."
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "Model beyond the detector. A cylinder fits each row at its edges. Zero assumes the scan contains the object.",
+          "x-choices": [
+            "cylinder",
+            "zero"
+          ]
         }
       },
       "required": [
@@ -1416,6 +1428,18 @@
             "auto",
             "numpy",
             "cupy"
+          ]
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder",
+          "description": "Model beyond the detector. A cylinder fits each row at its edges. Zero assumes the scan contains the object.",
+          "x-choices": [
+            "cylinder",
+            "zero"
           ]
         }
       },

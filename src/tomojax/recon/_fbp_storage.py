@@ -155,7 +155,9 @@ def fdk_config(cfg: FBPConfig) -> FDKConfig:
         raise InvalidParameter(
             "config.scale", "fbp: cone beams use FDK's exact view weights; leave scale as None"
         )
-    return FDKConfig(filter=cfg.filter, backend=cfg.backend, devices=cfg.devices)
+    return FDKConfig(
+        exterior=cfg.exterior, filter=cfg.filter, backend=cfg.backend, devices=cfg.devices
+    )
 
 
 def _host_fbp(

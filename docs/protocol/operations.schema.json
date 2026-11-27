@@ -1203,6 +1203,13 @@
             }
           ],
           "default": null
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
         }
       },
       "required": [
@@ -1249,6 +1256,13 @@
             "numpy"
           ],
           "default": "auto"
+        },
+        "exterior": {
+          "enum": [
+            "cylinder",
+            "zero"
+          ],
+          "default": "cylinder"
         }
       },
       "required": [

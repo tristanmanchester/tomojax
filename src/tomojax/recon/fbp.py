@@ -10,7 +10,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from tomojax import progress
+from tomojax import _parameters, progress
 from tomojax._parameters import Filter, check_backend, normalize_filter
 from tomojax._typed_arrays import Device
 from tomojax.backends.api import is_oom_error
@@ -53,6 +53,9 @@ class FBPConfig:
 
     Parameters
     ----------
+    exterior : {"cylinder", "zero"}, optional
+        Model beyond the detector. A cylinder fits each row at its edges. Zero assumes
+        the scan contains the object.
     filter : str, optional
         Frequency filter: "ramp", "shepp-logan" or "hann". Default is 'ramp'.
     scale : float | None, optional
@@ -72,7 +75,10 @@ class FBPConfig:
     backend: Literal["auto", "jax", "cuda"] = "auto"
     devices: Device | Sequence[Device] | None = None  # kept as a tuple
 
+    exterior: _parameters.Exterior = _parameters.DEFAULT_EXTERIOR
+
     def __post_init__(self) -> None:
+        _parameters.check_exterior(self.exterior)
         check_backend(self.backend, "fbp")
         if self.scale is not None and not math.isfinite(self.scale):
             raise InvalidParameter("scale", "fbp: scale must be finite")
@@ -198,7 +204,9 @@ def _filter_views(
     oblique = jnp.where((fu == 0) & (fv == 0), length * spectrum[0], jnp.abs(along) * along_window)
     ramp = jnp.where(row_ramp, jnp.abs(t_u) * spectrum, oblique)
     filtered = jnp.fft.irfft2(transformed * (ramp * weight / count), s=(n_v, n_u))
-    return detector_columns(filtered[:, : detector.nv], nu, detector)
+    return detector_columns(
+        filtered[:, : detector.nv], nu, detector, (continued.shape[-1] - nu) // 2
+    )
 
 
 _FILTER_WORKSPACE_BYTES = 128 * 1024**2
@@ -783,7 +791,7 @@ def _plan(
         filter_detector = _parallel_filter_detector(grid, detector)
     else:
         filter_detector = _filter_detector(grid, detector, np.asarray(poses), pad_v=not separable)
-    filter = row_filter(cfg.filter, filter_detector, projections)
+    filter = row_filter(cfg.filter, filter_detector, projections, cfg.exterior)
     n_fft_v = 1 if separable else _fft_length(filter_detector.nv)
     return _Plan(
         poses=poses,

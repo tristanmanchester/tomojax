@@ -14,6 +14,7 @@
   detail do not depend on the continuation; the absolute level is as good as the cylinder
   model. Voxels outside the field of view hold the reconstruction of the continued scan,
   and FDK now keeps its filtered rows as far as the grid projects, as parallel FBP does.
+  Set `exterior="zero"` in the analytic method config to use zero beyond the detector.
   Every reconstruction's `info["truncation"]` records `edge_ratio`, `outside_fraction`,
   `interior_shift`, `radius`, and `field_of_view_radius`; each slab of
   `tj.reconstruct_slabs` has the record of its own rows, and `tomojax reconstruct` and the

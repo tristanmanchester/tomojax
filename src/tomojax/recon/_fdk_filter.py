@@ -54,7 +54,9 @@ def grid_columns(
     return below, above
 
 
-def filter_operator(spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int) -> np.ndarray:
+def filter_operator(
+    spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int, pad: int
+) -> np.ndarray:
     """The matrix that ramp-filters continued rows as ``spectrum`` does.
 
     Its ``nu + 2 * continued_columns(nu)`` rows are the continued row's columns
@@ -66,7 +68,6 @@ def filter_operator(spectrum: np.ndarray, nu: int, pad_lo: int, pad_hi: int) -> 
     """
     n_fft = 2 * (spectrum.shape[0] - 1)
     impulse = np.fft.irfft(spectrum.astype(np.float64), n=n_fft)
-    pad = continued_columns(nu)
     columns = np.arange(-pad_lo, nu + pad_hi)
     return impulse[(columns[None, :] - np.arange(-pad, nu + pad)[:, None]) % n_fft].astype(
         np.float32
@@ -81,7 +82,7 @@ def filter_rows(rows: jax.Array, kernel: jax.Array, nu: int, pad_lo: int, pad_hi
     """
     n_fft = 2 * (int(kernel.shape[0]) - 1)
     out = jnp.fft.irfft(jnp.fft.rfft(rows, n=n_fft, axis=-1) * kernel, n=n_fft, axis=-1)
-    first = continued_columns(nu) - pad_lo
+    first = (rows.shape[-1] - nu) // 2 - pad_lo
     if first >= 0:
         return out[..., first : first + pad_lo + nu + pad_hi]
     # Virtual columns beyond the continuation read the circular transform's tail.
@@ -94,7 +95,7 @@ def continued_rows(
     views: jax.Array,
     weights: jax.Array,
     cosine: jax.Array,
-    radius2: jax.Array,
+    radius2: jax.Array | None,
     distance: tuple[float, ...],
 ) -> jax.Array:
     """Weighted rows continued past the detector's edges (see ``_continuation``).
@@ -108,6 +109,8 @@ def continued_rows(
     nu = views.shape[-1]
     pad = continued_columns(nu)
     rows = views * weights[:, None, :]
+    if radius2 is None:
+        return rows * cosine
     fits = Continuation(np.asarray(distance), nu, pad)
     before, after = fits.continued(partial(jnp.asarray, dtype=rows.dtype), rows, radius2)
     return jnp.concatenate([before, rows, after], axis=-1) * cosine

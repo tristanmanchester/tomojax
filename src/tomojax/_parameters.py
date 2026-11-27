@@ -9,6 +9,9 @@ from tomojax.errors import InvalidParameter
 type Method = Literal["auto", "fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 type ReconMethod = Literal["fbp", "fourier", "cgls", "fista", "spdhg", "sirt", "mlem"]
 type Filter = Literal["ramp", "hann", "shepp-logan"]
+type Exterior = Literal["cylinder", "zero"]
+DEFAULT_EXTERIOR: Exterior = "cylinder"
+
 type RegionName = Literal["auto", "bbox", "cube", "cyl"]
 type AlignMethod = Literal["joint", "opposite-views"]
 type Fit = Literal["center", "tilt", "roll", "translations", "rotations"]
@@ -17,6 +20,12 @@ type GeometryName = Literal["parallel", "lamino", "cone"]
 type TiltAbout = Literal["x", "z"]
 
 type ProjectorBackend = Literal["auto", "jax", "cuda"]
+
+
+def check_exterior(exterior: Exterior) -> None:
+    """Validate the model of the scan beyond the detector."""
+    if exterior not in get_args(Exterior.__value__):
+        raise InvalidParameter("config.exterior", "exterior must be cylinder or zero")
 
 
 def normalize_filter(name: str | None) -> Filter:
