@@ -3,7 +3,7 @@
 Two flat sets around a run of views differ either because the illumination changed
 between them or because one of them does not show the illumination the views had
 (something stood in the beam while it was taken). The acquisition times cannot tell
-these apart. The views identify differences in texture. With ``L = log(later) - log(earlier)`` and a view whose
+these apart. With ``L = log(later) - log(earlier)`` and a view whose
 illumination is ``earlier * exp(w L)``, ``log(view) - log(earlier) = w L - p`` for the
 line integrals ``p``. The fine structure of ``L`` along detector columns is unrelated
 to the object, so regressing the view on it over a neighborhood measures ``w`` there.
@@ -246,8 +246,9 @@ def _sampled_sums(
             progress.step("view batches")
     # The ratio's mean over each cell's rows, at every column.
     padded = np.pad(np.asarray(ratio, np.float64), ((0, -rows % _CELL), (0, 0)))
-    among = np.minimum(_CELL, rows - _CELL * np.arange(len(padded) // _CELL))[:, None]
-    return np.concatenate(sums, axis=1), padded.reshape(-1, _CELL, cols).sum(1) / among
+    measured = np.pad(fields.usable, ((0, -rows % _CELL), (0, 0))).reshape(-1, _CELL, cols).sum(1)
+    total = padded.reshape(-1, _CELL, cols).sum(1)
+    return np.concatenate(sums, axis=1), np.where(measured, total / np.maximum(measured, 1), np.nan)
 
 
 def _fitted(
@@ -444,7 +445,8 @@ def _levels(
     to cell; multiplying a level difference between the sets by them would print
     that noise, and every change of weight, into the flat as steps. For each end
     of the interval and each row of cells, with ``w`` the weights along the row
-    and ``r = exp(ratio)``, the blend ``1 + w (r - 1)`` steps by
+    and ``r`` the flat ratio after removing the common row gain, the blend
+    ``1 + w (r - 1)`` steps by
     ``log(1 + w[u + 1] (r[u + 1] - 1)) - log(1 + w[u] (r[u + 1] - 1))`` from the
     change of weight alone. The level ``d`` minimizes the squares of
     ``d[u + 1] - d[u]`` plus that step, and of the distance of the blend's level
@@ -461,7 +463,8 @@ def _levels(
     # Estimate the common row gain by absolute deviations. Give columns influence
     # in proportion to the position prior's share of the fit. The best available
     # reference sets its reliability when the entire row has changing texture.
-    quiet = _along_columns(1 - share, cols)
+    quiet = _along_columns(1 - share, cols) * np.isfinite(ratio)
+    ratio = np.nan_to_num(ratio)
     order = np.argsort(ratio, axis=1)
     mass = np.take_along_axis(quiet, order, axis=1).cumsum(axis=1)
     middle = (mass < 0.5 * mass[:, -1:]).sum(axis=1, keepdims=True)

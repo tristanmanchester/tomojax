@@ -146,11 +146,29 @@ def test_sets_that_differ_by_noise_or_level_stay_interpolated_by_position(case: 
     assert scan.corrections[0].found == {"pixels_without_light": 0, "flat_weights_from_views": 0.0}
 
 
-def test_structure_in_one_region_does_not_transfer_a_beam_wide_decay() -> None:
+@pytest.mark.parametrize("unlit_margin", [0, 2 * COLS])
+def test_structure_in_one_region_does_not_transfer_a_beam_wide_decay(unlit_margin: int) -> None:
     frames, truth, _ = _frames("fading with specks")
+    if unlit_margin:
+        cols = COLS + unlit_margin
+        geometry = tj.ParallelGeometry(
+            tj.Grid(cols, cols, ROWS, 1.0, 1.0, 1.0),
+            tj.Detector(cols, ROWS, 1.0, 1.0),
+            frames.geometry.angles,
+        )
+        padding = ((0, 0), (0, 0), (0, unlit_margin))
+        frames = tj.Frames(
+            np.pad(frames.counts, padding, constant_values=DARK),
+            geometry,
+            flats=np.pad(frames.flats, padding, constant_values=DARK),
+            darks=np.pad(frames.darks, padding, constant_values=DARK),
+            flat_positions=frames.flat_positions,
+        )
     region = np.s_[:12, :, : COLS // 4]
-    baseline = (_by_position(frames) - truth)[region]
-    error = (np.asarray(frames.corrected().projections) - truth)[region]
+    baseline = (
+        np.asarray(frames.corrected(flat_weights="position").projections)[region] - truth[region]
+    )
+    error = np.asarray(frames.corrected().projections)[region] - truth[region]
     assert abs(error.mean()) < 0.005
     assert _rms(error) < 0.6 * _rms(baseline)
 
