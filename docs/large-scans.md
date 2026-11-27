@@ -98,6 +98,14 @@ On `SIGTERM` inside a checkpointed loop on the main thread, TomoJAX finishes the
 
 On a hard kill (`SIGKILL`, a node failure, or a `SIGTERM` whose current step plus save runs past the scheduler grace period), no final save runs and the next run resumes from the last completed periodic or slab save. Because `checkpoint.json` is replaced atomically after the new entry is synced, a kill during a save leaves the previous entry intact, and any incomplete entry directory is deleted on the next open.
 
+![Two timelines of a checkpointed job. In the first, a SIGTERM shortly before the time limit makes the run save and exit; the requeued job starts from that save. In the second, a hard kill stops the run between two periodic saves; the requeued job starts from the last periodic save and repeats the work done after it, shown in orange.](images/checkpoint-timeline.png)
+
+A schematic of the two cases. An early `SIGTERM` costs no work. A hard kill costs the work done since the last periodic save, at most one save interval of 10 minutes or more.
+
+```bash
+uv run python examples/gallery/checkpoint_timeline.py checkpoint-timeline.png
+```
+
 TomoJAX refuses a checkpoint with `InvalidParameter` (a `ValueError` subclass) when:
 
 - the directory holds another run's checkpoint (different operation, TomoJAX version, input array digest, geometry, or settings such as method, config, filter, or warm start; arrays above 4 million elements are digested from 8 evenly spaced slices along axis 0, and the error names what differs);

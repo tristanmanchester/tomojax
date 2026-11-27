@@ -86,6 +86,15 @@ circular sample feature centered on the rotation axis gives the same
 measurements as a symmetric detector offset, so compare corrected and
 uncorrected slices near the axis.
 
+![Three rows of slices around the rotation axis, from a half turn with fine rings, a half turn with wide rings and a full turn. Each row shows the slice without a ring step, with Rings(), and what Rings() removed, which is a set of concentric rings. The fine rings and the full-turn rings disappear; on the wide-ring scan most rings disappear, while some broad rings and the structure at the axis remain.](images/ring-removal.png)
+
+One detector row of three real scans, each with its rotation center measured by `tj.align(scan, fit="center")` and reconstructed by the default `tj.reconstruct` without and with `Rings()`. Diamond K11 (DIAD) scan 52567 and setup scan 52510 are half turns of 8000 views on 2560 pixels of 0.54 µm; Diamond I13 scan 159950 is a full turn of 3001 views. Each panel shows 380 pixels around the axis, and the two slices in a row share one gray range.
+
+```bash
+uv run python examples/gallery/ring_removal.py k11-52567-row1080.nxs \
+  k11-52510-row1080.nxs 159950-row1035.nxs ring-removal.png
+```
+
 By default `Rings()` fits on 512 angular bin means, so it adds about 10 s on a
 half turn and 20 s on a full turn of an 8,000-view 2160 × 2560 streamed Fourier
 volume on one V100S, with ~15 MiB extra GPU memory. See
@@ -166,6 +175,14 @@ By default, reconstruction keeps the scan's recorded grid (matching `region=None
 
 By default (`filter=None`), Fourier uses its native response with a detector-Nyquist disk cutoff: edges stay sharper than in FBP, while high-frequency noise is higher. Pass `filter="ramp"` (`tj.reconstruct(scan, "fourier", filter="ramp")`, `--method fourier --filter ramp`, or `config=FourierConfig(filter="ramp")` in `tj.reconstruct_slabs`) for resolution and noise close to default FBP at Fourier's speed and GPU memory. The same option accepts `"hann"` and `"shepp-logan"` for stronger high-frequency smoothing.
 
+![Three enlargements of one region of a sandstone slice from Diamond I12, reconstructed by FBP, by Fourier with its default response and by Fourier with filter="ramp", above the whole FBP slice and each Fourier slice minus FBP. The default Fourier slice is grainier than FBP and differs from it by strong fine-grained noise; the filter="ramp" slice looks like FBP and its difference is fainter.](images/fourier-response.png)
+
+Detector row 1080 of the Diamond I12 scan of Vo et al. (Zenodo 3339629; 1801 views of 2560 pixels), ring-corrected and reconstructed three ways on one grid. In the enlarged region, about 280 pixels from the rotation axis, the RMS difference from FBP is 0.32 of FBP's standard deviation with the default response and 0.15 with `filter="ramp"`. More than about 700 pixels from the axis, both Fourier slices differ from FBP by similar amounts.
+
+```bash
+uv run python examples/gallery/fourier_response.py full_rows1048-1111.nxs fourier-response.png
+```
+
 ### Expert settings and truncated scans
 
 Pass solver-specific settings via config classes from `tomojax.recon` (`FBPConfig`, `FourierConfig`, `CGLSConfig`, `FISTAConfig`, `SPDHGConfig`, `SIRTConfig`, `MLEMConfig`) or a `--config` TOML file alongside an explicit `--method` (`tomojax reconstruct --method fista --config-keys` lists one method's keys):
@@ -187,6 +204,14 @@ Direct keywords (such as `iterations=100`) override fields of the same name in `
 
 - **Material outside the field of view:** CGLS, FISTA, and SPDHG fit absolute line integrals by default. Pass `data_term="per_view_contrast"` in the config to profile out one constant offset per view (absolute background level is then undetermined).
 - **FISTA TV weight and stopping:** With `tv_weight=None` and `tolerance=None` (the defaults), FISTA estimates detector noise and linear interpolation error from the projections, propagates that scale through the backprojector to set the TV weight, and stops once the proximal gradient reaches the estimated noise level or at `iterations=200`. Check `recon.info` for `resolved_tv_weight` (dimensionless), `effective_tv_weight` (dimensional), `noise_score_rms`, `effective_iterations`, and `early_stop` (`False` means the solver reached the iteration cap). Pass `tv_weight` explicitly (positive to fix the weight, `0` to disable TV) to bypass calibration and run to `iterations`; pass `FISTAConfig(tolerance=0)` to run an automatic weight for the full budget, or set `iterations` to change the cap. Remove rings before running automatic FISTA, because coherent detector errors survive scalar TV calibration.
+
+![One region of a cathode slice from Diamond K11, reconstructed by FBP and by FISTA with its automatic TV weight, each above an enlarged part. The FBP slice is grainy; the FISTA slice keeps the particles and their edges without the grain.](images/fista-tv-weight.png)
+
+Detector row 1080 of Diamond K11 (DIAD) scan 52567: 8000 views over a half turn on 2560 pixels of 0.54 µm, corrected with `Rings()` and reconstructed by `tj.reconstruct(scan, "fbp")` and `tj.reconstruct(scan, "fista")`. FISTA chose `resolved_tv_weight` 8.2e-6 and ran to the 200-update cap. All four panels share one gray range.
+
+```bash
+uv run python examples/gallery/fista_tv_weight.py k11-52567-row1080.nxs fista-tv-weight.png
+```
 
 ### Iterative solver defaults and stopping
 

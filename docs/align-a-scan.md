@@ -55,6 +55,14 @@ On an unposed, unrolled axial parallel scan with a well-sampled half-turn, `tj.a
 
 The returned `Alignment` holds the updated geometry in `result.scan`, the fitted center in `result.info["calibration"]["center"]` (`value` in geometry length units, `change` in native pixels), `result.info["method"] == "sinogram-focus"`, and `result.info["diagnostics"]` (`focus_px`, `binning`, `views`, and `pairs`). Both `result.image` and `result.grid` are `None`. Pass `method="joint"` when you also want a fitted working volume; supplying `grid=`, `region=`, `config=`, any joint solver keyword, a multi-parameter `fit`, or a geometry outside an unposed, unrolled, well-sampled axial parallel half-turn also runs the joint fit. Axial parallel joint fits initialize from the measured center. For a quick check from opposing view pairs alone (within 2°, with per-pair diagnostics), run `tj.align(scan, method="opposite-views")`, which also leaves `result.image` and `result.grid` as `None`.
 
+![A sandstone slice from Diamond I12 reconstructed with the rotation center at the detector middle and at the center fit="center" measures, 139 pixels away, each above an enlarged region away from the axis. At the detector middle every feature is smeared into arcs; at the measured center the pores and grains are sharp.](images/center-fit.png)
+
+Detector row 1080 of the Diamond I12 scan of Vo et al. (Zenodo 3339629; 1801 views over a half turn on 2560 pixels). The file records no rotation center, so loading puts it at the detector middle. `tj.align(scan, fit="center")` measures it 139.0 pixels from there.
+
+```bash
+uv run python examples/gallery/center_fit.py full_rows1048-1111.nxs center-fit.png
+```
+
 On well-sampled parallel scans with rings, streaks, and flat-field drift, the direct fit recovers the center with median error under 1 px across detector widths from 24 to 2,560 columns ([axial center measurements](measurements.md#axial-rotation-center)). Measurement requires transmitted sample signal across the turn: a dark or empty row band has no axis to locate and can return a large arbitrary offset. Strong artifacts, severely spoiled flats, or smooth, nearly stationary structure can still shift the estimate by several pixels. If reconstructed features still look doubled after `fit="center"`:
 
 1. Confirm the cropped row band holds illuminated sample structure across the turn, and apply `RejectViews()` or `Rings()` if broken frames or heavy rings are present.

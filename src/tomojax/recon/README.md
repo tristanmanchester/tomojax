@@ -129,6 +129,18 @@ not evaluate full-data optimality. To replay an automatic run, pass
 | `spdhg` | Fixed budget of 600 stochastic block updates | Pass `iterations=N` |
 | `cgls_multires` | Explicit per-level budgets (`iterations_per_level=(32, 16)`), numerical stopping per level | Pass `iterations_per_level=(...)` and `config=CGLSConfig(tolerance=...)` |
 
+![The central slice of FIPS walnut 1 and an enlarged region, reconstructed by FDK, CGLS, plain SIRT and the default SIRT with momentum, each after 50 updates. Plain SIRT is still blurred; SIRT with momentum is as sharp as CGLS and FDK.](../../../docs/images/sirt-momentum.png)
+
+FIPS walnut 1 (Der Sarkissian et al. 2019, Zenodo 2686726): all 1200 views of the middle
+cone orbit, the detector binned 2 × 2, on the authors' 501³ grid of 0.1 mm,
+with `region="cyl"`. Default CGLS and default SIRT both reached the 50-update
+cap on this scan; plain SIRT ran the same 50 updates with
+`tj.reconstruct(scan, "sirt", iterations=50)`. All panels share one gray range.
+
+```bash
+uv run python examples/gallery/sirt_momentum.py Walnut1 sirt-momentum.png
+```
+
 SIRT uses the exact matched projector pair with row and column normalization;
 `SIRTConfig()` defaults to `iterations=None, subsets=1, relaxation=1.0, acceleration=None, lower_bound=None, upper_bound=None, support=None`.
 Pass `lower_bound=0` for nonnegativity.
