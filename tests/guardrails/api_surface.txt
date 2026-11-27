@@ -703,6 +703,7 @@ class tomojax.recon.FBPConfig(
         scale: float | None = None,
         backend: Literal['auto', 'jax', 'cuda'] = 'auto',
         devices: tomojax._typed_arrays.Device | collections.abc.Sequence[tomojax._typed_arrays.Device] | None = None,
+        exterior: Exterior = 'cylinder',
     ) -> None
 class tomojax.recon.FBPHostConfig(
         *,
@@ -716,6 +717,7 @@ class tomojax.recon.FDKConfig(
         backend: 'ProjectorBackend' = 'auto',
         views_per_batch: 'int' = 64,
         devices: 'Device | Sequence[Device] | None' = None,
+        exterior: '_parameters.Exterior' = 'cylinder',
     ) -> None
 class tomojax.recon.FDKHostConfig(*, slices_per_batch: 'int | None' = None, fdk: 'FDKConfig' = <factory>) -> None
 class tomojax.recon.FISTAConfig(
@@ -743,6 +745,7 @@ class tomojax.recon.FourierConfig(
         slices_per_batch: 'int | None' = None,
         filter: '_parameters.Filter | None' = None,
         backend: "Literal['auto', 'numpy', 'cupy']" = 'auto',
+        exterior: '_parameters.Exterior' = 'cylinder',
     ) -> None
 class tomojax.recon.MLEMConfig(
         *,
