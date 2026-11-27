@@ -473,7 +473,8 @@ def least_squares_operators(
         if shared_update is None:
             return _summed(split, ops, at, shared=shared, views=(data,))
 
-        assert split is not None and volume is not None
+        assert split is not None
+        assert volume is not None
         update = shared_update
 
         def on_device(
