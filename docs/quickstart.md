@@ -199,7 +199,7 @@ When an object extends past the detector edges, assuming zero attenuation outsid
 
 By default (`exterior="cylinder"`), `fourier`, `fbp`, and cone-beam FDK continue each detector row beyond the measured field before filtering, as the projection of a uniform cylinder about the rotation axis fitted to the row's own edges. A row that ends at zero continues as zero, so contained objects reconstruct unchanged.
 
-Iterative solvers use one coarse fit to those completed rows to estimate how much of each measured ray comes from outside the reconstruction grid. CGLS, SIRT, FISTA and SPDHG subtract the estimated contribution from outside the reconstruction grid before fitting the measured rays. MLEM adds its nonnegative estimate to the predicted counts. The stored scan keeps its original measurements. An FBP or FDK warm start uses the same exterior setting.
+Iterative solvers use one coarse fit to the completed rows to estimate how much of each measured ray comes from outside the reconstruction grid. CGLS, SIRT, FISTA and SPDHG subtract that estimate once before the fine solve. MLEM adds its nonnegative estimate to the predicted counts at every update. The stored scan keeps its original measurements. An FBP or FDK warm start uses the same exterior setting.
 
 To assume zero beyond the detector, set `exterior="zero"` in the method configuration:
 
@@ -226,10 +226,10 @@ For iterative methods, `outside_grid` is the modeled contribution divided by the
 How to read the reconstruction:
 
 - **Analytic reconstructions:** edges, contrast between neighboring regions, and fine detail inside the field of view do not depend on the continuation. The absolute attenuation level depends on how closely the exterior matches a uniform cylinder about the rotation axis. Compare `interior_shift` with the contrast you measure to judge how much of the level comes from the model. Non-cylindrical exteriors that leave the field of view only in some views (such as a square bar) still retain partial cupping and rim error.
-- **Outside the field of view:** voxels outside the inscribed detector field hold the reconstruction of the continued scan (a model, not measured attenuation). Pass `region="cyl"` (`--region cyl`) to zero them.
+- **Outside the field of view:** analytic methods reconstruct the continued rows in voxels outside the inscribed detector field. Those values depend on the exterior model. Pass `region="cyl"` (`--region cyl`) to zero them.
 - **Iterative reconstructions:** the exterior fit can remove the bright rim and bowl when the object extends past the grid. Different exteriors can produce identical measured rays. The absolute level depends on the assumed exterior, and the stopping point affects fine detail.
 
-On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
+On full synchrotron volumes (DIAD k11-52567, 8,000 views of 2,160 × 2,560 into `2,160 × 2,560²`, medians of three runs), analytic cylinder continuation adds no measurable time on a Tesla V100S 32 GB GPU (Fourier 31.60 s vs 33.10 s; FBP 324.40 s vs 338.40 s) and up to 5% on an RTX PRO 6000 Blackwell 96 GB GPU (Fourier 12.60 s vs 12.00 s; FBP 55.80 s vs 56.00 s). On smaller volumes in a fresh process it adds a fixed fraction of a second (0.17 to 0.48 s on Blackwell and 0.36 to 0.76 s on V100S). See [truncated-scan measurements](measurements.md#automatic-corrections) and [known limitations](known-limitations.md#reconstruction-and-regularization).
 
 ### Expert settings
 
