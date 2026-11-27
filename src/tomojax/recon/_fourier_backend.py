@@ -523,7 +523,7 @@ class FourierPlan:
             raw, tails, exterior_mass = self.exterior.transform(raw)
         if self.cuda:
             rows = self.depth * self.source_views
-            padded = xp.empty((*raw.shape[:-1], self.nfft), dtype=xp.float32)
+            fft_rows = xp.empty((*raw.shape[:-1], self.nfft), dtype=xp.float32)
             self.mass_kernel(
                 ((rows + 7) // 8,),
                 (256,),
@@ -531,17 +531,18 @@ class FourierPlan:
                     raw,
                     self.deapod,
                     self.row_mass,
-                    padded,
+                    fft_rows,
                     np.int32(raw.shape[-1]),
                     np.int32(self.nfft),
                     np.int64(rows),
                 ),
             )
-            raw = padded
         else:
             mass = (xp.sum(raw, axis=-1, dtype=xp.float64) @ self.view_weights) * self.detector.du
             raw *= self.deapod
-        spectrum = xp.fft.rfft(raw, n=self.nfft, axis=-1)
+            fft_rows = raw
+        spectrum = xp.fft.rfft(fft_rows, n=self.nfft, axis=-1)
+        del fft_rows  # cuFFT can reuse this stream's row storage for the Cartesian inverse.
         _ = xp.multiply(spectrum, self.projection_phase, out=spectrum)
         if self.cuda:
             if exterior_mass is not None:

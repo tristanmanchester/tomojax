@@ -508,8 +508,9 @@ def fdk(
 
     With the default cylinder exterior, FDK continues rows past the detector edges
     after applying angular weights and before filtering. An opposing view that measures
-    an edge's rays takes their weight, so the edge continues as zero. Filtered rows are kept as far as the grid projects, so voxels outside
-    the field of view hold the reconstruction of the continued scan.
+    an edge's rays takes their weight, so the edge continues as zero. FDK keeps filtered
+    columns as far as the grid projects. Voxels outside the field of view hold the
+    reconstruction of the continued scan.
 
     Parameters
     ----------
