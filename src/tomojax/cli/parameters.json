@@ -617,6 +617,18 @@
           "default": 1e-06,
           "description": "Positive finite lower bound for flat field and transmission."
         },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views",
+          "description": "How a view between two flat sets blends them: by what a sample of the views shows of each set (see tomojax.corrections), or by its position alone.",
+          "x-choices": [
+            "views",
+            "position"
+          ]
+        },
         "views_per_batch": {
           "anyOf": [
             {
@@ -648,6 +660,7 @@
         "Frames.corrected": {
           "steps": "corrections",
           "epsilon": "epsilon",
+          "flat_weights": "flat_weights",
           "views_per_batch": "views_per_batch",
           "binning": "binning"
         }
@@ -2988,6 +3001,18 @@
           "default": 1e-06,
           "description": "Positive finite lower bound for flat field and transmission."
         },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views",
+          "description": "How a view between two flat sets blends them, as for tomojax.Frames.corrected.",
+          "x-choices": [
+            "views",
+            "position"
+          ]
+        },
         "checkpoint": {
           "anyOf": [
             {
@@ -3017,6 +3042,7 @@
           "config": "config",
           "warm_start": "warm_start",
           "epsilon": "epsilon",
+          "flat_weights": "flat_weights",
           "checkpoint": "checkpoint",
           "info": {
             "owner": "worker",
@@ -5201,6 +5227,18 @@
           "type": "number",
           "default": 1e-06,
           "description": "Positive finite lower bound for flat field and transmission."
+        },
+        "flat_weights": {
+          "enum": [
+            "position",
+            "views"
+          ],
+          "default": "views",
+          "description": "How a view between two flat sets blends them: by what a sample of the views shows of each set (see tomojax.corrections), or by its position alone.",
+          "x-choices": [
+            "views",
+            "position"
+          ]
         },
         "views_per_batch": {
           "anyOf": [
