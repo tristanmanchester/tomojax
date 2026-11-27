@@ -49,7 +49,8 @@ def edge_width(volume: np.ndarray, feature: np.ndarray, reach: float = 6.0) -> f
     The feature must be thicker than the blur: across a thin shell both of its edges
     fall within ``reach`` and the width measures the shell's own profile.
     """
-    inside = np.asarray(ndimage.distance_transform_edt(feature))
+    crop = (slice(1, -1),) * feature.ndim
+    inside = np.asarray(ndimage.distance_transform_edt(np.pad(feature, 1)))[crop]
     outside = np.asarray(ndimage.distance_transform_edt(~feature))
     distance = np.where(feature, 0.5 - inside, outside - 0.5)
     near = np.abs(distance) <= reach

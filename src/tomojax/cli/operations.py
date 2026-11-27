@@ -325,9 +325,10 @@ class Seeded(Record, tag="seeded"):
 class Band(Record, tag="band"):
     """Voxels whose signed distance from a feature lies in (inner, outer] index units.
 
-    The feature's own boundary voxels are at 0 and distances fall inward, so inner=0,
-    outer=3 is a three-voxel shell outside it and inner=-3, outer=0 the three-voxel rim
-    inside it.
+    Voxels beyond the array are background. Inside the feature the signed distance
+    is one minus the Euclidean distance to the nearest background voxel center,
+    so a face neighbor of background has distance zero. Outside the feature it
+    is the distance to the nearest feature voxel center. Both bands stop at the grid.
     """
 
     feature: Member

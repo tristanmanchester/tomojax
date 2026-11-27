@@ -221,7 +221,7 @@ def band(recipe: op.Band, base: ex.Feature) -> tuple[np.ndarray, Window]:
     """
     if not base.inside.any():
         raise InvalidParameter("recipe.feature", "the feature is empty")
-    reach = ceil(max(recipe.outer, -recipe.inner, 0)) + 1
+    reach = ceil(max(recipe.outer, 0))
     window = clipped(
         [b.start - reach for b in base.box], [b.stop - 1 + reach for b in base.box], base.shape
     )
@@ -232,7 +232,8 @@ def band(recipe: op.Band, base: ex.Feature) -> tuple[np.ndarray, Window]:
         result |= ~mask & (outside > recipe.inner) & (outside <= recipe.outer)
         del outside
     if recipe.inner < 0:  # voxels inside, at distances 0, -1, ...
-        depth = 1 - np.asarray(ndimage.distance_transform_edt(mask))
+        crop = (slice(1, -1),) * mask.ndim
+        depth = 1 - np.asarray(ndimage.distance_transform_edt(np.pad(mask, 1)))[crop]
         result |= mask & (depth > recipe.inner) & (depth <= recipe.outer)
     return result, window
 

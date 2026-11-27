@@ -407,3 +407,66 @@ s = tj.Scan(np.ones((2,5,5), np.float32), geom)
         fixed = c.call("open", path=str(path), kind="feature")["structuredContent"]["handle"]
         result = c.call("view", source=volume, features=[fixed])
         assert result["isError"] and "fixed axes" in result["content"][0]["text"]
+
+
+def test_inner_rim_counts_are_invariant_at_faces_edges_and_corners(tmp_path):
+    with connection(tmp_path) as c:
+        volume = python(c, "register(np.zeros((10,10,10), dtype='f4'))")["value"]
+        for side, low in (
+            (10, [0, 0, 0]),
+            (5, [2, 2, 2]),
+            (5, [0, 2, 2]),
+            (5, [0, 5, 2]),
+            (5, [5, 5, 0]),
+        ):
+            high = [v + side - 1 for v in low]
+            box = feature(c, source=volume, recipe={"type": "box", "corners": [low, high]})
+            rim = feature(
+                c,
+                source=volume,
+                recipe={"type": "band", "feature": box["handle"], "inner": -1, "outer": 0},
+            )
+            assert rim["voxels"] == side**3 - (side - 2) ** 3
+            if side == 10:
+                shell = feature(
+                    c, source=volume, recipe={"type": "band", "feature": box["handle"], "outer": 1}
+                )
+                assert (shell["voxels"], shell["mean"], shell["std"]) == (0, None, None)
+
+
+def test_bands_match_nearest_lattice_point_with_exterior_background(tmp_path):
+    with connection(tmp_path) as c:
+        for shape in ((5,), (4, 5), (3, 4, 5), (2, 3, 3, 4)):
+            points = np.indices(shape).reshape(len(shape), -1).T
+            # Irregular mask with diagonals, interiors and boundaries in each dimension.
+            inside = (points.sum(1) % 6 < 3).reshape(shape)
+            volume, base = python(
+                c,
+                f"""v = np.zeros({shape}, dtype='f4')
+f = register_feature(np.array({inside.tolist()!r}), like=v)
+[register(v), f]""",
+            )["value"]
+            foreground = points[inside.ravel()]
+            background = points[~inside.ravel()]
+            distances = []
+            for point in points:
+                # Nearest exterior lattice point lies one step beyond one of the faces.
+                exterior = np.minimum(point + 1, np.array(shape) - point).min()
+                if inside[tuple(point)]:
+                    nearest = min(np.linalg.norm(background - point, axis=1))
+                    distances.append(1 - min(exterior, nearest))
+                else:
+                    distances.append(min(np.linalg.norm(foreground - point, axis=1)))
+            signed = np.array(distances).reshape(shape)
+            for lo, hi in ((-2, -0.25), (-1, 0), (-1.5, 1), (0, 1.5), (1, 2)):
+                found = feature(
+                    c,
+                    source=volume,
+                    recipe={"type": "band", "feature": base, "inner": lo, "outer": hi},
+                )
+                indices = python(c, f"np.flatnonzero(handles[{found['handle']!r}].mask).tolist()")[
+                    "value"
+                ]
+                np.testing.assert_array_equal(
+                    indices, np.flatnonzero((signed > lo) & (signed <= hi))
+                )

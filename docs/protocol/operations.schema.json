@@ -4126,7 +4126,7 @@
     },
     "Band": {
       "title": "Band",
-      "description": "Voxels whose signed distance from a feature lies in (inner, outer] index units.\n\n    The feature's own boundary voxels are at 0 and distances fall inward, so inner=0,\n    outer=3 is a three-voxel shell outside it and inner=-3, outer=0 the three-voxel rim\n    inside it.",
+      "description": "Voxels whose signed distance from a feature lies in (inner, outer] index units.\n\n    Voxels beyond the array are background. Inside the feature the signed distance\n    is one minus the Euclidean distance to the nearest background voxel center,\n    so a face neighbor of background has distance zero. Outside the feature it\n    is the distance to the nearest feature voxel center. Both bands stop at the grid.",
       "type": "object",
       "properties": {
         "type": {

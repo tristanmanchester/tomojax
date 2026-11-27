@@ -141,6 +141,8 @@ Once you agree on a structure, the `feature` tool turns it into a named mask hel
 
 Bands, feature outlines and side-by-side views require the same physical sampling at every array index. The tools compare shape, axis order, frames, axis units, fixed planes, origins, signed pitches and complete coordinate vectors. The absolute tolerance is `1e-6` in each axis's unit. Use a feature made on the target grid or resample the mask explicitly before measuring it. Volume differences also require matching value units. The MCP `view` difference can transpose a saved volume by its axis names to compare the same voxels.
 
+For an inner rim one voxel thick, use `inner=-1, outer=0`. The space beyond every grid face is background, so the rim follows the feature even where it meets a face, edge or corner of the volume. An outer band includes only source voxels. A full-volume feature thus has an empty outer band, with count zero and null moments.
+
 ## Files
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`, and never overwrite their own inputs. Each output is written beside its destination and moved into place once whole.
