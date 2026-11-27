@@ -70,6 +70,9 @@ def _frames(
 
     if case == "fading":  # the beam fades by 5% through the scan
         change -= 0.05
+    elif case == "fading with specks":
+        change -= 0.1
+        shadows[0] = np.where(col < COLS // 3, np.exp(0.025 * _texture(rng, 1.5)), 1.0)
     elif case == "drifting pattern":  # fine structure grows through the scan
         change = 0.03 * _texture(rng, 2.0)
     elif case == "first set shadowed":
@@ -141,6 +144,15 @@ def test_sets_that_differ_by_noise_or_level_stay_interpolated_by_position(case: 
     scan = frames.corrected()
     np.testing.assert_allclose(np.asarray(scan.projections), _by_position(frames), atol=1e-5)
     assert scan.corrections[0].found == {"pixels_without_light": 0, "flat_weights_from_views": 0.0}
+
+
+def test_structure_in_one_region_does_not_transfer_a_beam_wide_decay() -> None:
+    frames, truth, _ = _frames("fading with specks")
+    region = np.s_[:12, :, : COLS // 4]
+    baseline = (_by_position(frames) - truth)[region]
+    error = (np.asarray(frames.corrected().projections) - truth)[region]
+    assert abs(error.mean()) < 0.005
+    assert _rms(error) < 0.6 * _rms(baseline)
 
 
 def test_sets_of_one_frame_have_no_measured_noise_and_stay_interpolated_by_position() -> None:

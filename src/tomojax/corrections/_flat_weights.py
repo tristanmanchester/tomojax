@@ -3,7 +3,7 @@
 Two flat sets around a run of views differ either because the illumination changed
 between them or because one of them does not show the illumination the views had
 (something stood in the beam while it was taken). The acquisition times cannot tell
-these apart; the views can. With ``L = log(later) - log(earlier)`` and a view whose
+these apart. The views identify differences in texture. With ``L = log(later) - log(earlier)`` and a view whose
 illumination is ``earlier * exp(w L)``, ``log(view) - log(earlier) = w L - p`` for the
 line integrals ``p``. The fine structure of ``L`` along detector columns is unrelated
 to the object, so regressing the view on it over a neighborhood measures ``w`` there.
@@ -14,7 +14,13 @@ as a line in the views' positions between the sets. The flat sets' own noise is 
 only noise or smooth across columns carries no information and the weights stay those
 of linear interpolation in position.
 
-The weights describe structure, not level. Where they change along a row while the
+A smooth change in incident flux and a change in object attenuation enter the logged
+view with opposite signs. Their absolute levels cannot be separated using this fit.
+Columns with little evidence of a change in texture provide a reference for a gain
+common to their detector row. Interpolate that gain by position. Without such a
+reference the common gain is unresolved and the texture blend retains its level.
+
+The weights describe the remaining structure. Where they change along a row while the
 sets differ, blending the sets would put a step in the flat that neither the views
 nor the weights support (the far side of an edge that only one set has). A level
 term removes that step: it keeps the blended flat where a set matches the views or
@@ -452,7 +458,16 @@ def _levels(
     cols = ratio.shape[1]
     unmatched = 4 * np.max(broad * (1 - broad), axis=0)
     hold = _along_columns((1 - share * unmatched) ** 8, cols) / _WIDTH**2 + 1e-9
-    change = np.expm1(ratio.astype(np.float64))[None]
+    # Estimate the common row gain by absolute deviations. Give columns influence
+    # in proportion to the position prior's share of the fit. The best available
+    # reference sets its reliability when the entire row has changing texture.
+    quiet = _along_columns(1 - share, cols)
+    order = np.argsort(ratio, axis=1)
+    mass = np.take_along_axis(quiet, order, axis=1).cumsum(axis=1)
+    middle = (mass < 0.5 * mass[:, -1:]).sum(axis=1, keepdims=True)
+    drift = np.take_along_axis(ratio, np.take_along_axis(order, middle, axis=1), axis=1)
+    drift *= quiet.max(axis=1, keepdims=True)
+    change = np.expm1(ratio - drift)[None]
     weights = _along_columns(ends.astype(np.float64), cols)
     step = np.log1p(weights[..., 1:] * change[..., 1:]) - np.log1p(
         weights[..., :-1] * change[..., 1:]
@@ -460,8 +475,11 @@ def _levels(
     target = np.log1p(_along_columns(broad.astype(np.float64), cols) * change) - np.log1p(
         weights * change
     )
+    # Convert the blend of gain-normalized sets back to a factor on the raw
+    # count-space blend. At either position endpoint its own set is unchanged.
+    gain = _LINEAR * drift + np.log1p(weights * change) - np.log1p(weights * np.expm1(ratio))
     if cols < 2 or not (step.any() or target.any()):
-        return np.zeros((2, *ratio.shape), np.float32)
+        return gain.astype(np.float32)
     # Tridiagonal normal equations, -1 off the diagonal, solved along each row at once.
     diagonal = np.broadcast_to(2.0 + hold, target.shape).copy()
     diagonal[..., [0, -1]] -= 1.0
@@ -477,4 +495,4 @@ def _levels(
         right[..., u] = (right[..., u] + right[..., u - 1]) / pivot
     for u in range(cols - 2, -1, -1):
         right[..., u] -= over[..., u] * right[..., u + 1]
-    return right.astype(np.float32)
+    return (right + gain).astype(np.float32)
