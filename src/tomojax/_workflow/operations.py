@@ -512,7 +512,7 @@ def reconstruct(
         device are reconstructed in slabs on the host.
     ``fourier``
         Fourier-slice inversion of parallel-beam half-turn scans, with
-        nonuniform or repeated angles and translation-only poses; no cone beams
+        nonuniform or repeated angles, axial pose rotations and translations; no cone beams
         or tilted axes. Omitting ``filter`` (default) keeps the sharper,
         noisier native response; ``filter="ramp"``, ``"shepp-logan"`` or
         ``"hann"`` matches FBP's detector response at Fourier speed. Input and

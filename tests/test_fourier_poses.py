@@ -92,7 +92,7 @@ def test_fourier_resamples_a_rolled_parallel_detector(backend):
     assert np.linalg.norm(result.volume - truth) / np.linalg.norm(truth) < 0.012
 
 
-def test_fourier_rejects_rotational_pose_corrections_before_writing():
+def test_fourier_rejects_out_of_plane_pose_corrections_before_writing():
     grid, detector = tj.Grid(8, 8, 2, 1, 1, 1), tj.Detector(12, 2, 1, 1)
     scan = tj.Scan(
         np.ones((8, 2, 12), np.float32), tj.ParallelGeometry(grid, detector, np.arange(8) * 20)
@@ -100,7 +100,7 @@ def test_fourier_rejects_rotational_pose_corrections_before_writing():
     poses = np.zeros((8, 6), np.float32)
     poses[1, 0] = 0.01
     out = np.full((2, 8, 8), 123, np.float32)
-    with pytest.raises(ValueError, match="translation-only"):
+    with pytest.raises(ValueError, match="rotations about z"):
         tj.reconstruct(
             scan.with_poses(poses), "fourier", config=FourierConfig(backend="numpy"), out=out
         )

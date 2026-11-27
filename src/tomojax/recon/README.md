@@ -255,8 +255,7 @@ Fourier-slice inverse for axial parallel half-turn scans, including
 nonuniform encoder angles, rejected views and an inclusive 0 to 180 degree
 range; views of one direction share an angular cell and are averaged. It accepts
 reordered, reversed and opposing views, offset detectors, anisotropic spacing
-and cropped output grids. Per-view translations are honored; rotational pose
-corrections and tilted axes are not supported. Projection FFTs use six-point Kaiser–Bessel radial
+and cropped output grids. Axial pose rotations determine the view directions and per-view translations shift the detector samples. Out-of-plane rotations mix axial slices and require a different inverse. Projection FFTs use six-point Kaiser–Bessel radial
 interpolation, linear interpolation in the measured angle (periodic over a half
 turn) and a padded Cartesian inverse FFT. The padding covers both the output grid and the
 acquired detector field to avoid wrapping an object outside a cropped ROI back

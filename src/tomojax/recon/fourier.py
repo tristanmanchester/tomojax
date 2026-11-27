@@ -125,8 +125,8 @@ def fourier(
     averaged in physical Fourier coordinates after detector phase/orientation.
     Per-view translations are honored in either detector or object coordinates.
     A parallel detector roll (``detector_roll``) is resampled bilinearly onto the
-    unrolled detector lattice. Rotational pose corrections and tilted axes are
-    not supported.
+    unrolled detector lattice. Axial pose rotations enter the view angles. Out-of-plane
+    rotations do not preserve the independent axial slices required here.
     Detector offsets, anisotropic voxels, shifted/cropped grids and fractional
     detector-v rows retain their physical coordinates.
 
@@ -321,8 +321,8 @@ def check_fourier_inputs(
 def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector) -> _Sampling:
     """Resolve the physical detector rows, view order and translations shared by plan and run."""
     require_parallel_beam(geometry, "fourier_reconstruct")
-    order, flipped, angles = sorted_half_turn(np.asarray(geometry.angles))
-    translations = detector_translations(geometry, len(order))
+    directions, translations, pose_angles = axial_trajectory(geometry)
+    order, flipped, angles = sorted_half_turn(directions, fitted=pose_angles)
     plan_detector, shifts, vertical = detector, None, None
     origin = grid_volume_origin(grid)
     positions = (origin[2] + np.arange(grid.nz) * grid.vz - detector.center[1]) / detector.dv + (
@@ -349,28 +349,24 @@ def _sampling_coordinates(geometry: ScanGeometry, grid: Grid, detector: Detector
     return _Sampling(plan_detector, order, flipped, angles, shifts, positions, vertical, rolled)
 
 
-def detector_translations(geometry: ScanGeometry, nviews: int) -> np.ndarray | None:
-    """Extract physical detector-u/v translations without importing alignment.
-
-    Nominal angles remain exact, including repeated/opposing directions; a
-    float32 pose's trigonometric rounding must not split their angular cells.
-    Translations along the parallel beam have no effect on its line integral.
-    """
+def axial_trajectory(geometry: ScanGeometry) -> tuple[np.ndarray, np.ndarray | None, bool]:
+    """Axial rotation and detector translation from the projector's world-from-object poses."""
+    degrees = np.asarray(geometry.angles, dtype=np.float64)
     if type(geometry) is ParallelGeometry:
-        return None
-    angles = np.deg2rad(np.asarray(geometry.angles, dtype=np.float64))
-    poses = np.asarray([geometry.pose_matrix(i) for i in range(nviews)])
-    expected = np.zeros((nviews, 3, 3))
-    expected[:, 0, 0] = expected[:, 1, 1] = np.cos(angles)
-    expected[:, 1, 0] = np.sin(angles)
-    expected[:, 0, 1] = -np.sin(angles)
-    expected[:, 2, 2] = 1
-    if not np.allclose(poses[:, :3, :3], expected, atol=2e-7, rtol=0):
-        raise ValueError(
-            "fourier_reconstruct: requires axial rotations with translation-only poses"
-        )
+        return degrees, None, False
+    poses = np.asarray([geometry.pose_matrix(i) for i in range(len(degrees))])
+    if not np.allclose(poses[:, 2, :3], [0, 0, 1], atol=2e-7, rtol=0):
+        raise ValueError("fourier_reconstruct: axial slices require rotations about z")
+    # Keep the precision of recorded angles if the rotations are exactly those
+    # angles rounded to the pose precision (e.g. a translation-only fit).
+    radians = np.deg2rad(degrees)
+    nominal = np.stack([np.cos(radians), np.sin(radians)], axis=1)
+    measured = poses[:, :2, 0]
+    fitted = not np.array_equal(measured.astype(np.float32), nominal.astype(np.float32))
+    if fitted:
+        degrees = np.rad2deg(np.arctan2(measured[:, 1], measured[:, 0]))
     translations = poses[:, [0, 2], 3]
-    return translations if np.any(translations) else None
+    return degrees, translations if np.any(translations) else None, fitted
 
 
 def _prepare_slab(

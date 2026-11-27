@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from tomojax.core.geometry.cone import cone_parts
+from tomojax.core.geometry.views import host_view_poses
+
 from ._directions import group_repeats
 
 if TYPE_CHECKING:
@@ -29,7 +32,23 @@ def grouped_angles(geometry: Geometry, n_views: int) -> tuple[np.ndarray, np.nda
     degrees = degrees[:n_views]
     if not np.isfinite(degrees).all():
         raise ValueError("FDK needs one finite rotation angle per view")
-    return group_repeats(np.deg2rad(degrees))
+    # The angle of the source around object z defines the quadrature. Inverting
+    # world-from-object gives R.T @ (source - translation) in the object.
+    parts = cone_parts(geometry)
+    if parts is None:
+        raise ValueError("FDK needs a cone-beam trajectory")
+    poses = host_view_poses(geometry, n_views, dtype=np.float64)
+    if poses is None:
+        poses = np.asarray([geometry.pose_matrix(i) for i in range(n_views)], np.float64)
+    azimuth = np.empty(n_views)
+    start = 0
+    for count, beam, _ in parts:
+        stop = n_views if count is None else min(start + count, n_views)
+        pose = poses[start:stop]
+        source = np.einsum("nij,ni->nj", pose[:, :3, :3], beam.source() - pose[:, :3, 3])
+        azimuth[start:stop] = np.arctan2(-source[:, 0], -source[:, 1])
+        start = stop
+    return group_repeats(azimuth)
 
 
 def ordered_arc(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, bool]:

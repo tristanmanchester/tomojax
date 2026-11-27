@@ -39,7 +39,9 @@ def next_fast_len(target: int) -> int:
     return best
 
 
-def sorted_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
+def sorted_half_turn(
+    angles: np.ndarray, *, fitted: bool = False
+) -> tuple[np.ndarray, np.ndarray, tuple[float, ...]]:
     """Sort half-turn directions, retaining redundant exposures and opposing orientations."""
     if angles.ndim != 1 or angles.size < 2 or not np.isfinite(angles).all():
         raise ValueError("fourier_reconstruct: requires at least two finite angles")
@@ -50,6 +52,8 @@ def sorted_half_turn(angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, tuple[
     tolerance = np.deg2rad(
         8 * np.finfo(np.float64).eps * max(180.0, float(np.max(np.abs(degrees))))
     )
+    if fitted:
+        tolerance = max(tolerance, 2 * np.pi * 1e-6)
     representatives, inverse, counts = group_repeats(
         2 * np.deg2rad(degrees), tolerance=2 * tolerance
     )

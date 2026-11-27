@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- FDK computes angular weights and short-scan coverage from the corrected source trajectory. Fourier inversion accepts per-view axial rotations.
 - Feature bands, overlays, grid comparisons, and registered solver inputs report mismatched physical coordinates before combining samples. Matching grids can be reused across handles and saved files.
 - Loading uses explicit HDF5 projection, frame-label and angle paths in saved scans.
   Explicit flat and dark calibration corrects unlabeled counts in integer and
