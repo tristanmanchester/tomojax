@@ -729,7 +729,7 @@ def scan_from_record(
     assert record.projections is not None  # tj.load refuses a file without them
     return Scan(
         projections=record.projections,
-        geometry=geometry if geometry is not None else geometry_of(record, apply_poses=apply_poses),
+        geometry=geometry if geometry is not None else frame_output_grid(geometry_of(record, apply_poses=apply_poses), record),
         name=record.sample_name or "sample",
         corrections=tuple(Correction.from_dict(c) for c in saved),
         source=record,
@@ -881,8 +881,12 @@ def frame_output_grid(
     if source is None or source.grid is not None:
         return geometry
     if isinstance(geometry, ParallelGeometry):
+        from tomojax.core.geometry.coverage import parallel_field
+
         d = geometry.detector
-        grid = Grid(d.nu, d.nu, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
+        field = parallel_field(geometry)
+        width = d.nu if field is None else int(np.ceil(2 * field[1]))
+        grid = Grid(width, width, d.nv, d.du, d.du, d.dv, vol_center=(0, 0, d.center[1]))
     elif binning > 1:
         g = geometry.grid
         grid = g.resampled(

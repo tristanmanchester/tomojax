@@ -316,4 +316,4 @@ def centered[T: Located](item: T, center: tuple[float, float] | None) -> T:
     if source is not None:
         meta = {**source.geometry_metadata, "detector_center_status": "provided"}
         source = replace_dataset(source, geometry_metadata=meta)
-    return replace(item, geometry=geometry, source=source)
+    return replace(item, geometry=frame_output_grid(geometry, source), source=source)

@@ -131,10 +131,13 @@ def _loading(path: Path) -> dict[str, object]:
 
     Calibration (flats and darks) is the dataset check's to report, in ``issues``.
     """
-    from tomojax._loading.loader import loading_record
+    from tomojax._loading.loader import Frames, resolve_input
+    from tomojax.core.geometry.coverage import parallel_field
 
     try:
-        record = loading_record(path)
+        item = resolve_input(path, layout_only=True)
+        frames = item if isinstance(item, Frames) else item.scan
+        record = frames.source
     except (ValueError, KeyError) as err:  # the reader names the argument to supply
         message = err.args[0] if isinstance(err, KeyError) and err.args else str(err)
         return {
@@ -146,7 +149,17 @@ def _loading(path: Path) -> dict[str, object]:
         }
     metadata = object_mapping(record.geometry_metadata if record is not None else None)
     acquisition = object_mapping(metadata.get("acquisition"))
+    coverage = {}
+    field = parallel_field(frames.geometry)
+    if field is not None:
+        coverage["full_turn"] = True
+        if metadata.get("detector_center_status") != "not_recorded":
+            near, far = field
+            coverage.update(
+                axis_to_edge_px=near, field_of_view_px=2 * far, overlap_px=max(0.0, 2 * near)
+            )
     return {
+        **coverage,
         "message": None,
         "length_unit": metadata.get("length_unit"),
         "center": metadata.get("detector_center_status"),

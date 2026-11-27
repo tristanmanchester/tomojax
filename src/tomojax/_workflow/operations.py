@@ -47,6 +47,7 @@ from tomojax._scan.model import (
     Scan,
     bind_step_geometry,
     cropped_record,
+    frame_output_grid,
     geometry_of,
     geometry_record,
     rebuild,
@@ -1136,7 +1137,7 @@ def _estimate_center(scan: Scan, selection: CenterSelection) -> tuple[Scan, dict
                 "detector_center_calibration": calibration,
             },
         )
-    return replace(scan, geometry=geometry, source=source), calibration
+    return replace(scan, geometry=frame_output_grid(geometry, source), source=source), calibration
 
 
 def align(

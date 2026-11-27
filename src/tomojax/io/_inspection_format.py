@@ -85,6 +85,14 @@ def _loading_rows(loading: LoadingReport) -> list[tuple[str, str]]:
     if loading["message"] is not None:
         return [("as a scan", f"needs more: {loading['message']}")]
     rows = [("as a scan", "loads with no further arguments")]
+    if loading.get("full_turn"):
+        text = "full turn"
+        if "axis_to_edge_px" in loading:
+            text += (
+                f", axis {loading['axis_to_edge_px']:.2f} px from the nearer edge, "
+                f"field {loading['field_of_view_px']:.2f} px, overlap {loading['overlap_px']:.2f} px"
+            )
+        rows.append(("parallel acquisition", text))
     if loading["geometry"] == "not_recorded":
         rows.append(("geometry", "not recorded: declare geometry to reconstruct or align"))
     if loading["center"] == "not_recorded":

@@ -198,6 +198,10 @@ class LoadingReport(TypedDict):
     center: str | None
     geometry: str | None
     frame_records: dict[str, int] | None
+    full_turn: NotRequired[bool]
+    axis_to_edge_px: NotRequired[float]
+    field_of_view_px: NotRequired[float]
+    overlap_px: NotRequired[float]
 
 
 class Inspection(InspectionReport):

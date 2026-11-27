@@ -85,3 +85,22 @@ def reliability(ray: np.ndarray, parameters: np.ndarray) -> np.ndarray:
     width = np.maximum(np.minimum(-lo, hi), pixel)
     distance = np.minimum(ray - lo, hi - ray)
     return np.tan(np.pi / 4 * np.clip(distance / width, 0, 1)) ** 2
+
+
+def parallel_field(geometry: object) -> tuple[float, float] | None:
+    """Distances from the axis to the near and far horizontal edges in pixels.
+
+    These define the doubly measured and complete field radii of a stationary
+    axial parallel full turn. A negative near distance means a central gap.
+    """
+    from .parallel import ParallelGeometry
+
+    if (
+        type(geometry) is not ParallelGeometry
+        or geometry.detector_roll
+        or not full_rotation(np.asarray(geometry.angles))
+    ):
+        return None
+    detector = geometry.detector
+    offset = abs(detector.center[0]) / detector.du
+    return detector.nu / 2 - offset, detector.nu / 2 + offset
