@@ -3,6 +3,8 @@
 Coarsened observations average finite pixels and weight each block by its observed fraction.
 """
 
+from dataclasses import replace
+
 import numpy as np
 import pytest
 
@@ -110,3 +112,36 @@ def test_the_fit_reads_the_frames_front_to_back_once():
     nominal = np.asarray(stack_view_poses(geometry, views))
     _fit.fit_poses(projections, nominal, grid, detector)
     assert projections.reads == [range(s, min(s + 16, views)) for s in range(0, views, 16)]
+
+
+def test_column_calibration_respects_missing_rays_at_both_resolutions():
+    rng = np.random.default_rng(31)
+    data = rng.normal(0, 0.01, (64, 16, 32)).astype(np.float32)
+    data[:, 4:10, 9:20] += 0.8
+    data += rng.normal(0, 0.06, 32).astype(np.float32)
+    data[::5, :, 7] = np.nan
+    data[:, 8:, 3::5] = np.nan
+    data[:, :, -1] = np.nan
+    levels, _, noise = _fit._read(data, [2, 1])
+    _fit.calibrate_columns(levels, [2, 1], noise)
+    coarse, fine = levels
+    weighted = (fine[0] * fine[1]).reshape(64, 8, 2, 16, 2).mean(axis=(2, 4))
+    np.testing.assert_allclose(coarse[0] * coarse[1], weighted, rtol=1e-6, atol=2e-7)
+    assert np.std(fine[0][:, :3, :-1].mean((0, 1))) < 0.03
+
+
+@pytest.mark.slow
+def test_column_shadow_on_a_stationary_object_keeps_pose_and_image():
+    sim = tj.simulate("shepp", size=48, n_views=96, geometry="parallel")
+    data = np.asarray(sim.scan.projections)
+    profile = data.mean(axis=1)
+    shadow = np.zeros_like(profile)
+    u = np.arange(data.shape[-1])
+    for i, row in enumerate(profile):
+        shift = 3 * np.sin(i * 0.8) * np.exp(-(((i - 27) / 7) ** 2))
+        shadow[i] = np.interp(u - shift, u, row) - row
+    measured = replace(sim.scan, projections=data + shadow[:, None, :])
+    result = tj.align(measured, fit="translations", grid=measured.grid)
+    assert np.sqrt(np.mean(result.poses[:, 3] ** 2)) < 0.02
+    relative_error = np.linalg.norm(result.image - sim.phantom) / np.linalg.norm(sim.phantom)
+    assert relative_error < 0.16

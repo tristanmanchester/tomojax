@@ -12,8 +12,8 @@ data-dependent route selection. Each working pixel is one ray through its center
 block with missing input pixels is the mean of its finite ones, weighted by their
 fraction. Model and data are compared through ``residual_filter`` (K = [1, 2, 1] / 4
 along u and v) at every level, so the objective does not ask the sampled model to be
-right at Nyquist. Image TV is off by default, so the fit imposes no shape preference
-on weak geometry modes.
+right at Nyquist. Low-attenuation rays and row contrasts calibrate fixed and transient
+detector-column offsets before either level. Image TV is off by default.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from tomojax.core.registration import scaled_images
 from tomojax.core.validation import validate_physical_poses
 from tomojax.recon.fista_tv import resolve_tv_metric
 
+from ._columns import calibrate_columns
 from ._noise import MAX_SAMPLES, Windows, estimate_noise
 from ._operators import Operators
 from ._parameters import Parameters
@@ -502,8 +503,7 @@ def fit_poses(
             frames = cropped_frames(frames, detector, high_u=drop_u, high_v=drop_v)
         gauge, constraint = fit_gauge(poses, pose_scales, parameters.fit, detector.center, frames)
         config = resolve_align_config(config, parameters.fit, cone=frames is not None)
-        x = last = None
-        p = None
+        x = last = p = None
         if "center_u" in parameters.globals:
             p = np.zeros(parameters.size, np.float64)
             p[parameters.local_size] = initial_center
@@ -511,6 +511,7 @@ def fit_poses(
         prior = None
         levels: list[FitLevelRecord] = []
         binned, scale, noise = _read(measured, bins)
+        calibrate_columns(binned, bins, noise)
         for level in schedule.levels:
             last = None  # Release the previous level before building the next one.
             with (

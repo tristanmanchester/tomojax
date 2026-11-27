@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Joint alignment estimates fixed detector stripes and transient shadows shared across
+  detector rows. It corrects the working projections before fitting the image and geometry.
 - The general cone transpose reuses each detector footprint when all the views
   in a launch fit in one 32-view tile batch. On the three-orbit FIPS walnut
   translation fit, the second fine step fell from 26.09 to 25.13 s on V100S
