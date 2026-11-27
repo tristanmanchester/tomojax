@@ -44,7 +44,6 @@
     "skill": 3
   },
   "long_files": {
-    "src/tomojax/_loading/loader.py": 823,
     "src/tomojax/alignment/_joint/_solver.py": 1014,
     "src/tomojax/core/cone.py": 826
   },
@@ -60,16 +59,16 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5554,
+    "reportAny": 5487,
     "reportMissingImports": 61,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 881,
     "reportUnknownMemberType": 1713,
     "reportUnknownVariableType": 992,
-    "reportUnusedCallResult": 160
+    "reportUnusedCallResult": 155
   },
-  "explicit_any": 455,
-  "type_casts": 85,
+  "explicit_any": 452,
+  "type_casts": 84,
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
@@ -163,5 +162,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 128
+  "test_private_imports": 129
 }
