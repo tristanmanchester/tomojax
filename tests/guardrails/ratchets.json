@@ -1,6 +1,6 @@
 {
   "config_fields": {
-    "AlignConfig": 23,
+    "AlignConfig": 25,
     "CGLSConfig": 12,
     "FBPConfig": 5,
     "FBPHostConfig": 3,
@@ -28,15 +28,15 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 29,
-    "tomojax.alignment.api": 4
+    "tomojax.io.api": 38,
+    "tomojax.alignment.api": 5
   },
   "cli_flags": {
     "inspect": 7,
     "correct": 36,
     "reconstruct": 22,
     "align": 21,
-    "export": 7,
+    "export": 12,
     "simulate": 20,
     "serve": 1,
     "mcp": 1,
@@ -44,13 +44,12 @@
     "skill": 3
   },
   "long_files": {
-    "src/tomojax/_loading/loader.py": 823,
     "src/tomojax/alignment/_joint/_solver.py": 1014,
     "src/tomojax/core/cone.py": 826
   },
   "long_functions": {
-    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 169,
-    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 122,
+    "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
+    "src/tomojax/alignment/_joint/_solver.py::_Level.__init__": 119,
     "src/tomojax/cli/align.py::build_parser": 101,
     "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
@@ -61,16 +60,16 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5611,
-    "reportMissingImports": 58,
+    "reportAny": 5591,
+    "reportMissingImports": 61,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 876,
-    "reportUnknownMemberType": 1622,
-    "reportUnknownVariableType": 978,
-    "reportUnusedCallResult": 141
+    "reportUnknownArgumentType": 892,
+    "reportUnknownMemberType": 1703,
+    "reportUnknownVariableType": 1000,
+    "reportUnusedCallResult": 155
   },
-  "explicit_any": 429,
-  "type_casts": 86,
+  "explicit_any": 425,
+  "type_casts": 84,
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
@@ -133,13 +132,10 @@
     "pyright: ignore": 12
   },
   "complex_functions": [
-    "src/tomojax/alignment/_joint/_fit.py::PLR0915::fit_poses",
     "src/tomojax/alignment/_joint/_solver.py::C901::_descend",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
-    "src/tomojax/cli/_adapters.py::C901::durable",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_python.py::C901::registered",
-    "src/tomojax/cli/_staging.py::C901::install",
     "src/tomojax/cli/mcp/tools/seeing.py::C901::finish",
     "src/tomojax/cli/mcp/tools/seeing.py::C901::view",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
@@ -148,6 +144,9 @@
     "src/tomojax/corrections/_engine.py::PLR0915::correct_frames",
     "src/tomojax/datasets/_impl/artifacts.py::C901::apply_simulation_artifacts",
     "src/tomojax/datasets/_impl/artifacts.py::PLR0915::apply_simulation_artifacts",
+    "src/tomojax/io/_export.py::C901::install_export",
+    "src/tomojax/io/_export.py::PLR0912::install_export",
+    "src/tomojax/io/_export_formats.py::C901::tiff",
     "src/tomojax/recon/_cgls_cuda.py::PLR0915::_iterate",
     "src/tomojax/recon/_cgls_host.py::C901::normal",
     "src/tomojax/recon/_fista_host.py::C901::apply",
@@ -155,7 +154,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 69,
+    "tiny": 66,
     "forwarders": 9,
     "chained": 7
   },
@@ -164,5 +163,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 129
+  "test_private_imports": 131
 }
