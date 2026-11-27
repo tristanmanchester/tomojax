@@ -72,6 +72,54 @@ def test_mlem_dense_subset_updates_with_support(problem, subsets, batch):
 
 
 @pytest.mark.numerical
+@pytest.mark.parametrize("host", [False, True])
+def test_known_exterior_updates_decrease_the_full_poisson_objective(problem, host, monkeypatch):
+    from tomojax.recon.mlem import run_mlem
+
+    grid, detector, geometry, matrix = problem
+    if host and not isinstance(geometry, ConeSegments):
+        pytest.skip("the cone sweep uses coupled host slabs")
+    monkeypatch.setattr(
+        import_module("tomojax.recon._cone_slabs"), "slab_depth", lambda *a, **kw: 1
+    )
+    background = np.linspace(0.3, 2, len(matrix), dtype=np.float32)
+    data = matrix @ np.linspace(0.2, 1.8, matrix.shape[1]) + background
+    x = np.full(matrix.shape[1], 0.8)
+    y = data.reshape(5, 4, 5).astype(np.float32)
+    b = background.reshape(y.shape)
+    sensitivity = matrix.sum(0)
+    for _ in range(3):
+        interior = matrix @ x
+        mean = interior + background
+        ratio = data / mean
+        score = matrix.T @ ratio
+        gradient = score - sensitivity
+        curvature = matrix.T @ (ratio * interior / mean)
+        incumbent = np.sum(mean - data * np.log(mean))
+        expected = x.copy()
+        up = (gradient >= 0) & (curvature > 0)
+        down = gradient < 0
+        expected[up] *= 1 + gradient[up] * score[up] / (sensitivity[up] * curvature[up])
+        expected[down] *= curvature[down] / (curvature[down] - gradient[down])
+        expected[sensitivity == 0] = 0
+        output = np.empty(grid.shape, np.float32) if host else None
+        fitted, _ = run_mlem(
+            geometry,
+            y,
+            grid=grid,
+            detector=detector,
+            init_x=x.reshape(grid.shape),
+            config=MLEMConfig(iterations=1),
+            background=b,
+            out=output,
+        )
+        x = np.asarray(fitted, dtype=np.float64).ravel()
+        np.testing.assert_allclose(x, expected, rtol=2e-5, atol=2e-6)
+        new_mean = matrix @ x + background
+        assert np.sum(new_mean - data * np.log(new_mean)) < incumbent
+
+
+@pytest.mark.numerical
 def test_mlem_public_workflow_improves_likelihood_and_image(problem):
     grid, detector, geometry, matrix = problem
     truth = np.linspace(0.2, 1.1, 12)

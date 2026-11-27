@@ -50,8 +50,8 @@ def axial_workspace(
         return (3 + min(cfg.subsets, 16) + 2 * cfg.accelerated) * volume + (
             2 + 2 / cfg.subsets
         ) * projections
-    # EM holds observations, the additive exterior and ratio workspace beside four volumes.
-    return 4 * volume + (2 + int(additive)) * projections
+    # With an additive mean, EM also transposes the interior-weighted ratio.
+    return (4 + int(additive)) * volume + (2 + 2 * int(additive)) * projections
 
 
 def axial_slab_depth(

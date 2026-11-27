@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from functools import cache
 import math
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 import jax
 import numpy as np
@@ -166,7 +166,21 @@ class RowReader:
         self._band = self._ahead = self._worker = None
 
 
-def host_projections(projections: Any, context: str, *, nonnegative: bool = False) -> Any:
+@overload
+def host_projections(
+    projections: RowReader, context: str, *, nonnegative: bool = False
+) -> RowReader: ...
+
+
+@overload
+def host_projections(
+    projections: np.ndarray | jax.Array, context: str, *, nonnegative: bool = False
+) -> np.ndarray: ...
+
+
+def host_projections(
+    projections: RowReader | np.ndarray | jax.Array, context: str, *, nonnegative: bool = False
+) -> RowReader | np.ndarray:
     """A :class:`RowReader` as it is, otherwise a NumPy stack checked a few views at a time."""
     if isinstance(projections, RowReader):
         return projections
@@ -496,7 +510,8 @@ class _Ring:
         self.sweep, self.plan, self.xp, self.engine = sweep, plan, xp, sweep.engine
         self.rows = xp.zeros((channels, len(views), plan.ring, plan.detector.nu), xp.float32)
         self.top = self.finished = plan.windows[plan.order[0]][0]
-        self.projected, self.sources, self.keep = 0, {}, keep
+        self.projected, self.keep = 0, keep
+        self.sources: dict[int, tuple[Any, ...]] = {}
         index, size = xp.asarray(views), sweep.batch
         self.batches = [
             (b, min(b + size, len(views)), Batch(views[b : b + size], index[b : b + size]))
@@ -574,7 +589,15 @@ class _Ring:
             images = tuple(self.window(c, b0, b1, first, stop) for c in range(count))
             if ones:
                 images += (xp.ones((b1 - b0, stop - first, plan.detector.nu), xp.float32),)
-            accumulate = self.engine.transpose(images, coeff[batch.index], accumulate)
+            # The CUDA pair kernel transposes two images in one pass.
+            batch_coeff = coeff[batch.index]
+            accumulate = tuple(
+                volume
+                for start in range(0, len(images), 2)
+                for volume in self.engine.transpose(
+                    images[start : start + 2], batch_coeff, accumulate[start : start + 2]
+                )
+            )
         return accumulate
 
 
@@ -599,7 +622,12 @@ def needs_volume_sweeps(
 
 
 def algebraic_sweep(
-    cfg: SIRTConfig | MLEMConfig, count: int, *, host_output: bool, warm_start: bool = False
+    cfg: SIRTConfig | MLEMConfig,
+    count: int,
+    *,
+    host_output: bool,
+    warm_start: bool = False,
+    additive: bool = False,
 ) -> dict[str, int]:
     """Subset views, row channels and resident iterates used by the SIRT and EM cone sweeps."""
     from .sirt import SIRTConfig
@@ -608,7 +636,7 @@ def algebraic_sweep(
     return {
         "views": -(-count // cfg.subsets),
         "batch": min(count, cfg.views_per_batch),
-        "channels": 1 + (sirt and cfg.support is not None),
+        "channels": 1 + (additive or (sirt and cfg.support is not None)),
         "resident": 0
         if host_output or (warm_start and not sirt)
         else 1 + (sirt and cfg.accelerated),

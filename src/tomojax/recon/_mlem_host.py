@@ -9,6 +9,7 @@ slices. Caller inputs are never modified.
 
 from __future__ import annotations
 
+from types import ModuleType
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -20,6 +21,7 @@ from tomojax.core.host_volume import fill, release_planes
 
 from ._cone_slabs import algebraic_sweep, cone_problem, host_projections
 from ._host_arrays import validate_host_arrays
+from ._poisson import background_multiplier
 
 if TYPE_CHECKING:
     import jax
@@ -65,7 +67,8 @@ def solve(
         _ = fbp_start(geometry, grid, detector, data, config=FBPConfig(), det_grid=None, out=x)
     problem = cone_problem(
         geometry, grid, detector, data, model=model, backend=backend, poses=poses,
-        **algebraic_sweep(cfg, data.shape[0], host_output=out is not None, warm_start=warm_start),
+        **algebraic_sweep(cfg, data.shape[0], host_output=out is not None, warm_start=warm_start,
+                          additive=background is not None),
     )  # fmt: skip
     if x is None:
         x = problem.iterate(initial, out, "mlem")
@@ -81,11 +84,16 @@ def solve(
         z1 = min(grid.nz, z0 + problem.plan.depth)
         x[z0:z1, :, :] *= xp.asarray(np.unpackbits(em.seen[z0:z1, :, :], axis=2, count=grid.nx))
         release_planes(x, z0, z1)
-    record = {"host_volume": not problem.on_device, "slices_per_batch": problem.plan.depth}
+    record: dict[str, object] = {
+        "host_volume": not problem.on_device,
+        "slices_per_batch": problem.plan.depth,
+    }
     return problem.result(x), record
 
 
-def _constrain(x: Any, support: Any, depth: int, *, nonnegative: bool, xp: Any) -> None:
+def _constrain(
+    x: Any, support: np.ndarray | jax.Array | None, depth: int, *, nonnegative: bool, xp: ModuleType
+) -> None:
     """Clip a warm start at zero and zero voxels outside the support; check the start."""
     mask = None if support is None else np.broadcast_to(np.asarray(support, bool), x.shape)
     for z0 in range(0, x.shape[0], depth):
@@ -112,7 +120,8 @@ class _HostEM:
         saved: Saved | None,
     ) -> None:
         self.background = background
-        self.problem, self.plan, self.xp = problem, problem.plan, problem.engine.xp
+        self.problem, self.plan = problem, problem.plan
+        self.xp: ModuleType = problem.engine.xp
         self.volume, self.updating = problem.volume(x), updating
         grid = self.plan.grid
         self.seen = np.zeros((grid.nz, grid.ny, (grid.nx + 7) // 8), np.uint8, order="C")
@@ -130,7 +139,9 @@ class _HostEM:
             for group in range(subsets):
                 problem.sweep.run(
                     order[group::subsets], source=self.source, finish=self.finish, sink=self.sink,
-                    transposed=int(self.updating), ones=True, keep=problem.keep,
+                    channels=1 + int(self.background is not None),
+                    transposed=(1 + int(self.background is not None)) if self.updating else 0,
+                    ones=True, keep=problem.keep,
                     prefetch=lambda k: self.volume.prefetch(*problem.plan.planes(k)),
                 )  # fmt: skip
             if iterations and (task := progress.for_unit("iterations")) is not None:
@@ -149,9 +160,13 @@ class _HostEM:
             measured = self.problem.measured(batch, first, stop)
             if self.background is not None:
                 additive = self.problem.engine.upload(self.background[batch.views, first:stop])
-                predicted += additive
+                expected = predicted + additive
+                rows[1][...] = predicted / xp.where(expected > 0, expected, 1)
+                predicted[...] = expected
             positive = predicted > 0
             predicted[...] = xp.where(positive, measured / xp.where(positive, predicted, 1), 0)
+            if self.background is not None:
+                rows[1][...] *= predicted
 
     def sink(self, k: int, accumulated: tuple[Any, ...], sources: tuple[Any, ...]) -> None:
         """Multiply slab ``k`` by its correction; unseen voxels keep their values until masked."""
@@ -162,8 +177,12 @@ class _HostEM:
         self.seen[z0:z1, :, :] |= np.packbits(visible, axis=2)
         if self.updating:
             updated = accumulated[0][: z1 - z0, :, :]
-            norm[norm <= 0] = xp.inf
-            updated /= norm
-            updated[xp.isinf(norm)] = 1
+            if self.background is None:
+                norm[norm <= 0] = xp.inf
+                updated /= norm
+                updated[xp.isinf(norm)] = 1
+            else:
+                curvature = accumulated[1][: z1 - z0, :, :]
+                updated[...] = background_multiplier(updated, norm, curvature, xp.where)
             updated *= (sources or (self.volume.view(z0, z1),))[0][: z1 - z0, :, :]
             self.volume.put(z0, z1, updated)

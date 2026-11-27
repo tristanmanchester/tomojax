@@ -628,9 +628,10 @@ def poisson_operators(
     stream: bool = False,
     background: jax.Array | None = None,
 ) -> tuple[
-    Callable[[jax.Array], jax.Array], Callable[[jax.Array, jax.Array, jax.Array], jax.Array]
+    Callable[[jax.Array], jax.Array],
+    Callable[[jax.Array, jax.Array, jax.Array], tuple[jax.Array, jax.Array | None]],
 ]:
-    """Subset ``A.T 1`` and ``A.T (data / A volume)`` with batch-sized image buffers.
+    """Subset sensitivity and backprojected Poisson ratios with batch-sized image buffers.
 
     ``indices`` is a (subsets, views) table into the original scan; ``valid``
     marks padding. The returned functions take the subset index, and the
@@ -681,12 +682,15 @@ def _correction(
     indices: jax.Array,
     stream: bool,
     background: jax.Array | None,
-) -> jax.Array:
+) -> tuple[jax.Array, jax.Array | None]:
     project = ops.projector(volume)
 
-    def batch(k: jax.Array, output: jax.Array) -> jax.Array:
+    def batch(
+        k: jax.Array, totals: tuple[jax.Array, jax.Array | None]
+    ) -> tuple[jax.Array, jax.Array | None]:
+        output, curvature = totals
         start, poses, valid = ops.select(k)
-        expected = project(start, poses)
+        interior = expected = project(start, poses)
         view_ids = jax.lax.dynamic_slice_in_dim(indices, start, ops.size)
         measured = (
             read_views(
@@ -713,6 +717,10 @@ def _correction(
         positive = expected > 0
         ratio = measured / jnp.where(positive, expected, 1.0)
         ratio = jnp.where(valid[:, None, None] & positive, ratio, 0.0)
-        return ops.backproject(ratio, start, poses, output)
+        if curvature is not None:
+            fraction = interior / jnp.where(positive, expected, 1.0)
+            curvature = ops.backproject(ratio * fraction, start, poses, curvature)
+        return ops.backproject(ratio, start, poses, output), curvature
 
-    return jax.lax.fori_loop(0, ops.count, batch, ops.zeros_volume())
+    zero = ops.zeros_volume()
+    return jax.lax.fori_loop(0, ops.count, batch, (zero, None if background is None else zero))

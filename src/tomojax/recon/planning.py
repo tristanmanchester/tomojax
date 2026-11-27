@@ -168,7 +168,9 @@ def _algebraic_slabs(
     ):
         return False
     windows = cone_windows(geometry, grid, detector, model, views, common_height=False)
-    sweep = algebraic_sweep(cfg, views, host_output=False, warm_start=warm_start)
+    sweep = algebraic_sweep(
+        cfg, views, host_output=False, warm_start=warm_start, additive=cfg.method == "mlem"
+    )
     if pool is None:
         return True
     return (

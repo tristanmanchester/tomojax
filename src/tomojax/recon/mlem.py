@@ -29,6 +29,7 @@ from tomojax.recon._axial_slabs import independent_planes
 from tomojax.recon._chunks import Chunked, fixed_updates
 from tomojax.recon._cone_slabs import RowReader, host_volumes
 from tomojax.recon._host_arrays import check_measurements
+from tomojax.recon._poisson import background_multiplier
 from tomojax.recon._projection import (
     ConeModel,
     poisson_operators,
@@ -244,11 +245,13 @@ def _segment(
             )
 
         if not cache:
+
+            def add_visible(i: jax.Array, seen: jax.Array) -> jax.Array:
+                return seen | (sensitivity(i) > 0)
+
             observed = jax.lax.cond(
                 iterations == 0,
-                lambda: jax.lax.fori_loop(
-                    0, subsets, lambda i, seen: seen | (sensitivity(i) > 0), observed
-                ),
+                lambda: jax.lax.fori_loop(0, subsets, add_visible, observed),
                 lambda: observed,
             )
         return (x, observed), inputs_valid, sensitivities
@@ -257,8 +260,13 @@ def _segment(
         volume, seen = state
         i = k % subsets
         norm = sensitivity(i) if sensitivities is None else sensitivities[i]
-        update = correction(i, volume, data)
-        volume = volume * jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
+        update, curvature = correction(i, volume, data)
+        multiplier = (
+            jnp.where(norm > 0, update / jnp.where(norm > 0, norm, 1), 1)
+            if curvature is None
+            else background_multiplier(update, norm, curvature, jnp.where)
+        )
+        volume = volume * multiplier
         return volume, seen if cache else seen | (norm > 0)
 
     return jax.lax.fori_loop(first * subsets, end * subsets, step, state)
@@ -363,9 +371,9 @@ def _run_device(
         # Four volume buffers cover the iterate, update, current norm and
         # visibility/output workspace. Both resident and streamed data need
         # only the current predicted/measured view batches.
-        workspace = (
-            4 * volume_bytes + (2 + int(background is not None)) * min(batch, count) * image_bytes
-        )
+        workspace = (4 + int(background is not None)) * volume_bytes + (
+            2 + 2 * int(background is not None)
+        ) * min(batch, count) * image_bytes
         cache = _cache_sensitivities(
             subsets * norm_bytes, subsets, iterations, workspace_bytes=workspace, initial=initial
         )
