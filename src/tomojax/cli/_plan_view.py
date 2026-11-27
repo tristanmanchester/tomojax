@@ -49,8 +49,11 @@ def grid_text(grid: Grid, unit: str) -> str:
     )
 
 
-def _pairs(count: int) -> str:
-    return f"{count} near-opposite pair{'' if count == 1 else 's'}"
+def _center_method(work: CenterSelection) -> str:
+    if work.focus is not None:
+        return work.focus_description
+    count = len(work.samples)
+    return f"opposite views: the center from {count} near-opposite pair{'' if count == 1 else 's'}"
 
 
 def _available(placement: Placement) -> str:
@@ -77,11 +80,8 @@ def plan_lines(scan: tj.Scan, work: Work, placement: Placement) -> list[tuple[st
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):
-        label = f"opposite views: the center from {_pairs(len(work.samples))}"
-        if work.focus is not None:
-            label = work.focus_description
         return [
-            ("method", label),
+            ("method", _center_method(work)),
             ("placement", placement_text(placement)),
         ]
     if isinstance(work, ResolvedReconstruction):
@@ -133,7 +133,7 @@ def plan_header(command: str, scan: tj.Scan, work: Work, placement: Placement) -
 
     unit = unit_of(scan)
     if isinstance(work, CenterSelection):
-        what = f"{work.method.replace('-', ' ')}, {_pairs(len(work.samples))}"
+        what = _center_method(work)
     elif isinstance(work, ResolvedReconstruction):
         what = method_name(work)
         iterations = work.iteration_budget

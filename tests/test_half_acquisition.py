@@ -105,6 +105,33 @@ def test_selected_views_reopen_on_the_saved_grid_before_the_next_detector_edit(
     assert loaded.cropped(slice(None), slice(0, 48)).grid.shape == (1, 48, 48)
 
 
+def test_full_turn_cli_progress_uses_the_pairs_in_the_plan(tmp_path, offset_acquisition, capsys):
+    import json
+
+    from tomojax.cli.main import main
+
+    saved = tmp_path / "corrected.nxs"
+    assert main(["correct", str(offset_acquisition), "-o", str(saved), "--progress", "none"]) == 0
+    capsys.readouterr()
+    args = [
+        "align",
+        str(saved),
+        "-o",
+        str(tmp_path / "aligned.nxs"),
+        "--fit",
+        "center",
+    ]
+    assert main([*args, "--dry-run"]) == 0
+    assert "64 opposing angular pairs" in capsys.readouterr().out
+    assert main([*args, "--progress", "json"]) == 0
+    notes = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert any(
+        event["event"] == "note" and "64 opposing angular pairs" in event["message"]
+        for event in notes
+    )
+    assert tj.load_alignment(tmp_path / "aligned.nxs").scan.grid.shape == (1, 115, 115)
+
+
 @pytest.mark.parametrize("method", ["fbp", "fourier"])
 def test_offset_detector_continues_only_beyond_the_complete_orbit(method):
     # A homogeneous cylinder extends past the far detector edge. Its radial
