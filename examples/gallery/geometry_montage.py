@@ -15,8 +15,9 @@ resolution and cropped to the largest bright region:
   through the glass-sphere layer at 2.16 µm;
 - CuO_2 tomo-B: 3201 views with the center and per-view shifts the file records,
   FDK of the central plane at 1.13 µm;
-- Walnut 1: all 3600 views of its three orbits, the default ``tj.reconstruct``
-  (CGLS for several cone arrangements) on the authors' 501³ grid of 0.1 mm.
+- Walnut 1: all 3600 views of its three orbits, each binned 2 x 2 and joined
+  by ``tj.Scan.combine``, the default ``tj.reconstruct`` (CGLS for several cone
+  arrangements) on the authors' 501³ grid of 0.1 mm.
 """
 
 from __future__ import annotations
@@ -65,7 +66,9 @@ def slices(data: Path) -> dict[str, np.ndarray]:
     scan = frames.cropped(slice(30, 33), slice(None)).corrected(*RINGS)
     i12 = np.asarray(tj.reconstruct(scan, "fbp").volume, np.float32)[1]
     k11 = tj.align(load_k11(data / "k11-54286.nxs", 35.0)).scan
-    walnut = load_scan(data / "Walnut1", orbits=(1, 2, 3), every=1, binning=1, size=501)
+    walnut = tj.Scan.combine(
+        [load_scan(data / "Walnut1", orbits=(k,), every=1, binning=2, size=501) for k in (1, 2, 3)]
+    )
     return {
         "Parallel beam · Diamond I12, Vo et al.": i12,
         "Laminography · Diamond K11 54286": plane(k11, (0, 0, 12.96), (704, 704, 1)),
