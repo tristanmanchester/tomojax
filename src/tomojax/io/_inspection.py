@@ -547,7 +547,7 @@ def _record_report(
         "schema_version": 1,
         "input_path": str(path),
         "projection": projection,
-        "angles": _angle_summary(angles, record.image_key, acquisition.get("angles_path"), "deg"),
+        "angles": _angle_summary(angles, record.image_key, acquisition.get("angles_path"), "degree"),
         "geometry": {
             "found": True,
             "type": record.geometry_type,

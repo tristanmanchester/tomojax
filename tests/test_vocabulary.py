@@ -276,8 +276,8 @@ def violations(sites) -> dict[tuple[str, str], str]:
     found = misspelled(sites)
     for site in sites:
         name, key = site.name, (site.place, site.name)
-        # A ``units`` value names the unit a file records; it is meant to be one.
-        if UNITS & set(name.lower().split("_")) and not site.place.endswith("[units]"):
+        # A unit field carries a physical-unit value in records and HDF5 attributes.
+        if UNITS & set(name.lower().split("_")) and not site.place.endswith(("[unit]", "[units]")):
             found[key] = "no unit in a name: angles are in degrees, said once in the docs"
         if name in SYNONYMS:
             found[key] = f"one concept, one word: {SYNONYMS[name]}"

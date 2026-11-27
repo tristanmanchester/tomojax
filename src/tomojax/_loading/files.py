@@ -18,6 +18,7 @@ from tomojax._scan.simulation import Simulation
 from tomojax._typed_arrays import object_mapping
 from tomojax.core.input_files import input_path, reading
 from tomojax.core.registration import recorded_length_unit, volume_axes, volume_values
+from tomojax.geometry import Grid
 from tomojax.io.api import (
     ExportCrop,
     ExportDtype,
@@ -218,8 +219,6 @@ def volume_source(item: Reconstruction | Simulation | Alignment) -> ExportSource
 @contextmanager
 def saved_export_source(path: Path, member: str | None) -> Iterator[tuple[ExportSource, Array]]:
     """Read registered volume windows from the same open generation as the metadata."""
-    from tomojax.geometry import Grid
-
     with reading(path), h5py.File(path, "r") as file:
         meta, data, order = volume_entry(file)
         geom = meta.geometry_meta or {}
