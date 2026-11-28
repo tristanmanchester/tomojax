@@ -337,7 +337,7 @@ fn run_script(
     let mut lines = read_script(dir)?;
     prepare(dir, claim.launcher, &mut lines)?;
     let mut executor: Box<dyn Executor + '_> = match session {
-        Some(session) => session,
+        Some(session) => Box::new(crate::inline_ids::InlineIds::new(session, &claim.name)),
         None if claim.launcher == Launcher::Inline => {
             return Err(io::Error::other("inline job has no session executor"));
         }

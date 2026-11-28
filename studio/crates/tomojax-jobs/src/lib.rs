@@ -2,6 +2,7 @@
 pub mod commands;
 pub mod directory;
 pub mod executor;
+mod inline_ids;
 pub mod locks;
 pub mod log;
 pub mod publication;

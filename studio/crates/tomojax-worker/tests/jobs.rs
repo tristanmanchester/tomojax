@@ -362,3 +362,28 @@ exec '{}' "$@"
     );
     worker.finished(&dir, "interrupted");
 }
+
+#[test]
+#[ignore = "runs two projects' identically named scripts in a single real session"]
+fn inline_scripts_can_reuse_the_same_line_ids_in_different_projects() {
+    let root = tempfile::tempdir().unwrap();
+    let mut worker = Worker::start(root.path(), "inline", &python());
+    for project in ["project-one", "project-two"] {
+        let dir = root.path().join(project).join("jobs/same");
+        let script = [
+            json!({"id":"same.sim","command":simulate()}),
+            json!({"id":"same.plan","command":{"type":"plan","operation":{"type":"reconstruct","source":{"type":"member","handle":"same.sim","member":"scan"},"method":"sirt","iterations":2}}}),
+        ];
+        worker.request(json!({"type":"submit","directory":dir,"script":script}));
+        let done = worker.finished(&dir, "completed");
+        assert_eq!(done["receipt"]["type"], "report");
+        let (records, _) = page(&dir, 0, u64::MAX).unwrap();
+        for id in ["same.sim", "same.plan"] {
+            assert!(
+                records
+                    .iter()
+                    .any(|r| r["type"] == "result" && r["request"] == id)
+            );
+        }
+    }
+}
