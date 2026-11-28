@@ -161,6 +161,36 @@ fn scheduler_never_gates_the_handshake_and_a_missing_worker_blocks() {
     );
 }
 
+#[test]
+fn a_check_whose_executor_cannot_start_reports_why() {
+    // As at a site whose python lacks TomoJAX: the worker is up, its executor is not.
+    let f = Fixture::new();
+    fs::write(f.config.join("connections.toml"), "[here]\n").unwrap();
+    let worker = f.root.path().join("worker without tomojax");
+    script(
+        &worker,
+        r#"#!/bin/sh
+printf '%s\n' '{"type":"ready","protocol":1,"home":"/","directory":"/","host":"test","capabilities":[],"jobs":"inline"}'
+printf '%s\n' '{"type":"executor","generation":1,"state":"starting","detail":null}'
+printf '%s\n' '{"type":"executor","generation":1,"state":"starting","detail":"/usr/bin/python3: No module named tomojax"}'
+printf '%s\n' '{"type":"executor","generation":1,"state":"gone","detail":"executor output ended"}'
+cat > /dev/null
+"#,
+    );
+    let result = f
+        .command("here")
+        .env("TEST_WORKER", &worker)
+        .env("TEST_ACTION", "check")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert_eq!(result.status.code(), Some(5), "{stderr}");
+    assert!(
+        stderr.contains("/usr/bin/python3: No module named tomojax"),
+        "{stderr}"
+    );
+}
+
 mod openssh;
 
 use proptest::prelude::*;

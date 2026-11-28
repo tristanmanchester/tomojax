@@ -23,6 +23,7 @@ struct Handshake {
     line: Vec<u8>,
     stage: Stage,
     check: bool,
+    said: Option<String>,
 }
 impl Handshake {
     fn output(&mut self, mut bytes: &[u8], worker: &mut Owned) -> Result<(), Failure> {
@@ -85,11 +86,23 @@ impl Handshake {
                 let state: ExecutorState = serde_json::from_value(record)
                     .map_err(|e| Failure::blocked(format!("Invalid executor event: {e}")))?;
                 match state {
+                    // What the executor or its launcher says while starting, such as a
+                    // queued allocation or an import error, is for the person waiting.
+                    ExecutorState::Starting(Value::String(line)) => {
+                        eprintln!("{line}");
+                        self.said = Some(line);
+                        return Ok(());
+                    }
                     ExecutorState::Starting(_) => return Ok(()),
+                    // An executor that exits has shown its cause: someone must act on it.
                     ExecutorState::Gone(reason) => {
-                        return Err(Failure::silent(format!(
-                            "Executor stopped before ready: {reason}"
-                        )));
+                        let reason = reason.as_str().map_or(reason.to_string(), str::to_owned);
+                        return Err(Failure::blocked(match &self.said {
+                            Some(line) => {
+                                format!("The executor stopped before ready ({reason}): {line}")
+                            }
+                            None => format!("The executor stopped before ready: {reason}"),
+                        }));
                     }
                     ExecutorState::Ready(Ready {
                         protocol: 1,
@@ -165,6 +178,7 @@ pub(super) fn session(
         line: Vec::new(),
         stage: Stage::Starting,
         check,
+        said: None,
     };
     let mut deadline = Some(Instant::now() + timeout);
     let mut tail = Vec::new();
