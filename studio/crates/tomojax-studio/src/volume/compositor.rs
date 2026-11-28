@@ -16,8 +16,10 @@ struct Resources {
     volumes: HashMap<u32, VolumeGpu>,
 }
 
+type Scene<S> = fn(&mut S, &[(u32, f32)]) -> Vec<RenderItem>;
+
 pub struct ScientificCompositor<S: 'static> {
-    source: fn(&S) -> Vec<RenderItem>,
+    source: Scene<S>,
     resources: Option<Resources>,
     uploading: bool,
     frame_count: u64,
@@ -25,7 +27,7 @@ pub struct ScientificCompositor<S: 'static> {
 }
 
 impl<S: 'static> ScientificCompositor<S> {
-    pub fn new(source: fn(&S) -> Vec<RenderItem>) -> Self {
+    pub fn new(source: Scene<S>) -> Self {
         Self {
             source,
             resources: None,
@@ -43,20 +45,12 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
 
     fn render(&mut self, frame: &mut Frame<'_, S>) {
         let started = std::time::Instant::now();
-        let items = (self.source)(&frame.rt.state);
-        let sites: HashMap<u32, Instance> = frame
-            .rt
-            .instances
+        let sites = effect_sites(&frame.rt.instances);
+        let sizes: Vec<_> = sites
             .iter()
-            .filter(|i| i.params[1] == KIND_EFFECT)
-            .map(|instance| {
-                // Rune's documented KIND_EFFECT encoding stores the tag in two exact
-                // 16-bit floats. Runtime::marks instead tracks element inspection IDs.
-                let mark = (instance.border[0] as u32 & 0xffff)
-                    | ((instance.border[1] as u32 & 0xffff) << 16);
-                (mark, *instance)
-            })
+            .map(|(&mark, site)| (mark, site.rect[2].max(site.rect[3])))
             .collect();
+        let items = (self.source)(&mut frame.rt.state, &sizes);
         let device_key = frame.device_key();
         if self.resources.as_ref().is_none_or(|r| r.key != device_key) {
             self.resources = None;
@@ -167,4 +161,18 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
             self.cpu_ms / self.frame_count.max(1) as f64
         ))
     }
+}
+
+fn effect_sites(instances: &[Instance]) -> HashMap<u32, Instance> {
+    instances
+        .iter()
+        .filter(|i| i.params[1] == KIND_EFFECT)
+        .map(|instance| {
+            // Rune's documented KIND_EFFECT encoding stores the tag in two exact
+            // 16-bit floats. Runtime::marks instead tracks element inspection IDs.
+            let mark =
+                (instance.border[0] as u32 & 0xffff) | ((instance.border[1] as u32 & 0xffff) << 16);
+            (mark, *instance)
+        })
+        .collect()
 }

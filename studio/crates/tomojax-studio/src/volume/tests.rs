@@ -9,7 +9,7 @@ use std::sync::Arc;
 fn view(_: &RenderItem, _: &mut Cx<RenderItem>) -> El {
     el().size(96., 96.).effect(1)
 }
-fn items(item: &RenderItem) -> Vec<RenderItem> {
+fn items(item: &mut RenderItem, _: &[(u32, f32)]) -> Vec<RenderItem> {
     vec![item.clone()]
 }
 
@@ -87,6 +87,7 @@ fn sample(bytes: &[u8], x: usize, y: usize) -> &[u8] {
 #[ignore = "requires a real wgpu adapter; exercised by the GPU verification command"]
 fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture() {
     let data = Arc::new(PlaneData {
+        lossless: true,
         id: 1,
         values: vec![0., 10., 0., 10.].into(),
         shape: [2, 2],

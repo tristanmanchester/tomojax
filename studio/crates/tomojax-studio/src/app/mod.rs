@@ -5,6 +5,7 @@ mod editing;
 mod export;
 mod jobs;
 mod local;
+mod pixels;
 mod previewing;
 mod projection;
 #[cfg(test)]
@@ -117,6 +118,9 @@ pub struct AppState {
     pub(crate) validation: validation::Controller,
     preview_context: previewing::PreviewContext,
     engine: Option<Engine>,
+    relay: Option<Vec<String>>,
+    pane_edges: [usize; 8],
+    worker_enabled: bool,
     pub(crate) catalog: SchemaCatalog,
     pending: HashMap<String, Pending>,
     control_watch: Option<ControlWatch>,
@@ -174,6 +178,9 @@ impl AppState {
             validation: validation::Controller::default(),
             preview_context: previewing::PreviewContext::default(),
             engine: None,
+            relay: None,
+            pane_edges: [1024; 8],
+            worker_enabled: false,
             catalog,
             pending: HashMap::new(),
             control_watch: None,
@@ -209,6 +216,7 @@ impl AppState {
         };
         state.set_operation("reconstruct", None);
         state.model.error = preference_error;
+        state.configure_planes();
         if let Some(path) = state.startup_input.clone()
             && project::folder(&path, false)
                 .join(project::MANIFEST)
@@ -230,24 +238,8 @@ impl AppState {
             ));
         }
         state.refresh_model();
-        // Headless captures still read the actual project arrays through the native
-        // loader, with a bounded wait before Rune starts its virtual frame clock.
         if rune::tooling::is_headless() && state.project.is_some() {
-            state.refresh_images();
-            let until = Instant::now() + Duration::from_secs(15);
-            while Instant::now() < until {
-                state.imaging.poll();
-                if [1, 2, 3, 4, 5, 8].iter().all(|slot| {
-                    !matches!(
-                        state.imaging.status(*slot),
-                        crate::imaging::ImagingStatus::Loading
-                    )
-                }) {
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            state.refresh_plane_model();
+            state.preload_planes();
         }
         state
     }
@@ -260,14 +252,8 @@ impl AppState {
             self.model.backend.status = "Viewing saved project".into();
             return;
         }
-        let python = std::env::var_os("TOMOJAX_STUDIO_PYTHON")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
-        match Engine::spawn(python, wake) {
-            Ok(engine) => self.engine = Some(engine),
-            Err(error) => self.model.error = Some(error),
-        }
-        self.model.backend.status = "Starting TomoJAX".into();
+        self.worker_enabled = true;
+        self.start_engine();
     }
 
     pub fn has_pending_work(&self) -> bool {
@@ -348,7 +334,7 @@ impl AppState {
         if let Some(project) = &mut self.project {
             changed |= project.poll();
         }
-        if self.imaging.poll() {
+        if self.dispatch_planes() {
             changed = true;
             self.refresh_plane_model();
         }
@@ -496,75 +482,13 @@ impl AppState {
         }
         match event {
             EngineEvent::Ready(ready) => self.model.backend = ready.into(),
-            EngineEvent::Reply { response, stale } => {
-                if let Response::Result {
-                    request,
-                    result: ResultValue::Output(output),
-                    ..
-                } = &response
-                    && let Some(handle) = output.value.handle()
-                {
-                    self.live.bind_result(request, handle);
-                }
-                let Some(response) = self.previews.consume(response, stale) else {
-                    return;
-                };
-                if stale {
-                    self.release_response(&response);
-                    return;
-                }
-                match response {
-                    Response::Progress {
-                        request, record, ..
-                    } => self.progress(&request, record),
-                    Response::Result {
-                        request, result, ..
-                    } => {
-                        if let ResultValue::Description { parameters } = &result
-                            && let Ok(catalog) = SchemaCatalog::new(parameters.clone())
-                        {
-                            self.catalog = catalog;
-                            self.model.parameters =
-                                forms::refresh_catalog(&mut self.ui, &self.catalog);
-                        }
-                        if let Some(pending) = self.pending.remove(&request) {
-                            match pending {
-                                Pending::Control { .. } | Pending::ControlStatus { .. } => {
-                                    self.control_result(pending, result)
-                                }
-                                _ => self.result(pending, result),
-                            }
-                        }
-                    }
-                    Response::Error { request, error, .. } => {
-                        if let Some(pending) = self.pending.remove(&request) {
-                            self.request_failed(
-                                pending,
-                                error.message,
-                                matches!(
-                                    error.kind,
-                                    crate::protocol::ErrorKind::Canceled
-                                        | crate::protocol::ErrorKind::Superseded
-                                ),
-                            );
-                        }
-                    }
-                    Response::ProtocolError {
-                        request, message, ..
-                    } => {
-                        if let Some(pending) = request.and_then(|id| self.pending.remove(&id)) {
-                            self.request_failed(pending, message, false);
-                        } else {
-                            self.model.error = Some(message);
-                        }
-                    }
-                    Response::Ready(_) | Response::Executor(_) => {}
-                }
-            }
+            EngineEvent::Reply { response, stale } => self.worker_response(response, stale),
             EngineEvent::Diagnostic(message) => {
                 self.last_diagnostic = message;
             }
             EngineEvent::Disconnected { reason, .. } => {
+                self.imaging.disconnected();
+                self.refresh_plane_model();
                 self.disconnect_interactive();
                 self.live.disconnected();
                 self.model.backend.ready = false;
@@ -575,6 +499,74 @@ impl AppState {
                 self.pending.clear();
                 self.model.error = Some(reason);
             }
+        }
+    }
+
+    fn worker_response(&mut self, response: Response, stale: bool) {
+        let Some(response) = self.imaging.worker_reply(response, stale) else {
+            return;
+        };
+        if let Response::Result {
+            request,
+            result: ResultValue::Output(output),
+            ..
+        } = &response
+            && let Some(handle) = output.value.handle()
+        {
+            self.live.bind_result(request, handle);
+        }
+        let Some(response) = self.previews.consume(response, stale) else {
+            return;
+        };
+        if stale {
+            self.release_response(&response);
+            return;
+        }
+        match response {
+            Response::Progress {
+                request, record, ..
+            } => self.progress(&request, record),
+            Response::Result {
+                request, result, ..
+            } => {
+                if let ResultValue::Description { parameters } = &result
+                    && let Ok(catalog) = SchemaCatalog::new(parameters.clone())
+                {
+                    self.catalog = catalog;
+                    self.model.parameters = forms::refresh_catalog(&mut self.ui, &self.catalog);
+                }
+                if let Some(pending) = self.pending.remove(&request) {
+                    match pending {
+                        Pending::Control { .. } | Pending::ControlStatus { .. } => {
+                            self.control_result(pending, result)
+                        }
+                        _ => self.result(pending, result),
+                    }
+                }
+            }
+            Response::Error { request, error, .. } => {
+                if let Some(pending) = self.pending.remove(&request) {
+                    self.request_failed(
+                        pending,
+                        error.message,
+                        matches!(
+                            error.kind,
+                            crate::protocol::ErrorKind::Canceled
+                                | crate::protocol::ErrorKind::Superseded
+                        ),
+                    );
+                }
+            }
+            Response::ProtocolError {
+                request, message, ..
+            } => {
+                if let Some(pending) = request.and_then(|id| self.pending.remove(&id)) {
+                    self.request_failed(pending, message, false);
+                } else {
+                    self.model.error = Some(message);
+                }
+            }
+            Response::Ready(_) | Response::Executor(_) | Response::Block { .. } => {}
         }
     }
 
@@ -691,7 +683,7 @@ impl AppState {
         self.validation.reset();
         self.imports.clear();
         self.ui = UiState::default();
-        self.imaging.invalidate();
+        self.select_project_source();
         self.restore_workspace(&context);
         self.set_workspace(self.ui.workspace);
         if let Some(newest) = newest {
@@ -796,7 +788,7 @@ impl AppState {
     }
 
     fn start_metadata(&mut self, id: &str) {
-        if self.shutting_down {
+        if self.shutting_down || !self.native_data_available() {
             return;
         }
         let Some(path) = self

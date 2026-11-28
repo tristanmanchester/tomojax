@@ -430,6 +430,8 @@ pub struct Workspace {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Document {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<String>,
     pub version: u32,
     pub id: String,
     pub name: String,
@@ -445,6 +447,7 @@ impl Document {
     fn new(path: &Path) -> Self {
         Self {
             version: 2,
+            connection: None,
             id: new_id("project"),
             name: path
                 .file_name()

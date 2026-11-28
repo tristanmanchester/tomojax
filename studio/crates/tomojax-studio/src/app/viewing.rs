@@ -1,3 +1,4 @@
+use super::pixels::plane_view;
 use super::*;
 use crate::imaging::{ColorMap, DisplaySettings, ImagingStatus};
 use crate::protocol::{ArrayDescriptor, Coordinates, Storage};
@@ -94,7 +95,9 @@ impl AppState {
         let mut descriptor = descriptor.clone();
         let resolve = |storage: &mut Storage| match storage {
             Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } => {
-                if let Some(project) = &self.project {
+                if let Some(project) = &self.project
+                    && self.remote_project().is_none()
+                {
                     *path = project.resolve(Path::new(path)).to_string_lossy().into();
                 }
             }
@@ -314,14 +317,12 @@ impl AppState {
                     volume.clone(),
                     stored,
                     index,
-                    1024,
+                    self.pane_edges[axis + 1],
                 ) {
                     self.model.error = Some(error);
                 }
             }
-            if let Err(error) = self.imaging.request_volume(8, volume, 192) {
-                self.model.error = Some(error);
-            }
+            self.request_native_volume(volume);
         } else {
             self.imaging.clear(8);
             for (axis, plane) in [PlaneKind::Axial, PlaneKind::Coronal, PlaneKind::Sagittal]
@@ -343,7 +344,7 @@ impl AppState {
                         self.resolved(&array),
                         0,
                         index,
-                        1024,
+                        self.pane_edges[axis + 1],
                     ) {
                         self.model.error = Some(error);
                     }
@@ -355,6 +356,38 @@ impl AppState {
                 self.ui.main_view = self.default_view();
             }
         }
+        self.refresh_projection_views();
+        // Both sides show the same index, so it is clamped to the shorter volume.
+        let plane_axis = self.ui.compare_plane.axis().unwrap_or(0);
+        let compared = self.compared_volumes(plane_axis);
+        let index = self
+            .compared_count(plane_axis)
+            .map_or(self.ui.display.indices[plane_axis], |count| {
+                self.ui.display.indices[plane_axis].min(count.saturating_sub(1))
+            });
+        // Keep the stored index on the shown slice, so the next step starts from it.
+        if self.ui.workspace == Workspace::Compare && compared.iter().any(Option::is_some) {
+            self.ui.display.indices[plane_axis] = index;
+        }
+        for (slot, compared) in [6, 7].into_iter().zip(compared) {
+            if let Some((descriptor, axis)) = compared {
+                if let Err(error) = self.imaging.request_plane(
+                    slot,
+                    self.resolved(&descriptor),
+                    axis,
+                    index,
+                    self.pane_edges[slot as usize],
+                ) {
+                    self.model.error = Some(error);
+                }
+            } else {
+                self.imaging.clear(slot);
+            }
+        }
+        self.refresh_plane_model();
+    }
+
+    fn refresh_projection_views(&mut self) {
         if let Some(projections) = self.active_projections().cloned() {
             let projections = self.resolved(&projections);
             if self.center_sinogram {
@@ -376,45 +409,23 @@ impl AppState {
                 projections.clone(),
                 0,
                 self.ui.display.projection_index,
-                1024,
+                self.pane_edges[4],
             ) {
                 self.model.error = Some(error);
             }
-            if let Err(error) =
-                self.imaging
-                    .request_plane(5, projections, 1, self.ui.display.sinogram_row, 1024)
-            {
+            if let Err(error) = self.imaging.request_plane(
+                5,
+                projections,
+                1,
+                self.ui.display.sinogram_row,
+                self.pane_edges[5],
+            ) {
                 self.model.error = Some(error);
             }
         } else {
             self.imaging.clear(4);
             self.imaging.clear(5);
         }
-        // Both sides show the same index, so it is clamped to the shorter volume.
-        let plane_axis = self.ui.compare_plane.axis().unwrap_or(0);
-        let compared = self.compared_volumes(plane_axis);
-        let index = self
-            .compared_count(plane_axis)
-            .map_or(self.ui.display.indices[plane_axis], |count| {
-                self.ui.display.indices[plane_axis].min(count.saturating_sub(1))
-            });
-        // Keep the stored index on the shown slice, so the next step starts from it.
-        if self.ui.workspace == Workspace::Compare && compared.iter().any(Option::is_some) {
-            self.ui.display.indices[plane_axis] = index;
-        }
-        for (slot, compared) in [6, 7].into_iter().zip(compared) {
-            if let Some((descriptor, axis)) = compared {
-                if let Err(error) =
-                    self.imaging
-                        .request_plane(slot, self.resolved(&descriptor), axis, index, 1024)
-                {
-                    self.model.error = Some(error);
-                }
-            } else {
-                self.imaging.clear(slot);
-            }
-        }
-        self.refresh_plane_model();
     }
 
     pub(super) fn refresh_plane_model(&mut self) {
@@ -735,25 +746,16 @@ impl AppState {
 
     pub(super) fn crosshair(&mut self, plane: PlaneKind, position: [f32; 2]) {
         let uv = self.data_uv(position);
-        let Some(dimensions) = self.volume_dimensions() else {
-            return;
-        };
         let Some(data) = self.imaging.plane(plane.mark()) else {
             return;
         };
-        for (i, stored) in [1, 0].iter().enumerate() {
-            if let Some(axis) = ["z", "y", "x"]
-                .iter()
-                .position(|name| *name == data.axes[*stored].name)
-            {
-                let sample =
-                    (uv[i] * data.shape[*stored] as f32 - 0.5).max(0.) * data.stride as f32;
-                self.ui.display.indices[axis] =
-                    (sample.round() as usize).min(dimensions[axis].saturating_sub(1));
+        for (axis, index) in data.axes.iter().zip(data.displayed_index(uv)) {
+            if let Some(i) = ["z", "y", "x"].iter().position(|name| *name == axis.name) {
+                self.ui.display.indices[i] = index;
             }
         }
     }
-    fn data_uv(&self, position: [f32; 2]) -> [f32; 2] {
+    pub(super) fn data_uv(&self, position: [f32; 2]) -> [f32; 2] {
         std::array::from_fn(|i| {
             ((position[i] - 0.5 - self.ui.display.pan[i]) / self.ui.display.zoom + 0.5)
                 .clamp(0., 1.)
@@ -773,9 +775,9 @@ impl AppState {
         let data = self
             .imaging
             .plane(plane.mark())
-            .ok_or("Wait for the slice to load")?;
+            .filter(|plane| plane.lossless)
+            .ok_or("Wait for the lossless slice to measure")?;
         let points = [self.data_uv(start), self.data_uv(end)];
-        // Sample-center coordinates: sample i is centered at i.
         let unclamped = points.map(|p| {
             [
                 p[1] as f64 * data.shape[0] as f64 - 0.5,
@@ -1419,61 +1421,4 @@ fn registered_plane_kind(array: &ArrayDescriptor) -> Option<PlaneKind> {
             "x" => Some(PlaneKind::Sagittal),
             _ => None,
         })
-}
-
-fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
-    let statistics = &plane.statistics;
-    let bins = statistics.histogram.len().max(1);
-    let same_units =
-        plane.axes[0].unit == plane.axes[1].unit && plane.axes[0].frame == plane.axes[1].frame;
-    PlaneView {
-        available: true,
-        pixel_shape: plane.shape,
-        spacing: if same_units {
-            [plane.axes[0].spacing.abs(), plane.axes[1].spacing.abs()]
-        } else {
-            [1., 1.]
-        },
-        axes: [plane.axes[0].name.clone(), plane.axes[1].name.clone()],
-        units: plane.value_unit.clone(),
-        index: plane.index,
-        count: plane.count,
-        // Position first: it is what changes as the slice moves.
-        quality: plane
-            .fixed
-            .iter()
-            .map(|fixed| {
-                format!(
-                    "{} = {:.4} {}",
-                    fixed.name,
-                    fixed.coordinate,
-                    crate::ui::unit_name(&fixed.unit)
-                )
-            })
-            .chain([
-                plane.domain.replace('_', " "),
-                if plane.stride == 1 {
-                    "full resolution".into()
-                } else {
-                    format!("preview at 1:{} sampling", plane.stride)
-                },
-            ])
-            .collect::<Vec<_>>()
-            .join(" · "),
-        range: [statistics.min as f64, statistics.max as f64],
-        histogram: statistics.histogram.clone(),
-        histogram_edges: (0..=bins)
-            .map(|i| {
-                statistics.min as f64
-                    + (statistics.max - statistics.min) as f64 * i as f64 / bins as f64
-            })
-            .collect(),
-        statistics: Some(Statistics {
-            min: statistics.min as f64,
-            max: statistics.max as f64,
-            mean: statistics.mean,
-            std: statistics.std,
-            sampled_pixels: statistics.finite_count,
-        }),
-    }
 }

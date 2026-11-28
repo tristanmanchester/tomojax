@@ -122,6 +122,7 @@ pub struct UiState {
     pub compare_linked: bool,
     pub compare_plane: PlaneKind,
     pub compare_mode: CompareMode,
+    pub probe: Option<(u32, [f32; 2])>,
     pub compare_cursor: [f32; 2],
     /// Curtain position in Split mode, as a fraction of the image width from the left.
     pub compare_split: f32,
@@ -178,6 +179,7 @@ impl Default for UiState {
             compare_linked: true,
             compare_plane: PlaneKind::Axial,
             compare_mode: CompareMode::Pair,
+            probe: None,
             compare_cursor: [0.5; 2],
             compare_split: 0.5,
             compare_menu: None,

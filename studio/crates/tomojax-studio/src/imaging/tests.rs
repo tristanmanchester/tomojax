@@ -444,6 +444,7 @@ fn explicit_source_refresh_reloads_a_replaced_file_at_the_same_path() {
 #[test]
 fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
     let plane = |values: [f32; 4], unit: &str| super::PlaneData {
+        lossless: true,
         id: 1,
         values: values.to_vec().into(),
         shape: [1, 4],
@@ -495,3 +496,5 @@ fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
     assert!(left.split(&other_unit, 0.5, same).is_none());
     assert!(left.difference(&other_unit).is_none());
 }
+
+mod remote;
