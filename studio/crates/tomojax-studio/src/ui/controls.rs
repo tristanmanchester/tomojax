@@ -764,7 +764,8 @@ pub fn unit_name(unit: &str) -> &str {
     match unit {
         "scan_length" | "geometry_length" => "scan unit",
         "1/scan_length" | "1/geometry_length" => "1/scan unit",
-        "1" => "",
+        // Raw frames carry no physical unit; say nothing rather than "unspecified".
+        "1" | "unspecified" => "",
         "counts_per_line_integral" => "counts",
         "line_integral" => "line integral",
         "native_pixel" => "detector px",

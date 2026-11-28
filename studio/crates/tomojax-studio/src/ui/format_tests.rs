@@ -12,6 +12,7 @@ fn slice_positions_drop_padding_and_name_units() {
         Some("z = 0.5 scan unit")
     );
     assert_eq!(coordinate("y", -3., "1").as_deref(), Some("y = -3"));
+    assert_eq!(coordinate("u", 2., "unspecified").as_deref(), Some("u = 2"));
     // The slice counter already shows an index position.
     assert_eq!(coordinate("view", 4., "index"), None);
 }

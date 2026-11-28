@@ -145,10 +145,11 @@ fn heading(state: &AppState) -> El {
         && let [views, rows, columns] = asset.shape[..]
     {
         // Projection stacks are (view, v, u), as `tomojax inspect` reports them.
-        let frames = if state.shows_stored_frames() {
-            "stored frames"
-        } else {
-            "views"
+        let frames = match (state.shows_stored_frames(), views == 1) {
+            (true, true) => "stored frame",
+            (true, false) => "stored frames",
+            (false, true) => "view",
+            (false, false) => "views",
         };
         details.push(format!("{views} {frames} of {rows} × {columns} pixels"));
     } else if !asset.shape.is_empty() {
