@@ -331,7 +331,9 @@ def save_feature(path: Path, feature: ex.Feature) -> None:
     )
 
 
-def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
+def load_feature(
+    path: str, context: ex.ExecutionContext, *, validate_only: bool
+) -> ex.NewHandle | p.Validated:
     """Open the mask's bounding box and give its coordinate arrays to the new handle."""
     import h5py
 
@@ -345,6 +347,8 @@ def load_feature(path: str, context: ex.ExecutionContext) -> ex.NewHandle:
         box = tuple(slice(a, b) for a, b in description["box"])
         mask = file[registration.storage.dataset]
         assert isinstance(mask, h5py.Dataset)
+        if validate_only:
+            return p.Validated()
         inside = np.asarray(mask[box], dtype=bool)
 
         def coordinate(ref: Storage) -> np.ndarray:

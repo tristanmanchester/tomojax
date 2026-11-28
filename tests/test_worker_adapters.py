@@ -1241,6 +1241,23 @@ def test_projection_dry_run_reads_only_layout(tmp_path, monkeypatch, forward):
     assert not any(getattr(e, "name", None) in ("load", "correction") for e in events)
 
 
+def test_feature_open_preflight_checks_the_file_without_reading_the_mask(tmp_path, monkeypatch):
+    from tests.worker_adapter import Stage, admitted
+    from tomojax.cli import operations as op
+
+    fixtures = Path(__file__).parent / "data" / "formats"
+    reads = trace_detector_reads(monkeypatch, "/entry/masks/grain/data")
+
+    def validate(name):
+        command = op.Open(str(fixtures / name), "feature")
+        return admitted(op.Validate(command), None, Stage(tmp_path), None)
+
+    assert validate("format2-feature.nxs").details["kind"] == "feature"
+    assert not reads
+    with pytest.raises(tj.InvalidParameter, match="holds no saved TomoJAX feature"):
+        validate("format2-alignment.nxs")
+
+
 def test_open_dry_run_omits_unread_angle_range(tmp_path, monkeypatch):
     from tests.test_io_workflows import _labeled_dataset
     from tests.worker_adapter import Stage, admitted

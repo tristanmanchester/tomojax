@@ -880,7 +880,7 @@ def test_simulate_cli_grid_derives_view_count_like_python(tmp_path: Path) -> Non
     assert loaded.grid.shape == (4, 5, 6)
 
 
-def test_align_cli_opposite_views_validation_dry_run_and_manifest(tmp_path: Path, capsys) -> None:
+def test_align_cli_opposite_views_validation_dry_run_and_saved_settings(tmp_path: Path, capsys) -> None:
     import tomojax as tj
 
     scan = tmp_path / "scan.nxs"

@@ -307,7 +307,12 @@ class Admission:
                 from tomojax.cli._features import load_feature
 
                 self.details.update(path=operation.path, kind="feature")
-                return partial(load_feature, operation.path, self.context)
+                work = partial(
+                    load_feature, operation.path, self.context, validate_only=self.validating
+                )
+                if self.validating:
+                    _ = work()
+                return work
             load = {
                 "reconstruction": tj.load_reconstruction,
                 "alignment": tj.load_alignment,

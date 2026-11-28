@@ -58,7 +58,7 @@ def beyond_detector(info: Mapping[str, object]) -> str | None:
 
 
 def report_automatic(info: Mapping[str, object]) -> None:
-    """Keep a successful but limited automatic result visible without a manifest."""
+    """Report the stopping reason for a limited automatic result on the console."""
     automatic = object_mapping(info.get("automatic"))
     if automatic.get("status") == "limited":
         reasons = object_list(automatic.get("reasons"))
