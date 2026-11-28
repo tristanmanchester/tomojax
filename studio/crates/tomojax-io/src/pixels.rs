@@ -10,6 +10,9 @@ use crate::npy::Npy;
 #[cfg(feature = "static-hdf5")]
 mod chunks;
 mod neighbors;
+#[cfg(feature = "static-hdf5")]
+mod rows;
+mod sec2;
 use neighbors::Neighbors;
 
 #[derive(Default)]
@@ -156,8 +159,12 @@ impl Selection {
 
     fn read<T>(&self, data: &hdf5::Dataset) -> Result<Vec<T>>
     where
-        T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>,
+        T: hdf5::H5Type + Send + Copy + From<u8> + From<u16> + From<f32>,
     {
+        #[cfg(feature = "static-hdf5")]
+        if let Some(row) = rows::read(data, self) {
+            return Ok(row);
+        }
         let Some((first, counts)) = self.dense_counts::<T>(data) else {
             return Ok(data
                 .read_slice::<T, _, ndarray::IxDyn>(self.slab(&self.stride, &self.count))?

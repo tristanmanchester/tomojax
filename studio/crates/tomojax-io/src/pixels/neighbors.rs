@@ -4,8 +4,6 @@ use super::Selection;
 use anyhow::Result;
 use ndarray::{Array3, Axis};
 use std::collections::VecDeque;
-use std::fs::File;
-use std::os::fd::BorrowedFd;
 use std::os::unix::fs::MetadataExt;
 use std::sync::{Arc, Mutex};
 use studio_core::sync::Locked;
@@ -24,30 +22,7 @@ impl Version {
         // Identify the open file, including the target of an external link. A
         // pathname can already refer to a replacement while this read is in flight.
         let file = data.file().ok()?;
-        if !matches!(
-            file.access_plist().ok()?.get_driver().ok()?,
-            hdf5::plist::file_access::FileDriver::Sec2
-        ) {
-            return None;
-        }
-        let meta = hdf5::sync::sync(|| {
-            let mut handle = std::ptr::null_mut();
-            // The sec2 driver returns a pointer to its open POSIX file descriptor.
-            // The HDF5 File above outlives the borrow and we own the duplicated fd.
-            unsafe {
-                if hdf5_sys::h5f::H5Fget_vfd_handle(
-                    file.id(),
-                    hdf5_sys::h5p::H5P_DEFAULT,
-                    &mut handle,
-                ) < 0
-                    || handle.is_null()
-                {
-                    return None;
-                }
-                let fd = BorrowedFd::borrow_raw(*handle.cast::<std::os::fd::RawFd>());
-                File::from(fd.try_clone_to_owned().ok()?).metadata().ok()
-            }
-        })?;
+        let meta = super::sec2::descriptor(&file)?.metadata().ok()?;
         Some(Self {
             device: meta.dev(),
             inode: meta.ino(),
