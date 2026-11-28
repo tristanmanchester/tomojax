@@ -99,7 +99,10 @@ impl Ledger {
         if self.records.contains_key(&id) {
             bail!("Duplicate published handle {id}");
         }
-        let array = product.get(primary(kind)).or(product.get("poses"));
+        let array = product
+            .get(primary(kind))
+            .filter(|a| a.is_object())
+            .or(product.get("poses"));
         let mut summary = json!({"kind":kind,"shape":array.and_then(|a|a.get("shape")),"unit":array.and_then(|a|a.get("unit")),"operation":cmd["type"]});
         if cmd["type"] == "open" {
             summary["path"] = cmd["path"].clone();

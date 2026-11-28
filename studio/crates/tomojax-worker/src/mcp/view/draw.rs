@@ -201,6 +201,16 @@ pub(super) fn advance(text: &str) -> i32 {
         })
         .sum()
 }
+fn glyph_top(text: &str) -> i32 {
+    text.chars()
+        .filter_map(|ch| {
+            let i = u8::try_from(ch as u32).unwrap_or(0) as u32;
+            let (gx, gy) = (i % 16 * 16, i / 16 * 16);
+            (0..15).find(|dy| (0..16).any(|dx| FONT.get_pixel(gx + dx, gy + dy).0[0] > 0))
+        })
+        .min()
+        .unwrap_or(0) as i32
+}
 fn ticks(p: &Panel, c: Cell, img: &mut RgbImage) {
     let color = Rgb([150; 3]);
     for (dim, len) in p.displayed.iter().zip([p.height, p.width]) {
@@ -224,14 +234,21 @@ fn ticks(p: &Panel, c: Cell, img: &mut RgbImage) {
                 for i in 1..5 {
                     img.put_pixel(x as u32, (y - i) as u32, color);
                 }
-                label(img, x - (advance(&text) + 1) / 2, y - 15, &text, color);
+                let left = c.pixel(0., pos)[0].round() as i32 - (advance(&text) + 1) / 2;
+                label(img, left, y - 15, &text, color);
             } else {
                 let x = c.left as i32;
                 let y = c.pixel(pos, 0.)[1] as i32;
                 for i in 1..5 {
                     img.put_pixel((x - i) as u32, y as u32, color);
                 }
-                label(img, x - 6 - advance(&text), y - 6, &text, color);
+                label(
+                    img,
+                    x - 6 - advance(&text),
+                    (c.pixel(pos, 0.)[1] - 0.5).ceil() as i32 - 6,
+                    &text,
+                    color,
+                );
             }
         }
     }
@@ -245,7 +262,7 @@ fn ticks(p: &Panel, c: Cell, img: &mut RgbImage) {
     label(
         img,
         c.left as i32 - 6 - advance(&p.axes[0]),
-        (c.top + c.height + 3) as i32 - 3,
+        (c.top + c.height + 3) as i32 - glyph_top(&p.axes[0]),
         &p.axes[0],
         color,
     );

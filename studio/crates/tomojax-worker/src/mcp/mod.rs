@@ -10,6 +10,7 @@ mod ledger;
 mod namespace;
 mod parts;
 mod schema;
+mod summary;
 mod tasks;
 mod tools;
 mod transfers;

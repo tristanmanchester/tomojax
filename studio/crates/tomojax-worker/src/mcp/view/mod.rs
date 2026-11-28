@@ -38,6 +38,21 @@ struct View {
     percentiles: Option<Vec<f64>>,
     bins: Option<usize>,
 }
+impl View {
+    fn require_plane(&self, mode: &str) -> Result<()> {
+        if !self.features.is_empty()
+            || !self.marks.is_empty()
+            || self.ticks == Some(true)
+            || self.grid
+        {
+            ensure!(
+                matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
+                "marks, ticks and grid need a rendered plane"
+            );
+        }
+        Ok(())
+    }
+}
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Sources {
@@ -384,16 +399,7 @@ impl Reader<'_> {
         let first = names.first().context("give a source")?;
         let mode = form.mode.as_deref().unwrap_or("planes");
         let src = source(self.session, self.inventory, first)?;
-        if !form.features.is_empty()
-            || !form.marks.is_empty()
-            || form.ticks == Some(true)
-            || form.grid
-        {
-            ensure!(
-                matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
-                "marks, ticks and grid need a rendered plane"
-            );
-        }
+        form.require_plane(mode)?;
         if mode == "statistics" {
             ensure!(names.len() == 1, "statistics needs one source");
             let mut cmd =
