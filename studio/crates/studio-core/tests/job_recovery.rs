@@ -99,39 +99,84 @@ fn kill_before_and_after_the_capture_and_adoption_saves() {
     }
 }
 
+fn calibration(project: &mut Project, id: &str) {
+    let reading = row(project, id, json!({"type":"source","product":"frames"}));
+    project.apply_job(id, 0, &reading, None).unwrap();
+}
+
+fn exercise_recovery(steps: Vec<u8>, reverse: bool) {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut p = Project::open(tmp.path(), true).unwrap();
+    let source = Asset::input("raw.h5".into(), false);
+    let asset = source.id.clone();
+    p.document.assets.push(source);
+    let input = std::slice::from_ref(&asset);
+    let inspect = submit(&mut p, "inspect", json!({}), input);
+    p.document
+        .asset_mut(&asset)
+        .unwrap()
+        .relink("new.h5".into(), tmp.path());
+    let older = submit(&mut p, "open", json!({"flats":900}), input);
+    let later = submit(&mut p, "open", json!({"flats":1000}), input);
+    let sim = submit(&mut p, "simulate", json!({}), &[]);
+    p.changed().unwrap();
+    p.flush().unwrap();
+
+    for event in steps {
+        match event {
+            0 => calibration(&mut p, &later),
+            1 => calibration(&mut p, &older),
+            2 => {
+                let stale = row(
+                    &p,
+                    &inspect,
+                    json!({
+                        "type":"report", "product":"inspection", "report":{"report":{"source":"stale"}}
+                    }),
+                );
+                p.apply_job(&inspect, 0, &stale, None).unwrap();
+            }
+            3 => {
+                let reading = product(&p, &sim);
+                p.apply_job(&sim, 0, &reading, None).unwrap();
+            }
+            4 => {
+                p.changed().unwrap();
+                p.flush().unwrap();
+            }
+            _ => {
+                drop(p);
+                p = Project::open(tmp.path(), false).unwrap();
+            }
+        }
+        let source = p.document.asset(&asset).unwrap();
+        assert!(source.inspection.is_null());
+        assert_ne!(source.open_parameters, json!({"flats":900}));
+    }
+    let order = if reverse {
+        [&later, &older]
+    } else {
+        [&older, &later]
+    };
+    for id in order {
+        calibration(&mut p, id);
+    }
+    let reading = product(&p, &sim);
+    p.apply_job(&sim, 0, &reading, None).unwrap();
+    assert_eq!(
+        p.document.asset(&asset).unwrap().open_parameters,
+        json!({"flats":1000})
+    );
+    assert_eq!(p.document.assets.len(), 2);
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
     #[test]
-    fn repeated_pages_and_autosaves_keep_the_latest_intent(steps in prop::collection::vec(0u8..6,1..40),reverse in any::<bool>()){
-        let tmp=tempfile::tempdir().unwrap();
-        let mut p=Project::open(tmp.path(),true).unwrap();
-        let source=Asset::input("raw.h5".into(),false);
-        let asset=source.id.clone();
-        p.document.assets.push(source);
-        let inspect=submit(&mut p,"inspect",json!({}),std::slice::from_ref(&asset));
-        p.document.asset_mut(&asset).unwrap().relink("new.h5".into(),tmp.path());
-        let older=submit(&mut p,"open",json!({"flats":900}),std::slice::from_ref(&asset));
-        let later=submit(&mut p,"open",json!({"flats":1000}),std::slice::from_ref(&asset));
-        let sim=submit(&mut p,"simulate",json!({}),&[]);
-        p.changed().unwrap();p.flush().unwrap();
-        let calibration=|p:&mut Project,id:&str|{
-            let r=row(p,id,json!({"type":"source","product":"frames"}));p.apply_job(id,0,&r,None).unwrap();
-        };
-        for event in steps{
-            match event{
-                0=>calibration(&mut p,&later),
-                1=>calibration(&mut p,&older),
-                2=>{let r=row(&p,&inspect,json!({"type":"report","product":"inspection","report":{"report":{"source":"stale"}}}));p.apply_job(&inspect,0,&r,None).unwrap();},
-                3=>{let r=product(&p,&sim);p.apply_job(&sim,0,&r,None).unwrap();},
-                4=>{p.changed().unwrap();p.flush().unwrap();},
-                _=>{drop(p);p=Project::open(tmp.path(),false).unwrap();}
-            }
-            prop_assert!(p.document.asset(&asset).unwrap().inspection.is_null());
-            prop_assert_ne!(&p.document.asset(&asset).unwrap().open_parameters,&json!({"flats":900}));
-        }
-        for id in if reverse{[&later,&older]}else{[&older,&later]}{calibration(&mut p,id);}
-        let r=product(&p,&sim);p.apply_job(&sim,0,&r,None).unwrap();
-        prop_assert_eq!(&p.document.asset(&asset).unwrap().open_parameters,&json!({"flats":1000}));
-        prop_assert_eq!(p.document.assets.len(),2);
+    fn repeated_pages_and_autosaves_keep_the_latest_intent(
+        steps in prop::collection::vec(0u8..6, 1..40),
+        reverse in any::<bool>(),
+    ) {
+        exercise_recovery(steps, reverse);
     }
 }
