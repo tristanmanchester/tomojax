@@ -306,6 +306,30 @@ def test_point_drawers_report_the_same_sample_and_draw_the_same_pixels(tmp_path,
         np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))
 
 
+def test_shape_footprints_and_outlines_match_on_a_nonuniform_plane(tmp_path, native):
+    # A uniform rectangle cannot detect a different set of boundary samples in a mean.
+    np.save(tmp_path / "plane.npy", np.random.default_rng(100).random((25, 20)))
+    marks = [
+        {"type": "point", "at": [8, 12], "label": "sample"},
+        {"type": "box", "corners": [[2, 5], [9, 14]]},
+        {"type": "circle", "at": [9, 7], "radius": 5},
+        {"type": "arrow", "from": [15, 8], "to": [5, 6]},
+        {"type": "polygon", "points": [[5, 1], [7, 8], [18, 4]]},
+        {"type": "polyline", "points": [[5, 1], [7, 8], [18, 4]]},
+        {"type": "text", "at": [10, 3], "label": "Hi"},
+    ]
+    with native() as rust, connection(tmp_path) as python:
+        for mark in marks:
+            a, b = (
+                checked(c, "view", source="plane.npy", marks=[mark], ticks=False)
+                for c in (rust, python)
+            )
+            assert a["structuredContent"] == b["structuredContent"], mark
+            np.testing.assert_array_equal(
+                image(a["content"][1]), image(b["content"][1]), err_msg=str(mark)
+            )
+
+
 @pytest.mark.parametrize("server", ["rust", "python"])
 def test_cancel_task_on_running_reconstruction(tmp_path, native, server):
     with native() if server == "rust" else connection(tmp_path) as client:
