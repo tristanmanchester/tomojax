@@ -116,6 +116,7 @@ struct Inbox {
     /// artifact must never appear idle between queueing and its first file open.
     active: HashMap<u64, Arc<ArrayDescriptor>>,
     desired: HashMap<u32, u64>,
+    waiting_for_plane: bool,
     stopping: bool,
 }
 
@@ -139,6 +140,14 @@ struct Slot {
     asset: Option<Asset>,
     status: ImagingStatus,
     displayed: (u64, bool),
+}
+
+impl Slot {
+    fn awaiting_first_plane(&self) -> bool {
+        self.request.key.plane.is_some()
+            && self.asset.is_none()
+            && self.status == ImagingStatus::Loading
+    }
 }
 
 /// Owns two background readers and a byte-bounded LRU. Hot cache hits need no worker roundtrip.
@@ -205,9 +214,14 @@ impl Imaging {
     ) -> bool {
         // Consume completed reads before opening another round of up to MAX_SLOTS fetches.
         let changed = self.poll();
+        // A transverse thumbnail or a 3D preview can hold the HDF5 lock for seconds.
+        let first = primary.filter(|id| self.slots.get(id).is_some_and(Slot::awaiting_first_plane));
+        if first.is_none() && std::mem::take(&mut self.shared.inbox.locked().waiting_for_plane) {
+            self.shared.changed.notify_all();
+        }
         self.remote
             .as_mut()
-            .is_some_and(|r| r.dispatch(engine, &mut self.slots, windows, primary))
+            .is_some_and(|r| r.dispatch(engine, &mut self.slots, windows, first))
             || changed
     }
 
@@ -397,6 +411,7 @@ impl Imaging {
         if cached.is_some() || remote_plane {
             inbox.pending.remove(&slot);
         } else {
+            inbox.waiting_for_plane = self.slots.values().any(Slot::awaiting_first_plane);
             inbox.pending.insert(slot, request.clone());
         }
         drop(inbox);
@@ -650,7 +665,9 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
             let inbox = shared.inbox.locked();
             let mut inbox = shared
                 .changed
-                .wait_while(inbox, |inbox| inbox.pending.is_empty() && !inbox.stopping)
+                .wait_while(inbox, |inbox| {
+                    (inbox.pending.is_empty() || inbox.waiting_for_plane) && !inbox.stopping
+                })
                 .unwrap_or_else(PoisonError::into_inner);
             if inbox.stopping {
                 return;
