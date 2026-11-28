@@ -466,6 +466,11 @@ def test_queued_executor_leaves_worker_tools_available(tmp_path, monkeypatch, na
         refused = client.call("simulate", size=8)
         assert refused["isError"]
         assert "waiting in the queue. waiting for resources" in refused["content"][0]["text"]
+        # Nothing is wrong with the arguments: the executor is not there yet.
+        error = refused["structuredContent"]
+        assert error["kind"] == "unavailable"
+        assert "status" in error["next"] and "parameters" not in error["next"]
+        assert ".." not in refused["content"][0]["text"]
         assert checked(client, "jobs")["structuredContent"]["jobs"] == []
         assert checked(client, "inspect", path=str(tmp_path))["structuredContent"][
             "directory"

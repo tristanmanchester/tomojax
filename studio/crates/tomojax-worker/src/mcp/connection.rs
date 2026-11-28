@@ -28,6 +28,16 @@ pub struct Inventory {
     space: Arc<Namespace>,
 }
 
+/// The executor is starting, queued or restarting; files, jobs and transfers still work.
+#[derive(Debug)]
+pub struct NotReady(String);
+impl std::fmt::Display for NotReady {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+impl std::error::Error for NotReady {}
+
 impl Inventory {
     fn check(&self, needs_executor: bool) -> Result<()> {
         if let Some(message) = &self.failure {
@@ -41,11 +51,16 @@ impl Inventory {
                 super::identity().version,
                 detail["versions"]["tomojax"].as_str().unwrap_or("unknown")
             ),
-            Some("gone") if needs_executor => bail!("TomoJAX executor stopped: {detail}"),
-            _ if needs_executor => bail!(
-                "TomoJAX is waiting in the queue. {}",
-                detail.as_str().unwrap_or("The executor is starting.")
-            ),
+            Some("gone") if needs_executor => {
+                return Err(NotReady(format!("TomoJAX executor stopped: {detail}")).into());
+            }
+            _ if needs_executor => {
+                return Err(NotReady(format!(
+                    "TomoJAX is waiting in the queue. {}",
+                    detail.as_str().unwrap_or("The executor is starting.")
+                ))
+                .into());
+            }
             _ => {}
         }
         Ok(())

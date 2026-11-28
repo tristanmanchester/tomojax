@@ -68,13 +68,19 @@ impl Server {
                 let wire = error
                     .downcast_ref::<connection::WorkerError>()
                     .map(|e| &e.0);
+                let not_ready = error.downcast_ref::<connection::NotReady>().is_some();
                 let kind = wire
                     .and_then(|e| e["kind"].as_str())
-                    .unwrap_or("invalid_parameter");
+                    .unwrap_or(if not_ready {
+                        "unavailable"
+                    } else {
+                        "invalid_parameter"
+                    });
                 let invalid = error.downcast_ref::<schema::ArgumentError>();
                 let checkpoint = wire.and_then(|w| w["checkpoint"].as_str());
                 let next = match kind {
                     _ if invalid.is_some() => invalid.unwrap().next.clone(),
+                    _ if not_ready => "Call status until the executor is ready, then retry. Files, jobs and transfers work meanwhile.".into(),
                     _ if checkpoint.is_some() => format!(
                         "Its state is saved in {}: call {name} again with the same arguments, on the same input, to resume (inspect shows what the checkpoint holds).",
                         checkpoint.unwrap()
@@ -98,7 +104,7 @@ impl Server {
                 if let Some(file) = checkpoint {
                     data["checkpoint"] = json!(file);
                 }
-                json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],"structuredContent":data,"isError":true})
+                json!({"content":[{"type":"text","text":format!("{kind}: {}. {next}", message.trim_end_matches('.'))}],"structuredContent":data,"isError":true})
             }
         };
         Ok(parts::Parts::bound(&self.parts, reply))
