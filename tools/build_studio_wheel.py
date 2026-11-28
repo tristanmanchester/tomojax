@@ -16,7 +16,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
-LICENSE_FILES = (ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md")
+LICENSE_FILE = ROOT / "LICENSE"
 STUDIO_README = ROOT / "studio" / "README.md"
 
 ALLOWED_SYSTEM_LIBS = frozenset(
@@ -90,7 +90,8 @@ def _metadata(version: str) -> str:
         "Home-page: https://tomojax.dev/studio/",
         "Author-email: Tristan Manchester <tmanchester96@gmail.com>",
         "License-Expression: GPL-3.0-only",
-        *(f"License-File: {path.name}" for path in LICENSE_FILES),
+        "License-File: LICENSE",
+        "License-File: THIRD_PARTY_NOTICES.md",
         "Project-URL: Documentation, https://tomojax.dev/studio/",
         "Project-URL: Repository, https://github.com/tristanmanchester/tomojax",
         "Project-URL: Issues, https://github.com/tristanmanchester/tomojax/issues",
@@ -127,18 +128,22 @@ def build_wheel(binary: Path, version: str, platform_tag: str, out_dir: Path) ->
     wheel_path = out_dir / f"tomojax_studio-{version}-py3-none-{platform_tag}.whl"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    binary_bytes = binary.read_bytes()
+    worker = binary.with_name("tomojax-worker")
+    license_bytes = LICENSE_FILE.read_bytes()
     metadata_bytes = _metadata(version).encode("utf-8")
     wheel_bytes = _wheel_file(platform_tag).encode("utf-8")
 
     entries: list[tuple[str, bytes, int]] = [
-        (data_scripts, binary_bytes, 0o100755),
+        (data_scripts, binary.read_bytes(), 0o100755),
+        (f"tomojax_studio-{version}.data/scripts/tomojax-worker", worker.read_bytes(), 0o100755),
+        (
+            f"{dist_info}/licenses/THIRD_PARTY_NOTICES.md",
+            (ROOT / "THIRD_PARTY_NOTICES.md").read_bytes(),
+            0o100644,
+        ),
         (f"{dist_info}/METADATA", metadata_bytes, 0o100644),
         (f"{dist_info}/WHEEL", wheel_bytes, 0o100644),
-        *(
-            (f"{dist_info}/licenses/{path.name}", path.read_bytes(), 0o100644)
-            for path in LICENSE_FILES
-        ),
+        (f"{dist_info}/licenses/LICENSE", license_bytes, 0o100644),
     ]
     record_name = f"{dist_info}/RECORD"
     record_lines = [_record_line(name, payload) for name, payload, _ in entries]
@@ -162,19 +167,18 @@ def build_tarball(
     tar_path = out_dir / f"tomojax-studio-{version}-linux-{arch}.tar.gz"
     out_dir.mkdir(parents=True, exist_ok=True)
     with tarfile.open(tar_path, "w:gz") as archive:
-        bin_info = archive.gettarinfo(str(binary), arcname="tomojax-studio")
-        bin_info.mode = 0o755
-        bin_info.uid = bin_info.gid = 0
-        bin_info.uname = bin_info.gname = ""
-        with binary.open("rb") as handle:
-            archive.addfile(bin_info, handle)
-        for path in LICENSE_FILES:
-            lic_info = archive.gettarinfo(str(path), arcname=path.name)
-            lic_info.mode = 0o644
-            lic_info.uid = lic_info.gid = 0
-            lic_info.uname = lic_info.gname = ""
+        for path, name, mode in (
+            (binary, "tomojax-studio", 0o755),
+            (binary.with_name("tomojax-worker"), "tomojax-worker", 0o755),
+            (LICENSE_FILE, "LICENSE", 0o644),
+            (ROOT / "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_NOTICES.md", 0o644),
+        ):
+            info = archive.gettarinfo(str(path), arcname=name)
+            info.mode = mode
+            info.uid = info.gid = 0
+            info.uname = info.gname = ""
             with path.open("rb") as handle:
-                archive.addfile(lic_info, handle)
+                archive.addfile(info, handle)
     digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
     sha_path = out_dir / f"{tar_path.name}.sha256"
     _ = sha_path.write_text(f"{digest}  {tar_path.name}\n", encoding="utf-8")
@@ -220,6 +224,7 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = cast("Path", args.out_dir)
     if cast("bool", args.check_static):
         verify_static_linux_binary(binary, platform_tag)
+        verify_static_linux_binary(binary.with_name("tomojax-worker"), platform_tag)
     wheel = build_wheel(binary, version, platform_tag, out_dir)
     tarball, sha = build_tarball(binary, version, platform_tag, out_dir)
     print(f"Wrote {wheel}")

@@ -77,7 +77,7 @@ jobs:
 
       - name: Build static-HDF5 Studio binary
         run: |
-          cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --features static-hdf5
+          cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --package tomojax-worker --features static-hdf5
 
       - name: Package and verify tomojax-studio wheel
         run: |

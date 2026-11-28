@@ -60,7 +60,7 @@ package:
 # Built in this checkout: the shared target directory holds whichever worktree's binary was built last.
 studio-wheel:
     rm -rf dist-studio
-    cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --features static-hdf5 --target-dir studio/target
+    cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --package tomojax-worker --features static-hdf5 --target-dir studio/target
     uv run --no-sync python tools/build_studio_wheel.py --out-dir dist-studio --check-static
     uv run --no-sync twine check --strict dist-studio/*.whl
 
