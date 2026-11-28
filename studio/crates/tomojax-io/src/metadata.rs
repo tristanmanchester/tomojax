@@ -10,11 +10,21 @@ use serde_json::{Value, json};
 
 use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Storage};
 
-pub const PROJECTIONS: &str = "/entry/instrument/detector/data";
-pub const ANGLES: &str = "/entry/sample/rotation_angle";
-
 /// Suggested input kind, registered file arrays and the metadata-only report.
 pub type HeaderMetadata = (String, BTreeMap<String, ArrayDescriptor>, Value);
+
+/// Where an NXtomo entry keeps its frames and rotation angles, as the loader looks.
+const STACKS: [&str; 4] = [
+    "instrument/detector/data",
+    "data/data",
+    "data/projections",
+    "projections",
+];
+const ANGLES: [&str; 3] = [
+    "sample/rotation_angle",
+    "sample/transformations/rotation_angle",
+    "data/rotation_angle",
+];
 
 /// Fast first-image metadata for standard NXtomo layouts. No pixel datasets or
 /// coordinate vectors are read; the full worker inspection remains an explicit audit.
@@ -32,19 +42,20 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     if let Some(metadata) = native_metadata(&file, path)? {
         return Ok(Some(metadata));
     }
-    if !file.link_exists("/entry") {
+    let root = nxtomo_entry(&file)?.unwrap_or_else(|| "/entry".into());
+    let at = |name: &str| format!("{root}/{name}");
+    let first = |names: &[&str]| names.iter().map(|n| at(n)).find(|n| file.link_exists(n));
+    if !file.link_exists(&root) {
         return Ok(None);
     }
-    let projection_path = [PROJECTIONS, "/entry/data/projections", "/entry/projections"]
-        .into_iter()
-        .find(|name| file.link_exists(name));
+    let projection_path = first(&STACKS);
     if projection_path.is_none() {
         return Ok(None);
     }
-    let entry = file.group("/entry").map_err(|error| error.to_string())?;
-    let (geometry, geometry_type) = if file.link_exists("/entry/geometry") {
+    let entry = file.group(&root).map_err(|error| error.to_string())?;
+    let (geometry, geometry_type) = if file.link_exists(&at("geometry")) {
         let group = file
-            .group("/entry/geometry")
+            .group(&at("geometry"))
             .map_err(|error| error.to_string())?;
         (
             json_attribute(&group, "geometry_meta_json")?,
@@ -53,10 +64,10 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     } else {
         (Value::Null, None)
     };
-    let detector = if file.link_exists("/entry/instrument/detector") {
+    let detector = if file.link_exists(&at("instrument/detector")) {
         json_attribute(
             &file
-                .group("/entry/instrument/detector")
+                .group(&at("instrument/detector"))
                 .map_err(|error| error.to_string())?,
             "detector_meta_json",
         )?
@@ -65,7 +76,7 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     };
     let mut projection = json!({"found":false,"path":null,"shape":null,"dtype":null});
     if let Some(dataset) = projection_path {
-        let data = file.dataset(dataset).map_err(|error| error.to_string())?;
+        let data = file.dataset(&dataset).map_err(|error| error.to_string())?;
         let stored = data.shape();
         let shape = match stored.as_slice() {
             [views, u] => vec![*views, 1, *u],
@@ -85,11 +96,9 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         projection = json!({"found":true,"path":dataset,"shape":shape,"dtype":dtype.to_descriptor().map_err(|error|error.to_string())?.to_string(),
             "n_views":shape[0],"detector_shape":{"nv":shape[1],"nu":shape[2]},"storage_bytes":bytes});
     }
-    let angle_path = [ANGLES, "/entry/sample/transformations/rotation_angle"]
-        .into_iter()
-        .find(|name| file.link_exists(name));
+    let angle_path = first(&ANGLES);
     let angles = if let Some(dataset) = angle_path {
-        let values = file.dataset(dataset).map_err(|error| error.to_string())?;
+        let values = file.dataset(&dataset).map_err(|error| error.to_string())?;
         let shape = values.shape();
         if shape.len() != 1 {
             return Ok(None);
@@ -104,10 +113,8 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     // leave out. They are found as the worker finds them: at the detector, else
     // the file's only per-frame dataset named `image_key`.
     let frames = projection["n_views"].as_u64().map(|n| n as usize);
-    let image_key = ["/entry/instrument/detector/image_key"]
-        .into_iter()
-        .find(|name| file.link_exists(name))
-        .map(str::to_owned)
+    let image_key = Some(at("instrument/detector/image_key"))
+        .filter(|name| file.link_exists(name))
         .or_else(|| frames.and_then(|frames| only_per_frame(&file, "image_key", frames)));
     let key_found = image_key.is_some();
     let read_keys = |name: &str| -> Result<Option<Vec<i64>>, String> {
@@ -137,8 +144,8 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         }
         None => None,
     };
-    let flat_found = file.link_exists("/entry/instrument/detector/data_white");
-    let dark_found = file.link_exists("/entry/instrument/detector/data_dark");
+    let flat_found = file.link_exists(&at("instrument/detector/data_white"));
+    let dark_found = file.link_exists(&at("instrument/detector/data_dark"));
     let tomojax_grid = entry
         .attr_names()
         .map_err(|error| error.to_string())?
@@ -151,7 +158,7 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         "flats_darks":{"image_key_found":key_found,"image_key_path":image_key,
             "sample_count":sample_count,
             "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
-        "alignment":{"found":file.link_exists("/entry/processing/tomojax/align"),"params_found":file.link_exists("/entry/processing/tomojax/align/thetas")}});
+        "alignment":{"found":file.link_exists(&at("processing/tomojax/align")),"params_found":file.link_exists(&at("processing/tomojax/align/thetas"))}});
     let mut kind = suggested_kind(&report).to_owned();
     let interleaved = sample_count
         .is_some_and(|samples| report["projection"]["n_views"].as_u64() != Some(samples as u64));
@@ -471,7 +478,6 @@ fn projection_arrays(
 }
 
 fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>, String> {
-    use hdf5::types::{FixedAscii, FixedUnicode, VarLenAscii, VarLenUnicode};
     if !group
         .attr_names()
         .map_err(|error| error.to_string())?
@@ -481,15 +487,20 @@ fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>
         return Ok(None);
     }
     let attribute = group.attr(name).map_err(|error| error.to_string())?;
-    // NeXus writers use variable- and fixed-length strings alike.
-    let text = if let Ok(value) = attribute.read_scalar::<VarLenUnicode>() {
+    text(&attribute, name).map(Some)
+}
+
+/// A scalar string, as NeXus writers store them: variable- or fixed-length.
+fn text(value: &hdf5::Container, name: &str) -> Result<String, String> {
+    use hdf5::types::{FixedAscii, FixedUnicode, VarLenAscii, VarLenUnicode};
+    let text = if let Ok(value) = value.read_scalar::<VarLenUnicode>() {
         value.as_str().to_owned()
-    } else if let Ok(value) = attribute.read_scalar::<VarLenAscii>() {
+    } else if let Ok(value) = value.read_scalar::<VarLenAscii>() {
         value.as_str().to_owned()
-    } else if let Ok(value) = attribute.read_scalar::<FixedUnicode<4096>>() {
+    } else if let Ok(value) = value.read_scalar::<FixedUnicode<4096>>() {
         value.as_str().to_owned()
     } else {
-        attribute
+        value
             .read_scalar::<FixedAscii<4096>>()
             .map_err(|error| format!("Cannot decode {name}: {error}"))?
             .as_str()
@@ -498,7 +509,59 @@ fn string_attribute(group: &hdf5::Location, name: &str) -> Result<Option<String>
     if text.len() > 1024 * 1024 {
         return Err(format!("The {name} metadata exceed 1 MiB"));
     }
-    Ok(Some(text))
+    Ok(text)
+}
+
+/// The file's NXtomo entry, found as the loader finds it (GDA writes /entry/tomo_entry;
+/// TomoJAX's own files use /entry): a group, reached through any links, whose
+/// `definition` field or attribute is NXtomo. Among those and the
+/// groups below them, the one holding a detector; None when there is none or more
+/// than one.
+fn nxtomo_entry(file: &hdf5::File) -> Result<Option<String>, String> {
+    let declares = |group: &hdf5::Group| -> Result<bool, String> {
+        let label = if group.link_exists("definition") {
+            match group.dataset("definition") {
+                Ok(field) => text(&field, "definition")?,
+                Err(_) => return Ok(false),
+            }
+        } else {
+            string_attribute(group, "definition")?.unwrap_or_default()
+        };
+        Ok(label.trim() == "NXtomo")
+    };
+    let mut definitions = Vec::new();
+    let mut containers = Vec::new();
+    let mut seen = Vec::new();
+    let root = file.group("/").map_err(|error| error.to_string())?;
+    let mut pending = vec![(String::new(), root, false)];
+    while let Some((path, group, inherited)) = pending.pop() {
+        let declared = declares(&group)?;
+        let scope = inherited || declared;
+        let info = group.loc_info().map_err(|error| error.to_string())?;
+        // Object identity across files: soft and external links can form cycles.
+        if seen.contains(&(info.fileno, info.token, scope)) {
+            continue;
+        }
+        seen.push((info.fileno, info.token, scope));
+        if declared {
+            definitions.push(path.clone());
+        }
+        if scope && group.link_exists("instrument/detector") {
+            containers.push(path.clone());
+        }
+        for name in group.member_names().map_err(|error| error.to_string())? {
+            // Opened by name, so an external link resolves into its own file.
+            if let Ok(child) = group.group(&name) {
+                pending.push((format!("{path}/{name}"), child, scope));
+            }
+        }
+    }
+    let mut found = if containers.is_empty() {
+        definitions
+    } else {
+        containers
+    };
+    Ok((found.len() == 1).then(|| found.remove(0)))
 }
 
 fn json_attribute(group: &hdf5::Group, name: &str) -> Result<Value, String> {
@@ -639,6 +702,61 @@ mod tests {
         assert!(report.get("valid").is_none());
         assert!(report["projection"].get("stats").is_none());
         assert!(!unavailable.exists());
+    }
+
+    #[test]
+    fn a_beamline_master_is_read_from_its_nxtomo_entry_through_external_links() {
+        // As GDA writes a DIAD scan: an NXsubentry declaring NXtomo below /entry,
+        // its detector frames in another file behind an external link.
+        use hdf5::types::VarLenUnicode;
+        let directory = tempfile::tempdir().unwrap();
+        let frames = hdf5::File::create(directory.path().join("imaging.h5")).unwrap();
+        frames
+            .create_group("entry")
+            .unwrap()
+            .new_dataset::<u16>()
+            .shape((4, 2, 3))
+            .create("data")
+            .unwrap();
+        drop(frames);
+        let path = directory.path().join("scan.nxs");
+        let file = hdf5::File::create(&path).unwrap();
+        let entry = file.create_group("entry").unwrap();
+        entry.create_group("instrument").unwrap();
+        let tomo = entry.create_group("tomo_entry").unwrap();
+        tomo.new_dataset::<VarLenUnicode>()
+            .shape(())
+            .create("definition")
+            .unwrap()
+            .write_scalar(&"NXtomo".parse::<VarLenUnicode>().unwrap())
+            .unwrap();
+        let detector = tomo
+            .create_group("instrument")
+            .unwrap()
+            .create_group("detector")
+            .unwrap();
+        detector
+            .link_external("imaging.h5", "/entry/data", "data")
+            .unwrap();
+        detector
+            .new_dataset_builder()
+            .with_data(&[1i32, 2, 0, 0])
+            .create("image_key")
+            .unwrap();
+        drop((detector, tomo, entry, file));
+
+        let (kind, _, report) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "frames");
+        assert_eq!(
+            report["projection"]["path"],
+            "/entry/tomo_entry/instrument/detector/data"
+        );
+        assert_eq!(report["projection"]["shape"], json!([4, 2, 3]));
+        assert_eq!(
+            report["flats_darks"]["image_key_path"],
+            "/entry/tomo_entry/instrument/detector/image_key"
+        );
+        assert_eq!(report["flats_darks"]["sample_count"], 2);
     }
 
     #[test]
