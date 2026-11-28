@@ -59,7 +59,7 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5613,
+    "reportAny": 5612,
     "reportMissingImports": 66,
     "reportMissingTypeStubs": 28,
     "reportUnknownArgumentType": 928,
@@ -69,12 +69,12 @@
   },
   "explicit_any": 429,
   "type_casts": 85,
-  "broad_except": 30,
+  "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
-    "studio/crates/tomojax-studio/src/app/mod.rs": 967,
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1424,
+    "studio/crates/tomojax-studio/src/app/jobs.rs": 998,
+    "studio/crates/tomojax-studio/src/app/mod.rs": 921,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1405,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 1053,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 938
   },
@@ -83,9 +83,11 @@
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
     "studio/crates/studio-core/src/project.rs::open": 124,
+    "studio/crates/tomojax-io/src/metadata.rs::projection_arrays": 138,
+    "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 165,
     "studio/crates/tomojax-studio/src/app/actions.rs::action": 556,
-    "studio/crates/tomojax-studio/src/app/jobs.rs::persist_arrays": 143,
-    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 193,
+    "studio/crates/tomojax-studio/src/app/jobs.rs::persist_arrays": 129,
+    "studio/crates/tomojax-studio/src/app/jobs.rs::result_checked": 153,
     "studio/crates/tomojax-studio/src/app/mod.rs::open_project": 112,
     "studio/crates/tomojax-studio/src/app/previewing.rs::poll_interactive": 223,
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 144,
@@ -96,9 +98,6 @@
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
     "studio/crates/tomojax-studio/src/app/viewing.rs::restore_workspace": 116,
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
-    "studio/crates/tomojax-studio/src/imaging/reader.rs::volume": 105,
-    "studio/crates/tomojax-studio/src/metadata.rs::projection_arrays": 138,
-    "studio/crates/tomojax-studio/src/metadata.rs::quick_metadata": 165,
     "studio/crates/tomojax-studio/src/ui/controls.rs::icon": 146,
     "studio/crates/tomojax-studio/src/ui/export.rs::form": 121,
     "studio/crates/tomojax-studio/src/ui/inspector.rs::display": 107,
@@ -162,5 +161,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 141
+  "test_private_imports": 139
 }
