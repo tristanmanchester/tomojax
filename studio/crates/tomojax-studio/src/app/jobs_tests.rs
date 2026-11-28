@@ -166,7 +166,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
     };
     assert!(artifact.is_none());
     assert_eq!(
-        std::fs::read(project.resolve(Path::new(stored))).unwrap(),
+        std::fs::read(project.resolve_storage(Path::new(stored))).unwrap(),
         std::fs::read(&path).unwrap()
     );
     assert!(state.running.is_none());
@@ -278,7 +278,11 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     projections.fixed.clear();
     projections.domain = "line_integrals".into();
     projections.unit = "1".into();
-    let mut result = Asset::input(state.project.as_ref().unwrap().stored_path(&path), true);
+    let mut result = Asset::at(
+        state.project.as_ref().unwrap().stored_path(&path),
+        true,
+        false,
+    );
     result.kind = "projections".into();
     result.arrays.insert("projections".into(), projections);
     state.project.as_mut().unwrap().document.jobs.push(job);
@@ -323,7 +327,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
-    state.engine = Some(
+    state.engine = crate::app::session::Session::local(
         Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
     );
     let drive = |state: &mut AppState, done: &dyn Fn(&AppState) -> bool| {

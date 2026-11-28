@@ -340,7 +340,7 @@ impl AppState {
             }
         }
         if self.model.backend.ready
-            && let Some(engine) = &mut self.engine
+            && let Some(engine) = self.engine.as_mut()
         {
             self.previews.poll(engine);
         }

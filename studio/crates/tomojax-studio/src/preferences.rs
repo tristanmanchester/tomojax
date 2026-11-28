@@ -106,6 +106,10 @@ pub struct Preferences {
     pub recent: Vec<PathBuf>,
     #[serde(default)]
     pub shortcuts: BTreeMap<String, String>,
+    #[serde(default)]
+    pub results_folders: BTreeMap<String, studio_core::worker_path::WorkerPath>,
+    #[serde(default)]
+    pub recent_folders: BTreeMap<String, Vec<studio_core::worker_path::WorkerPath>>,
 }
 impl Preferences {
     pub fn path() -> PathBuf {

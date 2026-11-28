@@ -41,6 +41,10 @@ fn key(state: &mut AppState, event: &KeyEvent, tx: &mut Tx) -> bool {
         return true;
     }
     if event.key == Key::Escape {
+        if !matches!(state.files.panel, app::files::Panel::Closed) {
+            state.files.close_browser();
+            return true;
+        }
         // The topmost layer closes first: dialogs, then open menus, then Activity.
         if state.ui.palette_open || state.ui.shortcuts_open {
             state.ui.palette_open = false;

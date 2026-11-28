@@ -17,6 +17,7 @@ pub(super) struct LocalTask {
 
 pub(super) struct LocalMessage {
     pub task: String,
+    pub epoch: u64,
     pub event: LocalEvent,
 }
 
@@ -75,13 +76,13 @@ impl AppState {
     pub(super) fn audit_stored(
         &mut self,
         asset: String,
-        path: PathBuf,
+        path: studio_core::worker_path::WorkerPath,
         report: Value,
         job: Option<String>,
     ) {
         let files = self.file_reads();
         self.spawn_local(job.clone(), move |_| {
-            let result = stored(files, &path, Some(&report));
+            let result = stored(files, path.lexical(), Some(&report));
             LocalEvent::Audited {
                 asset,
                 job,
@@ -102,9 +103,14 @@ impl AppState {
         let send = self.local_send.clone();
         let wake = self.wake.clone();
         let id = task.clone();
+        let epoch = self.connection_epoch;
         let thread = std::thread::spawn(move || {
             let event = work(token);
-            let _ = send.send(LocalMessage { task: id, event });
+            let _ = send.send(LocalMessage {
+                task: id,
+                event,
+                epoch,
+            });
             wake();
         });
         self.local_tasks.insert(
@@ -214,11 +220,12 @@ pub(super) fn stored(
 pub(super) fn copy_acquisition(
     files: Option<studio_core::engine::FileReads>,
     path: &Path,
+    folder: bool,
     inputs: &Path,
     canceled: &std::sync::atomic::AtomicBool,
 ) -> Result<PathBuf, String> {
     let name = path.file_name().ok_or("Missing acquisition name")?;
-    let source = if path.is_file() && !project::holds_whole_acquisition(path) {
+    let source = if !folder && !project::holds_whole_acquisition(path) {
         path.parent().ok_or("Missing acquisition folder")?
     } else {
         path

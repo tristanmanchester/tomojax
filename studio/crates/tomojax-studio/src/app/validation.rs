@@ -264,6 +264,11 @@ impl AppState {
             self.model.validation = self.validation.view.clone();
             return changed;
         }
+        if self.data_offline() {
+            changed |= self.validation.status(Phase::Waiting, "Not connected");
+            self.model.validation = self.validation.view.clone();
+            return changed;
+        }
         let draft = if self.validating_export() {
             self.export_parameters()
                 .map_err(|e| DraftError::new("export", e))

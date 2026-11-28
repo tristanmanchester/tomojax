@@ -50,6 +50,12 @@ impl AppState {
     }
 
     pub(super) fn export_dialog(&mut self, format: &str, tx: &mut Tx) -> Result<(), String> {
+        if self.remote_project().is_some() {
+            if format == "array" {
+                return self.file_action(files::Action::Browse(files::Purpose::Bundle), tx);
+            }
+            return Err("Remote processing jobs are unavailable. Use Copy to this computer to copy a saved file.".into());
+        }
         let id = self
             .model
             .active_asset
@@ -133,7 +139,7 @@ impl AppState {
         path: PathBuf,
         format: &str,
     ) -> Result<(), String> {
-        if path.exists() {
+        if self.remote_project().is_none() && path.exists() {
             return Err("That output already exists. Choose a new destination.".into());
         }
         let op = if format == "array" {
@@ -165,7 +171,7 @@ impl AppState {
         } else {
             format!("Export {format}")
         };
-        job.destination = Some(path);
+        job.destination = Some(path.into());
         let project = self.project.as_mut().ok_or("No project")?;
         let id = job.id.clone();
         project.document.jobs.push(job);
@@ -213,7 +219,7 @@ tj.save('ramp.nxs', tj.Reconstruction(volume,geometry,'fbp',{},length_unit='mm')
         );
         let mut state = AppState::init();
         state.open_project(&root.join("project"), true).unwrap();
-        state.engine = Some(
+        state.engine = crate::app::session::Session::local(
             Engine::spawn_through(
                 &python,
                 state.relay.as_deref().unwrap_or_default(),

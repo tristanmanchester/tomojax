@@ -3,11 +3,13 @@ mod actions;
 mod controls;
 mod editing;
 mod export;
+pub(crate) mod files;
 mod jobs;
 mod local;
 mod pixels;
 mod previewing;
 mod projection;
+mod session;
 #[cfg(test)]
 mod state_machine_tests;
 #[cfg(test)]
@@ -69,6 +71,8 @@ struct Running {
     next_input: usize,
 }
 enum LocalEvent {
+    Identity(Result<(), String>),
+    FilePanel(files::FileReply),
     Copied {
         asset: Asset,
         result: Result<PathBuf, String>,
@@ -122,7 +126,9 @@ pub struct AppState {
     pub(crate) live: crate::live::LivePreviews,
     pub(crate) validation: validation::Controller,
     preview_context: previewing::PreviewContext,
-    engine: Option<Engine>,
+    engine: session::Session,
+    connection_epoch: u64,
+    pub(crate) files: files::FilePanel,
     relay: Option<Vec<String>>,
     pane_edges: [usize; 8],
     pub(crate) catalog: SchemaCatalog,
@@ -184,7 +190,9 @@ impl AppState {
             live: crate::live::LivePreviews::default(),
             validation: validation::Controller::default(),
             preview_context: previewing::PreviewContext::default(),
-            engine: None,
+            engine: session::Session::Closed,
+            connection_epoch: 0,
+            files: Default::default(),
             relay: None,
             pane_edges: [1024; 8],
             catalog,
@@ -332,7 +340,9 @@ impl AppState {
             self.interacting = interacting;
             changed = true;
         }
-        let events = self.engine.as_mut().map(Engine::poll).unwrap_or_default();
+        let status_before = self.connection_status();
+        let events = self.engine.poll();
+        changed |= status_before != self.connection_status();
         for event in events {
             changed = true;
             self.engine_event(event);
@@ -341,7 +351,9 @@ impl AppState {
         while let Ok(message) = self.local_receive.try_recv() {
             changed = true;
             self.finish_local(&message.task);
-            self.local_event(message.event);
+            if message.epoch == self.connection_epoch {
+                self.local_event(message.event);
+            }
         }
         if let Some(project) = &mut self.project {
             changed |= project.poll();
@@ -360,7 +372,7 @@ impl AppState {
             self.previews
                 .retire_resources(Default::default(), Some(handle));
         }
-        if let Some(engine) = &mut self.engine {
+        if let Some(engine) = self.engine.as_mut() {
             self.previews
                 .collect_retired(engine, |tokens| self.imaging.artifacts_in_use(tokens));
         }
@@ -406,6 +418,8 @@ impl AppState {
 
     fn local_event(&mut self, event: LocalEvent) {
         match event {
+            LocalEvent::Identity(result) => self.verified(result),
+            LocalEvent::FilePanel(reply) => self.file_reply(reply),
             LocalEvent::Copied {
                 mut asset,
                 result,
@@ -502,10 +516,11 @@ impl AppState {
         }
         match event {
             EngineEvent::Ready(ready) => {
+                self.session_ready();
                 self.model.backend = ready.into();
                 self.model.backend.ready = false;
                 self.model.backend.status = "Starting TomoJAX".into();
-                if let Some(engine) = &self.engine {
+                if let Some(engine) = self.engine.as_ref() {
                     self.imaging.bind(engine);
                     self.live.bind(engine.files());
                 }
@@ -515,7 +530,16 @@ impl AppState {
                 self.last_diagnostic = message;
             }
             EngineEvent::Disconnected { reason, .. } => {
-                self.imaging.disconnected();
+                if let session::Session::Named { verified, .. } = &mut self.engine {
+                    *verified = false;
+                    self.connection_epoch += 1;
+                    self.metadata_pending = 0;
+                    self.copying = 0;
+                    self.files.close_browser();
+                }
+                if self.remote_project().is_none() {
+                    self.imaging.disconnected();
+                }
                 self.refresh_plane_model();
                 self.disconnect_interactive();
                 self.live.disconnected();
@@ -525,7 +549,9 @@ impl AppState {
                     self.fail_job(&running.job, &reason, false);
                 }
                 self.pending.clear();
-                self.model.error = Some(reason);
+                if self.remote_project().is_none() {
+                    self.model.error = Some(reason);
+                }
             }
         }
     }
@@ -689,7 +715,15 @@ impl AppState {
                     )
                 })?;
         }
-        let project = Project::open(path, create)?;
+        let project = Project::open_on(
+            path,
+            create,
+            if create {
+                self.files.new_connection.take()
+            } else {
+                None
+            },
+        )?;
         // View undo belongs to the project it was recorded in.
         self.view_history.clear();
         self.view_future.clear();
@@ -719,6 +753,8 @@ impl AppState {
             .map(|asset| asset.id.clone())
             .collect();
         self.preferences.visit(&project.root)?;
+        self.connection_epoch += 1;
+        self.files.close_browser();
         self.project = Some(project);
         self.previews.reset();
         self.preview_context = previewing::PreviewContext::default();
@@ -754,7 +790,8 @@ impl AppState {
         for id in unread {
             self.start_metadata(&id);
         }
-        if let Some(input) = self.startup_input.take()
+        if self.remote_project().is_none()
+            && let Some(input) = self.startup_input.take()
             && input != path
         {
             self.import_paths(vec![input]);
@@ -763,6 +800,24 @@ impl AppState {
     }
 
     pub fn import_paths(&mut self, paths: Vec<PathBuf>) {
+        if self.remote_project().is_some() {
+            self.model.error = Some("Use Import to select a file on this connection, or Copy from this computer to upload one.".into());
+            return;
+        }
+        let mut selected = Vec::new();
+        for path in paths {
+            match std::fs::canonicalize(&path) {
+                Ok(path) => {
+                    let folder = path.is_dir();
+                    selected.push((path, folder));
+                }
+                Err(e) => self.model.error = Some(format!("{}: {e}", path.display())),
+            }
+        }
+        self.import_selected(selected);
+    }
+
+    fn import_selected(&mut self, paths: Vec<(PathBuf, bool)>) {
         let selection = self.selected_inputs();
         let Some(project) = &mut self.project else {
             self.model.error = Some("Create or open a project before importing scans".into());
@@ -770,7 +825,7 @@ impl AppState {
         };
         let mut metadata = Vec::new();
         let mut copies = Vec::new();
-        for path in paths {
+        for (path, folder) in paths {
             if path
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
@@ -780,24 +835,17 @@ impl AppState {
                 );
                 continue;
             }
-            let path = match std::fs::canonicalize(&path) {
-                Ok(path) => path,
-                Err(error) => {
-                    self.model.error = Some(format!("{}: {error}", path.display()));
-                    continue;
-                }
-            };
             if project
                 .document
                 .assets
                 .iter()
-                .any(|a| project.resolve(&a.path) == path)
+                .any(|a| project.resolve(&a.path).lexical() == path)
             {
                 continue;
             }
-            let mut asset = Asset::input(path.clone(), false);
+            let mut asset = Asset::at(path.clone().into(), false, folder);
             if self.ui.import_copy {
-                let inputs = project.root.join("inputs").join(&asset.id);
+                let inputs = project.data_root().join("inputs").join(&asset.id);
                 copies.push((asset, path, inputs));
             } else {
                 asset.path = project.stored_path(&path);
@@ -810,7 +858,8 @@ impl AppState {
             let selection = selection.clone();
             let files = self.file_reads();
             self.spawn_local(Some(IMPORT_COPY.into()), move |canceled| {
-                let result = local::copy_acquisition(files, &path, &inputs, &canceled);
+                let result =
+                    local::copy_acquisition(files, &path, asset.folder, &inputs, &canceled);
                 LocalEvent::Copied {
                     asset,
                     result,
@@ -846,7 +895,8 @@ impl AppState {
         let files = self.file_reads();
         self.metadata_pending += 1;
         self.spawn_local(None, move |canceled| {
-            let result = check_cancel(&canceled).and_then(|()| local::stored(files, &path, None));
+            let result =
+                check_cancel(&canceled).and_then(|()| local::stored(files, path.lexical(), None));
             LocalEvent::Metadata { asset, result }
         });
     }
@@ -885,7 +935,9 @@ impl AppState {
         self.shutting_down = true;
         self.stop_local_tasks();
         while let Ok(message) = self.local_receive.try_recv() {
-            self.local_event(message.event);
+            if message.epoch == self.connection_epoch {
+                self.local_event(message.event);
+            }
         }
         self.previews.reset();
         self.imaging.shutdown();
@@ -896,10 +948,10 @@ impl AppState {
             self.previews
                 .retire_resources(Default::default(), Some(handle));
         }
-        if let Some(engine) = &mut self.engine {
+        if let Some(engine) = self.engine.as_mut() {
             self.previews.collect_retired(engine, |_| false);
         }
-        if let Some(engine) = &mut self.engine {
+        if let Some(engine) = self.engine.as_mut() {
             let events = engine.drain_shutdown(Duration::from_secs(3));
             for event in events {
                 self.engine_event(event);
@@ -907,9 +959,13 @@ impl AppState {
         }
         self.stop_local_tasks();
         while let Ok(message) = self.local_receive.try_recv() {
-            self.local_event(message.event);
+            if message.epoch == self.connection_epoch {
+                self.local_event(message.event);
+            }
         }
-        if let Some(project) = &mut self.project {
+        if let Some(project) = &mut self.project
+            && project.document.connection.is_none()
+        {
             project.document.recover();
         }
         let workspace = self.capture_workspace();

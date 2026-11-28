@@ -416,7 +416,9 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
             );
     }
     if !available {
-        let message = if state.model.preview.is_some() {
+        let message = if state.data_offline() {
+            "Not connected"
+        } else if state.model.preview.is_some() {
             "Waiting for preview…"
         } else if state.model.render_loading || (comparison && info.is_some()) {
             "Loading image…"
@@ -546,6 +548,14 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
                 .fill(canvas_bg())
                 .pin(Some(10.), None, None, Some(10.))
                 .inert(),
+        );
+    }
+    if state.data_offline() {
+        return area.child(
+            label("Not live", 12., canvas_ink())
+                .padding(7.)
+                .fill(canvas_bg())
+                .pin(Some(12.), Some(10.), None, None),
         );
     }
     if interactive && state.model.render_loading {

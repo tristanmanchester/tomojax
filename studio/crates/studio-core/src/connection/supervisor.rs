@@ -185,6 +185,9 @@ impl Owner {
         self.ping = None;
         self.retry.state = State::Closed;
     }
+    pub fn engine_mut(&mut self) -> Option<&mut Engine> {
+        self.engine.as_mut()
+    }
     pub fn engine(&self) -> Option<&Engine> {
         self.engine.as_ref()
     }

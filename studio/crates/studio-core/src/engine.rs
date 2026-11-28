@@ -136,7 +136,7 @@ pub struct Engine {
 /// A local Python executor or a named Rust worker connection.
 pub struct WorkerCommand(Command);
 impl WorkerCommand {
-    pub fn local(python: &Path) -> Result<Self, String> {
+    pub fn binary() -> Result<std::path::PathBuf, String> {
         let current = std::env::current_exe().map_err(|e| e.to_string())?;
         let parent = current.parent().ok_or("Missing executable directory")?;
         // Cargo puts integration tests under debug/deps (or release/deps).
@@ -145,7 +145,10 @@ impl WorkerCommand {
         } else {
             parent
         };
-        let mut command = Command::new(parent.join("tomojax-worker"));
+        Ok(parent.join("tomojax-worker"))
+    }
+    pub fn local(python: &Path) -> Result<Self, String> {
+        let mut command = Command::new(Self::binary()?);
         command.args(["serve", "--python"]).arg(python);
         Ok(Self(command))
     }

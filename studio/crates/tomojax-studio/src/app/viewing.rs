@@ -129,7 +129,7 @@ impl AppState {
         }
         let mut reread = true;
         if let Some(project) = &mut self.project {
-            let path = project.stored_path(path);
+            let path = project.stored_path(path).lexical().to_owned();
             let root = project.data_root().to_owned();
             if let Some(asset) = project.document.asset_mut(id) {
                 asset.relink(path, &root);
@@ -279,6 +279,9 @@ impl AppState {
     }
 
     pub(super) fn refresh_images(&mut self) {
+        if self.data_offline() {
+            return;
+        }
         self.ensure_image_worker();
         if let Some(volume) = self.active_volume().cloned() {
             let volume = self.resolved(&volume);
@@ -1193,7 +1196,7 @@ impl AppState {
                                 AssetKind::Other
                             },
                             parent: a.parent.clone(),
-                            path: p.resolve(&a.path).to_string_lossy().into(),
+                            path: p.resolve(&a.path).to_string(),
                             shape,
                             voxel_pitch,
                             units: array
@@ -1201,7 +1204,7 @@ impl AppState {
                                 .map(|a| a.unit.clone())
                                 .unwrap_or_default(),
                             missing: p.document.connection.is_none()
-                                && !p.resolve(&a.path).exists(),
+                                && !p.resolve(&a.path).lexical().exists(),
                             status: a.issue.clone().unwrap_or_else(|| {
                                 if a.arrays.is_empty() {
                                     "Reading metadata"

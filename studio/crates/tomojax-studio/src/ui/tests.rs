@@ -205,7 +205,7 @@ fn dropping_multiple_files_keeps_each_path_and_original() {
                 .document
                 .assets
                 .iter()
-                .any(|asset| project.resolve(&asset.path) == path)
+                .any(|asset| project.resolve(&asset.path).lexical() == path)
         );
         assert_eq!(std::fs::read(path).unwrap(), b"test source retained");
     }
@@ -800,7 +800,7 @@ fn removing_an_asset_needs_confirmation_and_leaves_its_file_on_disk() {
             .asset(&id)
             .is_none()
     );
-    assert!(path.exists());
+    assert!(path.lexical().exists());
 }
 
 #[test]

@@ -77,6 +77,7 @@ impl AppState {
         if inputs.iter().any(|input| {
             input
                 .path
+                .lexical()
                 .extension()
                 .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
         }) {
@@ -144,7 +145,8 @@ impl AppState {
             .and_then(|p| {
                 p.document.jobs.iter().find(|j| {
                     j.status == JobStatus::Queued
-                        && (p.document.connection.is_none() || j.operation == "inspect")
+                        && (p.document.connection.is_none()
+                            || matches!(j.operation.as_str(), "inspect" | "export_array"))
                 })
             })
             .cloned();
@@ -489,7 +491,7 @@ impl AppState {
                     };
                     let path = project.root.join("derived").join(format!("{id}.nxs"));
                     if let Some(j) = project.document.job_mut(&job) {
-                        j.destination = Some(path.clone());
+                        j.destination = Some(path.clone().into());
                         j.stage = "Saving result into project".into();
                         j.progress = None;
                     }
@@ -707,7 +709,7 @@ impl AppState {
         artifacts.dedup();
         let handle = output.value.handle().map(str::to_owned);
         if let Some(job) = self.project.as_mut().and_then(|p| p.document.job_mut(job)) {
-            job.destination = Some(destination.clone());
+            job.destination = Some(destination.clone().into());
             job.stage = "Copying preview arrays into project".into();
             job.progress = None;
         }
@@ -750,10 +752,7 @@ impl AppState {
             for array in asset.arrays.values_mut() {
                 let store = |storage: &mut Storage| {
                     if let Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } = storage {
-                        *path = project
-                            .stored_path(Path::new(path))
-                            .to_string_lossy()
-                            .into();
+                        *path = project.stored_path(Path::new(path)).to_string();
                     }
                 };
                 store(&mut array.storage);
@@ -822,7 +821,7 @@ impl AppState {
 
     fn close_running(&mut self, id: &str) {
         if let Some(running) = self.running.take_if(|running| running.job == id)
-            && let Some(engine) = &mut self.engine
+            && let Some(engine) = self.engine.as_mut()
         {
             for handle in running.handles {
                 if !handle.is_empty() {

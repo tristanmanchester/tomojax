@@ -7,7 +7,10 @@ impl AppState {
         let resolve = |storage: &mut Storage| match storage {
             Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } => {
                 if let Some(project) = &self.project {
-                    *path = project.resolve(Path::new(path)).to_string_lossy().into();
+                    *path = project
+                        .resolve_storage(Path::new(path))
+                        .to_string_lossy()
+                        .into();
                 }
             }
             _ => {}
@@ -45,7 +48,7 @@ impl AppState {
             }
         }
     }
-    pub(super) fn remote_project(&self) -> Option<&str> {
+    pub(crate) fn remote_project(&self) -> Option<&str> {
         self.project
             .as_ref()?
             .document
@@ -55,21 +58,28 @@ impl AppState {
     }
 
     pub(super) fn native_data_available(&self) -> bool {
-        self.remote_project().is_none() || self.relay.is_some()
+        self.remote_project().is_none() || self.engine.as_ref().is_some()
     }
 
     pub(super) fn select_project_source(&mut self) {
         self.pane_edges = [1024; 8];
         self.imaging.invalidate();
-        if !self.native_data_available() {
-            self.engine.take();
-            self.model.backend.ready = false;
-            self.model.backend.status = format!(
-                "Not connected to {}",
-                self.remote_project().unwrap_or_default()
-            );
-        } else if self.engine.is_none() {
-            self.start_engine();
+        if let Some(name) = self.remote_project() {
+            self.engine = match session::Session::named(name, self.wake.clone()) {
+                Ok(session) => session,
+                Err(error) => {
+                    self.model.error = Some(error);
+                    session::Session::Closed
+                }
+            };
+            self.model.backend = Default::default();
+        } else {
+            if self.engine.owner().is_some() {
+                self.engine = session::Session::Closed;
+            }
+            if self.engine.is_none() {
+                self.start_engine();
+            }
         }
     }
 
@@ -81,9 +91,31 @@ impl AppState {
         if self.remote_project().is_some() && self.engine.is_none() {
             return;
         }
+        if self.remote_project().is_some() {
+            let until = Instant::now() + Duration::from_secs(30);
+            while Instant::now() < until {
+                self.poll();
+                if self.model.error.is_some()
+                    || self.files.listing.is_some()
+                    || (!self.data_offline()
+                        && self.metadata_pending == 0
+                        && (1..=8).all(|slot| {
+                            !matches!(
+                                self.imaging.status(slot),
+                                crate::imaging::ImagingStatus::Loading
+                                    | crate::imaging::ImagingStatus::Refining
+                            )
+                        }))
+                {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            return;
+        }
         let until = Instant::now() + Duration::from_secs(30);
         while Instant::now() < until {
-            if let Some(engine) = &mut self.engine {
+            if let Some(engine) = self.engine.as_mut() {
                 for event in engine.poll() {
                     match event {
                         EngineEvent::Reply { response, stale } => {
@@ -144,7 +176,7 @@ impl AppState {
     }
 
     pub(super) fn start_engine(&mut self) {
-        if !self.native_data_available() {
+        if self.remote_project().is_some() {
             return;
         }
 
@@ -159,7 +191,7 @@ impl AppState {
             Ok(engine) => {
                 self.imaging.bind(&engine);
                 self.live.bind(engine.files());
-                self.engine = Some(engine);
+                self.engine = session::Session::local(engine);
             }
             Err(error) => self.model.error = Some(error),
         }
@@ -217,8 +249,8 @@ impl AppState {
     }
 
     pub(super) fn dispatch_planes(&mut self) -> bool {
-        let Some(engine) = &mut self.engine else {
-            return self.imaging.poll();
+        let Some(engine) = self.engine.as_mut() else {
+            return false;
         };
         let mut windows = [self.window.applied(); 8];
         if !self.ui.compare_linked {

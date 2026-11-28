@@ -17,7 +17,7 @@ tempfile.workspace = true
 sha2 = "0.10"
 flate2 = "1"
 blake3 = "1"
-toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+toml = { version = "1", default-features = false, features = ["parse", "display", "serde", "std"] }
 libc = "0.2"
 fastrand = "2"
 zstd = { version = "0.13", default-features = false }

@@ -627,6 +627,7 @@ pub struct ShortcutView {
 
 #[derive(Clone, Debug)]
 pub enum UiAction {
+    Files(crate::app::files::Action),
     NewProject,
     OpenProject,
     OpenDemo,

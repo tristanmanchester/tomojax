@@ -153,7 +153,7 @@ fn a_relinked_asset_cannot_reuse_a_plan_from_its_previous_source() {
         .document
         .asset_mut(&id)
         .unwrap()
-        .path = replacement;
+        .path = replacement.into();
     state.poll_form_context();
     let changed = state.current_form_input().unwrap();
     assert_eq!(changed.asset, original.asset);
@@ -252,7 +252,9 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
     state.ui.workspace = Workspace::Explore;
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(Engine::spawn_through(python, &[], Arc::new(|| {})).unwrap());
+    state.engine = crate::app::session::Session::local(
+        Engine::spawn_through(python, &[], Arc::new(|| {})).unwrap(),
+    );
     drive(&mut state, |state| {
         state.model.backend.ready && state.engine.as_ref().unwrap().catalog().is_some()
     });
@@ -422,7 +424,7 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
         let project = state.project.as_ref().unwrap();
         let asset = &project.document.assets[0];
         let dataset = directory.join("validation-cone.nxs");
-        std::fs::copy(project.resolve(&asset.path), &dataset).unwrap();
+        std::fs::copy(project.resolve(&asset.path).lexical(), &dataset).unwrap();
         let evidence = json!({
             "description":"Captured from the official worker during the real validation regression; suitable for explicitly labeled UI replay.",
             "input":{"path":dataset,"kind":asset.kind,"name":"Validation cone fixture","geometry":"cone","size":6,"views":12},

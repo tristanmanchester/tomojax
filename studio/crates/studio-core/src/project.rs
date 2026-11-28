@@ -63,7 +63,7 @@ pub struct Asset {
     pub id: String,
     pub name: String,
     pub kind: String,
-    pub path: PathBuf,
+    pub path: WorkerPath,
     pub managed: bool,
     pub parent: Option<String>,
     pub created: u64,
@@ -87,13 +87,14 @@ pub struct Asset {
 impl Asset {
     pub fn input(path: PathBuf, managed: bool) -> Self {
         let folder = path.is_dir();
-        Self::at(path, managed, folder)
+        Self::at(path.into(), managed, folder)
     }
 
-    pub fn at(path: PathBuf, managed: bool, folder: bool) -> Self {
+    pub fn at(path: WorkerPath, managed: bool, folder: bool) -> Self {
         Self {
             id: new_id("scan"),
             name: path
+                .lexical()
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
@@ -147,14 +148,14 @@ impl Asset {
                 root.join(path)
             }
         };
-        let old = resolve(&self.path);
+        let old = resolve(self.path.lexical());
         let new = resolve(&path);
         // Files that sat beside the old file (a sweep's coordinates) moved with it.
         let (old_folder, new_folder) = (
             old.parent().map(Path::to_owned),
             new.parent().map(Path::to_owned),
         );
-        self.path = path;
+        self.path = path.into();
 
         self.managed = false;
         self.issue = None;
@@ -217,7 +218,7 @@ impl Asset {
 pub struct CapturedInput {
     pub asset: String,
     pub name: String,
-    pub path: PathBuf,
+    pub path: WorkerPath,
     pub kind: String,
     #[serde(default)]
     pub open_parameters: Value,
@@ -256,7 +257,7 @@ impl CapturedInput {
             asset: asset.id.clone(),
             name: asset.name.clone(),
             kind: asset.kind.clone(),
-            path: absolute(&asset.path),
+            path: absolute(asset.path.lexical()).into(),
             open_parameters: asset.open_parameters.clone(),
             arrays,
         }
@@ -321,7 +322,7 @@ pub struct Job {
     pub stage: String,
     pub error: Option<String>,
     pub result: Option<String>,
-    pub destination: Option<PathBuf>,
+    pub destination: Option<WorkerPath>,
     #[serde(default)]
     pub progress: Option<f32>,
     #[serde(default)]
@@ -638,7 +639,7 @@ impl Project {
         } else if document
             .results
             .as_ref()
-            .is_some_and(|p| !p.as_str().starts_with('/'))
+            .is_some_and(|p| !p.lexical().is_absolute())
         {
             return Err("A remote results folder needs an absolute path".into());
         }
@@ -689,23 +690,25 @@ impl Project {
     pub fn data_root(&self) -> &Path {
         match self.document.connection {
             None => &self.root,
-            Some(_) => Path::new(
-                self.document
-                    .results
-                    .as_ref()
-                    .map_or("", WorkerPath::as_str),
-            ),
+            Some(_) => self
+                .document
+                .results
+                .as_ref()
+                .map_or(Path::new(""), WorkerPath::lexical),
         }
     }
 
-    pub fn resolve(&self, path: &Path) -> PathBuf {
+    pub fn resolve(&self, path: &WorkerPath) -> WorkerPath {
+        self.resolve_storage(path.lexical()).into()
+    }
+    pub fn resolve_storage(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.into()
         } else {
             self.data_root().join(path)
         }
     }
-    pub fn stored_path(&self, path: &Path) -> PathBuf {
+    pub fn stored_path(&self, path: &Path) -> WorkerPath {
         path.strip_prefix(self.data_root()).unwrap_or(path).into()
     }
     pub fn capture(&self, id: &str) -> Result<CapturedInput, String> {
@@ -806,9 +809,10 @@ fn validate_document(document: &Document) -> Result<(), String> {
     }
     for asset in &document.assets {
         if asset.managed
-            && (asset.path.is_absolute()
+            && (asset.path.lexical().is_absolute()
                 || asset
                     .path
+                    .lexical()
                     .components()
                     .any(|c| matches!(c, std::path::Component::ParentDir)))
         {
@@ -846,7 +850,7 @@ mod tests {
         simulation.name = "Phantom · simulate".into();
         let mut sim_job = Job::new("simulate", json!({"phantom":"random_shapes"}), vec![]);
         sim_job.result = Some(simulation.id.clone());
-        std::fs::write(p.resolve(&simulation.path), []).unwrap();
+        std::fs::write(p.resolve(&simulation.path).lexical(), []).unwrap();
         let input = CapturedInput::from_asset(&simulation, &p.root);
         let mut reconstruction = Asset::input("result.nxs".into(), true);
         reconstruction.parent = Some(simulation.id.clone());

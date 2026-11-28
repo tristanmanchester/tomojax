@@ -709,7 +709,7 @@ fn a_read_updates_the_calibration_kind_and_opens_a_volume_on_its_slices() {
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
     let volume = ramp_volume(directory.path(), "volume", 4);
     let arrays = volume.arrays.clone();
-    let mut imported = Asset::input(volume.path.clone(), false);
+    let mut imported = Asset::at(volume.path.clone(), false, false);
     imported.kind = "scan".into();
     let id = imported.id.clone();
     state
@@ -950,7 +950,7 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(
+    state.engine = crate::app::session::Session::local(
         Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
     );
     drive(&mut state, |s| s.model.backend.ready);
@@ -977,7 +977,12 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     assert_eq!(project.document.assets[0].name, "Shepp phantom");
     assert!(project.document.assets[0].volume().is_some());
     assert!(project.document.assets[0].projections().is_some());
-    assert!(project.resolve(&project.document.assets[0].path).is_file());
+    assert!(
+        project
+            .resolve(&project.document.assets[0].path)
+            .lexical()
+            .is_file()
+    );
 
     state.set_operation("reconstruct", Some(&json!({"method":"fourier"})));
     state.queue_operation("reconstruct").unwrap();
@@ -1093,10 +1098,10 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
             .document
             .asset(job.result.as_ref().unwrap())
             .unwrap();
-        assert!(project.resolve(&asset.path).is_file());
+        assert!(project.resolve(&asset.path).lexical().is_file());
         for array in asset.arrays.values() {
             assert!(
-                matches!(&array.storage,crate::protocol::Storage::Npy{path,artifact:None} if !Path::new(path).is_absolute()&&project.resolve(Path::new(path)).is_file())
+                matches!(&array.storage,crate::protocol::Storage::Npy{path,artifact:None} if !Path::new(path).is_absolute()&&project.resolve_storage(Path::new(path)).is_file())
             );
         }
         let expected = if operation == "slice" {
@@ -1203,7 +1208,7 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     state.project.as_mut().unwrap().document.name = "Interactive preview verification".into();
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(
+    state.engine = crate::app::session::Session::local(
         Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
     );
     drive(&mut state, |state| state.model.backend.ready);
@@ -1449,7 +1454,7 @@ fn copying_a_parameter_file_brings_its_frames_and_a_container_comes_alone() {
         .document
         .assets
         .iter()
-        .map(|asset| project.resolve(&asset.path))
+        .map(|asset| project.resolve(&asset.path).lexical().to_owned())
         .collect();
     let xtekct = copied.iter().find(|p| p.ends_with("scan.xtekct")).unwrap();
     assert!(xtekct.starts_with(&project.root));
@@ -1508,6 +1513,7 @@ fn hdf5_copies_only_files_that_hold_all_their_data() {
     assert!(
         project
             .resolve(&project.document.assets[0].path)
+            .lexical()
             .starts_with(&project.root)
     );
 

@@ -132,7 +132,7 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
     let simulation=client.output(json!({"type":"run","operation":{"type":"simulate","phantom":"sphere","size":16,"n_views":32}}));
     let source_path = project.root.join("derived/source.nxs");
     client.save(&simulation, &source_path);
-    let mut source = project::Asset::input(project.stored_path(&source_path), true);
+    let mut source = project::Asset::at(project.stored_path(&source_path), true, false);
     source.kind = "simulation".into();
     source.provenance = Some(simulation.manifest.clone());
     let source_id = source.id.clone();
@@ -210,7 +210,7 @@ fn project_roundtrip_captured_recipe_and_registered_volume() {
             .collect::<Vec<_>>(),
         ["z", "y", "x"]
     );
-    let mut result = project::Asset::input(project.stored_path(&result_path), true);
+    let mut result = project::Asset::at(project.stored_path(&result_path), true, false);
     result.kind = "reconstruction".into();
     result.parent = Some(source_id);
     result.method = Some("fourier".into());

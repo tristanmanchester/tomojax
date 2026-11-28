@@ -2,6 +2,7 @@
 mod controls;
 pub mod corrections;
 mod export;
+mod files;
 mod inspector;
 pub mod model;
 mod overlays;
@@ -31,7 +32,9 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
             .child(project_tree(state, project))
             .child(el().w(1.).h_full().fill(line()));
     }
-    let main = if state.model.project.is_none() {
+    let main = if !matches!(state.files.panel, crate::app::files::Panel::Closed) {
+        files::view(state)
+    } else if state.model.project.is_none() {
         welcome(state)
     } else if state.ui.workspace == Workspace::Jobs {
         overlays::jobs_workspace(state)
@@ -40,6 +43,7 @@ pub fn view(state: &AppState, cx: &mut Cx<AppState>) -> El {
     };
     body = body.child(main.grow(1.).min_w(0.).min_h(0.));
     if state.model.project.is_some()
+        && matches!(state.files.panel, crate::app::files::Panel::Closed)
         && state.ui.inspector_open
         && state.ui.workspace != Workspace::Jobs
     {
@@ -754,6 +758,27 @@ fn statusbar(state: &AppState) -> El {
     }
     if !state.model.render_quality.is_empty() {
         bar = bar.child(label(&state.model.render_quality, 11., muted()));
+    }
+    let connection = if state.remote_project().is_some() {
+        format!(
+            "{} · {}",
+            state.connection_status(),
+            state.model.backend.status
+        )
+    } else {
+        format!("This computer · {}", state.model.backend.status)
+    };
+    bar = bar.child(
+        quiet_button("connections", &connection, false, |s, tx| {
+            s.dispatch(
+                UiAction::Files(crate::app::files::Action::Connections(false)),
+                tx,
+            )
+        })
+        .h(24.),
+    );
+    if state.data_offline() {
+        bar = bar.child(label("Not live", 11., warning()));
     }
     if !state.model.backend.device.is_empty() {
         bar = bar.child(label(&state.model.backend.device, 11., muted()).pl(12.));

@@ -58,27 +58,8 @@ impl AppState {
 
     fn action(&mut self, action: UiAction, tx: &mut Tx) -> Result<(), String> {
         match action {
-            UiAction::NewProject => {
-                // A save dialog names a folder that does not exist yet; the project creates it.
-                tx.save_file(
-                    FileDialogOptions {
-                        title: "Create a project".into(),
-                        file_name: Some("TomoJAX project".into()),
-                        ..Default::default()
-                    },
-                    |s: &mut AppState, result, tx| match result {
-                        Ok(Some(path)) => {
-                            if let Err(error) = s.open_project(&path, true) {
-                                s.model.error = Some(error);
-                            }
-                            s.refresh_model();
-                            tx.wake_after(Duration::from_millis(50));
-                        }
-                        Ok(None) => {}
-                        Err(error) => s.model.error = Some(error.to_string()),
-                    },
-                );
-            }
+            UiAction::Files(action) => self.file_action(action, tx)?,
+            UiAction::NewProject => self.file_action(files::Action::Connections(true), tx)?,
             UiAction::OpenProject => {
                 tx.open_folder(
                     FileDialogOptions {
@@ -103,28 +84,16 @@ impl AppState {
                 self.open_demo_project()?;
                 self.demo = super::Demo::Simulate;
             }
-            UiAction::ImportFiles => {
+            UiAction::ImportFiles | UiAction::ImportFolder => {
                 if self.project.is_none() {
                     return Err("Create or open a project before importing scans".into());
                 }
-                tx.open_file(FileDialogOptions{title:"Import tomography data".into(),..Default::default()}
-                    .filter("Tomography data",&["nxs","nx","h5","hdf5","tif","tiff","xtekct","txrm","vol","log","xml","info"])
-                    .filter("All files",&["*"]),|s:&mut AppState,result,_|match result{Ok(Some(path))=>s.import_paths(vec![path]),Ok(None)=>{},Err(error)=>s.model.error=Some(format!("Could not open the file chooser: {error}. Drop files into the window instead."))});
-            }
-            UiAction::ImportFolder => {
-                if self.project.is_none() {
-                    return Err("Create or open a project before importing scans".into());
-                }
-                tx.open_folder(FileDialogOptions{title:"Import an acquisition folder or a folder of NXtomo scans".into(),..Default::default()},|s:&mut AppState,result,_|match result{
-                    Ok(Some(path))=>{
-                        if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition.".into());return;}
-                        let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&studio_core::project::is_hdf5(p)).collect();
-                        scans.sort();
-                        // A folder of NXtomo/HDF5 scans imports each scan; a folder of
-                        // TIFF frames is one acquisition.
-                        let frames=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).any(|e|e.path().extension().is_some_and(|ext|matches!(ext.to_string_lossy().to_ascii_lowercase().as_str(),"tif"|"tiff")));
-                        s.import_paths(if !scans.is_empty()&&!frames{scans}else{vec![path]});
-                    },Ok(None)=>{},Err(error)=>s.model.error=Some(error.to_string())});
+                let purpose = if matches!(action, UiAction::ImportFiles) {
+                    files::Purpose::Import
+                } else {
+                    files::Purpose::Folder
+                };
+                self.file_action(files::Action::Browse(purpose), tx)?;
             }
             UiAction::SelectAsset { id, extend } => {
                 if self
@@ -224,27 +193,10 @@ impl AppState {
                     .as_ref()
                     .and_then(|project| project.document.asset(&id))
                     .is_some_and(|asset| asset.folder);
-                let reconnect = move |s: &mut AppState,
-                                      result: rune::FileDialogResult,
-                                      _: &mut Tx| match result {
-                    Ok(Some(path)) => s.relink(&id, &path),
-                    Ok(None) => {}
-                    Err(error) => s.model.error = Some(error.to_string()),
-                };
-                let title = if folder {
-                    "Reconnect the acquisition folder"
-                } else {
-                    "Reconnect the original data file"
-                };
-                let options = FileDialogOptions {
-                    title: title.into(),
-                    ..Default::default()
-                };
-                if folder {
-                    tx.open_folder(options, reconnect);
-                } else {
-                    tx.open_file(options, reconnect);
-                }
+                self.file_action(
+                    files::Action::Browse(files::Purpose::Relink(id, folder)),
+                    tx,
+                )?;
             }
             UiAction::SetWorkspace(workspace) => self.set_workspace(workspace),
             UiAction::SetMainView(plane) => {
@@ -349,13 +301,20 @@ impl AppState {
                     .iter()
                     .find(|j| j.id == id)
                     .ok_or("Job not found")?;
+                if project.document.connection.is_some() && old.operation != "inspect" {
+                    return Err("Remote processing jobs are unavailable".into());
+                }
                 if old.status.active() {
                     return Err("This job is still active".into());
                 }
-                if let Some(destination) = old.destination.as_ref().filter(|path| path.exists()) {
+                if let Some(destination) = old
+                    .destination
+                    .as_ref()
+                    .filter(|path| project.document.connection.is_none() && path.lexical().exists())
+                {
                     return Err(format!(
                         "An output already exists at {}. Move or delete it, then retry.",
-                        destination.display()
+                        destination
                     ));
                 }
                 let mut job =

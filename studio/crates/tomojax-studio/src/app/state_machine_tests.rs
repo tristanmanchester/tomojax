@@ -175,7 +175,7 @@ impl Fixture {
     fn linked(&self, state: &AppState, index: usize) -> usize {
         let project = state.project.as_ref().unwrap();
         let path = project.resolve(&project.document.asset(&self.ids[index]).unwrap().path);
-        usize::from(path == self.files[index][1])
+        usize::from(path.lexical() == self.files[index][1])
     }
 }
 
@@ -448,7 +448,11 @@ fn run(steps: Vec<Step>) {
         let input = state
             .current_form_input()
             .expect("the active asset is an input");
-        assert_eq!(input.path, fixture.files[active][linked], "after {step:?}");
+        assert_eq!(
+            input.path.lexical(),
+            fixture.files[active][linked],
+            "after {step:?}"
+        );
     }
 }
 
