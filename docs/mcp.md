@@ -59,6 +59,28 @@ command = "uvx"
 args = ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
 ```
 
+### Inspect and submit jobs on another machine
+
+With the native worker built, a stdio client can start the server on your laptop and use a named connection from `~/.config/tomojax/connections.toml`. This Codex entry starts the server for a connection named `beamline`.
+
+```toml
+[mcp_servers.tomojax_beamline]
+command = "tomojax-worker"
+args = ["mcp", "--connection", "beamline"]
+```
+
+Use `status` to see the connected host, working directory and job launcher. Paths passed to this server belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. The native server currently provides `status`, `inspect`, `describe`, `submit`, `jobs` and `cancel_job`.
+
+To run a small simulation, pass these arguments to `submit`.
+
+```json
+{"operation":{"type":"simulate","size":16,"n_views":24}}
+```
+
+Keep the returned `job` ID. With the process or Slurm launcher, you can close the client and reconnect later. Call `jobs` with no arguments to list jobs, or with `{"job":"ID"}` to read one job's progress, receipt and result slices. Pass the returned byte `offset` on your next poll to read subsequent records. To request cancellation, pass the job ID to `cancel_job`.
+
+`submit` also accepts `correct`, `reconstruct`, `reconstruct_slabs` and `align`. Give a detached operation the paths of its saved inputs. The connection's `results` directory holds the jobs, with `~/tomojax` as the default. To work with a different results directory, pass the same `results` argument to `submit`, `jobs` and `cancel_job`.
+
 ### Install the Agent Skill
 
 The TomoJAX Agent Skill teaches an agent how to use TomoJAX well: when to use the server and when its own Python, how to choose a method and check a result without ground truth, how to agree a feature with you by marking it, and how to report a bug. It follows the [Agent Skills](https://agentskills.io) format and ships inside the `tomojax` package. Copy it into the directory your agent reads skills from:
