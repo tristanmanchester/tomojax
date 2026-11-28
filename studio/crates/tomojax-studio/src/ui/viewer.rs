@@ -1,6 +1,8 @@
 //! Image-led exploration. The compositor owns all scientific pixels and GPU work.
 mod drag;
+mod labels;
 mod marks;
+use labels::{axes_label, plane_title};
 use marks::{cursor_lines, curtain, measurements};
 use rune::{El, PointerButton, Shape, canvas, col, el, row};
 
@@ -143,11 +145,7 @@ fn heading(state: &AppState) -> El {
         && let [views, rows, columns] = asset.shape[..]
     {
         // Projection stacks are (view, v, u), as `tomojax inspect` reports them.
-        let frames = if state
-            .active_projections()
-            .and_then(|a| a.axes.first())
-            .is_some_and(|axis| axis.name == "frame")
-        {
+        let frames = if state.shows_stored_frames() {
             "stored frames"
         } else {
             "views"
@@ -219,19 +217,6 @@ fn heading(state: &AppState) -> El {
         );
     }
     title.min_h(58.)
-}
-
-fn plane_title(state: &AppState, kind: PlaneKind) -> &'static str {
-    if kind == PlaneKind::Projection
-        && state
-            .active_projections()
-            .and_then(|a| a.axes.first())
-            .is_some_and(|axis| axis.name == "frame")
-    {
-        "Stored detector frame"
-    } else {
-        kind.title()
-    }
 }
 
 fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
@@ -597,28 +582,6 @@ fn freshness(state: &AppState, mut area: El, interactive: bool) -> El {
         );
     }
     area
-}
-
-fn axes_label(state: &AppState, kind: PlaneKind) -> String {
-    if kind == PlaneKind::Volume {
-        return String::new();
-    }
-    state
-        .model
-        .planes
-        .get(&kind)
-        .filter(|p| p.axes.iter().all(|name| !name.is_empty()))
-        .map(|p| {
-            let axis = |s: &str| match s {
-                "u" => "detector column".into(),
-                "v" => "detector row".into(),
-                "view" => "view".into(),
-                "frame" => "stored frame".into(),
-                _ => s.to_uppercase(),
-            };
-            format!("{} × {}", axis(&p.axes[1]), axis(&p.axes[0]))
-        })
-        .unwrap_or_else(|| kind.axes().into())
 }
 
 fn crosshair(state: &AppState, kind: PlaneKind, interactive: bool) -> El {

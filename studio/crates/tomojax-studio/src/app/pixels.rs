@@ -277,6 +277,28 @@ impl AppState {
         }
     }
 
+    pub(crate) fn shows_stored_frames(&self) -> bool {
+        self.active_projections()
+            .and_then(|array| array.axes.first())
+            .is_some_and(|axis| axis.name == "frame")
+    }
+
+    pub(super) fn initialize_projection_view(&mut self, projections: &ArrayDescriptor) {
+        if self.center_sinogram {
+            if self.shows_stored_frames() {
+                self.ui.display.projection_index = self
+                    .project
+                    .as_ref()
+                    .and_then(|p| p.document.asset(self.model.active_asset.as_deref()?))
+                    .and_then(|asset| asset.inspection.pointer("/flats_darks/first_sample"))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+            }
+            self.ui.display.sinogram_row = projections.shape[1] / 2;
+            self.center_sinogram = false;
+        }
+    }
+
     pub(super) fn request_native_volume(&mut self, volume: crate::protocol::ArrayDescriptor) {
         if self.native_data_available() {
             use studio_core::pixels::Encoding;

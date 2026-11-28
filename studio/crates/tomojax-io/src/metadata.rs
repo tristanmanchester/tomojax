@@ -26,15 +26,20 @@ const ANGLES: [&str; 3] = [
     "data/rotation_angle",
 ];
 
+fn is_hdf5(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            ["h5", "hdf5", "hdf", "nxs", "nx"]
+                .iter()
+                .any(|candidate| ext.eq_ignore_ascii_case(candidate))
+        })
+}
+
 /// Fast first-image metadata for standard NXtomo layouts. No pixel datasets or
 /// coordinate vectors are read; the full worker inspection remains an explicit audit.
 pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
-    let extension = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+    if !is_hdf5(path) {
         return Ok(None);
     }
     let file =
@@ -284,12 +289,7 @@ pub fn inspection_arrays(
     report: &Value,
     path: &Path,
 ) -> Result<BTreeMap<String, ArrayDescriptor>, String> {
-    let extension = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+    if !is_hdf5(path) {
         return Ok(BTreeMap::new());
     }
     let file =
@@ -309,12 +309,7 @@ fn projection_arrays(
     if report.pointer("/projection/found").and_then(Value::as_bool) != Some(true) {
         return Ok(arrays);
     }
-    let extension = path
-        .extension()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    if !matches!(extension.as_str(), "h5" | "hdf5" | "hdf" | "nxs" | "nx") {
+    if !is_hdf5(path) {
         return Ok(arrays);
     }
     let projection = &report["projection"];

@@ -70,16 +70,16 @@
   "broad_except": 25,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1327,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1324,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
-    "studio/crates/tomojax-studio/src/ui/viewer.rs": 894
+    "studio/crates/tomojax-studio/src/ui/viewer.rs": 880
   },
   "studio_long_functions": {
     "studio/crates/studio-core/src/previews.rs::poll": 130,
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
-    "studio/crates/tomojax-io/src/metadata.rs::projection_arrays": 138,
-    "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 122,
+    "studio/crates/tomojax-io/src/metadata.rs::projection_arrays": 136,
+    "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 119,
     "studio/crates/tomojax-studio/src/app/actions.rs::action": 507,
     "studio/crates/tomojax-studio/src/app/jobs.rs::copy_kept_preview": 129,
     "studio/crates/tomojax-studio/src/app/mod.rs::open_project": 101,
