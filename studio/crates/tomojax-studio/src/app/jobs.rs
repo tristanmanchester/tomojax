@@ -70,15 +70,6 @@ impl AppState {
         } else {
             self.current_form_inputs().to_vec()
         };
-        if inputs.iter().any(|input| {
-            input
-                .path
-                .lexical()
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-        }) {
-            return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognized acquisition".into());
-        }
         // Results are saved as datasets, which hold scans, not raw frames.
         if matches!(operation, "crop" | "select")
             && inputs.iter().any(|input| input.kind == "frames")

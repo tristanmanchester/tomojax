@@ -1166,16 +1166,12 @@ impl AppState {
                         });
                         AssetView {
                             mask: array.is_some_and(|a| a.domain == "mask"),
-                            export: match a.kind.as_str() {
-                                "reconstruction" | "simulation" => Export::Volume,
-                                "alignment" if a.volume().is_some() => Export::Volume,
-                                "scan" | "alignment" => Export::Dataset,
-                                "frames" => Export::Unavailable,
-                                _ => Export::Array,
-                            },
+                            export: Export::for_asset(a),
                             id: a.id.clone(),
                             name: a.name.clone(),
-                            kind: if a.volume().is_some() {
+                            kind: if a.kind == "feature" {
+                                AssetKind::Mask
+                            } else if a.volume().is_some() {
                                 AssetKind::Volume
                             } else if a.projections().is_some()
                                 || matches!(a.kind.as_str(), "scan" | "frames")

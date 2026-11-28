@@ -126,11 +126,13 @@ def test_files_keep_their_angle_and_detector_center_keys(tmp_path):
     assert load_dataset(path).detector == detector
 
 
-def test_rc6_native_files_name_the_migration_build_but_external_nexus_still_loads(tmp_path):
+def test_rc6_native_files_name_the_migration_release_but_external_nexus_still_loads(tmp_path):
     legacy = tmp_path / "old.nxs"
     write_rc6_dataset(legacy)
     for read in (load_dataset, load_nxtomo, tj.load, tj.load_frames, tj.inspect):
-        with pytest.raises(ValueError, match="rc6.*re-save.*4378e691"):
+        with pytest.raises(
+            ValueError, match=r"rc6.*re-save.*python -m pip install tomojax==1\.0\.0rc7"
+        ):
             read(legacy)
     external = tmp_path / "external.nxs"
     write_raw_nxtomo(external)

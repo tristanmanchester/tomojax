@@ -214,6 +214,10 @@ pub enum Product {
         poses: ArrayDescriptor,
         image: Option<ArrayDescriptor>,
     },
+    Feature {
+        handle: String,
+        mask: ArrayDescriptor,
+    },
     Simulation {
         handle: String,
         scan: Storage,
@@ -291,6 +295,7 @@ impl Product {
             Self::Reconstruction { .. } => "reconstruction",
             Self::Alignment { .. } => "alignment",
             Self::Simulation { .. } => "simulation",
+            Self::Feature { .. } => "feature",
             Self::Plane { .. } => "plane",
             Self::Projections { .. } => "projections",
             Self::Volume { .. } => "volume",
@@ -337,6 +342,7 @@ impl Product {
                 vec!["self", "scan", "projections", "angles", "poses", "image"]
             }
             Self::Alignment { .. } => vec!["self", "scan", "projections", "angles", "poses"],
+            Self::Feature { .. } => vec!["self", "mask"],
             Self::Region { .. } => vec!["self"],
             _ => Vec::new(),
         };
@@ -361,6 +367,7 @@ impl Product {
             | Self::Reconstruction { handle, .. }
             | Self::Alignment { handle, .. }
             | Self::Simulation { handle, .. }
+            | Self::Feature { handle, .. }
             | Self::Region { handle, .. } => Some(handle),
             _ => None,
         }
@@ -373,6 +380,7 @@ impl Product {
             Self::Reconstruction { volume, .. } | Self::Volume { volume } => Some(volume),
             Self::Alignment { image, .. } => image.as_ref(),
             Self::Simulation { phantom, .. } => Some(phantom),
+            Self::Feature { mask, .. } => Some(mask),
             Self::Plane { plane } => Some(plane),
             Self::Sweep { planes } => Some(planes),
             Self::CorrectionPreview { after, .. } => Some(after),

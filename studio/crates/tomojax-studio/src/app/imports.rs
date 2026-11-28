@@ -28,15 +28,6 @@ impl AppState {
         let mut metadata = Vec::new();
         let mut copies = Vec::new();
         for (path, folder) in paths {
-            if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-            {
-                self.model.error = Some(
-                    "NPZ files can't be imported. Use NXtomo/HDF5 or an acquisition folder.".into(),
-                );
-                continue;
-            }
             if project
                 .document
                 .assets
@@ -134,16 +125,6 @@ impl AppState {
 
     /// Points asset `id` at `path`, chosen by the user after its data moved.
     pub(super) fn relink(&mut self, id: &str, path: &Path) {
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-        {
-            self.model.error = Some(
-                "NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition."
-                    .into(),
-            );
-            return;
-        }
         let mut reread = true;
         if let Some(project) = &mut self.project {
             let path = project.stored_path(path).lexical().to_owned();

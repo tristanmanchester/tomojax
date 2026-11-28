@@ -233,6 +233,7 @@ pub fn suggested_kind(report: &Value) -> &'static str {
             "reconstruction" => return "reconstruction",
             "alignment" => return "alignment",
             "simulation" => return "simulation",
+            "feature" => return "feature",
             _ => {}
         }
     }
@@ -560,7 +561,7 @@ fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetada
         .any(|name| name == "tomojax_format")
     {
         if is_rc6(file)? {
-            return Err("Re-save this rc6 file with the format-2 migration release (build 4378e691): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
+            return Err("Re-save this rc6 file with TomoJAX 1.0.0rc7 (install with `python -m pip install tomojax==1.0.0rc7`): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
         }
         return Ok(None);
     }
@@ -588,7 +589,7 @@ fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetada
     for (name, value) in contents {
         if !matches!(
             name.as_str(),
-            "projections" | "volume" | "image" | "phantom"
+            "projections" | "volume" | "image" | "phantom" | "mask"
         ) {
             continue;
         }
@@ -829,6 +830,19 @@ mod tests {
     }
 
     #[test]
+    fn saved_feature_registers_its_mask_for_the_worker() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../tests/data/formats/format2-feature.nxs");
+        let (kind, arrays, _) = quick_metadata(&path).unwrap().unwrap();
+        assert_eq!(kind, "feature");
+        assert_eq!(arrays["mask"].shape, [2, 3, 4]);
+        assert_eq!(arrays["mask"].domain, "mask");
+        assert!(
+            matches!(&arrays["mask"].storage, Storage::Hdf5 {dataset, ..} if dataset == "/entry/masks/grain/data")
+        );
+    }
+
+    #[test]
     fn a_format_one_file_gives_resave_instructions() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("legacy.nxs");
@@ -849,6 +863,10 @@ mod tests {
             &path,
         )
         .unwrap_err();
+        assert!(
+            error.contains("python -m pip install tomojax==1.0.0rc7"),
+            "{error}"
+        );
         assert!(error.contains("tj.load_reconstruction"), "{error}");
     }
 

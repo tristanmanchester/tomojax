@@ -147,7 +147,7 @@ impl CapturedInput {
     pub fn dataset(&self) -> bool {
         matches!(
             self.kind.as_str(),
-            "scan" | "frames" | "reconstruction" | "simulation" | "alignment"
+            "scan" | "frames" | "reconstruction" | "simulation" | "alignment" | "feature"
         )
     }
     fn has_scan(&self) -> bool {

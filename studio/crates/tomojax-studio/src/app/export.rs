@@ -5,6 +5,26 @@ use crate::protocol::{ExportFormat, Storage};
 use crate::ui::model::Export;
 use rune::{FileDialogOptions, Tx};
 
+impl Export {
+    pub(super) fn for_asset(asset: &project::Asset) -> Self {
+        match asset.kind.as_str() {
+            "reconstruction" | "simulation" => Self::Volume,
+            "alignment" if asset.volume().is_some() => Self::Volume,
+            "feature"
+                if asset
+                    .arrays
+                    .get("mask")
+                    .is_some_and(|mask| mask.axes.iter().all(|axis| axis.frame == "volume")) =>
+            {
+                Self::Volume
+            }
+            "scan" | "alignment" | "feature" => Self::Dataset,
+            "frames" => Self::Unavailable,
+            _ => Self::Array,
+        }
+    }
+}
+
 impl AppState {
     pub(super) fn export_array(&mut self, job: &Job) {
         let Some(input) = job.inputs.first().cloned() else {
@@ -88,7 +108,7 @@ impl AppState {
         let mut parameters = format.parameters(&self.catalog, asset.mask, path, |key| {
             self.ui.export_edits.get(key).map(|e| e.text.as_str())
         })?;
-        if asset.export == Export::Dataset {
+        if asset.export == Export::Dataset && !asset.mask {
             parameters["member"] = json!("projections");
         }
         Ok(parameters)

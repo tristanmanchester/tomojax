@@ -30,7 +30,6 @@ shlex = "2"
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
 percent-encoding = "2"
 npyz = "0.9"
-zip = { version = "0.6", default-features = false, features = ["deflate"] }
 tomojax-io.workspace = true
 
 [dev-dependencies]

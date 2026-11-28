@@ -1494,24 +1494,6 @@ fn hdf5_copies_only_files_that_hold_all_their_data() {
 }
 
 #[test]
-fn npz_is_rejected_before_a_worker_or_copy_task_is_started() {
-    let directory = tempfile::tempdir().unwrap();
-    let mut state = AppState::init();
-    state.project = Some(Project::open(directory.path(), true).unwrap());
-    state.import_paths(vec![directory.path().join("untrusted.NPZ")]);
-    assert!(state.project.as_ref().unwrap().document.assets.is_empty());
-    assert_eq!(state.copying, 0);
-    assert!(state.pending.is_empty());
-    assert!(
-        state
-            .model
-            .error
-            .as_ref()
-            .is_some_and(|e| e.contains("NPZ"))
-    );
-}
-
-#[test]
 fn reopening_uses_the_saved_view_or_centers_the_newest_result() {
     let (directory, mut original) = registered_projection_fixture();
     let document = &mut original.project.as_mut().unwrap().document;

@@ -49,8 +49,9 @@ array on its physical grid. The worker and MCP can also save a feature mask
 with its labels, coordinates and the recipe used to select it. To see the
 contents and processing history, run `tomojax inspect result.nxs --json`.
 
-For a file saved by TomoJAX 1.0.0rc6, open the old NeXus or NPZ file with
-the format-2 migration build (`4378e691`) and write a new NeXus file.
+For a file saved by TomoJAX 1.0.0rc6, install TomoJAX 1.0.0rc7 with
+`python -m pip install tomojax==1.0.0rc7`. Open the old NeXus or NPZ file
+in that release and write a new NeXus file.
 Choose the loader for the object in the old file. This example keeps a
 reconstruction's projections if they were saved with it.
 
@@ -62,7 +63,7 @@ tj.save("converted.nxs", recon, include_scan=recon.scan is not None)
 ```
 
 For a scan, alignment or simulation, use `tj.load`, `tj.load_alignment` or
-`tj.load_simulation` in that build, then save the returned object.
+`tj.load_simulation` in that release, then save the returned object.
 [Reopen a saved result](quickstart.md#reopen-a-saved-result) shows how to
 load the new file and read a slice.
 

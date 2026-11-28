@@ -373,8 +373,10 @@ are present, their coordinates and how the file was produced.
 | Simulated scan and its phantom | `tj.load_simulation("simulation.nxs")` |
 
 A saved scan already contains line integrals. When opening its projections
-in another application, skip flat-field correction and the logarithm. For an
-older TomoJAX file, see [Saved objects](support-matrix.md#saved-objects).
+in another application, skip flat-field correction and the logarithm. For a
+file saved by rc6, install TomoJAX 1.0.0rc7 with
+`python -m pip install tomojax==1.0.0rc7` and follow the
+[saved-object migration instructions](support-matrix.md#saved-objects).
 
 ## Watch a Python operation
 

@@ -274,7 +274,6 @@ pub fn peek(path: &Path) -> Result<Value> {
                 "txrm" | "txm" => "Zeiss",
                 "log" => "acquisition log",
                 "xml" | "info" => "acquisition metadata",
-                "npz" => "NumPy archive",
                 "mat" => "PSI MATLAB acquisition",
                 "nxs" | "nx" | "hdf" | "hdf5" | "h5" => "HDF5",
                 _ => continue,
@@ -312,24 +311,10 @@ pub fn peek(path: &Path) -> Result<Value> {
                 }
             }
         }
-    } else if path.extension().is_some_and(|s| s == "npz") {
-        let mut archive = zip::ZipArchive::new(File::open(path)?)?;
-        for index in 0..archive.len() {
-            let member = archive.by_index(index)?;
-            let Some(name) = npyz::npz::array_name_from_file_name(member.name()).map(str::to_owned)
-            else {
-                continue;
-            };
-            let array = npyz::NpyHeader::from_reader(member)?;
-            datasets.insert(
-                name,
-                json!({"shape":array.shape(),"dtype":array.dtype().descr()}),
-            );
-        }
     } else {
         return Err(std::io::Error::new(
             ErrorKind::InvalidData,
-            "expected directory, HDF5 file or NPZ archive",
+            "expected a directory or HDF5 file",
         )
         .into());
     }
