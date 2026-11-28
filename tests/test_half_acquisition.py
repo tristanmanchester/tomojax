@@ -350,3 +350,20 @@ def test_near_edge_signal_on_a_contained_full_turn_needs_no_exterior():
     assert data[..., -1].all()
     assert cylinder.info["truncation"]["background_treatment"] == "none"
     np.testing.assert_array_equal(cylinder.volume, zero.volume)
+
+
+def test_explicit_fbp_angular_weight_preserves_the_full_turn_detector_edges():
+    from tomojax.recon import FBPConfig
+
+    angles = np.arange(120) * 3.0
+    detector = tj.Detector(32, 1, 1, 1, center=(10.25, 0))
+    geometry = tj.ParallelGeometry(tj.Grid(52, 52, 1, 1, 1, 1), detector, angles)
+    ray = np.arange(32) - 15.5 + detector.center[0]
+    data = np.broadcast_to(
+        (0.04 * np.sqrt(32**2 - ray**2)).astype(np.float32), (len(angles), 1, 32)
+    )
+    scan = tj.Scan(data, geometry)
+    angular = FBPConfig(scale=np.pi / len(angles))
+    default = tj.reconstruct(scan, "fbp")
+    uniform = tj.reconstruct(scan, "fbp", config=angular)
+    np.testing.assert_allclose(uniform.volume, default.volume, atol=3e-7, rtol=2e-5)

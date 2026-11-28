@@ -133,6 +133,11 @@ def axial_trajectory(
     return degrees, translations if np.any(translations) else None
 
 
+def stationary_full_turn(angles: np.ndarray, shifts: np.ndarray | None) -> bool:
+    """Whether opposite axial rays measure the same line over the directed circle."""
+    return shifts is None and full_rotation(angles)
+
+
 def full_parallel_turn(geometry: Geometry) -> bool:
     """Whether the measured orbit is axial and stationary over a full rotation."""
     from tomojax.geometry import ParallelGeometry
@@ -146,7 +151,7 @@ def full_parallel_turn(geometry: Geometry) -> bool:
         )
     except ValueError:  # An out-of-plane pose does not have axial conjugates.
         return False
-    return shifts is None and full_rotation(angles)
+    return stationary_full_turn(angles, shifts)
 
 
 def outer_edge(center: float, *, full_turn: bool) -> int | None:

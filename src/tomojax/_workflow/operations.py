@@ -727,7 +727,7 @@ def reconstruct_resolved(
             operation="reconstruct",
             settings=(plan.config, plan.warm_start, plan.cylinder, scan.geometry),
             input=scan.projections,
-            **({"projection_model": _EXTERIOR_MODEL} if method not in {"fourier", "fbp"} else {}),
+            projection_model=_EXTERIOR_MODEL,
         ),
         registration(scan, cylinder_radius=radius),
         progress.runtime() as actual,
@@ -986,11 +986,7 @@ def _reconstruct_slabs_context(
                 operation="reconstruct_slabs",
                 settings=(cfg, target, bound, epsilon, flat_weights, warm_start, frames.geometry),
                 input=(frames.counts, *raw, *timing, frames.dark_source, frames.linear_limit),
-                **(
-                    {"projection_model": _EXTERIOR_MODEL}
-                    if method not in {"fourier", "fbp"}
-                    else {}
-                ),
+                projection_model=_EXTERIOR_MODEL,
             ),
             corrected_row_source(
                 frames.counts,

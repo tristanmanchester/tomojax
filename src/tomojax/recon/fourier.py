@@ -16,7 +16,7 @@ from tomojax.core.geometry.cone import require_parallel_beam
 from tomojax.core.validation import validate_projection_stack
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import grid_volume_origin
-from tomojax.geometry.coverage import axial_trajectory, full_rotation
+from tomojax.geometry.coverage import axial_trajectory, stationary_full_turn
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import FourierPlan, fourier_slab_depth, resolve_fourier_backend
@@ -351,7 +351,7 @@ def _sampling_coordinates(
     order, flipped, angles = sorted_half_turn(directions)
     roll = float(getattr(geometry, "detector_roll", 0.0) or 0.0)
     asymmetric = detector.center[0] != 0 or roll % 90 != 0
-    full_turn = asymmetric and translations is None and full_rotation(directions)
+    full_turn = asymmetric and stationary_full_turn(directions, translations)
     layout = DetectorRows(detector, roll, full_turn) if roll else None
     if layout is not None:
         detector = layout.filter_detector(exterior)

@@ -34,7 +34,7 @@ def horizontal_projections(
     from ._detector_rows import DetectorRows
 
     asymmetric = detector.center[0] != 0 or roll % 90 != 0
-    full_turn = asymmetric and cfg.scale is None and full_parallel_turn(geometry)
+    full_turn = asymmetric and full_parallel_turn(geometry)
     if not roll:
         return data, detector, cfg, full_turn
     layout = DetectorRows(detector, roll, full_turn)

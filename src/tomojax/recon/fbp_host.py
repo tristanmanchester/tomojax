@@ -545,7 +545,7 @@ def fbp_slabs[T](
                             backend,
                             depth,
                             start,
-                            full_turn=config.scale is None and full_parallel_turn(geometry),
+                            full_turn=full_parallel_turn(geometry),
                         )
                     ) as completed:
                         for slab in completed:

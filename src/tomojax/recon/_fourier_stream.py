@@ -13,7 +13,7 @@ from tomojax import progress
 from tomojax.backends.api import is_oom_error
 from tomojax.core import checkpoint
 from tomojax.geometry import Detector, Grid, ParallelGeometry, grid_volume_origin
-from tomojax.geometry.coverage import full_rotation
+from tomojax.geometry.coverage import full_parallel_turn
 
 from ._detector_rows import DetectorRows
 from ._fourier_backend import (
@@ -103,7 +103,7 @@ def fourier_slabs[T](
     if info is not None:
         info["backend"] = backend
     asymmetric = detector.center[0] != 0 or geometry.detector_roll % 90 != 0
-    full_turn = asymmetric and full_rotation(np.asarray(geometry.angles))
+    full_turn = asymmetric and full_parallel_turn(geometry)
     layout = (
         DetectorRows(detector, geometry.detector_roll, full_turn)
         if geometry.detector_roll
