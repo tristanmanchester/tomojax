@@ -75,7 +75,7 @@ pub fn workspace(state: &AppState) -> El {
             col()
                 .key(format!("thumbnail-{thumb:?}"))
                 .role("button")
-                .label(format!("Explore {} view", thumb.title()))
+                .label(format!("Explore {} view", plane_title(state, thumb)))
                 .focusable(true)
                 .focus_selected(selected)
                 .grow(1.)
@@ -98,7 +98,7 @@ pub fn workspace(state: &AppState) -> El {
                         .justify_center()
                         .fill(sage())
                         .child(
-                            strong(thumb.title(), 11., forest())
+                            strong(plane_title(state, thumb), 11., forest())
                                 .shrink()
                                 .min_w(0.)
                                 .truncate()
@@ -143,7 +143,16 @@ fn heading(state: &AppState) -> El {
         && let [views, rows, columns] = asset.shape[..]
     {
         // Projection stacks are (view, v, u), as `tomojax inspect` reports them.
-        details.push(format!("{views} views of {rows} × {columns} pixels"));
+        let frames = if state
+            .active_projections()
+            .and_then(|a| a.axes.first())
+            .is_some_and(|axis| axis.name == "frame")
+        {
+            "stored frames"
+        } else {
+            "views"
+        };
+        details.push(format!("{views} {frames} of {rows} × {columns} pixels"));
     } else if !asset.shape.is_empty() {
         details.push(
             asset
@@ -212,6 +221,19 @@ fn heading(state: &AppState) -> El {
     title.min_h(58.)
 }
 
+fn plane_title(state: &AppState, kind: PlaneKind) -> &'static str {
+    if kind == PlaneKind::Projection
+        && state
+            .active_projections()
+            .and_then(|a| a.axes.first())
+            .is_some_and(|axis| axis.name == "frame")
+    {
+        "Stored detector frame"
+    } else {
+        kind.title()
+    }
+}
+
 fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
     let mut toolbar = row()
         .h(42.)
@@ -220,7 +242,7 @@ fn image_toolbar(state: &AppState, kind: PlaneKind) -> El {
         .gap(10.)
         .items_center()
         .fill(canvas_bg())
-        .child(strong(kind.title(), 12., canvas_ink()))
+        .child(strong(plane_title(state, kind), 12., canvas_ink()))
         .child(label(axes_label(state, kind), 11., canvas_muted()))
         .child(spacer());
     let volume_available = state
@@ -591,6 +613,7 @@ fn axes_label(state: &AppState, kind: PlaneKind) -> String {
                 "u" => "detector column".into(),
                 "v" => "detector row".into(),
                 "view" => "view".into(),
+                "frame" => "stored frame".into(),
                 _ => s.to_uppercase(),
             };
             format!("{} × {}", axis(&p.axes[1]), axis(&p.axes[0]))

@@ -108,23 +108,25 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
             .map(Some)
             .map_err(|error| error.to_string())
     };
-    let sample_count = match &image_key {
-        Some(path) => {
-            let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
-            let control = read_keys(&format!("{folder}/image_key_control"))?;
-            read_keys(path)?.map(|keys| {
-                keys.iter()
-                    .enumerate()
-                    .filter(|&(i, &key)| {
-                        key == 0
-                            && control
-                                .as_ref()
-                                .is_none_or(|control| control.get(i) != Some(&-1))
-                    })
-                    .count()
-            })
-        }
-        None => None,
+    let (sample_count, first_sample) = if let Some(path) = &image_key {
+        let folder = path.rsplit_once('/').map_or("", |(folder, _)| folder);
+        let control = read_keys(&format!("{folder}/image_key_control"))?;
+        let keys = file
+            .dataset(path)
+            .and_then(|d| d.read_raw::<i64>())
+            .map_err(|e| e.to_string())?;
+        let samples = keys.iter().enumerate().filter_map(|(i, key)| {
+            (*key == 0
+                && control
+                    .as_ref()
+                    .is_none_or(|values| values.get(i) != Some(&-1)))
+            .then_some(i)
+        });
+        let mut samples = samples.peekable();
+        let first = samples.peek().copied();
+        (Some(samples.count()), first)
+    } else {
+        (None, None)
     };
     let flat_found = file.link_exists(&at("instrument/detector/data_white"));
     let dark_found = file.link_exists(&at("instrument/detector/data_dark"));
@@ -133,11 +135,11 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
         "geometry":{"found":geometry_type.is_some(),"type":geometry_type,"meta_found":false,"meta_keys":[]},
         "detector_metadata":{"found":false},
         "flats_darks":{"image_key_found":key_found,"image_key_path":image_key,
-            "sample_count":sample_count,
+            "sample_count":sample_count,"first_sample":first_sample,
             "flats_present":if flat_found{Some(true)}else{None},"darks_present":if dark_found{Some(true)}else{None}},
         "alignment":{"found":false,"params_found":false}});
     let mut arrays = projection_arrays(&report, path)?;
-    if let Some(array) = arrays.get_mut("projections") {
+    for array in arrays.values_mut() {
         // Raw HDF5 may interleave sample/calibration frames whose angle entries
         // are undefined. Until the loader selects samples, show stored indices.
         if key_found {
@@ -334,19 +336,15 @@ fn projection_arrays(
     if shape.len() != 3 || shape.contains(&0) {
         return Err("Projection shape must be nonempty (view, v, u)".into());
     }
-    // Registered for direct viewing only when every stored frame is a sample
-    // view; frames interleaved with flats and darks become viewable once the scan
-    // is opened and calibrated. A stored (view, u) line scan registers as
-    // (view, 1, u).
-    let samples = report
+    // Keep mixed raw detector frames (including calibrations) distinct from sample views.
+    let interleaved = report
         .pointer("/flats_darks/sample_count")
-        .and_then(Value::as_u64);
+        .and_then(Value::as_u64)
+        .is_some_and(|samples| samples != shape[0] as u64);
     let stored = hdf5::File::open(path).map_err(|error| error.to_string())?;
     let squeezed = |dims: &[usize]| dims.iter().copied().filter(|&n| n != 1).collect::<Vec<_>>();
     let stored_shape = stored.dataset(dataset).map(|d| d.shape()).ok();
-    if samples.is_some_and(|n| n != shape[0] as u64)
-        || stored_shape.as_deref().map(squeezed) != Some(squeezed(&shape))
-    {
+    if stored_shape.as_deref().map(squeezed) != Some(squeezed(&shape)) {
         return Ok(arrays);
     }
     let file = path.to_string_lossy().into_owned();
@@ -363,7 +361,9 @@ fn projection_arrays(
         });
     let view = match (angles["path"].as_str(), stored_unit) {
         (Some(dataset), Some(unit))
-            if dataset.starts_with('/') && angles["count"].as_u64() == Some(shape[0] as u64) =>
+            if !interleaved
+                && dataset.starts_with('/')
+                && angles["count"].as_u64() == Some(shape[0] as u64) =>
         {
             Axis {
                 name: "view".into(),
@@ -378,7 +378,7 @@ fn projection_arrays(
             }
         }
         _ => Axis {
-            name: "view".into(),
+            name: if interleaved { "frame" } else { "view" }.into(),
             frame: "acquisition".into(),
             unit: "index".into(),
             coordinates: Coordinates::Uniform {
@@ -417,7 +417,7 @@ fn projection_arrays(
         });
     }
     arrays.insert(
-        "projections".into(),
+        if interleaved { "counts" } else { "projections" }.into(),
         ArrayDescriptor {
             storage: Storage::Hdf5 {
                 path: file,
@@ -430,7 +430,12 @@ fn projection_arrays(
                 .into(),
             axes,
             unit: "unspecified".into(),
-            domain: "stored_measurements".into(),
+            domain: if interleaved {
+                "counts"
+            } else {
+                "stored_measurements"
+            }
+            .into(),
             fixed: Vec::new(),
             columns: Vec::new(),
         },
@@ -800,6 +805,8 @@ mod tests {
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 2);
         assert!(!arrays.contains_key("projections"));
+        assert_eq!(arrays["counts"].axes[0].name, "frame");
+        assert_eq!(arrays["counts"].domain, "counts");
 
         // ESRF files also mark return images with -1 in image_key_control; the
         // image keys still give the flats and darks.
@@ -816,6 +823,8 @@ mod tests {
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 1);
         assert!(!arrays.contains_key("projections"));
+        assert_eq!(arrays["counts"].axes[0].name, "frame");
+        assert_eq!(arrays["counts"].domain, "counts");
 
         // Keys stored elsewhere (an NXdata group) are found as the worker finds
         // them: the file's only per-frame `image_key`.
@@ -834,7 +843,10 @@ mod tests {
         let (kind, arrays, report) = quick_metadata(&path).unwrap().unwrap();
         assert_eq!(kind, "frames");
         assert_eq!(report["flats_darks"]["sample_count"], 2);
+        assert_eq!(report["flats_darks"]["first_sample"], 1);
         assert!(!arrays.contains_key("projections"));
+        assert_eq!(arrays["counts"].axes[0].name, "frame");
+        assert_eq!(arrays["counts"].domain, "counts");
     }
 
     #[test]
@@ -944,8 +956,7 @@ mod tests {
             "angles":{"path":angles,"units":"degree","count":3},
             "detector_metadata":{"du":0.1,"dv":0.4,"center":[0.3,-0.2]}})
         };
-        // Sample frames interleaved with flats and darks are not the stored array,
-        // whether the report gives the sample stack or the whole stack.
+        // A sample-only report cannot directly index the longer stored detector stack.
         assert!(
             projection_arrays(&report("/with_flats", "/theta"), &path)
                 .unwrap()
@@ -953,7 +964,10 @@ mod tests {
         );
         let mut whole = report("/raw", "/theta");
         whole["flats_darks"] = json!({"sample_count": 2});
-        assert!(projection_arrays(&whole, &path).unwrap().is_empty());
+        let mixed = projection_arrays(&whole, &path).unwrap();
+        assert_eq!(mixed["counts"].shape, [3, 2, 4]);
+        assert_eq!(mixed["counts"].axes[0].unit, "index");
+        assert!(!mixed.contains_key("projections"));
         // A stored (view, u) line scan registers as (view, 1, u).
         let mut line = report("/line", "/theta");
         line["projection"]["shape"] = json!([3, 1, 4]);

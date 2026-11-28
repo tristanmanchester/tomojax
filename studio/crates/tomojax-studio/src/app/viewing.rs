@@ -69,7 +69,7 @@ impl AppState {
         }
         Some(dimensions)
     }
-    pub(super) fn active_projections(&self) -> Option<&ArrayDescriptor> {
+    pub(crate) fn active_projections(&self) -> Option<&ArrayDescriptor> {
         if self.preview_context.active == Some(crate::previews::PreviewKind::Corrections) {
             return self
                 .preview_context
@@ -349,6 +349,19 @@ impl AppState {
         if let Some(projections) = self.active_projections().cloned() {
             let projections = self.resolved(&projections);
             if self.center_sinogram {
+                if projections
+                    .axes
+                    .first()
+                    .is_some_and(|axis| axis.name == "frame")
+                {
+                    self.ui.display.projection_index =
+                        self.project
+                            .as_ref()
+                            .and_then(|p| p.document.asset(self.model.active_asset.as_deref()?))
+                            .and_then(|asset| asset.inspection.pointer("/flats_darks/first_sample"))
+                            .and_then(Value::as_u64)
+                            .unwrap_or(0) as usize;
+                }
                 self.ui.display.sinogram_row = projections.shape[1] / 2;
                 self.center_sinogram = false;
             }

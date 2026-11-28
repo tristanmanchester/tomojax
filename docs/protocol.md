@@ -61,6 +61,8 @@ solver settings when the final slab has been written. Saved array references
 name the HDF5 signal. The scan signal has axes `(view, v, u)`, and volumes,
 working images and phantoms have axes `(z, y, x)`.
 
+For an NXtomo detector with interleaved sample and calibration frames, `stored` returns a `counts` array in physical file order. Its first axis is `frame`, in stored indices. The header report’s `flats_darks.first_sample` identifies the first sample frame after image-key and control exclusions, or is null when none exists. The numerical loader still selects sample views for processing.
+
 ## Fetching a plane
 
 Give `fetch` the storage and shape from the array descriptor. It reads on the I/O threads while the executor works or waits. This request reads every second row and column of a stored plane.
