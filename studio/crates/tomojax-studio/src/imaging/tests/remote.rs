@@ -59,7 +59,12 @@ fn fixtures(directory: &Path) -> (ArrayDescriptor, ArrayDescriptor, ArrayDescrip
     };
     let path = directory.join("ramp.h5");
     {
-        let file = hdf5::File::create(&path).unwrap();
+        // Other tests fork workers while this private fixture is written. A forked
+        // HDF5 descriptor can retain a writer lock after this scope closes.
+        let file = hdf5::File::with_options()
+            .with_fapl(|p| p.file_locking(false))
+            .create(&path)
+            .unwrap();
         let mut detector = vec![0f32; 51 * 73];
         detector[74] = 1.; // An impulse between the displayed sample centers.
         file.new_dataset::<f32>()

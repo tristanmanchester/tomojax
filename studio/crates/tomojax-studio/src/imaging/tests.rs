@@ -107,7 +107,12 @@ fn hdf5_hyperslabs_preserve_anisotropy_and_line_detector_expansion() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("scan.h5");
     {
-        let file = hdf5::File::create(&path).unwrap();
+        // Other tests fork workers while this private fixture is written. A forked
+        // HDF5 descriptor can retain a writer lock after this scope closes.
+        let file = hdf5::File::with_options()
+            .with_fapl(|p| p.file_locking(false))
+            .create(&path)
+            .unwrap();
         file.new_dataset::<f32>()
             .shape([3, 4, 5])
             .chunk([1, 4, 5])
