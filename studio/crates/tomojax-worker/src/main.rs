@@ -135,7 +135,7 @@ fn serve(opts: Options) -> Result<()> {
     let stdout = io::stdout();
     let mut disconnected = [PollFd::new(&stdout, PollFlags::empty())];
     let idle = opts.idle;
-    let (events, incoming) = mpsc::sync_channel(256);
+    let (events, receiver) = mpsc::sync_channel(256);
     read_requests(events.clone());
     let (writer, output) = mpsc::sync_channel::<Vec<u8>>(1);
     let send = events.clone();
@@ -149,6 +149,8 @@ fn serve(opts: Options) -> Result<()> {
         }
     });
     let mut session = session::Session::new(opts, events)?;
+    // On a broken output pipe, disconnect producers before joining inline jobs.
+    let incoming = receiver;
     let mut last = Instant::now();
     let mut writing = false;
     loop {

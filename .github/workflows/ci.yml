@@ -221,6 +221,8 @@ jobs:
 
       - name: Official worker and application workflows
         run: |
+          cargo test --locked --manifest-path studio/Cargo.toml -p tomojax-jobs --test inline_executor -- --ignored
+          cargo test --locked --manifest-path studio/Cargo.toml -p tomojax-worker --test jobs -- --ignored --test-threads=1
           cargo test --locked --manifest-path studio/Cargo.toml -p tomojax-studio --test worker_contract -- --ignored
           cargo test --locked --manifest-path studio/Cargo.toml -p tomojax-studio --bin tomojax-studio real_application -- --ignored
 
