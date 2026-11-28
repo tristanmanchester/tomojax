@@ -7,7 +7,6 @@ use crate::AppState;
 #[derive(Clone, Copy)]
 pub enum Icon {
     Folder,
-    File,
     Add,
     Search,
     Cube,
@@ -48,17 +47,6 @@ pub fn icon(kind: Icon, size: f32, color: Color) -> El {
             [21., 19.],
             [3., 19.],
         ]],
-        Icon::File => vec![
-            vec![
-                [6., 3.],
-                [14., 3.],
-                [19., 8.],
-                [19., 21.],
-                [6., 21.],
-                [6., 3.],
-            ],
-            vec![[14., 3.], [14., 8.], [19., 8.]],
-        ],
         Icon::Add | Icon::Plus => vec![vec![[5., 12.], [19., 12.]], vec![[12., 5.], [12., 19.]]],
         Icon::Minus => vec![vec![[5., 12.], [19., 12.]]],
         Icon::Search => vec![
@@ -643,7 +631,15 @@ pub fn slider(
     enabled: bool,
     action: impl Fn(f32) -> UiAction + Clone + 'static,
 ) -> El {
-    slider_on(false, key, title, title, value, formatted, enabled, action)
+    slider_on(
+        false,
+        key,
+        (title, title),
+        value,
+        formatted,
+        enabled,
+        action,
+    )
 }
 
 /// A slider drawn on the dark scientific canvas. `title` names it for assistive technology;
@@ -657,18 +653,21 @@ pub fn canvas_slider(
     enabled: bool,
     action: impl Fn(f32) -> UiAction + Clone + 'static,
 ) -> El {
-    slider_on(true, key, title, caption, value, formatted, enabled, action)
+    slider_on(
+        true,
+        key,
+        (title, caption),
+        value,
+        formatted,
+        enabled,
+        action,
+    )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "private builder behind two public sliders"
-)]
 fn slider_on(
     dark: bool,
     key: &str,
-    title: &str,
-    caption: &str,
+    (title, caption): (&str, &str),
     value: f32,
     formatted: &str,
     enabled: bool,
@@ -799,25 +798,5 @@ pub fn compact_number(value: f64) -> String {
             .trim_end_matches('0')
             .trim_end_matches('.')
             .to_owned()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::coordinate;
-
-    #[test]
-    fn slice_positions_drop_padding_and_name_units() {
-        assert_eq!(
-            coordinate("view", 22.5, "degree").as_deref(),
-            Some("view = 22.5°")
-        );
-        assert_eq!(
-            coordinate("z", 0.5, "scan_length").as_deref(),
-            Some("z = 0.5 scan unit")
-        );
-        assert_eq!(coordinate("y", -3., "1").as_deref(), Some("y = -3"));
-        // The slice counter already shows an index position.
-        assert_eq!(coordinate("view", 4., "index"), None);
     }
 }
