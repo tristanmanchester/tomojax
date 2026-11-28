@@ -230,6 +230,14 @@ pub fn stored(path: &Path) -> Result<Value> {
     })
 }
 
+fn directory_record(path: &Path) -> bool {
+    path.join("checkpoint.json").is_file()
+        || path.file_name().is_some_and(|name| {
+            path.join(format!("{}.json", name.to_string_lossy()))
+                .is_file()
+        })
+}
+
 pub fn peek(path: &Path) -> Result<Value> {
     let mut datasets = BTreeMap::new();
     if path.is_dir() {
@@ -280,7 +288,7 @@ pub fn peek(path: &Path) -> Result<Value> {
         checkpoints.sort();
         let names: Vec<_> = subdirectories.iter().map(|s| s.to_string_lossy()).collect();
         return Ok(
-            json!({"type":"peek","directory":path,"datasets":datasets,"candidate_count":candidates,"subdirectories":names,"subdirectory_count":directories,"tiff_files":frames,"checkpoints":checkpoints,"omitted":candidates-datasets.len()}),
+            json!({"type":"peek","record": directory_record(path), "directory":path,"datasets":datasets,"candidate_count":candidates,"subdirectories":names,"subdirectory_count":directories,"tiff_files":frames,"checkpoints":checkpoints,"omitted":candidates-datasets.len()}),
         );
     }
     if signature(path)? {
