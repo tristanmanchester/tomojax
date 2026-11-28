@@ -18,7 +18,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax.core.geometry.base import Detector, Grid
-from tomojax.core.host_volume import release_planes
+from tomojax.core.host_volume import InputMapping, release_planes
 from tomojax.core.input_files import input_hdf5
 from tomojax.core.registration import (
     pose_columns,
@@ -458,7 +458,7 @@ def local_map(file: h5py.File, field: h5py.Dataset) -> np.memmap | None:
     with phil, os.fdopen(file.id.get_vfd_handle(), "rb", buffering=0, closefd=False) as stream:
         position = stream.tell()
         try:
-            pixels = np.memmap(stream, field.dtype, "r", offset=offset, shape=field.shape)
+            pixels = InputMapping(stream, field.dtype, "r", offset=offset, shape=field.shape)
         finally:
             stream.seek(position)
     pixels.filename = str(Path(file.filename).absolute())

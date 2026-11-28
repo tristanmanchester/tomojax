@@ -26,7 +26,7 @@ from tomojax import progress
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Protocol
+    from typing import BinaryIO, Protocol
 
     from numpy.typing import ArrayLike, DTypeLike
 
@@ -148,6 +148,14 @@ def mapped_storage(array: object) -> np.memmap | None:
             return current
         current = current.obj if isinstance(current, memoryview) else current.base
     return None
+
+
+class InputMapping(np.memmap):
+    """A file mapping whose original device and inode come from the open input."""
+
+    def __init__(self, stream: BinaryIO, *_args: object, **_kwargs: object) -> None:
+        # NumPy creates the mapping in __new__ from this same descriptor.
+        self.opened = os.fstat(stream.fileno())
 
 
 def scratch_directory(array: object) -> Path | None:
