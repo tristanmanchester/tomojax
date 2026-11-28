@@ -208,10 +208,13 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
             }
             _ => Account::Allocated,
         };
+        let reason = fields.next().unwrap_or("");
+        let _start = fields.next();
+        let node = fields.next().unwrap_or("");
         return Ok(Report {
             account,
             id: Some(id),
-            detail: format!("{phase} {}", fields.collect::<Vec<_>>().join(" ")),
+            detail: describe(phase, reason, node),
         });
     }
     let history = history?;
@@ -242,8 +245,41 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
             accounted: detail.is_some(),
         },
         id: None,
-        detail: detail.unwrap_or("").into(),
+        detail: detail.map_or_else(String::new, |phase| describe(phase, "", "")),
     })
+}
+
+/// Slurm's phase, reason and node list as a sentence for the person watching the job.
+fn describe(phase: &str, reason: &str, node: &str) -> String {
+    let known = |value: &str| !value.is_empty() && !matches!(value, "None" | "(null)" | "n/a");
+    let on = |verb: &str| {
+        if known(node) {
+            format!("{verb} on {node}")
+        } else {
+            verb.to_owned()
+        }
+    };
+    match phase {
+        "PENDING" if known(reason) => format!("Waiting in the Slurm queue ({reason})"),
+        "PENDING" => "Waiting in the Slurm queue".into(),
+        "CONFIGURING" => on("Slurm is starting the allocation"),
+        "RUNNING" => on("Running"),
+        "COMPLETING" => on("Finishing"),
+        "SUSPENDED" | "STOPPED" => "Suspended by Slurm".into(),
+        "REQUEUED" | "REQUEUE_FED" | "REQUEUE_HOLD" | "SPECIAL_EXIT" => "Requeued by Slurm".into(),
+        "RESV_DEL_HOLD" => "Held by Slurm after its reservation was deleted".into(),
+        "COMPLETED" => "Slurm finished the job".into(),
+        "CANCELLED" => "Slurm cancelled the job".into(),
+        "FAILED" => "The Slurm job failed".into(),
+        "TIMEOUT" => "Slurm stopped the job at its time limit".into(),
+        "OUT_OF_MEMORY" => "Slurm stopped the job: out of memory".into(),
+        "PREEMPTED" => "Slurm preempted the job".into(),
+        "NODE_FAIL" => "The Slurm node running the job failed".into(),
+        "BOOT_FAIL" => "The Slurm node failed to boot".into(),
+        "DEADLINE" => "Slurm stopped the job at its deadline".into(),
+        "REVOKED" => "Slurm revoked the job".into(),
+        other => format!("Slurm reports {}", other.to_lowercase().replace('_', " ")),
+    }
 }
 
 pub fn withdraw(claim: &Claim, id: u64) -> io::Result<()> {

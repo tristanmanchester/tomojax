@@ -326,9 +326,9 @@ impl JobStatus {
             Self::Paused => "Paused",
             Self::Completed => "Complete",
             Self::Failed => "Failed",
-            Self::Canceled => "Canceled",
+            Self::Canceled => "Cancelled",
             Self::Interrupted => "Interrupted",
-            Self::Unknown => "Unknown",
+            Self::Unknown => "State unknown",
         }
     }
     pub fn active(self) -> bool {
