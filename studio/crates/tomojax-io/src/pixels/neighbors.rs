@@ -187,4 +187,34 @@ mod tests {
         // An in-flight selection of the old inode still addresses its own samples.
         assert_ne!(cache.read(&a, &s).unwrap(), cache.read(&b, &s).unwrap());
     }
+    #[test]
+    fn external_links_keep_the_versions_of_their_open_target_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let master = hdf5::File::create(tmp.path().join("master.h5")).unwrap();
+        for (name, bias) in [("left", 3u16), ("right", 29u16)] {
+            let filename = format!("{name}.h5");
+            let file = hdf5::File::create(tmp.path().join(&filename)).unwrap();
+            file.new_dataset_builder()
+                .with_data(&Array3::from_elem((4, 5, 6), bias))
+                .chunk((2, 3, 3))
+                .deflate(1)
+                .create("data")
+                .unwrap();
+            master.link_external(&filename, "/data", name).unwrap();
+        }
+        drop(master);
+        let master = hdf5::File::open(tmp.path().join("master.h5")).unwrap();
+        let cache = Neighbors::<f32>::default();
+        let selection = Selection {
+            shape: vec![4, 5, 6],
+            start: vec![0, 1, 0],
+            stride: vec![1; 3],
+            count: vec![4, 1, 6],
+        };
+        for (name, value) in [("left", 3.), ("right", 29.), ("left", 3.)] {
+            let data = master.dataset(name).unwrap();
+            assert_eq!(cache.read(&data, &selection).unwrap(), vec![value; 24]);
+        }
+        assert_eq!(cache.0.locked().len(), 2);
+    }
 }
