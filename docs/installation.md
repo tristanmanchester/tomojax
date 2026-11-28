@@ -28,7 +28,7 @@ Setting `JAX_PLATFORMS=cuda` forces an immediate error if CUDA fails to initiali
 
 ## Optional extras and Studio
 
-Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
+Combine extras in one install command, such as `tomojax[cuda12,spectra]`:
 
 | Extra | Adds |
 | --- | --- |
@@ -36,7 +36,6 @@ Combine extras in one install command, such as `tomojax[cuda12,mcp,spectra]`:
 | `zarr` | Write OME-Zarr 0.5 multiscale volumes |
 | `cuda12` | JAX CUDA 12 runtime, CuPy, and NVIDIA runtime/NVRTC wheels |
 | `fourier-cuda12` | CuPy alone for GPU-accelerated Fourier-slice inversion (`method="fourier"`) alongside `cpu` |
-| `mcp` | Model Context Protocol server (`tomojax mcp`); see [use TomoJAX from an AI agent](mcp.md) |
 | `spectra` | `xraylib` for physical X-ray tube spectra (`corrections.tube_spectrum`) and beam-hardening curves |
 
 To run the native desktop workspace ([TomoJAX Studio](../studio/README.md)) on Linux `x86_64` or `aarch64`, install the `tomojax-studio` wheel alongside `tomojax` (`uv pip install --prerelease=allow "tomojax[cuda12]" tomojax-studio` while `1.0.0` is in release candidate), or build from a source checkout with Rust **1.99.1** (`uv run --no-sync tomojax studio --build`).

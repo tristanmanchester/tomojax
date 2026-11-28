@@ -2,7 +2,7 @@
 name: tomojax
 description: Reconstructs, aligns and checks X-ray tomography with TomoJAX (parallel-beam, laminography and lab cone-beam CT) through its MCP server or Python API. Use when the user wants to load or correct a scan, find the rotation center, align per-view motion, reconstruct a volume, compare or tune reconstruction settings without ground truth, point at or segment a feature in a slice, or report a TomoJAX bug.
 license: GPL-3.0-only
-compatibility: Python 3.12 or newer with the tomojax package; a CUDA 12 GPU is optional but much faster; the MCP tools need the tomojax[mcp] extra and a client running `tomojax mcp`.
+compatibility: Python 3.12 or newer with the tomojax package; a CUDA 12 GPU is optional but much faster; the MCP tools need the native worker from tomojax-studio and a client running `tomojax mcp`.
 ---
 
 # TomoJAX

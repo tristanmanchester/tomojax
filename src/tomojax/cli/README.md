@@ -152,7 +152,7 @@ With no `--fit`, alignment estimates per-view translations jointly with a volume
 - `serve`: run the local JSON Lines worker over stdin/stdout for GUI and automation clients.
   See the [local worker protocol](../../../docs/protocol.md).
 - `mcp`: run the Model Context Protocol server over stdio so AI agents such as Claude Code or
-  Codex can inspect, process, view, and script scans directly. Requires `tomojax[mcp]`; see
+  Codex can inspect, process, view, and script scans directly. Requires the native worker from `tomojax-studio`; see
   [use TomoJAX from an AI agent](../../../docs/mcp.md).
 - `skill`: print where the TomoJAX Agent Skill is in this installation and the directories
   common agents read skills from, or copy it there with `-o SKILLS_DIR` (`--force` replaces

@@ -107,7 +107,7 @@ export function buildRootLlmsTxt(): string {
     "",
     "How an agent should invoke TomoJAX:",
     "",
-    "- **Interactive agent workflows on local scan data**: connect to the local stdio MCP server (`tomojax mcp` from `tomojax[mcp,cuda12]`). Scans and volumes stay resident on the GPU between tool calls, and `view` returns labeled slice PNGs for visual inspection.",
+    "- **Interactive agent workflows on local scan data**: connect to the local stdio MCP server (`tomojax mcp` with the worker from `tomojax-studio`). Scans and volumes stay resident on the GPU between tool calls, and `view` returns labeled slice PNGs for visual inspection.",
     "- **Scripted pipelines and batch reconstruction**: run the `tomojax` CLI (`tomojax inspect`, `correct`, `align`, `reconstruct`, `export`, `simulate`).",
     "- **Custom solvers, training loops, or multi-GPU scripts**: call the Python API (`import tomojax as tj`).",
     "- **Not a hosted cloud API**: TomoJAX runs locally beside the scan files and GPU, with no cloud backend or API keys.",
@@ -122,7 +122,7 @@ export function buildRootLlmsTxt(): string {
     "## Packages and source",
     "",
     `- [GitHub repository](${repoUrl}): Source code, issue tracker, benchmarks, examples, and Agent Skill (\`plugins/tomojax/\`).`,
-    "- [PyPI package (`tomojax`)](https://pypi.org/project/tomojax/): Python library, CLI (`tomojax`), and MCP server (`tomojax[mcp]`).",
+    "- [PyPI package (`tomojax`)](https://pypi.org/project/tomojax/): Python library, CLI (`tomojax`), and MCP launcher (`tomojax mcp`).",
     "- [PyPI package (`tomojax-studio`)](https://pypi.org/project/tomojax-studio/): Prebuilt Linux desktop workspace (`tomojax studio`).",
     "",
   ];
