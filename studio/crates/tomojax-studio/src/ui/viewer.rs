@@ -1,5 +1,6 @@
 //! Image-led exploration. The compositor owns all scientific pixels and GPU work.
-use rune::{El, Phase, PointerButton, Shape, canvas, col, el, row};
+mod drag;
+use rune::{El, PointerButton, Shape, canvas, col, el, row};
 
 use super::{controls::*, model::*, tokens::*};
 use crate::AppState;
@@ -503,79 +504,8 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
             .focusable(true)
             .focus_ring(1.5, -2., axis(kind.axis().unwrap_or(0)))
             .pointer_buttons([PointerButton::Middle])
-            .on_drag(move |s: &mut AppState, drag, tx| {
-                if drag.phase == Phase::Down {
-                    s.ui.drag_last = [0.; 2];
-                }
-                let delta = [drag.dx - s.ui.drag_last[0], drag.dy - s.ui.drag_last[1]];
-                s.ui.drag_last = [drag.dx, drag.dy];
-                if !comparison
-                    && kind.axis().is_some()
-                    && s.ui.inspect_tool != InspectTool::Navigate
-                    && tx.button() != PointerButton::Middle
-                {
-                    if drag.phase == Phase::Up && drag.cancelled() {
-                        s.dispatch(UiAction::CancelMeasurement, tx);
-                    } else {
-                        s.dispatch(
-                            UiAction::MeasureDrag {
-                                plane: kind,
-                                start: [
-                                    (drag.start_x / drag.w.max(1.)).clamp(0., 1.),
-                                    (drag.start_y / drag.h.max(1.)).clamp(0., 1.),
-                                ],
-                                end: [
-                                    (drag.x / drag.w.max(1.)).clamp(0., 1.),
-                                    (drag.y / drag.h.max(1.)).clamp(0., 1.),
-                                ],
-                                finished: drag.phase == Phase::Up,
-                            },
-                            tx,
-                        );
-                    }
-                } else if matches!(drag.phase, Phase::Down | Phase::Move) {
-                    if tx.button() == PointerButton::Middle {
-                        s.dispatch(
-                            UiAction::Pan {
-                                delta: [delta[0] / drag.w.max(1.), delta[1] / drag.h.max(1.)],
-                            },
-                            tx,
-                        );
-                    } else if mark == 12 {
-                        let u = drag.x / drag.w.max(1.);
-                        let split = (u - 0.5 - s.ui.display.pan[0]) / s.ui.display.zoom + 0.5;
-                        s.dispatch(UiAction::SetCompareSplit(split), tx);
-                    } else if comparison {
-                        s.ui.compare_cursor = std::array::from_fn(|i| {
-                            let pos = [drag.x / drag.w.max(1.), drag.y / drag.h.max(1.)][i];
-                            ((pos - 0.5 - s.ui.display.pan[i]) / s.ui.display.zoom + 0.5)
-                                .clamp(0., 1.)
-                        });
-                    } else if kind == PlaneKind::Volume {
-                        s.dispatch(
-                            UiAction::CameraDrag {
-                                delta: [delta[0] * 0.35, delta[1] * 0.35],
-                            },
-                            tx,
-                        );
-                    } else if kind.axis().is_some()
-                        && s.model
-                            .active()
-                            .is_some_and(|asset| asset.kind == AssetKind::Volume)
-                    {
-                        s.dispatch(
-                            UiAction::SetCrosshair {
-                                plane: kind,
-                                position: [
-                                    (drag.x / drag.w.max(1.)).clamp(0., 1.),
-                                    (drag.y / drag.h.max(1.)).clamp(0., 1.),
-                                ],
-                            },
-                            tx,
-                        );
-                    }
-                }
-                tx.instant();
+            .on_drag(move |s: &mut AppState, event, tx| {
+                drag::handle(s, kind, mark, comparison, event, tx)
             })
             .on_wheel(move |s: &mut AppState, event, tx| {
                 if event.mods.cmd || kind == PlaneKind::Volume {
@@ -609,6 +539,15 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
             .on_double_press_tx(|s: &mut AppState, tx| s.dispatch(UiAction::FitView, tx));
     }
     area = area.child(surface);
+    if interactive && let Some(readout) = state.probe_text(mark, kind) {
+        area = area.child(
+            label(readout, 11., canvas_ink())
+                .padding(6.)
+                .fill(canvas_bg())
+                .pin(Some(10.), None, None, Some(10.))
+                .inert(),
+        );
+    }
     if interactive && state.model.render_loading {
         area = area.child(
             label("Refining preview…", 11., canvas_ink())

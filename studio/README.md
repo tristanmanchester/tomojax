@@ -152,6 +152,7 @@ Press **Ctrl+K** or click **Search commands** to run any command or open any ope
 | Environment variable | Purpose |
 | --- | --- |
 | `TOMOJAX_STUDIO_PYTHON` | Python interpreter for `tomojax serve` when launching the binary directly (`tomojax studio` sets this automatically) |
+| `TOMOJAX_STUDIO_SLOWLINK` | Development override for the whole project. Fetch planes through the worker using a JSON array of relay arguments, or `[]` for a direct pipe. |
 | `TOMOJAX_STUDIO_SETTINGS` | Override the preferences file path (recent projects and custom shortcuts) for isolated runs |
 | `TOMOJAX_STUDIO_INPUT` | Project directory or acquisition path opened on startup |
 
@@ -170,6 +171,16 @@ cargo clippy --locked --manifest-path studio/Cargo.toml --workspace --all-target
 cargo test --release --locked --manifest-path studio/Cargo.toml --workspace
 TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml --workspace -- --ignored
 uv run --no-sync python tools/verify_studio.py --build
+```
+
+In Navigate mode, press a plane to read the nearest displayed sample and its source row and column. The readout appears when the lossless plane is available.
+
+To run the same capture suite through the local worker at 1.2 MB/s and 54 ms round-trip delay, run this from the repository root.
+
+```sh
+TOMOJAX_STUDIO_PYTHON="$PWD/.venv/bin/python" \
+TOMOJAX_STUDIO_SLOWLINK='["'"$PWD"'/tools/slowlink.py","--rate","1200000","--delay-ms","27"]' \
+just studio-verify
 ```
 
 Studio is two crates: `studio-core` (projects, the worker protocol, jobs and previews) and `tomojax-studio` (native I/O, rendering, views and the binary). `studio-core` builds without Rune, wgpu or HDF5, so `cargo test --manifest-path studio/Cargo.toml -p studio-core` checks the protocol, manifest and state-machine logic in seconds.

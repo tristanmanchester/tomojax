@@ -6,6 +6,7 @@ use std::sync::{
 
 use super::{AxisScale, PlaneData, Statistics, VolumeData, npy::Npy};
 use hdf5::{Hyperslab, SliceOrIndex};
+use studio_core::pixels::PlaneSelection;
 use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
 
 pub(super) fn identity() -> u64 {
@@ -152,33 +153,32 @@ pub(crate) fn plane(
     max_edge: usize,
 ) -> Result<PlaneData, String> {
     validate(descriptor)?;
+    let slab = PlaneSelection::new(&descriptor.shape, axis, index, max_edge)?;
+    let values = selection(
+        &descriptor.storage,
+        &descriptor.shape,
+        &slab.start,
+        &slab.step,
+        &slab.count,
+    )?;
+    registered_plane(descriptor, axis, index, &slab, values, true)
+}
+
+pub(super) fn registered_plane(
+    descriptor: &ArrayDescriptor,
+    axis: usize,
+    index: usize,
+    slab: &PlaneSelection,
+    values: Vec<f32>,
+    lossless: bool,
+) -> Result<PlaneData, String> {
     let dimensions = descriptor.shape.len();
-    if axis >= dimensions || (dimensions == 3 && index >= descriptor.shape[axis]) {
-        return Err("The requested slice lies outside the array.".into());
-    }
-    let remaining: Vec<_> = (0..dimensions)
-        .filter(|&a| dimensions == 2 || a != axis)
-        .collect();
-    let source_shape = [
-        descriptor.shape[remaining[0]],
-        descriptor.shape[remaining[1]],
-    ];
-    let stride = source_shape[0]
-        .max(source_shape[1])
-        .div_ceil(max_edge)
-        .max(1);
-    let mut start = vec![0; dimensions];
-    let mut step = vec![stride; dimensions];
-    let mut count: Vec<_> = descriptor
-        .shape
-        .iter()
-        .map(|n| n.div_ceil(stride))
-        .collect();
+    let remaining = slab.remaining;
+    let stride = slab.stride;
+    let count = &slab.count;
+    let source_shape = remaining.map(|a| descriptor.shape[a]);
     let mut fixed = descriptor.fixed.clone();
     if dimensions == 3 {
-        start[axis] = index;
-        step[axis] = 1;
-        count[axis] = 1;
         let fixed_axis = scale(&descriptor.axes[axis], descriptor.shape[axis], 1)?;
         fixed.push(Fixed {
             name: fixed_axis.name.clone(),
@@ -188,15 +188,9 @@ pub(crate) fn plane(
             coordinate: fixed_axis.coordinate(index as f64),
         });
     }
-    let values = selection(
-        &descriptor.storage,
-        &descriptor.shape,
-        &start,
-        &step,
-        &count,
-    )?;
     let statistics = statistics(&values)?;
     Ok(PlaneData {
+        lossless,
         id: identity(),
         values: values.into(),
         shape: [count[remaining[0]], count[remaining[1]]],

@@ -213,7 +213,14 @@ tj.save('ramp.nxs', tj.Reconstruction(volume,geometry,'fbp',{},length_unit='mm')
         );
         let mut state = AppState::init();
         state.open_project(&root.join("project"), true).unwrap();
-        state.engine = Some(Engine::spawn(python.clone(), std::sync::Arc::new(|| {})).unwrap());
+        state.engine = Some(
+            Engine::spawn_through(
+                &python,
+                state.relay.as_deref().unwrap_or_default(),
+                std::sync::Arc::new(|| {}),
+            )
+            .unwrap(),
+        );
         state.import_paths(vec![root.join("ramp.nxs")]);
         let drive = |state: &mut AppState, done: &dyn Fn(&AppState) -> bool| {
             let until = Instant::now() + Duration::from_secs(45);
@@ -323,6 +330,10 @@ for name in ['volume.tif', 'slices', 'volume.zarr', 'volume.example']:
             state.ui.export_format = "ImageJ TIFF".into();
             state.ui.export_path = Some(root.join("detail.tif"));
             drive(&mut state, &AppState::export_plan_current);
+            state.refresh_images();
+            drive(&mut state, &|s| {
+                (1..=3).all(|slot| s.imaging.status(slot) == &crate::imaging::ImagingStatus::Ready)
+            });
             super::super::tests::capture_native_viewport(state, &path, &size, &scale);
         } else {
             state.shutdown();

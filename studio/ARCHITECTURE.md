@@ -21,7 +21,8 @@ cargo test --manifest-path studio/Cargo.toml -p studio-core
 | `studio-core` module | Responsibility |
 | --- | --- |
 | `protocol.rs` | Typed official protocol responses and parameter schema |
-| `engine.rs` | Bounded asynchronous JSONL transport, request correlation, process lifecycle |
+| `pixels/` | Binary block framing and credit, plane selection and decoding, per-pane fetch state and bounded decode queue |
+| `engine.rs` | Bounded worker transport, request correlation, process lifecycle |
 | `project.rs` | Versioned manifest, captured inputs, job records, single writer and atomic autosave |
 | `operations.rs` | Operation names, groups and method titles shared by projects and forms |
 | `previews.rs` | Temporary per-control requests, warm sources and supersession |
@@ -180,6 +181,23 @@ units and fixed coordinates. Native I/O reads bounded hyperslabs or memory-mappe
 numeric NPY arrays. Stored axis permutations, signed spacing and irregular view
 coordinates remain explicit. The application maps physical z/y/x controls onto
 the stored axis names.
+
+The project manifest's optional `connection` selects the plane source for all its
+assets. Local projects use native readers. On a worker connection, `Imaging`
+requests a windowed JPEG up to 512 pixels across while moving. Each pane keeps
+its newest wanted index while a JPEG is in flight. Once the index settles, the
+pane requests float32 samples at its displayed size. Moving again supersedes
+that lossless request immediately.
+
+The engine's stdout reader consumes and acknowledges pixel blocks before
+handing a complete frame to the decoder. The reader sizes the credit window
+from the measured block transfer rate, targeting a tenth of a second of data.
+One decoder serves the connection and can replace a waiting JPEG with a newer
+one for the same slot. The slot checks its generation and source before
+installing a frame. An interim JPEG carries its own coordinates. The probe,
+profiles, measurements and histogram use only settled samples. A disconnect
+clears the old planes. The development relay shares the local filesystem for
+native volume reads, metadata, coordinate vectors and pose tables.
 
 The scalar cache has a 512 MiB default budget. Active decoded views and a bounded
 number of in-flight loads also consume memory; this is a cache budget, not a hard

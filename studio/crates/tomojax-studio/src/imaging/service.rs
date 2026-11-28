@@ -1,12 +1,17 @@
-//! Latest-request scheduling, scalar LRU, and neighbor prefetch. No numerical worker calls.
+//! Registered view slots shared by the native readers and the worker pixel source.
+mod remote;
+use remote::Remote;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::Instant;
+use studio_core::{engine::Engine, protocol::Response};
 
 use super::{PlaneData, VolumeData, reader};
 use studio_core::protocol::ArrayDescriptor;
 use studio_core::sync::Locked;
+
+const MAX_SLOTS: usize = 32;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum ImagingStatus {
@@ -95,6 +100,7 @@ struct Request {
     descriptor: Arc<ArrayDescriptor>,
     key: Key,
     submitted: Instant,
+    lineage: u64,
 }
 
 #[derive(Default)]
@@ -125,10 +131,12 @@ struct Slot {
     request: Request,
     asset: Option<Asset>,
     status: ImagingStatus,
+    displayed: (u64, bool),
 }
 
 /// Owns two background readers and a byte-bounded LRU. Hot cache hits need no worker roundtrip.
 pub struct Imaging {
+    remote: Option<Remote>,
     shared: Arc<Shared>,
     events: Option<mpsc::Receiver<Completion>>,
     threads: Vec<JoinHandle<()>>,
@@ -167,6 +175,7 @@ impl Imaging {
             })
             .collect();
         Self {
+            remote: None,
             shared,
             events: Some(events),
             threads,
@@ -174,6 +183,47 @@ impl Imaging {
             next_generation: 0,
             epoch: 0,
             timings: VecDeque::new(),
+        }
+    }
+
+    /// Project replacement changes the source of every pane together.
+    pub fn select_source(&mut self, fetch: bool) {
+        self.invalidate();
+        if fetch != self.remote.is_some() {
+            self.remote = fetch.then(|| Remote::new(self.shared.clone()));
+        }
+    }
+
+    pub fn dispatch(&mut self, engine: &mut Engine, windows: &[Option<[f32; 2]>]) -> bool {
+        // Consume completed reads before opening another round of up to MAX_SLOTS fetches.
+        let changed = self.poll();
+        self.remote
+            .as_mut()
+            .is_some_and(|r| r.dispatch(engine, &mut self.slots, windows))
+            || changed
+    }
+
+    pub fn worker_reply(&mut self, response: Response, stale: bool) -> Option<Response> {
+        match &mut self.remote {
+            Some(remote) => remote.receive(response, stale),
+            None => Some(response),
+        }
+    }
+
+    pub fn disconnected(&mut self) {
+        if self.remote.is_some() {
+            self.remote = Some(Remote::new(self.shared.clone()));
+            for slot in self
+                .slots
+                .values_mut()
+                .filter(|s| s.request.key.plane.is_some())
+            {
+                self.next_generation += 1;
+                slot.request.generation = self.next_generation;
+                slot.request.lineage = self.next_generation;
+                slot.asset = None;
+                slot.status = ImagingStatus::Loading;
+            }
         }
     }
 
@@ -198,7 +248,15 @@ impl Imaging {
         if !(32..=4096).contains(&max_edge) {
             return Err("Slice quality must be between 32 and 4096 pixels.".into());
         }
-        self.request(slot, descriptor, Some((axis, index)), max_edge)
+        let longest = descriptor
+            .shape
+            .iter()
+            .enumerate()
+            .filter(|(a, _)| descriptor.shape.len() == 2 || *a != axis)
+            .map(|(_, &length)| length)
+            .max()
+            .unwrap_or(max_edge);
+        self.request(slot, descriptor, Some((axis, index)), max_edge.min(longest))
     }
 
     pub fn request_volume(
@@ -245,26 +303,39 @@ impl Imaging {
             return Ok(());
         }
         self.next_generation += 1;
+        let remote_plane = self.remote.is_some() && plane.is_some();
+        let previous = self.slots.remove(&slot).filter(|s| {
+            s.request.key.source == key.source
+                && s.request.key.plane.map(|p| p.0) == plane.map(|p| p.0)
+        });
+        let lineage = previous
+            .as_ref()
+            .map_or(self.next_generation, |s| s.request.lineage);
+        let displayed = previous.as_ref().map_or((0, false), |s| s.displayed);
+        if previous.is_none()
+            && let Some(remote) = &mut self.remote
+        {
+            remote.clear(slot);
+        }
         let request = Request {
             slot,
             generation: self.next_generation,
             descriptor: Arc::new(descriptor),
             key: key.clone(),
             submitted: Instant::now(),
+            lineage,
         };
-        let previous = self.slots.remove(&slot).and_then(|s| {
-            (s.request.key.source == key.source
-                && s.request.key.plane.map(|p| p.0) == plane.map(|p| p.0))
-            .then_some(s.asset)
-            .flatten()
-        });
-        let cached = self.shared.cache.locked().get(&key);
+        let cached = if remote_plane {
+            None
+        } else {
+            self.shared.cache.locked().get(&key)
+        };
         let mut inbox = self.shared.inbox.locked();
-        if inbox.desired.len() >= 32 && !inbox.desired.contains_key(&slot) {
+        if inbox.desired.len() >= MAX_SLOTS && !inbox.desired.contains_key(&slot) {
             return Err("The workbench already has 32 active image views.".into());
         }
         inbox.desired.insert(slot, request.generation);
-        if cached.is_some() {
+        if cached.is_some() || remote_plane {
             inbox.pending.remove(&slot);
         } else {
             inbox.pending.insert(slot, request.clone());
@@ -274,7 +345,8 @@ impl Imaging {
             slot,
             Slot {
                 request: request.clone(),
-                asset: cached.clone().or(previous),
+                asset: cached.clone().or_else(|| previous.and_then(|s| s.asset)),
+                displayed,
                 status: if cached.is_some() {
                     ImagingStatus::Ready
                 } else {
@@ -284,6 +356,9 @@ impl Imaging {
         );
         if let Some(asset) = cached {
             self.record(&request, &asset, true, true);
+        } else if remote_plane {
+            let wake = self.shared.waker.locked().clone();
+            wake();
         } else {
             self.shared.changed.notify_one();
         }
@@ -292,32 +367,49 @@ impl Imaging {
 
     pub fn poll(&mut self) -> bool {
         let mut changed = false;
-        while let Some(event) = self.events.as_ref().and_then(|r| r.try_recv().ok()) {
-            let Some(slot) = self.slots.get_mut(&event.request.slot) else {
-                continue;
-            };
-            if slot.request.generation != event.request.generation {
-                continue;
-            }
-            match event.asset {
-                Ok(asset) => {
-                    slot.asset = Some(asset.clone());
-                    slot.status = if event.finished {
-                        ImagingStatus::Ready
-                    } else {
-                        ImagingStatus::Refining
-                    };
-                    self.record(&event.request, &asset, event.cache_hit, event.finished);
-                }
-                // The previous pixels are no longer the requested plane.
-                Err(error) => {
-                    slot.asset = None;
-                    slot.status = ImagingStatus::Error(error);
-                }
-            }
-            changed = true;
+        while let Some(event) = self
+            .events
+            .as_ref()
+            .and_then(|r| r.try_recv().ok())
+            .or_else(|| self.remote.as_ref().and_then(Remote::poll))
+        {
+            changed |= self.install(event);
         }
         changed
+    }
+
+    fn install(&mut self, event: Completion) -> bool {
+        let Some(slot) = self.slots.get_mut(&event.request.slot) else {
+            return false;
+        };
+        let current = slot.request.generation == event.request.generation;
+        let arrival = (event.request.generation, event.finished);
+        let interim = !event.finished
+            && matches!(&event.asset, Ok(Asset::Plane(p)) if !p.lossless)
+            && event.request.lineage == slot.request.lineage;
+        if arrival < slot.displayed || (!current && !interim) {
+            return false;
+        }
+        match event.asset {
+            Ok(asset) => {
+                slot.asset = Some(asset.clone());
+                slot.displayed = arrival;
+                slot.status = if !current {
+                    ImagingStatus::Loading
+                } else if event.finished {
+                    ImagingStatus::Ready
+                } else {
+                    ImagingStatus::Refining
+                };
+                self.record(&event.request, &asset, event.cache_hit, event.finished);
+            }
+            // The previous pixels are no longer the requested plane.
+            Err(error) => {
+                slot.asset = None;
+                slot.status = ImagingStatus::Error(error);
+            }
+        }
+        true
     }
 
     fn record(&mut self, request: &Request, asset: &Asset, cache_hit: bool, refined: bool) {
@@ -358,6 +450,9 @@ impl Imaging {
     }
 
     pub fn clear(&mut self, slot: u32) {
+        if let Some(remote) = &mut self.remote {
+            remote.clear(slot);
+        }
         self.slots.remove(&slot);
         let mut inbox = self.shared.inbox.locked();
         inbox.desired.remove(&slot);
@@ -371,6 +466,9 @@ impl Imaging {
     pub fn artifacts_in_use(&self, artifacts: &BTreeSet<String>) -> bool {
         if artifacts.is_empty() {
             return false;
+        }
+        if self.remote.as_ref().is_some_and(|r| r.uses(artifacts)) {
+            return true;
         }
         let inbox = self.shared.inbox.locked();
         inbox
@@ -389,6 +487,9 @@ impl Imaging {
     /// refresh. No filesystem checks run on hot navigation; the project owns this boundary.
     /// An epoch prevents a reader already working on old storage from repopulating the cache.
     pub fn invalidate(&mut self) {
+        if let Some(remote) = &mut self.remote {
+            remote.invalidate();
+        }
         self.epoch += 1;
         self.slots.clear();
         {
@@ -404,6 +505,7 @@ impl Imaging {
     }
 
     pub fn shutdown(&mut self) {
+        self.remote.take();
         {
             let mut inbox = self.shared.inbox.locked();
             inbox.stopping = true;
@@ -550,3 +652,6 @@ impl Drop for ActiveRead<'_> {
         wake();
     }
 }
+
+#[cfg(test)]
+mod generation_tests;

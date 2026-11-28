@@ -93,6 +93,8 @@ pub struct Statistics {
 
 #[derive(Clone, Debug)]
 pub struct PlaneData {
+    /// Only lossless frames may supply quantitative readouts.
+    pub lossless: bool,
     /// Unique decoded-content identity; used to avoid re-uploading unchanged scalar pixels.
     pub id: u64,
     pub values: Arc<[f32]>,
@@ -160,6 +162,7 @@ impl PlaneData {
             id: super::reader::identity(),
             values,
             statistics,
+            lossless: self.lossless && right.lossless,
             ..self.clone()
         })
     }
@@ -174,11 +177,26 @@ impl PlaneData {
     }
 
     pub fn sample(&self, row: usize, column: usize) -> Option<f32> {
-        if row >= self.shape[0] || column >= self.shape[1] {
+        if !self.lossless || row >= self.shape[0] || column >= self.shape[1] {
             return None;
         }
         let value = self.values[row * self.shape[1] + column];
         value.is_finite().then_some(value)
+    }
+
+    /// Source row and column of the displayed sample nearest this normalized texture position.
+    pub fn displayed_index(&self, uv: [f32; 2]) -> [usize; 2] {
+        let [u, v] = uv;
+        std::array::from_fn(|i| {
+            let texel = ([v, u][i] * self.shape[i] as f32) as usize;
+            texel.min(self.shape[i] - 1) * self.stride
+        })
+    }
+
+    pub fn probe(&self, uv: [f32; 2]) -> Option<([usize; 2], f32)> {
+        let index = self.displayed_index(uv);
+        self.sample(index[0] / self.stride, index[1] / self.stride)
+            .map(|value| (index, value))
     }
 
     /// Distance between sample-center coordinates; rejects unlike coordinate frames/units.

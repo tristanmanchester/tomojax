@@ -143,7 +143,7 @@ fn main() {
     }
     rune::tooling::set_app_id("org.tomojax.studio");
     let app = rune::App::new(app_spec())
-        .compositor(volume::ScientificCompositor::new(AppState::render_items))
+        .compositor(volume::ScientificCompositor::new(AppState::render_panes))
         .on_close(|s, _| s.shutdown())
         .on_quit(|s, _| s.shutdown());
     app.run();

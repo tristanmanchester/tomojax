@@ -47,7 +47,7 @@ pub(crate) fn capture_native_viewport(mut state: AppState, path: &Path, size: &s
     });
     spec.on_key = None;
     let app = rune::App::new(spec).init(move || state).compositor(
-        crate::volume::ScientificCompositor::new(AppState::render_items),
+        crate::volume::ScientificCompositor::new(AppState::render_panes),
     );
     let tree = path.with_extension("tree.json");
     let args = rune::tooling::Args::parse_from(vec![
