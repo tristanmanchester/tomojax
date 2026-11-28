@@ -3,6 +3,8 @@ use rune::compose::{Compositor, DeviceKey, Frame};
 use rune::render::{Instance, KIND_EFFECT};
 use std::collections::{HashMap, HashSet};
 
+use crate::imaging::{DisplaySettings, PlaneData};
+
 use super::{
     RenderItem,
     gpu::{ImageTexture, Pipelines},
@@ -14,6 +16,28 @@ struct Resources {
     pipes: Pipelines,
     planes: HashMap<(u32, bool), ImageTexture>,
     volumes: HashMap<u32, VolumeGpu>,
+}
+
+impl Resources {
+    fn prepare_plane<S>(
+        &mut self,
+        frame: &Frame<'_, S>,
+        mark: u32,
+        data: &PlaneData,
+        display: &DisplaySettings,
+        visible: &mut HashSet<(u32, bool)>,
+    ) {
+        for (detail, layer) in data.layers(display) {
+            let key = (mark, detail);
+            visible.insert(key);
+            if self.planes.get(&key).is_none_or(|p| p.id != layer.id) {
+                self.planes.insert(
+                    key,
+                    ImageTexture::plane(frame.device, frame.queue, &self.pipes, layer),
+                );
+            }
+        }
+    }
 }
 
 type Scene<S> = fn(&mut S, &[(u32, f32)]) -> Vec<RenderItem>;
@@ -75,21 +99,7 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
                     if !sites.contains_key(mark) {
                         continue;
                     }
-                    for (detail, layer) in data.layers(display) {
-                        let key = (*mark, detail);
-                        planes.insert(key);
-                        if resources.planes.get(&key).is_none_or(|p| p.id != layer.id) {
-                            resources.planes.insert(
-                                key,
-                                ImageTexture::plane(
-                                    frame.device,
-                                    frame.queue,
-                                    &resources.pipes,
-                                    layer,
-                                ),
-                            );
-                        }
-                    }
+                    resources.prepare_plane(frame, *mark, data, display, &mut planes);
                 }
                 RenderItem::Volume {
                     mark,

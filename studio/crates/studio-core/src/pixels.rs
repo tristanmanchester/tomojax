@@ -181,12 +181,8 @@ impl PlaneSelection {
         {
             return Err("The requested region lies outside the plane.".into());
         }
-        let stride = region
-            .iter()
-            .map(|[lo, hi]| hi - lo)
-            .max()
-            .unwrap()
-            .div_ceil(edge);
+        let [height, width] = region.map(|[lo, hi]| hi - lo);
+        let stride = height.max(width).div_ceil(edge);
         let mut start = vec![0; shape.len()];
         let mut step = vec![stride; shape.len()];
         let mut count = vec![1; shape.len()];

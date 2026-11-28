@@ -114,7 +114,9 @@ On this computer, Studio runs one job at a time in its worker. You can reorder w
 | **Region**, then drag a box on a slice | Compute mean, standard deviation, and range of finite samples |
 
 - **Display controls:** adjust the grayscale window (**Apply window** commits typed bounds; **Auto** resets from the image), choose a color map (**Gray**, **Bone**, **Viridis**, **Magma**), or invert display contrast. Display settings change rendering on the GPU without altering stored float values.
-- **3D volume rendering:** tune **Opacity threshold**, **Density**, **Lighting**, and **X / Y / Z extent** clipping planes. Studio loads slices progressively up to 1,024 samples per edge and renders interactive 3D previews at up to 192³ voxels while keeping full-resolution floating-point arrays on disk for measurements and exports.
+In **Navigate** mode, press a plane to read the nearest displayed sample and its source row and column. Zoom in to inspect finer detail. Studio fetches the visible region at the pane’s resolution, down to individual source pixels. The probe appears when lossless samples arrive.
+
+- **3D volume rendering:** tune **Opacity threshold**, **Density**, **Lighting**, and **X / Y / Z extent** clipping planes. Studio renders interactive 3D previews at up to 192³ voxels.
 - **Measurements:** saved distance and ROI measurements stay tied to their asset, slice index, and physical coordinate frame, and reappear whenever you return to that slice.
 
 ### Compare results
@@ -183,8 +185,6 @@ cargo test --release --locked --manifest-path studio/Cargo.toml --workspace
 TOMOJAX_TEST_PYTHON="$PWD/.venv/bin/python" cargo test --release --locked --manifest-path studio/Cargo.toml --workspace -- --ignored
 uv run --no-sync python tools/verify_studio.py --build
 ```
-
-In Navigate mode, press a plane to read the nearest displayed sample and its source row and column. The readout appears when the lossless plane is available.
 
 To run the same capture suite through the local worker at 1.2 MB/s and 54 ms round-trip delay, run this from the repository root.
 

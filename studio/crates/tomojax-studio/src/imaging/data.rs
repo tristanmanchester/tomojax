@@ -51,6 +51,13 @@ impl Default for DisplaySettings {
     }
 }
 
+impl DisplaySettings {
+    /// Invert the pan and zoom of a fitted plane; blank margins lie outside 0..1.
+    pub fn source_uv(&self, pane: [f32; 2]) -> [f32; 2] {
+        std::array::from_fn(|i| (pane[i] - 0.5 - self.pan[i]) / self.zoom + 0.5)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AxisScale {
     pub name: String,
@@ -91,6 +98,12 @@ pub struct Statistics {
     pub window: [f32; 2],
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PlaneCrop {
+    pub bounds: studio_core::pixels::PlaneRegion,
+    pub edge: usize,
+}
+
 #[derive(Clone, Debug)]
 pub struct PlaneData {
     /// Only lossless frames may supply quantitative readouts.
@@ -117,7 +130,6 @@ pub struct PlaneData {
 }
 
 impl PlaneData {
-    /// Subtract registered display samples. Callers verify the full volume grids first.
     /// Whether two planes sample the same grid, so they can be combined pixel by pixel.
     pub fn same_grid(&self, other: &Self) -> bool {
         self.shape == other.shape
@@ -154,9 +166,7 @@ impl PlaneData {
     }
 
     pub fn split_column(&self, fraction: f32) -> usize {
-        let [start, end] = self.region[1];
-        let cut = fraction.clamp(0., 1.) * self.source_shape[1] as f32;
-        ((cut - start as f32) * self.shape[1] as f32 / (end - start) as f32).round() as usize
+        self.texture_position([fraction.clamp(0., 1.), 0.])[1].round() as usize
     }
 
     fn combine_layers(
@@ -198,7 +208,7 @@ impl PlaneData {
             .enumerate()
             .map(|(i, (a, b))| f(i, *a, *b))
             .collect();
-        let statistics = super::reader::statistics(&values).ok()?;
+        let statistics = super::reader::statistics(&values);
         Some(Self {
             id: super::reader::identity(),
             values,
@@ -214,7 +224,7 @@ impl PlaneData {
             } else {
                 1.
             };
-        (self.shape[1] as f64 / self.shape[0] as f64 * ratio) as f32
+        (self.source_shape[1] as f64 / self.source_shape[0] as f64 * ratio) as f32
     }
 
     pub fn sample(&self, row: usize, column: usize) -> Option<f32> {
@@ -240,13 +250,33 @@ impl PlaneData {
             .unwrap_or(self)
     }
 
-    pub fn texel(&self, [u, v]: [f32; 2]) -> [usize; 2] {
-        std::array::from_fn(|axis| {
-            let [lo, hi] = self.region[axis];
-            let position =
-                ([v, u][axis] * self.source_shape[axis] as f32 - lo as f32) / (hi - lo) as f32;
-            ((position * self.shape[axis] as f32) as usize).min(self.shape[axis] - 1)
+    /// A sample at source index k is centered at k + 0.5, even when striding
+    /// leaves a partial cell at the far edge of the selection.
+    fn texel_position(&self, axis: usize, source_edge: f64) -> f64 {
+        (source_edge - self.region[axis][0] as f64 - 0.5) / self.stride as f64 + 0.5
+    }
+
+    pub fn texture_position(&self, [u, v]: [f32; 2]) -> [f64; 2] {
+        std::array::from_fn(|a| {
+            self.texel_position(a, [v, u][a] as f64 * self.source_shape[a] as f64)
         })
+    }
+
+    /// Map the layer's painted rectangle to normalized GPU texture coordinates.
+    pub(crate) fn texture_transform(&self) -> [f32; 4] {
+        let mut uv = [0.; 4];
+        for (i, a) in [1, 0].into_iter().enumerate() {
+            let [lo, hi] = self.region[a];
+            let first = self.texel_position(a, lo as f64);
+            uv[i] = ((self.texel_position(a, hi as f64) - first) / self.shape[a] as f64) as f32;
+            uv[i + 2] = (first / self.shape[a] as f64) as f32;
+        }
+        uv
+    }
+
+    pub fn texel(&self, uv: [f32; 2]) -> [usize; 2] {
+        let position = self.texture_position(uv);
+        std::array::from_fn(|i| (position[i] as usize).min(self.shape[i] - 1))
     }
 
     pub fn displayed_index(&self, uv: [f32; 2]) -> [usize; 2] {
@@ -264,26 +294,39 @@ impl PlaneData {
     }
 
     /// Source pixels visible inside the fitted pane after pan and zoom.
-    pub fn visible_region(
+    pub(super) fn visible_region(
         &self,
         display: &DisplaySettings,
         edge: usize,
-    ) -> Option<studio_core::pixels::PlaneRegion> {
+    ) -> Option<PlaneCrop> {
         if display.zoom <= 1. || self.stride == 1 {
             return None;
         }
+        let low = display.source_uv([0.; 2]);
+        let high = display.source_uv([1.; 2]);
         let region: [[usize; 2]; 2] = std::array::from_fn(|a| {
             let n = self.source_shape[a] as f32;
-            let start = (0.5 + (-0.5 - display.pan[1 - a]) / display.zoom) * n;
-            let end = (0.5 + (0.5 - display.pan[1 - a]) / display.zoom) * n;
+            let start = low[1 - a] * n;
+            let end = high[1 - a] * n;
             [
                 start.floor().clamp(0., n) as usize,
                 end.ceil().clamp(0., n) as usize,
             ]
         });
         let lengths = region.map(|[lo, hi]| hi - lo);
-        (!lengths.contains(&0) && lengths.into_iter().max()?.div_ceil(edge) < self.stride)
-            .then_some(region)
+        if lengths.contains(&0) {
+            return None;
+        }
+        // Choose the coarsest grid that still supplies one sample per pane pixel.
+        // Panning past an image boundary clips the read without changing that grid.
+        let longest = self.source_shape[0].max(self.source_shape[1]);
+        let stride = ((longest as f32 / display.zoom / edge as f32) as usize).max(1);
+        let cropped = lengths[0].max(lengths[1]);
+        let edge = cropped.div_ceil(stride).min(2048); // 2048² float32 fits one fetch.
+        (cropped.div_ceil(edge) < self.stride).then_some(PlaneCrop {
+            bounds: region,
+            edge,
+        })
     }
 
     /// Distance between sample-center coordinates; rejects unlike coordinate frames/units.

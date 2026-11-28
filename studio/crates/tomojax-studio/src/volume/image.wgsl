@@ -4,6 +4,7 @@ struct ImageUniform {
     viewport: vec4<f32>,
     window: vec4<f32>,
     info: vec4<f32>,
+    uv: vec4<f32>,
     clip: vec4<f32>,
     fade: vec4<u32>,
 }
@@ -49,7 +50,7 @@ fn fetch(uv: vec2<f32>) -> vec4<f32> {
     let uv = (absolute - u.rect.xy) / u.rect.zw;
     if any(uv < vec2(0.)) || any(uv > vec2(1.)) { discard; }
     let mask = clip_alpha(absolute, u.clip, u.fade);
-    let sample = fetch(uv);
+    let sample = fetch(uv * u.uv.xy + u.uv.zw);
     if u.info.y > 0.5 {
         let unpremultiplied = sample.rgb / max(sample.a, 0.00001);
         let rgb = select(unpremultiplied, linear_to_srgb(unpremultiplied), u.info.x > 0.5);

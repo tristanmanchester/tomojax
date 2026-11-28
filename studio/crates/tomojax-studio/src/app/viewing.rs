@@ -395,9 +395,7 @@ impl AppState {
             (4, PlaneKind::Projection),
             (5, PlaneKind::Sinogram),
         ] {
-            if let ImagingStatus::Error(error) = self.imaging.status(slot) {
-                self.model.error = Some(error.clone());
-            } else if let Some(plane) = self.imaging.plane(slot) {
+            if let Some(plane) = self.imaging.plane(slot) {
                 self.model.planes.insert(kind, plane_view(plane));
             }
         }
@@ -420,8 +418,8 @@ impl AppState {
                 }
             })
         });
-        for slot in [6, 7] {
-            if self.ui.workspace == Workspace::Compare
+        for slot in 1..=7 {
+            if (slot < 6 || self.ui.workspace == Workspace::Compare)
                 && let ImagingStatus::Error(error) = self.imaging.status(slot)
             {
                 self.model.error = Some(error.clone());
@@ -714,10 +712,9 @@ impl AppState {
         }
     }
     pub(super) fn data_uv(&self, position: [f32; 2]) -> [f32; 2] {
-        std::array::from_fn(|i| {
-            ((position[i] - 0.5 - self.ui.display.pan[i]) / self.ui.display.zoom + 0.5)
-                .clamp(0., 1.)
-        })
+        self.display_settings()
+            .source_uv(position)
+            .map(|v| v.clamp(0., 1.))
     }
 
     pub(super) fn measure(
@@ -730,18 +727,16 @@ impl AppState {
         if plane.axis().is_none() {
             return Err("Choose an orthogonal slice to measure".into());
         }
+        let points = [self.data_uv(start), self.data_uv(end)];
         let data = self
             .imaging
             .plane(plane.mark())
-            .filter(|plane| plane.lossless)
+            .and_then(|p| {
+                let layer = p.layer_at(points[0]);
+                (layer.lossless && std::ptr::eq(layer, p.layer_at(points[1]))).then_some(layer)
+            })
             .ok_or("Wait for the lossless slice to measure")?;
-        let points = [self.data_uv(start), self.data_uv(end)];
-        let unclamped = points.map(|p| {
-            [
-                p[1] as f64 * data.shape[0] as f64 - 0.5,
-                p[0] as f64 * data.shape[1] as f64 - 0.5,
-            ]
-        });
+        let unclamped = points.map(|uv| data.texture_position(uv).map(|x| x - 0.5));
         let last = [data.shape[0], data.shape[1]].map(|n| n.saturating_sub(1) as f64);
         let pixels = unclamped.map(|p| [p[0].clamp(0., last[0]), p[1].clamp(0., last[1])]);
         let (name, value, detail) = match self.ui.inspect_tool {

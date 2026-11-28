@@ -165,6 +165,32 @@ fn fetched_planes_match_native_npy_and_hdf5_bit_for_bit() {
     assert_eq!(sinogram.probe(cursor), Some(([0, 0], 0.)));
     assert_eq!(sinogram.probe([0.05, 0.08]), Some(([3, 3], 0.)));
     assert_eq!(sinogram.axes[1].coordinate(1.), -0.5);
+    // Crop a strided irregular view axis and a signed regular detector axis.
+    let selection = studio_core::pixels::PlaneSelection::for_region(
+        &npy.shape,
+        2,
+        2,
+        4,
+        Some([[1, 4], [13, 19]]),
+    )
+    .unwrap();
+    let p = reader::registered_plane(
+        &engine.files(),
+        &npy,
+        2,
+        2,
+        &selection,
+        vec![f32::NAN; 6],
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        p.axes[0].coordinates.as_deref(),
+        Some([6.75, -0.125].as_slice())
+    );
+    assert_eq!((p.axes[1].origin, p.axes[1].spacing), (-1.5, -1.));
+    assert_eq!(p.statistics.missing_count, 6);
+    assert_eq!(p.probe([0.3, 0.7]), None);
     engine.drain_shutdown(Duration::from_secs(3));
 }
 

@@ -39,6 +39,7 @@ proptest! {
                     if bound!=Some(binding) {floor=request.generation;displayed=None;}
                     bound=Some(binding);
                     wanted=Some(request.generation);
+                    if images.status(1) == &ImagingStatus::Ready { displayed=Some((request.generation,true)); }
                     for exact in [false,true] {replies.push((epoch,request.clone(),exact));}
                 }
                 3 => {
@@ -67,6 +68,104 @@ proptest! {
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+#[test]
+fn delayed_crops_cannot_overwrite_a_pan_fit_slice_rebind_or_reconnect() {
+    let engine = crate::imaging::tests::file_worker();
+    let files = engine.files();
+    let completion = |request: &Request, finished: bool, value: f32| {
+        let (axis, index) = request.key.plane.unwrap();
+        let selection = PlaneSelection::for_region(
+            &request.descriptor.shape,
+            axis,
+            index,
+            request.crop.map_or(request.key.edge, |crop| crop.edge),
+            request.crop.map(|crop| crop.bounds),
+        )
+        .unwrap();
+        let values = vec![value; selection.count.iter().product()];
+        let plane = reader::registered_plane(
+            &files,
+            &request.descriptor,
+            axis,
+            index,
+            &selection,
+            values,
+            finished,
+        )
+        .unwrap();
+        Completion {
+            request: request.clone(),
+            asset: Ok(Asset::Plane(Arc::new(plane))),
+            finished,
+            cache_hit: false,
+        }
+    };
+    for change in ["pan", "fit", "slice", "source", "epoch", "connection"] {
+        let mut images = Imaging::default();
+        let mut descriptor = source(0);
+        descriptor.shape = vec![2, 128, 128];
+        images
+            .request_plane(1, descriptor.clone(), 0, 0, 32)
+            .unwrap();
+        let base = images.slots[&1].request.clone();
+        assert!(images.install(completion(&base, true, 0.)));
+        let mut display = super::super::DisplaySettings {
+            zoom: 4.,
+            ..Default::default()
+        };
+        assert!(images.view_region(1, Some(&display)));
+        let crop = images.slots[&1].request.clone();
+        assert!(images.install(completion(&crop, false, 7.)));
+        assert_eq!(images.plane(1).unwrap().probe([0.5; 2]), None);
+        assert_eq!(images.plane(1).unwrap().probe([0.; 2]), Some(([0, 0], 0.)));
+        match change {
+            "pan" => {
+                display.pan = [2., -1.];
+                assert!(images.view_region(1, Some(&display)));
+                let latest = images.slots[&1].request.clone();
+                assert_eq!(latest.crop.unwrap().bounds, [[80, 112], [0, 16]]);
+                assert!(images.install(completion(&latest, true, 2.)));
+                assert_eq!(
+                    images.plane(1).unwrap().probe([1.5 / 128., 100.5 / 128.]),
+                    Some(([100, 1], 2.))
+                );
+            }
+            "fit" => {
+                assert!(images.view_region(1, None));
+            }
+            "slice" => {
+                images
+                    .request_plane(1, descriptor.clone(), 0, 1, 32)
+                    .unwrap();
+            }
+            "source" => {
+                images.request_plane(1, source(1), 0, 0, 32).unwrap();
+            }
+            "epoch" => {
+                images.invalidate();
+            }
+            "connection" => {
+                images.disconnected();
+                images
+                    .request_plane(1, descriptor.clone(), 0, 1, 32)
+                    .unwrap();
+                images.request_plane(1, descriptor, 0, 0, 32).unwrap();
+                assert!(
+                    images.plane(1).is_none(),
+                    "old overview survived a reconnect"
+                );
+            }
+            _ => unreachable!(),
+        }
+        for finished in [false, true] {
+            assert!(
+                !images.install(completion(&crop, finished, 99.)),
+                "{change}"
+            );
         }
     }
 }

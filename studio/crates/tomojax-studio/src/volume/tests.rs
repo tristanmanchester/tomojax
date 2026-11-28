@@ -83,10 +83,8 @@ fn sample(bytes: &[u8], x: usize, y: usize) -> &[u8] {
     &bytes[(y * 96 + x) * 4..(y * 96 + x + 1) * 4]
 }
 
-#[test]
-#[ignore = "requires a real wgpu adapter; exercised by the GPU verification command"]
-fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture() {
-    let data = Arc::new(PlaneData {
+fn scalar_plane() -> PlaneData {
+    PlaneData {
         lossless: true,
         id: 1,
         values: vec![0., 10., 0., 10.].into(),
@@ -109,7 +107,13 @@ fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture(
         domain: "attenuation".into(),
         stride: 1,
         statistics: statistics(),
-    });
+    }
+}
+
+#[test]
+#[ignore = "requires a real wgpu adapter; exercised by the GPU verification command"]
+fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture() {
+    let data = Arc::new(scalar_plane());
     let mut display = DisplaySettings {
         window: Some([0., 10.]),
         ..Default::default()
@@ -130,6 +134,42 @@ fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture(
     let inverted = rig.draw(item(&display));
     assert!(sample(&inverted, 24, 48)[0] > 247);
     assert_eq!(&*data.values, &[0., 10., 0., 10.]);
+}
+
+#[test]
+#[ignore = "requires a real wgpu adapter"]
+fn cropped_texture_overlays_its_registered_quadrant() {
+    let detail = Arc::new(PlaneData {
+        id: 43,
+        region: [[2, 4], [4, 6]],
+        source_shape: [8, 8],
+        values: vec![0., 10., 0., 0.].into(),
+        ..scalar_plane()
+    });
+    let data = Arc::new(PlaneData {
+        id: 42,
+        values: vec![0.; 4].into(),
+        source_shape: [8, 8],
+        region: [[0, 8]; 2],
+        stride: 4,
+        detail: Some(detail),
+        ..scalar_plane()
+    });
+    let item = RenderItem::Plane {
+        mark: 1,
+        data: data.clone(),
+        display: DisplaySettings {
+            zoom: 2.,
+            window: Some([0., 10.]),
+            ..Default::default()
+        },
+    };
+    let pixels = Rig::new(item.clone()).draw(item);
+    // The 96-pixel canvas shows source rows and columns [2,6).
+    assert!(sample(&pixels, 84, 12)[0] > 245);
+    assert!(sample(&pixels, 12, 12)[0] < 8);
+    assert!(sample(&pixels, 84, 84)[0] < 8);
+    assert_eq!(data.probe([5.5 / 8., 2.5 / 8.]), Some(([2, 5], 10.)));
 }
 
 fn block() -> Arc<VolumeData> {
