@@ -3988,7 +3988,6 @@ name = "tomojax-io"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
  "half",
  "hdf5-metno",
  "image",

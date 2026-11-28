@@ -21,7 +21,6 @@ npyz = "0.9"
 ndarray = "0.17"
 half = "2"
 memmap2 = "0.9"
-bytemuck = "1"
 
 [dev-dependencies]
 tempfile.workspace = true

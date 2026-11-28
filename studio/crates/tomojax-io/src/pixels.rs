@@ -142,13 +142,13 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
             selection.stored(file.shape())?;
             if f32_only {
                 (
-                    file.read(&selection.start, &selection.stride, &selection.count),
+                    file.read(&selection.start, &selection.stride, &selection.count)?,
                     vec![],
                 )
             } else {
                 (
                     vec![],
-                    file.read_f64(&selection.start, &selection.stride, &selection.count),
+                    file.read_f64(&selection.start, &selection.stride, &selection.count)?,
                 )
             }
         }
