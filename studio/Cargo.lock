@@ -3749,6 +3749,8 @@ dependencies = [
 name = "tomojax-jobs"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.4.3",
+ "libc",
  "rustix 1.1.6",
  "serde",
  "serde_json",

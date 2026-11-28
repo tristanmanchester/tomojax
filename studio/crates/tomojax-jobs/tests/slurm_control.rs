@@ -84,6 +84,19 @@ fn a_reconnecting_poller_withdraws_only_the_lost_submission() {
         "queued"
     );
     assert_eq!(fs::read_to_string(root.join("next")).unwrap().trim(), "101");
+    // Another project can use the same human-chosen directory name, and both
+    // sbatch replies can be lost. Recovery must still select the right allocation.
+    let other = root.join("another/jobs/hold");
+    service().submit(&other, &script, &[]).unwrap();
+    control(&other, "cancel").unwrap();
+    assert!(
+        root.join("101/cancel").exists(),
+        "cancel missed the second project"
+    );
+    assert!(
+        !root.join("100/cancel").exists(),
+        "cancel reached the first project"
+    );
     fs::write(root.join("offline"), "").unwrap();
     assert_eq!(control(&dir, "cancel").unwrap()["state"], "unknown");
     assert!(!root.join("100/cancel").exists());

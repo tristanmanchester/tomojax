@@ -1,7 +1,7 @@
 //! The four worker job commands. Each poll can complete a standing cancel.
 use crate::{
     directory::{Submission, create_record, optional, read_files},
-    locks::try_lock,
+    locks::held,
     log, publication,
     runner::{self, InlineSession},
     script::{
@@ -80,7 +80,13 @@ impl Service {
             .transpose()?;
         let claim = Claim {
             launcher,
-            name: format!("tj-{}", job_id(&dir)?),
+            // Scripts are client-named. Two projects may legitimately submit "run-1".
+            // Keep lookup unambiguous even before the scheduler returns an ID.
+            name: format!(
+                "tj-{:.64}-{:016x}",
+                job_id(&dir)?,
+                getrandom::u64().map_err(io::Error::other)?
+            ),
             host: host(),
             user: slurm::output(Command::new("id").arg("-un"))?.trim().into(),
             cluster,
@@ -195,7 +201,7 @@ fn account(dir: &Path, claim: &Claim, launch: Launch) -> io::Result<Report> {
             claim.host
         )));
     }
-    let held = try_lock(&dir.join("lock"))?.is_none();
+    let held = held(&dir.join("lock"))?;
     Ok(Report {
         account: if held {
             Account::LocalLockHeld
@@ -214,6 +220,16 @@ pub fn status(dir: &Path) -> io::Result<Value> {
         let before = read_files(dir)?;
         let claim = optional(read_claim(dir))?;
         let report = match &claim {
+            Some(_)
+                if (before.receipt && !before.cancel)
+                    || matches!(before.launch, Launch::Prevented | Launch::Rejected) =>
+            {
+                Report {
+                    account: Account::Absent { accounted: false },
+                    id: None,
+                    detail: String::new(),
+                }
+            }
             Some(c) => account(dir, c, before.launch).unwrap_or_else(|e| Report {
                 account: Account::Offline,
                 id: None,
@@ -270,7 +286,7 @@ pub fn status(dir: &Path) -> io::Result<Value> {
         };
         return Ok(
             json!({"directory":dir,"state":state,"cancel_requested":after.cancel,"receipt":receipt,"checkpoint":checkpoint,
-            "launcher":claim.as_ref().map(|c|c.launcher),"detail":detail}),
+            "launcher":claim.as_ref().map(|c|c.launcher),"job_name":claim.as_ref().map(|c|&c.name),"detail":detail}),
         );
     }
 }

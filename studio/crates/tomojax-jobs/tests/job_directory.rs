@@ -187,3 +187,39 @@ fn only_checkpointed_lines_and_resource_options_reach_the_launcher() {
         assert!(!d.exists());
     }
 }
+
+#[test]
+fn polling_never_contends_with_launch_or_with_other_readers() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tomojax_jobs::locks::{held, try_lock};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("lock");
+    assert!(!held(&path).unwrap());
+    assert!(!path.exists(), "a read created a job lock");
+    let done = AtomicBool::new(false);
+    let barrier = Barrier::new(5);
+    thread::scope(|scope| {
+        for _ in 0..4 {
+            scope.spawn(|| {
+                barrier.wait();
+                while !done.load(Ordering::Acquire) {
+                    held(&path).unwrap();
+                }
+            });
+        }
+        barrier.wait();
+        let mut denied = false;
+        for _ in 0..500 {
+            let guard = try_lock(&path).unwrap();
+            if guard.is_none() {
+                denied = true;
+                break;
+            }
+            assert!(held(&path).unwrap());
+            drop(guard);
+        }
+        done.store(true, Ordering::Release);
+        assert!(!denied, "a reader denied a new runner the lock");
+    });
+    assert!(!held(&path).unwrap());
+}

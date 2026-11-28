@@ -289,7 +289,9 @@ pub fn run(
     let number = read_files(dir)?.attempt + 1;
     log.append(&json!({"type":"attempt","number":number}))?;
     let work = (|| {
-        let _machine = machine?;
+        if let Err(e) = &machine {
+            return Err(io::Error::new(e.kind(), e.to_string()));
+        }
         let session = session?;
         if stopping() {
             return Err(stopped());
@@ -311,6 +313,7 @@ pub fn run(
     log.append(
         &json!({"type":"end","outcome":outcome,"message":result.err().map(|e|e.to_string())}),
     )?;
+    drop(machine);
     Ok(status)
 }
 

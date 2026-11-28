@@ -3,7 +3,10 @@ use rustix::process::getuid;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, ErrorKind},
-    os::unix::fs::{DirBuilderExt, MetadataExt},
+    os::{
+        fd::AsRawFd,
+        unix::fs::{DirBuilderExt, MetadataExt},
+    },
     path::{Path, PathBuf},
     thread,
     time::Duration,
@@ -20,15 +23,37 @@ fn lock_file(path: &Path, shared: bool) -> io::Result<Option<File>> {
         .create(true)
         .truncate(false)
         .open(path)?;
-    match if shared {
-        file.try_lock_shared()
-    } else {
-        file.try_lock()
-    } {
-        Ok(()) => Ok(Some(file)),
-        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    let kind = if shared { libc::F_RDLCK } else { libc::F_WRLCK };
+    match ofd(&file, libc::F_OFD_SETLK, kind) {
+        Ok(_) => Ok(Some(file)),
+        Err(e) if matches!(e.raw_os_error(), Some(libc::EAGAIN | libc::EACCES)) => Ok(None),
+        Err(e) => Err(e),
     }
+}
+
+/// Query the conflicting open-file-description lock without ever taking it.
+/// A reader must neither deny admission to a runner nor appear live to a peer.
+pub fn held(path: &Path) -> io::Result<bool> {
+    let Some(file) = crate::directory::optional(File::open(path))? else {
+        return Ok(false);
+    };
+    Ok(ofd(&file, libc::F_OFD_GETLK, libc::F_WRLCK)? != libc::F_UNLCK as i16)
+}
+
+fn ofd(file: &File, command: libc::c_int, kind: libc::c_int) -> io::Result<libc::c_short> {
+    let mut lock = libc::flock {
+        l_type: kind as _,
+        l_whence: libc::SEEK_SET as _,
+        l_start: 0,
+        l_len: 0,
+        l_pid: 0,
+    };
+    // SAFETY: GETLK and SETLK both take a pointer to this initialized flock.
+    // The descriptor and writable buffer remain live for the call.
+    if unsafe { libc::fcntl(file.as_raw_fd(), command, &mut lock) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(lock.l_type)
 }
 
 pub struct Machine(PathBuf);
@@ -69,13 +94,14 @@ impl Machine {
 
     /// Keep the returned lease until the GPU executor process has been reaped.
     pub fn session_gpu(&self) -> io::Result<Option<File>> {
-        let Some(_admission) = try_lock(&self.0.join("jobs.lock"))? else {
+        let lease = try_lock(&self.0.join("gpu.lock"))?;
+        if lease.is_some() && self.job_waiting_or_running()? {
             return Ok(None);
-        };
-        try_lock(&self.0.join("gpu.lock"))
+        }
+        Ok(lease)
     }
 
     pub fn job_waiting_or_running(&self) -> io::Result<bool> {
-        Ok(try_lock(&self.0.join("jobs.lock"))?.is_none())
+        held(&self.0.join("jobs.lock"))
     }
 }
