@@ -200,10 +200,7 @@ impl Attempt<'_> {
         }
         let command = &lines.last().expect("validated nonempty script")["command"];
         let product = &output["value"];
-        if matches!(
-            product["type"].as_str(),
-            Some("simulation" | "scan" | "alignment" | "reconstruction")
-        ) {
+        if publication::needs_dataset_save(product) {
             if self.stopping() {
                 return Err(stopped());
             }

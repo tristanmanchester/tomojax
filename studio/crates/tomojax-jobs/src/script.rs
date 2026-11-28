@@ -163,16 +163,23 @@ pub enum LauncherChoice {
 
 pub fn prepare(dir: &Path, launcher: Launcher, lines: &mut [Value]) -> io::Result<Option<PathBuf>> {
     let mut checkpoint = None;
-    for line in lines {
+    let count = lines.len();
+    for (index, line) in lines.iter_mut().enumerate() {
         if let Some(channel) = line["channel"].as_str() {
             line["channel"] = json!(format!("{}.{}", job_id(dir)?, channel));
         }
+        let runs = line["command"]["type"] == "run";
         let Some(operation) = line.pointer_mut("/command/operation") else {
             continue;
         };
         let slab = operation["type"] == "reconstruct_slabs";
         if slab {
-            operation["path"] = json!(dir.join("work/result/result.nxs"));
+            let path = if index + 1 == count {
+                dir.join("work/result/result.nxs")
+            } else {
+                dir.join("work").join(format!("slabs-{index}.nxs"))
+            };
+            operation["path"] = json!(path);
         }
         if matches!(
             operation["type"].as_str(),
@@ -180,10 +187,12 @@ pub fn prepare(dir: &Path, launcher: Launcher, lines: &mut [Value]) -> io::Resul
         ) {
             operation["force"] = json!(false);
         }
-        if matches!(
-            operation["type"].as_str(),
-            Some("reconstruct" | "align" | "reconstruct_slabs")
-        ) {
+        if runs
+            && matches!(
+                operation["type"].as_str(),
+                Some("reconstruct" | "align" | "reconstruct_slabs")
+            )
+        {
             if operation["checkpoint"].is_null() && launcher != Launcher::Inline {
                 operation["checkpoint"] = json!(dir.join("checkpoint"));
             }

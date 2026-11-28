@@ -223,3 +223,25 @@ fn polling_never_contends_with_launch_or_with_other_readers() {
     });
     assert!(!held(&path).unwrap());
 }
+
+#[test]
+fn intermediate_slabs_and_a_final_plan_publish_only_the_report() {
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path();
+    let mut lines = [
+        json!({"command":{"type":"run","operation":{"type":"reconstruct_slabs"}}}),
+        json!({"command":{"type":"plan","operation":{"type":"reconstruct_slabs","checkpoint":"/some/checkpoint"}}}),
+    ];
+    let checkpoint = prepare(dir, Launcher::Process, &mut lines).unwrap();
+    assert_eq!(checkpoint.unwrap(), dir.join("checkpoint"));
+    assert_eq!(
+        lines[0]["command"]["operation"]["path"],
+        json!(dir.join("work/slabs-0.nxs"))
+    );
+    let result = json!({"value":{"type":"reconstruction_plan"}});
+    let receipt = publication::receipt(dir, &lines[1]["command"], result, &|_| {
+        panic!("opening an intermediate dataset")
+    })
+    .unwrap();
+    assert_eq!(receipt["type"], "report");
+}

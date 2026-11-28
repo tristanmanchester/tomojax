@@ -115,6 +115,13 @@ fn provenance(value: &mut Value, stage: &Path, destination: &Path) {
     }
 }
 
+pub(crate) fn needs_dataset_save(product: &Value) -> bool {
+    matches!(
+        product["type"].as_str(),
+        Some("simulation" | "scan" | "alignment" | "reconstruction")
+    )
+}
+
 pub fn receipt(
     dir: &Path,
     command: &Value,
@@ -131,13 +138,15 @@ pub fn receipt(
         .as_str()
         .ok_or_else(|| io::Error::other("executor output missing product"))?;
     let mut result = json!({"product":kind,"info":info,"manifest":output["manifest"]});
-    if stage.join("result.nxs").try_exists()? {
+    let slabs = command["type"] == "run"
+        && command.pointer("/operation/type") == Some(&json!("reconstruct_slabs"));
+    if needs_dataset_save(product) || slabs {
         let mut arrays = stored(&stage.join("result.nxs"))?;
         files.arrays(&mut arrays)?;
         result["type"] = json!("dataset");
         result["path"] = json!(dest.join("result.nxs"));
         result["arrays"] = arrays;
-        if command.pointer("/operation/type") == Some(&json!("reconstruct_slabs")) {
+        if slabs {
             result["product"] = json!("reconstruction");
         }
     } else if kind == "frames" && command["type"] == "open" {
