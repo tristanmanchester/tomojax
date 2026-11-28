@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
+from hashlib import sha256
 from importlib import metadata, resources
 import os
 from pathlib import Path
@@ -214,6 +215,8 @@ def serve(
         terminated = Event()
         _stop_on_sigterm(terminated, writer)
         inventory = executor.submit(ready).result() if callable(ready) else ready
+        schema = resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()
+        inventory = msgspec.structs.replace(inventory, root=root, schema=sha256(schema).hexdigest())
         session = Session(Path(root), execute, box.send, inventory, description, box.pixels)
         for _ in range(4):
             io.submit(box.pixels.work).add_done_callback(_executor_done)

@@ -2,7 +2,7 @@
 
 ## T3 Code
 
-The Rust connection layer and pixel stream in `studio/crates/studio-core/src/` incorporate
+The Rust connection layer and pixel stream in `studio/crates/studio-core/src/` and worker in `studio/crates/tomojax-worker/src/` incorporate
 code from T3 Code commit `d2c440312e5f39d59827ed466838a623516454d6`.
 
 | T3 Code source | TomoJAX source |
@@ -14,6 +14,8 @@ code from T3 Code commit `d2c440312e5f39d59827ed466838a623516454d6`.
 | `packages/client-runtime/src/connection/supervisor.ts`, `packages/client-runtime/src/connection/presentation.ts` | `connection/supervisor.rs` |
 | `packages/client-runtime/src/connection/registry.ts` | `connection/registry.rs` |
 | `packages/client-runtime/src/preview/serverBrowserStream.ts`, `apps/server/src/preview/ServerBrowser.ts` | `pixels/stream.rs` |
+| `apps/server/src/attachmentStore.ts` | `tomojax-worker/src/transfer.rs` |
+| `apps/server/src/preview/ServerBrowser.ts` | `tomojax-worker/src/wire.rs` |
 
 MIT License
 

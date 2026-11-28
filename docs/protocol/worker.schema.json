@@ -300,7 +300,9 @@
         "encoding": {
           "enum": [
             "float32",
-            "jpeg"
+            "float64",
+            "jpeg",
+            "uint16"
           ]
         },
         "window": {
@@ -621,11 +623,13 @@
             "$ref": "#/$defs/Device"
           }
         },
-        "pixel_credit": {
-          "type": "integer",
-          "minimum": 65536,
-          "maximum": 1048576,
-          "default": 262144
+        "schema": {
+          "type": "string",
+          "default": ""
+        },
+        "root": {
+          "type": "string",
+          "default": ""
         }
       },
       "required": [
@@ -882,7 +886,9 @@
         "encoding": {
           "enum": [
             "float32",
-            "jpeg"
+            "float64",
+            "jpeg",
+            "uint16"
           ]
         },
         "bytes": {

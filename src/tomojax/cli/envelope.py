@@ -49,7 +49,7 @@ class Shutdown(Record, tag="shutdown"):
     """Cancel outstanding work and close the session."""
 
 
-PixelEncoding = Literal["jpeg", "float32"]
+PixelEncoding = Literal["jpeg", "float32", "float64", "uint16"]
 
 
 class Fetch(Window, tag="fetch", kw_only=True):
@@ -139,7 +139,8 @@ class Ready(Record, tag="ready"):
     versions: Versions
     capabilities: tuple[Id, ...]
     devices: tuple[Device, ...]
-    pixel_credit: PixelBytes = INITIAL_PIXEL_CREDIT
+    schema: str = ""
+    root: str = ""
 
 
 class ChannelRevision(Record):

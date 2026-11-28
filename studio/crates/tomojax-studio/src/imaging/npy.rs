@@ -74,7 +74,6 @@ impl Npy {
     }
 
     pub fn read(&self, start: &[usize], step: &[usize], count: &[usize]) -> Vec<f32> {
-        let total: usize = count.iter().product();
         let native_f32 = if self.kind == TypeChar::Float
             && self.bytes == 4
             && self.big == cfg!(target_endian = "big")
@@ -83,24 +82,36 @@ impl Npy {
         } else {
             None
         };
-        let mut result = Vec::with_capacity(total);
-        for linear in 0..total {
-            let mut remainder = linear;
+        self.indices(start, step, count)
+            .map(|i| native_f32.map_or_else(|| self.scalar(i) as f32, |data| data[i]))
+            .collect()
+    }
+
+    pub fn read_f64(&self, start: &[usize], step: &[usize], count: &[usize]) -> Vec<f64> {
+        self.indices(start, step, count)
+            .map(|i| self.scalar(i))
+            .collect()
+    }
+
+    fn indices<'a>(
+        &'a self,
+        start: &'a [usize],
+        step: &'a [usize],
+        count: &'a [usize],
+    ) -> impl Iterator<Item = usize> + 'a {
+        (0..count.iter().product()).map(move |mut linear: usize| {
             let mut source = 0;
             for axis in (0..count.len()).rev() {
-                let coordinate = remainder % count[axis];
-                remainder /= count[axis];
+                let coordinate = linear % count[axis];
+                linear /= count[axis];
                 source += (start[axis] + coordinate * step[axis]) * self.strides[axis];
             }
-            result.push(native_f32.map_or_else(|| self.scalar(source) as f32, |data| data[source]));
-        }
-        result
+            source
+        })
     }
 
     pub fn coordinates(&self) -> Vec<f64> {
-        (0..self.shape[0])
-            .map(|i| self.scalar(i * self.strides[0]))
-            .collect()
+        self.read_f64(&[0], &[1], &self.shape)
     }
 
     pub fn table(&self) -> Vec<f64> {
