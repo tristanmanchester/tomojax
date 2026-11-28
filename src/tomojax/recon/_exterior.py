@@ -21,14 +21,15 @@ from tomojax._typed_arrays import (
 from tomojax.core import checkpoint
 from tomojax.core.cuda_types import CuPyValue
 from tomojax.core.geometry.cone import cone_parts
-from tomojax.core.geometry.views import host_view_poses
 from tomojax.core.host_volume import host_array
 from tomojax.geometry import Detector, Geometry, Grid, ParallelGeometry, grid_volume_origin
+from tomojax.geometry.coverage import scan_outer_edge
 
 from ._continuation import Continuation
+from ._exterior_fit import CompletedRows, fitted_columns, view_poses, view_stride
 from ._exterior_rows import ObliqueExterior, detector_means
 from ._truncation import axis_distance
-from .cgls import CGLSConfig, cgls, resident_bytes
+from .cgls import CGLSConfig, resident_bytes
 
 if TYPE_CHECKING:
     import jax
@@ -38,15 +39,6 @@ if TYPE_CHECKING:
     from .mlem import MLEMConfig
     from .sirt import SIRTConfig
     from .spdhg_tv import SPDHGConfig
-
-
-def _poses(geometry: Geometry, views: int) -> Float32Array:
-    poses = host_view_poses(geometry, views)
-    if poses is None:
-        from tomojax.core.geometry.views import stack_view_poses
-
-        poses = np.asarray(stack_view_poses(geometry, views))
-    return numpy_float32_array(poses)
 
 
 def _unseen(
@@ -102,7 +94,15 @@ class _Sampling:
     binning: int
 
     @classmethod
-    def for_scan(cls, grid: Grid, detector: Detector, reach: float, binning: int = 1) -> _Sampling:
+    def for_scan(
+        cls,
+        grid: Grid,
+        detector: Detector,
+        reach: float,
+        binning: int = 1,
+        *,
+        chord_planes: bool = False,
+    ) -> _Sampling:
         # The exterior determines a smooth background. Resolve at least 64 columns
         # on small scans; bound the auxiliary lattice independently of the fine grid.
         cols = min(detector.nu, max(64, min(128, math.ceil(detector.nu / 4))))
@@ -126,19 +126,29 @@ class _Sampling:
             grid.vz * grid.nz / nz,
             vol_center=(0.0, 0.0, oz + (grid.nz - 1) * grid.vz / 2),
         )
+        if chord_planes:
+            # Rotation about z preserves each physical horizontal detector line.
+            wide = replace(wide, nz=rows, vz=coarse.dv, vol_center=(0.0, 0.0, coarse.center[1]))
         return cls(coarse, wide, binning)
 
     @classmethod
     def fitting(
-        cls, geometry: Geometry, grid: Grid, detector: Detector, views: int, room: int | None
+        cls,
+        geometry: Geometry,
+        grid: Grid,
+        detector: Detector,
+        views: int,
+        room: int | None,
+        *,
+        chord_planes: bool = False,
     ) -> _Sampling:
         """Use the finest auxiliary lattice that fits beside the solver's counting buffers."""
         reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
         binning = 1
         while True:
-            sample = cls.for_scan(grid, detector, reach, binning)
+            sample = cls.for_scan(grid, detector, reach, binning, chord_planes=chord_planes)
             d, wide = sample.detector, sample.grid
-            fitted = len(range(0, views, _stride(geometry, wide)))
+            fitted = len(range(0, views, view_stride(geometry, wide)))
             if (
                 room is None
                 or resident_bytes(wide, (fitted, d.nv, 3 * d.nu)) <= room
@@ -158,7 +168,7 @@ class _Sampling:
         )
 
     def depth(self, geometry: Geometry, views: int, rows: int, room: int | None) -> int:
-        shape = (len(range(0, views, _stride(geometry, self.grid))), 1, 3 * self.detector.nu)
+        shape = (len(range(0, views, view_stride(geometry, self.grid))), 1, 3 * self.detector.nu)
         # Batch right-hand sides within 128 MiB of completed host rows and the
         # available resident device budget. A full scan reuses the same workspace.
         fitting = min(rows, max(1, (128 << 20) // (4 * views * 3 * self.detector.nu)))
@@ -166,11 +176,31 @@ class _Sampling:
             fitting = min(fitting, max(1, room // resident_bytes(self.grid, shape)))
         return 2 ** (fitting.bit_length() - 1)
 
+    def has_edge_signal(self, data: np.ndarray | jax.Array | CuPyValue, edge: int | None) -> bool:
+        nu = data.shape[-1]
+        cols = self.detector.nu
+        window = math.ceil(min(cols, max(2, cols // 16)) * nu / cols)
+        return bool(
+            (edge != 1 and data[..., :window].any()) or (edge != 0 and data[..., -window:].any())
+        )
+
     def completed(
-        self, geometry: Geometry, data: np.ndarray | jax.Array | CuPyValue
-    ) -> Float32Array:
+        self,
+        geometry: Geometry,
+        data: np.ndarray | jax.Array | CuPyValue,
+        unseen: NDArray[np.bool_],
+        edge: int | None,
+    ) -> CompletedRows | None:
         d = self.detector
         views, nv, nu = data.shape
+        support = None
+        unseen[:, d.nu : 2 * d.nu] = False
+        if edge is not None:
+            support = np.zeros(3 * d.nu, bool)
+            support[fitted_columns(d.nu, 2 * d.nu, 3 * d.nu, edge)] = True
+            unseen &= support
+        if not unseen.any():
+            return None
         full: Float32Array = host_array((views, d.nv, 3 * d.nu), copies=4)
         middle = full[..., d.nu : 2 * d.nu]
         batch = max(1, (16 << 20) // (4 * nv * nu))
@@ -183,14 +213,14 @@ class _Sampling:
                 block = host_detector_block(block, d.nu)
             host = np.asarray(block, dtype=np.float32)
             middle[i : i + batch] = detector_means(host, d)
-        fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu)
+        fit = Continuation(axis_distance(geometry, d, d.nu), d.nu, d.nu, edge=edge)
         radius = fit.stack_radius(middle)[None]
         batch = max(1, (16 << 20) // (8 * d.nv * d.nu))
         for i in range(0, views, batch):
-            lhs, rhs = fit.continued(np.asarray, middle[i : i + batch], radius)
+            lhs, rhs = fit.continued(np.asarray, middle[i : i + batch], radius, quadrature=False)
             full[i : i + batch, :, : d.nu] = lhs
             full[i : i + batch, :, 2 * d.nu :] = rhs
-        return full
+        return CompletedRows(full, unseen[:, None, :], support)
 
     def exterior(self, volume: Float32Array, grid: Grid) -> Float32Array:
         wide = self.grid
@@ -227,7 +257,14 @@ def storage(
     if independent:
         grid = replace(grid, nz=1)
         detector = replace(detector, nv=1)
-    sample = _Sampling.fitting(geometry, grid, detector, views, room)
+    sample = _Sampling.fitting(
+        geometry,
+        grid,
+        detector,
+        views,
+        room,
+        chord_planes=oblique is not None and oblique.full_turn,
+    )
     if independent:
         depth = sample.depth(geometry, views, rows, room) if room is not None else 1
         sample = sample.planes(depth, detector.dv)
@@ -244,68 +281,9 @@ def storage(
     # Rolled chords have a distinct measured interval on each horizontal row.
     mask = math.prod(shape) if oblique is not None else 0
     host = full_data + completed + completed // 3 + 3 * volume + 4 * images + mask
-    fitted_shape = (len(range(0, views, _stride(geometry, wide))), *shape[1:])
+    fitted_shape = (len(range(0, views, view_stride(geometry, wide))), *shape[1:])
     device = max(resident_bytes(wide, fitted_shape), project)
     return host, device + (full_data if turns else 0)
-
-
-def _stride(geometry: Geometry, grid: Grid) -> int:
-    """Largest angular stride moving a corner by at most one auxiliary voxel between views."""
-    if type(geometry) is not ParallelGeometry or len(geometry.angles) < 2:
-        return 1
-    gap = max_float(np.abs(np.diff(np.unwrap(np.deg2rad(geometry.angles)))))
-    distance = 0.5 * math.hypot(grid.nx * grid.vx, grid.ny * grid.vy)
-    return max(1, math.floor(min(grid.vx, grid.vy) / (distance * gap))) if gap else 1
-
-
-class _Runtime(NamedTuple):
-    native: bool
-
-
-def _fit(
-    geometry: Geometry,
-    wide: Grid,
-    detector: Detector,
-    full: np.ndarray,
-    config: CGLSConfig,
-    *,
-    native: bool,
-    axial: bool,
-) -> tuple[Float32Array, bool]:
-    """Resume the coarse fit independently and retain its finished coefficients for the fine fit."""
-    from tomojax.geometry.detector_grid import detector_grid_from_geometry_inputs
-
-    with checkpoint.scope("continued-exterior"), checkpoint.loop("volume") as fitted:
-        if fitted.saved is not None:
-            return fitted.saved.arrays[0], native and fitted.saved.scalars(_Runtime).native
-        stride = _stride(geometry, wide)
-        if isinstance(geometry, ParallelGeometry) and stride > 1:
-            geometry = replace(geometry, angles=np.asarray(geometry.angles)[::stride])
-            full = np.ascontiguousarray(full[::stride])
-        if axial:
-            from ._exterior_cuda import axial_fit
-
-            volume = axial_fit(_poses(geometry, len(full)), wide, detector, full, config)
-        else:
-            reconstruction, info = cgls(
-                geometry,
-                wide,
-                detector,
-                full,
-                config=config,
-                det_grid=detector_grid_from_geometry_inputs(detector, geometry),
-            )
-            volume = numpy_float32_array(reconstruction)
-            if native and cone_parts(geometry, detector) is not None:
-                from tomojax.core.cone import use_cuda_cone
-
-                # Reproject the reference cone iterate with the same native kernel.
-                # Its CGLS reductions determine the fitted low-frequency background.
-                native = use_cuda_cone()
-            else:
-                native = info.get("execution_backend") == "cupy"
-        fitted.save((volume,), _Runtime(native))
-        return volume, native
 
 
 def _project(
@@ -527,12 +505,23 @@ def _background(
 
     with checkpoint.loop("exterior-sampling") as sampling:
         if sampling.saved is None:
-            sample = _Sampling.fitting(geometry, grid, detector, views, room)
+            sample = _Sampling.fitting(
+                geometry,
+                grid,
+                detector,
+                views,
+                room,
+                chord_planes=oblique is not None and oblique.full_turn,
+            )
             sampling.save((), _Binning(sample.binning))
         else:
             reach = max_float(np.abs(axis_distance(geometry, detector, detector.nu)))
             sample = _Sampling.for_scan(
-                grid, detector, reach, sampling.saved.scalars(_Binning).factor
+                grid,
+                detector,
+                reach,
+                sampling.saved.scalars(_Binning).factor,
+                chord_planes=oblique is not None and oblique.full_turn,
             )
     depth = rows
     if independent:
@@ -628,16 +617,14 @@ def _model(
     axial: bool,
     oblique: ObliqueExterior | None,
 ) -> Iterator[tuple[slice[int, int, None], Float32Array | CuPyValue]]:
-    views, nv, nu = data.shape
+    views, nv, _ = data.shape
     coarse = CGLSConfig(iterations=50)
     d, wide = sample.detector, sample.grid
-    # If both fitted edge windows contain only air on every view, every
-    # virtual ray is identically zero. No interior samples enter that result.
-    window = math.ceil(min(d.nu, max(2, d.nu // 16)) * nu / d.nu)
-    if oblique is None and not (data[..., :window].any() or data[..., -window:].any()):
+    edge = scan_outer_edge(geometry, d) if oblique is None else None
+    if oblique is None and not sample.has_edge_signal(data, edge):
         return
     complete = replace(d, nu=3 * d.nu)
-    poses = _poses(geometry, views)
+    poses = view_poses(geometry, views)
     # With a single ray family, virtual and measured rays never intersect
     # inside the object. The extension adds no observations of the measured paths.
     if (
@@ -646,40 +633,31 @@ def _model(
     ):
         return
     unseen = _unseen(geometry, complete, grid, poses)
-    if oblique is None:
-        unseen[:, d.nu : 2 * d.nu] = False
-    if not unseen.any():
+    completed = (
+        sample.completed(geometry, data, unseen, edge)
+        if oblique is None
+        else oblique.completed(data, d, unseen)
+    )
+    if completed is None:
         return
-    if oblique is None:
-        full, mask = sample.completed(geometry, data), unseen[:, None, :]
-    else:
-        full, mask = oblique.completed(data, d, unseen)
-    observed = np.sum(full, axis=-1, where=mask, dtype=np.float64)
-    # Positive exterior attenuation, fitted to the integral of the virtual rays
-    # that no voxel can reach. The number of missed rays varies by view and can
-    # be zero over most of a turn. The second moment of adjacent differences
-    # retains the variance of the views that actually contribute.
-    uncertainty: Float64Array | float = (
-        np.sqrt(np.mean(np.diff(observed, axis=0) ** 2, axis=0) / (2 * views)) if views > 1 else 0.0
-    )
-    mass: Float64Array = np.maximum(
-        np.mean(observed, axis=0, dtype=np.float64)
-        - math.sqrt(2 * math.log(2 * views)) * uncertainty,
-        0.0,
-    )
+    mass = completed.mass()
     if not mass.any():
         return
     # The completed stack includes correlated, synthetic rays. Its residual
     # does not have the measured scan's noise law.
-    volume, native = _fit(geometry, wide, complete, full, coarse, native=native, axial=axial)
+    volume, native = completed.fit(geometry, wide, complete, coarse, native=native, axial=axial)
     predicted: Float64Array = np.zeros(d.nv)
     residual: Float32Array = host_array((views, d.nv, d.nu))
     for part, projected in _project(geometry, complete, wide, poses, volume, coarse, native=native):
         block = numpy_float32_array(
             projected if isinstance(projected, np.ndarray) else projected.get()
         )
-        predicted += np.sum(block, axis=(0, 2), where=mask[part], dtype=np.float64) / views
-        residual[part] = full[part, :, d.nu : 2 * d.nu] - block[..., d.nu : 2 * d.nu]
+        predicted += (
+            np.sum(block, axis=(0, 2), where=completed.unseen[part], dtype=np.float64) / views
+        )
+        residual[part] = completed.data[part, :, d.nu : 2 * d.nu] - block[..., d.nu : 2 * d.nu]
+    if completed.support is not None:
+        residual *= completed.support[..., d.nu : 2 * d.nu]
     scale = np.divide(mass, predicted, out=np.zeros_like(mass), where=predicted > 0)
     if not scale.any():
         return

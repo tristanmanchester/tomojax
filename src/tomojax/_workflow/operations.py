@@ -79,7 +79,7 @@ else:
 
 type Region = RegionName | _region.RegionEstimate
 LOG = logging.getLogger(__name__)
-_EXTERIOR_MODEL = "continued_horizontal_chords_v2"
+_EXTERIOR_MODEL = "continued_horizontal_chords_v3"
 
 
 # ----------------------------------------------------------------------------- files

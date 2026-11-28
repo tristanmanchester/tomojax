@@ -12,9 +12,11 @@ from tomojax import progress
 from tomojax.core.geometry.cone import ConeGeometry, ConeSegments, cone_parts
 from tomojax.core.host_volume import host_array
 from tomojax.geometry import Detector, Geometry
+from tomojax.geometry.coverage import full_parallel_turn, outer_edge
 
 from ._continuation import Continuation, cone_axis_distance, parallel_axis_distance, radius_views
 from ._detector_rows import DetectorRows, RowSamples
+from ._exterior_fit import CompletedRows, fitted_columns
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -84,6 +86,7 @@ def _horizontal(geometry: Geometry, detector: Detector) -> Geometry:
 class ObliqueExterior:
     detector: Detector
     panels: tuple[_Panel, ...]
+    full_turn: bool
 
     @classmethod
     def for_scan(
@@ -121,16 +124,25 @@ class ObliqueExterior:
         turns = panels[0].turns % 4
         if all(p.layout.roll == 0 and p.turns % 4 == turns for p in panels):
             return horizontal, panel, turns, None
-        return horizontal, panel, 0, cls(panel, tuple(panels))
+        return (
+            horizontal,
+            panel,
+            0,
+            cls(panel, tuple(panels), full_turn=full_parallel_turn(geometry)),
+        )
 
     def completed(
-        self, data: np.ndarray | jax.Array | CuPyValue, coarse: Detector, unseen: NDArray[np.bool_]
-    ) -> tuple[Float32Array, NDArray[np.bool_]]:
+        self,
+        data: np.ndarray | jax.Array | CuPyValue,
+        coarse: Detector,
+        unseen: NDArray[np.bool_],
+    ) -> CompletedRows:
         """Fill the bounded auxiliary detector, continuing only actual measured chords."""
         views, rows, cols = data.shape
         full = host_array((views, coarse.nv, 3 * coarse.nu), copies=4)
         missing = host_array(full.shape, dtype=bool)
         missing[:] = unseen[:, None, :]
+        support = np.zeros(full.shape[1:], bool) if self.full_turn else None
         vertical = np.arange(coarse.nv)
         batch = max(1, (16 << 20) // (4 * rows * cols))
         pad = coarse.nu
@@ -143,9 +155,7 @@ class ObliqueExterior:
             samples = None
             if layout.roll or layout.measured != replace(self.detector, center=det.center):
                 u, v = layout.coordinates(det, vertical)
-                samples = RowSamples(
-                    np.clip(u, 0, layout.measured.nu - 1), np.clip(v, 0, layout.measured.nv - 1)
-                )
+                samples = RowSamples.on_panel(u, v, layout.measured, edge_slopes=self.full_turn)
             columns = np.arange(det.nu)
             inside = (columns >= low[:, None]) & (columns < high[:, None])
             for panel in panels:
@@ -175,16 +185,21 @@ class ObliqueExterior:
                     if beam is None
                     else cone_axis_distance(beam, chord, width)
                 )
-                fit = Continuation(distance, width, width)
+                edge = outer_edge(center, full_turn=self.full_turn)
+                fit = Continuation(distance, width, width, edge=edge)
+                if support is not None:
+                    support[row, fitted_columns(start, stop, full.shape[-1], edge)] = True
                 radius = fit.stack_radius(full[selected, row : row + 1, start:stop])[None]
                 for panel in panels:
                     part = slice(panel.first, panel.stop)
                     missing[part, row, start:stop] = False
                     measured = full[part, row : row + 1, start:stop]
-                    left, right = fit.continued(np.asarray, measured, radius)
+                    left, right = fit.continued(np.asarray, measured, radius, quadrature=False)
                     full[part, row : row + 1, start - width : start] = left
                     full[part, row : row + 1, stop : stop + width] = right
-        return full, missing
+        if support is not None:
+            missing &= support
+        return CompletedRows(full, missing, support)
 
     def measured_rays(
         self,

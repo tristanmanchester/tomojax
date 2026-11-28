@@ -290,3 +290,63 @@ def test_detector_derived_grid_contains_every_rolled_panel_corner(tmp_path, roll
         assert report["loading"]["field_of_view_px"] == pytest.approx(2 * abs(x).max() / 1.1)
     else:
         assert "overlap_px" not in report["loading"]  # the interval varies with height
+
+
+@pytest.mark.parametrize("method", ["cgls", "sirt"])
+@pytest.mark.parametrize(("offset", "roll"), [(10.25, 0), (-10.25, 0), (10.25, 17)])
+def test_iterative_fit_uses_physical_line_integrals_at_the_far_edge(method, offset, roll):
+    from tomojax.recon import CGLSConfig, SIRTConfig
+
+    # Analytic line integrals of a 32 mm cylinder and an off-axis Gaussian.
+    # The axial taper makes clamping a tilted panel's end cell alter its slope.
+    det = tj.Detector(32, 15 if roll else 1, 1, 1, center=(offset, 0))
+    grid = tj.Grid(52, 52, 25 if roll else 1, 1, 1, 1)
+    angles = np.linspace(1, 361, 119, endpoint=False) + 0.08 * np.sin(np.arange(119))
+    angles = np.r_[angles, angles[0]]
+    geometry = tj.ParallelGeometry(grid, det, angles, detector_roll=roll)
+    u = np.arange(det.nu) - (det.nu - 1) / 2
+    v = np.arange(det.nv)[:, None] - (det.nv - 1) / 2
+    c, s = np.cos(np.deg2rad(roll)), np.sin(np.deg2rad(roll))
+    ray, z = offset + c * u - s * v, s * u + c * v
+    theta = np.deg2rad(angles)[:, None, None]
+    distance = ray - 2 * np.cos(theta) - 4 * np.sin(theta)
+    data = np.exp(-0.5 * (z / 6) ** 2) * (
+        0.04 * np.sqrt(32**2 - ray**2) + 0.05 * np.sqrt(2 * np.pi) * np.exp(-(distance**2) / 8)
+    )
+    scan = tj.Scan(data.astype(np.float32), geometry)
+    coordinate = np.arange(grid.nx) - (grid.nx - 1) / 2
+    truth = 0.02 + 0.025 * np.exp(-((coordinate - 2) ** 2 + (coordinate[:, None] + 4) ** 2) / 8)
+    roi = np.hypot(coordinate, coordinate[:, None]) < 23
+    config = (CGLSConfig if method == "cgls" else SIRTConfig)(iterations=35)
+    rec = tj.reconstruct(scan, method, config=config)
+    middle = np.asarray(rec.volume)[grid.nz // 2]
+    error = np.linalg.norm((middle - truth)[roi]) / np.linalg.norm(truth[roi])
+    assert error < 0.05
+    for direct_method in ("fbp", "fourier"):
+        direct = tj.reconstruct(scan, direct_method).info["truncation"]
+        assert direct["field_of_view_radius"] == pytest.approx(24.75 if roll else 26.25)
+        assert direct["radius"] == pytest.approx(32, rel=0.01)
+        for key in (
+            "edge_ratio",
+            "outside_fraction",
+            "radius",
+            "field_of_view_radius",
+            "interior_shift",
+        ):
+            assert rec.info["truncation"][key] == pytest.approx(direct[key])
+
+
+def test_near_edge_signal_on_a_contained_full_turn_needs_no_exterior():
+    from tomojax.recon import CGLSConfig
+
+    detector = tj.Detector(32, 1, 1, 1, center=(-10.25, 0))
+    geometry = tj.ParallelGeometry(tj.Grid(52, 52, 1, 1, 1, 1), detector, np.arange(120) * 3.0)
+    ray = np.arange(32) - 15.5 + detector.center[0]
+    chord = 0.04 * np.sqrt(np.maximum(18**2 - ray**2, 0))
+    data = np.broadcast_to(chord.astype(np.float32), (120, 1, 32))
+    scan = tj.Scan(data, geometry)
+    cylinder = tj.reconstruct(scan, "cgls", config=CGLSConfig(iterations=5))
+    zero = tj.reconstruct(scan, "cgls", config=CGLSConfig(iterations=5, exterior="zero"))
+    assert data[..., -1].all()
+    assert cylinder.info["truncation"]["background_treatment"] == "none"
+    np.testing.assert_array_equal(cylinder.volume, zero.volume)
