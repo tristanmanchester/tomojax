@@ -403,15 +403,16 @@ fn file_rows(
                 .on_press_tx(move |s: &mut AppState, tx| {
                     s.dispatch(UiAction::Files(act.clone()), tx)
                 })
-                .child(icon(
-                    match () {
-                        _ if open => Icon::Folder,
-                        _ if item.hdf5 => Icon::Layers,
-                        _ => Icon::File,
-                    },
-                    15.,
-                    if open || item.hdf5 { forest() } else { muted() },
-                ))
+                .child(if open || item.hdf5 {
+                    icon(
+                        if open { Icon::Folder } else { Icon::Layers },
+                        15.,
+                        forest(),
+                    )
+                } else {
+                    // Plain files carry no glyph, so folders and scans stand out.
+                    el().size(15., 15.)
+                })
                 .child(strong(&item.name, 12., ink()).grow(1.).min_w(0.).truncate())
                 .child(number(detail, 12., muted())),
         );
@@ -537,19 +538,4 @@ fn file_actions(state: &AppState, purpose: &Purpose, list: &crate::protocol::Lis
             ));
     }
     actions
-}
-
-#[cfg(test)]
-mod tests {
-    use super::file_size;
-
-    #[test]
-    fn file_sizes_read_in_decimal_units() {
-        assert_eq!(file_size(1), "1 byte");
-        assert_eq!(file_size(8), "8 bytes");
-        assert_eq!(file_size(395_264), "395 KB");
-        assert_eq!(file_size(1_250_000), "1.2 MB");
-        assert_eq!(file_size(100 * 1024 * 1024), "105 MB");
-        assert_eq!(file_size(7_600_000_000_000), "7.6 TB");
-    }
 }

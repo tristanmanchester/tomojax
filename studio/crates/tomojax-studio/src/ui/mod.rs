@@ -3,6 +3,8 @@ mod controls;
 pub mod corrections;
 mod export;
 mod files;
+#[cfg(test)]
+mod format_tests;
 mod inspector;
 pub mod model;
 mod overlays;

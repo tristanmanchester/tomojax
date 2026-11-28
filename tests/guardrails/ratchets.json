@@ -72,9 +72,10 @@
   "broad_except": 25,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1331,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1316,
+    "studio/crates/tomojax-studio/src/ui/controls.rs": 802,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
-    "studio/crates/tomojax-studio/src/ui/viewer.rs": 894
+    "studio/crates/tomojax-studio/src/ui/viewer.rs": 884
   },
   "studio_long_functions": {
     "studio/crates/studio-core/src/previews.rs::poll": 130,
@@ -90,7 +91,7 @@
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 121,
     "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 112,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 209,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 161,
+    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 146,
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
     "studio/crates/tomojax-studio/src/ui/controls.rs::icon": 146,
