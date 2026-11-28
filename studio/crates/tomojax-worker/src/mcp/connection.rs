@@ -92,22 +92,9 @@ impl Connections {
             }
         };
         drop(current);
-        let mut state = session.inventory.clone();
-        // A normal local executor starts immediately. A scheduler diagnostic is final
-        // for this call, so the client can do other work while Slurm is waiting.
-        let inventory = state
-            .wait_for(|s| {
-                s.failure.is_some()
-                    || !s.worker.is_null()
-                        && (!needs_executor
-                            || s.executor["state"] == "ready"
-                            || s.executor["state"] == "gone"
-                            || s.executor["detail"].is_string()
-                            || self.name != "local")
-            })
-            .await?
-            .clone();
-        inventory.check(needs_executor)?;
+        let inventory = session
+            .inventory(needs_executor, self.name == "local")
+            .await?;
         Ok((session, inventory))
     }
 }
@@ -220,6 +207,25 @@ impl Session {
         })
     }
 
+    pub async fn inventory(&self, needs_executor: bool, local: bool) -> Result<Inventory> {
+        let mut state = self.inventory.clone();
+        // A normal local executor starts immediately. A scheduler diagnostic is final
+        // for this call, so the client can do other work while Slurm is waiting.
+        let inventory = state
+            .wait_for(|s| {
+                s.failure.is_some()
+                    || !s.worker.is_null()
+                        && (!needs_executor
+                            || s.executor["state"] == "ready"
+                            || s.executor["state"] == "gone"
+                            || s.executor["detail"].is_string()
+                            || !local)
+            })
+            .await?
+            .clone();
+        inventory.check(needs_executor)?;
+        Ok(inventory)
+    }
     pub async fn request(&self, command: Value) -> Result<Reply> {
         let cancels = matches!(
             command["type"].as_str(),

@@ -53,6 +53,9 @@ fn prepare(
         .to_owned();
     let catalog = describe::workflows();
     let (_, schema) = catalog.get(tag.as_str()).context("Unknown workflow")?;
+    if name == "feature" {
+        super::schema::tagged("recipe", &cmd, &schema["properties"]["recipe"])?;
+    }
     if name == "open" {
         cmd.as_object_mut()
             .unwrap()
@@ -364,6 +367,27 @@ pub fn tool(name: &str) -> Value {
     json!({"name":name,"description":schema["description"],"inputSchema":schema,"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":false,"openWorldHint":false}})
 }
 
+fn beyond_detector(data: &Value) -> Option<String> {
+    let truncation = &data["truncation"];
+    let mut details = vec![];
+    if let Some(f) = truncation["outside_fraction"]
+        .as_f64()
+        .filter(|v| *v >= 0.005)
+    {
+        details.push(format!(
+            "{:.0}% of attenuation beyond the detector",
+            f * 100.
+        ))
+    }
+    match truncation["background_treatment"].as_str() {
+        Some("subtracted") => details.push("modeled exterior subtracted from fit data".into()),
+        Some("additive_poisson") => {
+            details.push("modeled exterior added to the Poisson mean".into())
+        }
+        _ => {}
+    }
+    (!details.is_empty()).then(|| details.join(", "))
+}
 pub fn summary(data: &Value) -> Option<String> {
     let time = data["wall_seconds"].as_f64()?;
     let kind = data["kind"].as_str()?;
@@ -427,6 +451,7 @@ pub fn summary(data: &Value) -> Option<String> {
     if let Some(a) = data.pointer("/automatic/reasons").and_then(Value::as_array) {
         parts.extend(a.iter().filter_map(Value::as_str).map(str::to_owned));
     }
+    parts.extend(beyond_detector(data));
     if let (Some(rms), Some(cols)) = (
         data.pointer("/poses/rms").and_then(Value::as_array),
         data.pointer("/poses/columns").and_then(Value::as_array),

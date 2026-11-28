@@ -11,6 +11,7 @@ static-hdf5 = ["tomojax-io/static-hdf5"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
+tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 base64 = "0.22"
 jiff = { version = "1", default-features = false, features = ["std"] }
 tokio-util = "0.7"

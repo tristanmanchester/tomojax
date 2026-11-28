@@ -27,6 +27,7 @@ pub async fn inspect(
     session: &Session,
     inventory: &Inventory,
     args: Value,
+    local: bool,
 ) -> Result<(Value, Vec<Value>)> {
     let form: Form = serde_json::from_value(args)?;
     let path = path(inventory, &form.path)?;
@@ -41,6 +42,7 @@ pub async fn inspect(
             return Ok((listing, vec![]));
         }
     }
+    session.inventory(true, local).await?;
     let report = query(session, json!({"type":"inspect","path":path})).await;
     let mut full = match report {
         Ok(reply) => reply
