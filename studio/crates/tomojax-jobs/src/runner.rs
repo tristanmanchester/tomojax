@@ -24,6 +24,13 @@ use std::{
 const TICK: Duration = Duration::from_millis(100);
 pub type Stored<'a> = dyn Fn(&Path) -> io::Result<Value> + 'a;
 
+#[derive(PartialEq, Eq)]
+enum Lifetime {
+    Shared,
+    Owned,
+    Draining,
+}
+
 struct Attempt<'a> {
     dir: &'a Path,
     stop: &'a AtomicBool,
@@ -32,6 +39,9 @@ struct Attempt<'a> {
     number: u64,
     serial: u64,
     previews: u64,
+    pending: BTreeSet<String>,
+    lifetime: Lifetime,
+    record_error: Option<io::Error>,
     handles: BTreeSet<String>,
     artifacts: BTreeSet<String>,
 }
@@ -49,6 +59,7 @@ impl Attempt<'_> {
         self.serial += 1;
         let id = format!("@{}.{}.{}", job_id(self.dir)?, self.number, self.serial);
         self.executor.send(&json!({"id":id,"command":command}))?;
+        self.pending.insert(id.clone());
         Ok(id)
     }
 
@@ -60,14 +71,29 @@ impl Attempt<'_> {
             let tokens = publication::tokens(&row["record"]["arrays"]);
             self.artifacts.extend(tokens.iter().cloned());
             self.previews += 1;
-            publication::preview(self.dir, self.number, self.previews, row)?;
+            if self.record_error.is_none() {
+                self.record_error =
+                    publication::preview(self.dir, self.number, self.previews, row).err();
+            }
+            if self.lifetime == Lifetime::Draining {
+                return Ok(None);
+            }
             for token in tokens {
                 self.internal(json!({"type":"release","artifact":token}))?;
                 self.artifacts.remove(&token);
             }
             return Ok(None);
         }
-        self.log.append(&row)?;
+        if matches!(
+            row["type"].as_str(),
+            Some("result" | "error" | "protocol_error")
+        ) && let Some(id) = row["request"].as_str()
+        {
+            self.pending.remove(id);
+        }
+        if self.record_error.is_none() {
+            self.record_error = self.log.append(&row).err();
+        }
         Ok(Some(row))
     }
 
@@ -77,6 +103,9 @@ impl Attempt<'_> {
                 return Err(stopped());
             }
             thread::sleep(TICK);
+        }
+        if let Some(error) = self.record_error.take() {
+            return Err(error);
         }
         if self.stopping() {
             return Err(stopped());
@@ -91,7 +120,7 @@ impl Attempt<'_> {
         loop {
             if control && !cancel_sent {
                 let pause = self.dir.join("paused").try_exists()?;
-                let action = if self.stopping() {
+                let action = if self.stopping() || self.record_error.is_some() {
                     cancel_sent = true;
                     Some("cancel")
                 } else if pause != paused {
@@ -101,7 +130,12 @@ impl Attempt<'_> {
                     None
                 };
                 if let Some(action) = action {
-                    self.internal(json!({"type":"control","action":action,"target":id}))?;
+                    if self.lifetime == Lifetime::Owned && self.stop.load(Ordering::Acquire) {
+                        self.lifetime = Lifetime::Draining;
+                        self.internal(json!({"type":"shutdown"}))?;
+                    } else {
+                        self.internal(json!({"type":"control","action":action,"target":id}))?;
+                    }
                 }
             }
             let Some(row) = self.next()? else {
@@ -112,6 +146,9 @@ impl Attempt<'_> {
             }
             match row["type"].as_str() {
                 Some("error" | "protocol_error") => {
+                    if let Some(error) = self.record_error.take() {
+                        return Err(error);
+                    }
                     if cancel_sent || row["error"]["kind"] == "canceled" {
                         return Err(stopped());
                     }
@@ -129,6 +166,9 @@ impl Attempt<'_> {
                         && result.pointer("/value/type") != Some(&json!("inspection"))
                     {
                         self.artifacts.extend(publication::tokens(&result["value"]));
+                    }
+                    if let Some(error) = self.record_error.take() {
+                        return Err(error);
                     }
                     return Ok(result.clone());
                 }
@@ -179,6 +219,12 @@ impl Attempt<'_> {
     }
 
     fn release(&mut self) -> io::Result<()> {
+        if self.lifetime == Lifetime::Draining {
+            while !self.pending.is_empty() {
+                self.next()?;
+            }
+            return Ok(());
+        }
         let resources = std::mem::take(&mut self.artifacts)
             .into_iter()
             .map(|artifact| json!({"type":"release","artifact":artifact}))
@@ -195,6 +241,9 @@ impl Attempt<'_> {
             if let Err(e) = result {
                 first.get_or_insert(e);
             }
+        }
+        while !self.pending.is_empty() {
+            self.next()?;
         }
         first.map_or(Ok(()), Err)
     }
@@ -291,6 +340,13 @@ fn run_script(
         number,
         serial: 0,
         previews: 0,
+        pending: BTreeSet::new(),
+        lifetime: if claim.launcher == Launcher::Inline {
+            Lifetime::Shared
+        } else {
+            Lifetime::Owned
+        },
+        record_error: None,
         handles: BTreeSet::new(),
         artifacts: BTreeSet::new(),
     };
