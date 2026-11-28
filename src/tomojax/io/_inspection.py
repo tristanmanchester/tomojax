@@ -21,7 +21,6 @@ from tomojax._data import (
     native_payload,
 )
 from tomojax._typed_arrays import (
-    any_true,
     finite_values_float64,
     linspace_indices,
     max_float,
@@ -30,7 +29,6 @@ from tomojax._typed_arrays import (
     numpy_float64_array,
     object_mapping,
     sum_float64,
-    true_count,
     unique_int_count_map,
 )
 from tomojax.io._acquisition import read_acquisition
@@ -95,7 +93,7 @@ def _dataset_at(file: h5py.File, path: str) -> h5py.Dataset | None:
     return obj if isinstance(obj, h5py.Dataset) else None
 
 
-def _iter_view_blocks(dataset: _ProjectionStack) -> Iterator[NDArray[np.float64]]:
+def _iter_view_blocks(dataset: _ProjectionStack) -> Iterator[NDArray[np.generic]]:
     n_views = int(dataset.shape[0])
     block = 1
     if dataset.ndim == 3:
@@ -103,7 +101,7 @@ def _iter_view_blocks(dataset: _ProjectionStack) -> Iterator[NDArray[np.float64]
         block = max(1, min(n_views, _DEFAULT_MAX_EXACT_STATS_ELEMENTS // plane_elements))
     for start in range(0, n_views, block):
         stop = min(n_views, start + block)
-        yield numpy_float64_array(dataset[start:stop])
+        yield np.asarray(dataset[start:stop])
 
 
 def _sample_projection_values(dataset: _ProjectionStack) -> NDArray[np.float64]:
@@ -146,15 +144,24 @@ def projection_stats(dataset: _ProjectionStack) -> tuple[ProjectionStatsReport, 
     neginf_count = 0
 
     for block in _iter_view_blocks(dataset):
-        arr = numpy_float64_array(block)
-        nan_count += true_count(np.isnan(arr))
-        posinf_count += true_count(np.isposinf(arr))
-        neginf_count += true_count(np.isneginf(arr))
-        finite = np.isfinite(arr)
-        if any_true(finite):
-            values = finite_values_float64(arr, finite)
+        # The integer detector types have no nonfinite values. Sums of bounded blocks
+        # of 8- and 16-bit counts are also exactly representable in float64.
+        if block.dtype.kind in "biu" and block.dtype.itemsize <= 2:
+            values = block
+            block_sum = float(np.sum(values, dtype=np.int64))
+        else:
+            # Preserve the inspector's float64 block reduction and C-order
+            # summation, including for wide integers and non-contiguous input.
+            values = np.ascontiguousarray(block, dtype=np.float64)
+            if not (finite := np.isfinite(values)).all():
+                nan_count += int(np.count_nonzero(np.isnan(values)))
+                posinf_count += int(np.count_nonzero(np.isposinf(values)))
+                neginf_count += int(np.count_nonzero(np.isneginf(values)))
+                values = values[finite]
+            block_sum = sum_float64(values)
+        if values.size:
             finite_count += int(values.size)
-            finite_sum += sum_float64(values)
+            finite_sum += block_sum
             finite_min = min(finite_min, min_float(values))
             finite_max = max(finite_max, max_float(values))
 

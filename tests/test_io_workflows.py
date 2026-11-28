@@ -317,6 +317,37 @@ def test_projection_stats_keep_exact_stats_when_percentile_sample_has_no_finite_
     assert nonfinite["nan_count"] == 1024 * 1024
 
 
+@pytest.mark.parametrize("dtype", ["u1", ">u2", "i2", "i4", "u8", "f2", "f4", "f8"])
+@pytest.mark.parametrize("special", [False, True])
+def test_projection_reductions_match_detector_values_in_logical_order(dtype, special):
+    rng = np.random.default_rng(892)
+    data = rng.integers(2, 240, size=(7, 17, 41)).astype(dtype)
+    if data.dtype.kind == "f":
+        data /= 3
+        if special:
+            data[::2, 0, 0] = np.nan
+            data[1, :, 2] = np.inf
+            data[-1, 1, :] = -np.inf
+    elif data.dtype == np.uint64:
+        data += np.uint64(2**53)
+    elif data.dtype.kind == "i":
+        data -= 123
+
+    values = data.swapaxes(1, 2)[:, ::-1, :]
+    finite = values[np.isfinite(values)].astype(np.float64)
+    p01, p50, p99 = np.percentile(finite, [1, 50, 99])
+    stats, counts = projection_stats(values)
+    assert stats == dict(
+        min=finite.min(), max=finite.max(), mean=finite.mean(), p01=p01, p50=p50, p99=p99
+    )
+    assert counts == dict(
+        nan_count=np.isnan(values).sum(),
+        posinf_count=np.isposinf(values).sum(),
+        neginf_count=np.isneginf(values).sum(),
+        inf_count=np.isinf(values).sum(),
+    )
+
+
 def test_only_a_nonzero_saved_detector_roll_builds_an_explicit_grid() -> None:
     detector = Detector(4, 3, 1.0, 1.0, (0.5, 0.0))
     assert detector_grid_from_geometry_inputs(detector, {}) is None

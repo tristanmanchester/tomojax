@@ -40,8 +40,9 @@ from tomojax.wire.arrays import Array, Axis, Coordinates, Hdf5, Member, Storage
 def inspect(path: str | PathLike[str]) -> Inspection:
     """Describe a dataset, acquisition, or checkpoint directory and run checks.
 
-    For a dataset or acquisition, reads metadata and a bounded sample of the
-    frames, never the whole stack: the projections' shape, type and statistics,
+    For a dataset or acquisition, reads metadata and scans the projections in
+    blocks for extrema, the mean and nonfinite counts. Percentiles use a
+    bounded sample of views. The report includes projection shape and type,
     the angles, geometry, detector, flats and darks, the corrections recorded,
     saved poses, memory estimates and a saved volume, and what loading the file
     as a scan reads (``loading``: its length unit, where its rotation center
