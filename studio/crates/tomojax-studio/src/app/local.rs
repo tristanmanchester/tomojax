@@ -1,6 +1,5 @@
 //! File work has its own cancellation and lifetime, independent of the JAX worker.
 use super::*;
-use std::io::{Read, Write};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -22,6 +21,76 @@ pub(super) struct LocalMessage {
 }
 
 impl AppState {
+    pub(super) fn finish_audit(
+        &mut self,
+        asset: String,
+        job: Option<String>,
+        report: Value,
+        result: Result<Option<HeaderMetadata>, String>,
+    ) {
+        let read = result
+            .and_then(|header| header.ok_or("No stored metadata".into()))
+            .map(|(kind, arrays, _)| (kind, arrays));
+        if let Some(job) = job {
+            if let Some(project) = &mut self.project {
+                let root = project.root.clone();
+                if let Some(asset) = project.document.asset_mut(&asset) {
+                    if !asset.is_result()
+                        && let Ok((_, arrays)) = &read
+                    {
+                        if let Some(mut projections) = arrays.get("projections").cloned() {
+                            projections.relative_to(&root);
+                            asset.arrays.insert("projections".into(), projections);
+                        } else {
+                            asset.arrays.remove("projections");
+                        }
+                    }
+                    asset.issue = report["issues"]
+                        .as_array()
+                        .filter(|v| !v.is_empty())
+                        .map(|v| {
+                            v.iter()
+                                .map(|s| s.as_str().unwrap_or("Inspection issue"))
+                                .collect::<Vec<_>>()
+                                .join("; ")
+                        });
+                    asset.inspection = report;
+                }
+            }
+            self.complete_job(&job, None);
+            self.image_key.clear();
+            self.refresh_images();
+        } else {
+            self.record_read(&asset, read, report);
+        }
+    }
+
+    pub(super) fn file_reads(&mut self) -> Option<studio_core::engine::FileReads> {
+        if self.engine.is_none() {
+            self.start_engine();
+        }
+        self.engine.as_ref().map(Engine::files)
+    }
+
+    pub(super) fn audit_stored(
+        &mut self,
+        asset: String,
+        path: PathBuf,
+        report: Value,
+        job: Option<String>,
+    ) {
+        let files = self.file_reads();
+        self.spawn_local(job.clone(), move |_| {
+            let result = stored(files, &path, Some(&report));
+            LocalEvent::Audited {
+                asset,
+                job,
+                report,
+                result,
+            }
+        });
+    }
+
     pub(super) fn spawn_local(
         &mut self,
         job: Option<String>,
@@ -91,30 +160,84 @@ pub(super) fn check_cancel(canceled: &AtomicBool) -> Result<(), String> {
     }
 }
 
-/// Exclusive creation and bounded copying make cancellation leave only owned staging data.
-pub(super) fn copy_file(
-    source: &Path,
+pub(super) fn copy(
+    files: Option<studio_core::engine::FileReads>,
     destination: &Path,
+    sources: Vec<Value>,
+    documents: Value,
     canceled: &AtomicBool,
 ) -> Result<(), String> {
     check_cancel(canceled)?;
-    let mut input = std::fs::File::open(source).map_err(|e| e.to_string())?;
-    let mut output = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(destination)
-        .map_err(|e| e.to_string())?;
-    let mut buffer = vec![0u8; 1024 * 1024];
-    loop {
-        check_cancel(canceled)?;
-        let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
-        if count == 0 {
-            break;
+    let result = files.ok_or("The file worker is disconnected")?.copy(
+        json!({"type":"copy","destination":destination,"sources":sources,"documents":documents}),
+        canceled,
+    );
+    result.map_err(|error| {
+        if canceled.load(Ordering::Acquire) {
+            CANCELED.into()
+        } else {
+            error
         }
-        output
-            .write_all(&buffer[..count])
-            .map_err(|e| e.to_string())?;
+    })
+}
+
+pub(super) type HeaderMetadata = (
+    String,
+    std::collections::BTreeMap<String, crate::protocol::ArrayDescriptor>,
+    Value,
+);
+
+pub(super) fn stored(
+    files: Option<studio_core::engine::FileReads>,
+    path: &Path,
+    inspection: Option<&Value>,
+) -> Result<Option<HeaderMetadata>, String> {
+    let files = files.ok_or("The file worker is disconnected")?;
+    let mut command = json!({"type":"stored","path":path});
+    if let Some(report) = inspection {
+        command["inspection"] = report.clone();
     }
-    check_cancel(canceled)?;
-    output.sync_all().map_err(|e| e.to_string())
+    let ResultValue::Stored {
+        kind,
+        arrays,
+        report,
+    } = files.request(command)?
+    else {
+        return Err("Expected stored metadata".into());
+    };
+    Ok(kind.map(|k| (k, arrays, report)))
+}
+
+/// Copies a chosen input into `inputs` and returns the copy to open. A header
+/// file brings its folder, whose frames it reads. An HDF5 file that reads data
+/// from other files can't be copied: its links would still reach the originals.
+pub(super) fn copy_acquisition(
+    files: Option<studio_core::engine::FileReads>,
+    path: &Path,
+    inputs: &Path,
+    canceled: &std::sync::atomic::AtomicBool,
+) -> Result<PathBuf, String> {
+    let name = path.file_name().ok_or("Missing acquisition name")?;
+    let source = if path.is_file() && !project::holds_whole_acquisition(path) {
+        path.parent().ok_or("Missing acquisition folder")?
+    } else {
+        path
+    };
+    let source_name = source
+        .file_name()
+        .ok_or("Missing acquisition folder name")?;
+    let destination = inputs;
+    local::copy(
+        files,
+        destination,
+        vec![json!({"path":source,"name":source_name.to_string_lossy()})],
+        json!({}),
+        canceled,
+    )?;
+    let copy = destination.join(source_name);
+    Ok(if source == path {
+        copy
+    } else {
+        copy.join(name)
+    })
 }

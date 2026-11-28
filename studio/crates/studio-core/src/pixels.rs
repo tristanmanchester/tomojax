@@ -1,4 +1,4 @@
-//! Registered plane selections and the worker's two pixel encodings.
+//! Registered plane selections and the worker pixel encodings.
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use zune_jpeg::JpegDecoder;
@@ -14,6 +14,8 @@ pub(crate) mod wire;
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
     Float32,
+    Float64,
+    Uint16,
     Jpeg,
 }
 
@@ -22,12 +24,49 @@ pub struct Pixels {
     pub shape: Vec<usize>,
     pub encoding: Encoding,
     bytes: usize,
-    range: Option<[f32; 2]>,
+    range: Option<[f64; 2]>,
     #[serde(skip)]
     payload: Vec<u8>,
 }
 
 impl Pixels {
+    fn shuffled<const N: usize>(
+        &self,
+        shape: &[usize],
+        encoding: Encoding,
+    ) -> Result<Vec<[u8; N]>, String> {
+        if self.shape != shape || self.encoding != encoding {
+            return Err("Worker returned a different selection or encoding".into());
+        }
+        let size = shape
+            .iter()
+            .try_fold(N, |n, dim| n.checked_mul(*dim))
+            .filter(|n| *n <= 16 << 20)
+            .ok_or("Selection exceeds the decoded limit")?;
+        let raw = zstd::bulk::decompress(&self.payload, size).map_err(|e| e.to_string())?;
+        if raw.len() != size {
+            return Err("Incomplete shuffled scalar payload".into());
+        }
+        let count = size / N;
+        Ok((0..count)
+            .map(|i| std::array::from_fn(|b| raw[b * count + i]))
+            .collect())
+    }
+    pub fn doubles(&self, shape: &[usize]) -> Result<Vec<f64>, String> {
+        Ok(self
+            .shuffled(shape, Encoding::Float64)?
+            .into_iter()
+            .map(f64::from_le_bytes)
+            .collect())
+    }
+    pub fn volume(&self, shape: &[usize]) -> Result<Vec<f32>, String> {
+        let [lo, hi] = self.range.ok_or("Volume has no scalar range")?;
+        Ok(self
+            .shuffled(shape, Encoding::Uint16)?
+            .into_iter()
+            .map(|b| (lo + (hi - lo) * f64::from(u16::from_le_bytes(b)) / 65535.) as f32)
+            .collect())
+    }
     pub fn decode(
         &self,
         selection: &PlaneSelection,
@@ -36,23 +75,13 @@ impl Pixels {
         if self.shape != selection.count || self.encoding != encoding {
             return Err("Worker returned a different pixel selection or encoding".into());
         }
-        let count = self
-            .shape
-            .iter()
-            .try_fold(1usize, |a, b| a.checked_mul(*b))
-            .filter(|n| *n <= (16 << 20) / if encoding == Encoding::Float32 { 4 } else { 1 })
-            .ok_or("Worker plane exceeds the 16 MiB decoded limit")?;
         match encoding {
-            Encoding::Float32 => {
-                let raw =
-                    zstd::bulk::decompress(&self.payload, count * 4).map_err(|e| e.to_string())?;
-                if raw.len() != count * 4 {
-                    return Err("Incomplete shuffled float32 plane".into());
-                }
-                Ok((0..count)
-                    .map(|i| f32::from_le_bytes(std::array::from_fn(|b| raw[b * count + i])))
-                    .collect())
-            }
+            Encoding::Float32 => Ok(self
+                .shuffled(&selection.count, encoding)?
+                .into_iter()
+                .map(f32::from_le_bytes)
+                .collect()),
+            Encoding::Float64 | Encoding::Uint16 => Err("Expected a plane encoding".into()),
             Encoding::Jpeg => {
                 let [low, high] = self
                     .range
@@ -82,6 +111,7 @@ impl Pixels {
                         "JPEG dimensions or color space differ from the declared plane".into(),
                     );
                 }
+                let [low, high] = [low as f32, high as f32];
                 let grey = decoder.decode().map_err(|e| e.to_string())?;
                 Ok(grey
                     .into_iter()

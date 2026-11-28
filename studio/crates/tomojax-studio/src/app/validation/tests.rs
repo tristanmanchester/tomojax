@@ -252,7 +252,7 @@ fn real_worker_nested_errors_plan_refresh_and_already_piped_reply_rejection() {
     state.ui.workspace = Workspace::Explore;
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(Engine::spawn(python, Arc::new(|| {})).unwrap());
+    state.engine = Some(Engine::spawn_through(python, &[], Arc::new(|| {})).unwrap());
     drive(&mut state, |state| {
         state.model.backend.ready && state.engine.as_ref().unwrap().catalog().is_some()
     });

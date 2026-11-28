@@ -37,7 +37,7 @@ impl Client {
     fn new() -> Self {
         let python = std::env::var_os("TOMOJAX_TEST_PYTHON").expect("set TOMOJAX_TEST_PYTHON");
         let mut client = Self {
-            engine: Engine::spawn(Path::new(&python), Arc::new(|| {})).unwrap(),
+            engine: Engine::spawn_through(Path::new(&python), &[], Arc::new(|| {})).unwrap(),
             live: LivePreviews::new(),
             terminals: BTreeMap::new(),
             progress: BTreeMap::new(),
@@ -49,6 +49,7 @@ impl Client {
             cleanup: BTreeSet::new(),
             closed: BTreeSet::new(),
         };
+        client.live.bind(client.engine.files());
         let until = Instant::now() + Duration::from_secs(45);
         while client.engine.catalog().is_none() {
             client.pump();

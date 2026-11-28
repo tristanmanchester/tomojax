@@ -4,6 +4,9 @@
 //! applies correlated replies; cancellation acknowledgment is never a terminal
 //! for the target job. Normal shutdown keeps draining through process exit.
 
+mod files;
+pub use files::FileReads;
+
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -122,6 +125,7 @@ pub struct Engine {
     executor: Option<Ready>,
     catalog: Option<SchemaCatalog>,
     requests: Requests,
+    files: FileReads,
     incoming: Option<mpsc::Receiver<Incoming>>,
     outgoing: Option<mpsc::SyncSender<Outgoing>>,
     terminate: mpsc::Sender<()>,
@@ -131,14 +135,20 @@ pub struct Engine {
 
 /// A local Python executor or a named Rust worker connection.
 pub struct WorkerCommand(Command);
-impl<P: AsRef<Path>> From<P> for WorkerCommand {
-    fn from(python: P) -> Self {
-        let mut command = Command::new(python.as_ref());
-        command.args(["-u", "-m", "tomojax.cli.main", "serve"]);
-        Self(command)
-    }
-}
 impl WorkerCommand {
+    pub fn local(python: &Path) -> Result<Self, String> {
+        let current = std::env::current_exe().map_err(|e| e.to_string())?;
+        let parent = current.parent().ok_or("Missing executable directory")?;
+        // Cargo puts integration tests under debug/deps (or release/deps).
+        let parent = if parent.ends_with("deps") {
+            parent.parent().unwrap_or(parent)
+        } else {
+            parent
+        };
+        let mut command = Command::new(parent.join("tomojax-worker"));
+        command.args(["serve", "--python"]).arg(python);
+        Ok(Self(command))
+    }
     pub(crate) fn profile(worker: &Path, profile: &str) -> Self {
         let mut command = Command::new(worker);
         command.args(["connect", profile]);
@@ -153,7 +163,7 @@ impl Engine {
         relay: &[String],
         wake: Wake,
     ) -> Result<Self, String> {
-        let worker = WorkerCommand::from(python.as_ref());
+        let worker = WorkerCommand::local(python.as_ref())?;
         if relay.is_empty() {
             return Self::spawn(worker, wake);
         }
@@ -166,8 +176,8 @@ impl Engine {
         Self::spawn(WorkerCommand(command), wake)
     }
 
-    pub fn spawn(worker: impl Into<WorkerCommand>, wake: Wake) -> Result<Self, String> {
-        let WorkerCommand(mut command) = worker.into();
+    pub fn spawn(worker: WorkerCommand, wake: Wake) -> Result<Self, String> {
+        let WorkerCommand(mut command) = worker;
         let workspace = tempfile::Builder::new()
             .prefix("tomojax-studio-serve-")
             .tempdir()
@@ -210,14 +220,16 @@ impl Engine {
                 }
             }
         });
+        let files = FileReads::new(outgoing.clone());
         let reader = {
+            let files = files.clone();
             let (send, credits, stop, wake) = (
                 send.clone(),
                 outgoing.clone(),
                 terminate.clone(),
                 wake.clone(),
             );
-            thread::spawn(move || read_worker(output, send, credits, stop, wake))
+            thread::spawn(move || read_worker(output, send, credits, stop, wake, files))
         };
         let stderr = {
             let (send, wake) = (send.clone(), wake.clone());
@@ -262,6 +274,7 @@ impl Engine {
             executor: None,
             catalog: None,
             requests: Requests::default(),
+            files,
             incoming: Some(incoming),
             outgoing: Some(outgoing),
             terminate,
@@ -278,6 +291,9 @@ impl Engine {
     pub fn lifecycle(&self) -> &Lifecycle {
         &self.lifecycle
     }
+    pub fn files(&self) -> FileReads {
+        self.files.clone()
+    }
     pub fn ready(&self) -> Option<&Ready> {
         self.ready.as_ref()
     }
@@ -289,7 +305,13 @@ impl Engine {
     }
 
     pub fn execution_capacity(&self) -> usize {
-        if self.lifecycle != Lifecycle::Ready {
+        if self.lifecycle != Lifecycle::Ready
+            || (self
+                .ready
+                .as_ref()
+                .is_some_and(|r| matches!(r.peer, Peer::Worker { .. }))
+                && self.executor.is_none())
+        {
             return 0;
         }
         EXECUTION_LIMIT.saturating_sub(
@@ -492,6 +514,7 @@ impl Engine {
                     events.push(EngineEvent::Ready(ready));
                 }
                 Incoming::Response(Response::Executor(state)) => {
+                    self.catalog = None;
                     self.executor = match &state {
                         ExecutorState::Ready(executor) if executor.supported() => {
                             Some(executor.clone())
@@ -569,6 +592,7 @@ fn read_worker(
     credits: mpsc::SyncSender<Outgoing>,
     stop: mpsc::Sender<()>,
     wake: Wake,
+    files: FileReads,
 ) {
     let mut wire = crate::pixels::wire::WireReader::new(BufReader::new(output));
     loop {
@@ -579,7 +603,10 @@ fn read_worker(
                 .send(Outgoing::Line(line))
                 .map_err(|e| e.to_string())
         }) {
-            Ok(Some(response)) => Incoming::Response(response),
+            Ok(Some(response)) => match files.route(response) {
+                Some(response) => Incoming::Response(response),
+                None => continue,
+            },
             Ok(None) => break,
             Err(error) => Incoming::Fault(error),
         };
@@ -593,6 +620,7 @@ fn read_worker(
             break;
         }
     }
+    files.close();
 }
 fn read_diagnostics(errors: impl Read, incoming: mpsc::SyncSender<Incoming>, wake: Wake) {
     let mut buffered = BufReader::new(errors);
@@ -618,6 +646,7 @@ impl Drop for Engine {
         // Graceful application close calls shutdown() and keeps polling. A lost
         // window or panic must still reap the child; dropping the receiver first
         // unblocks bounded output writers before joining the supervisor.
+        self.files.close();
         self.incoming.take();
         self.outgoing.take();
         let _ = self.terminate.send(());
@@ -688,6 +717,7 @@ mod tests {
             executor: None,
             catalog: None,
             requests: Requests::default(),
+            files: FileReads::new(outgoing.clone()),
             incoming: None,
             outgoing: Some(outgoing),
             terminate,

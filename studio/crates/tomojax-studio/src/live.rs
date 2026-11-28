@@ -8,6 +8,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 
 use crate::imaging::{PlaneData, read_pose_table, read_preview_plane};
+use studio_core::engine::FileReads;
 use studio_core::protocol::ArrayDescriptor;
 use studio_core::sync::Locked;
 
@@ -50,6 +51,7 @@ pub struct LiveFrame {
 }
 
 struct SolverPreview {
+    files: Option<FileReads>,
     generation: u64,
     info: SolverPreviewInfo,
     arrays: BTreeMap<String, ArrayDescriptor>,
@@ -77,6 +79,7 @@ struct ResultHandle {
 type Reader = Arc<dyn Fn(&SolverPreview) -> Result<LiveFrame, String> + Send + Sync>;
 
 pub struct LivePreviews {
+    files: Option<FileReads>,
     enabled: bool,
     generation: u64,
     desired: Option<u64>,
@@ -136,6 +139,7 @@ impl LivePreviews {
             }
         });
         Self {
+            files: None,
             enabled: true,
             generation: 0,
             desired: None,
@@ -149,6 +153,10 @@ impl LivePreviews {
             events: Some(events),
             thread: Some(thread),
         }
+    }
+
+    pub fn bind(&mut self, files: FileReads) {
+        self.files = Some(files);
     }
 
     pub fn enabled(&self) -> bool {
@@ -226,6 +234,7 @@ impl LivePreviews {
             *self.references.entry(artifact.clone()).or_default() += 1;
         }
         let preview = Arc::new(SolverPreview {
+            files: self.files.clone(),
             generation,
             info: SolverPreviewInfo {
                 job: job.into(),
@@ -263,6 +272,7 @@ impl LivePreviews {
         self.owners.insert(
             self.generation,
             Arc::new(SolverPreview {
+                files: self.files.clone(),
                 generation: self.generation,
                 info: SolverPreviewInfo {
                     job: String::new(),
@@ -396,19 +406,26 @@ impl Drop for LivePreviews {
 }
 
 fn read(preview: &SolverPreview) -> Result<LiveFrame, String> {
+    let files = preview
+        .files
+        .as_ref()
+        .ok_or("The file worker is disconnected")?;
     let mut planes = BTreeMap::new();
     for key in ["z", "y", "x"] {
         if let Some(array) = preview.arrays.get(key) {
             if array.shape.len() != 2 {
                 return Err(format!("The live {key} preview is not a registered plane."));
             }
-            planes.insert(key.into(), Arc::new(read_preview_plane(array, 0, 0, 1024)?));
+            planes.insert(
+                key.into(),
+                Arc::new(read_preview_plane(files, array, 0, 0, 1024)?),
+            );
         }
     }
     let poses = preview
         .arrays
         .get("poses")
-        .map(read_pose_table)
+        .map(|desc| read_pose_table(files, desc))
         .transpose()?;
     if planes.is_empty() && poses.is_none() {
         return Err(
@@ -692,7 +709,7 @@ mod tests {
         let mut image = descriptor("image", "unused");
         image.storage = Storage::Npy {
             path: image_path.to_string_lossy().into(),
-            artifact: Some("image".into()),
+            artifact: None,
         };
         image.dtype = "<f8".into();
         image.axes[0].coordinates = Coordinates::Uniform {
@@ -713,7 +730,7 @@ mod tests {
         let mut poses = descriptor("poses", "view-coordinates");
         poses.storage = Storage::Npy {
             path: pose_path.to_string_lossy().into(),
-            artifact: Some("poses".into()),
+            artifact: None,
         };
         poses.dtype = "<f8".into();
         poses.shape = vec![2, 6];
@@ -726,7 +743,7 @@ mod tests {
             coordinates: Coordinates::Coordinates {
                 values: Storage::Npy {
                     path: coordinates_path.to_string_lossy().into(),
-                    artifact: Some("view-coordinates".into()),
+                    artifact: None,
                 },
             },
         };
@@ -747,7 +764,10 @@ mod tests {
                 unit: if i < 3 { "degree" } else { "mm" }.into(),
             })
             .collect();
+        let worker =
+            studio_core::engine::Engine::spawn_through("/bin/false", &[], Arc::new(|| {})).unwrap();
         let mut live = LivePreviews::new();
+        live.bind(worker.files());
         live.accept(
             "alignment",
             "run",
@@ -779,10 +799,7 @@ mod tests {
         assert_eq!(table.columns[3].unit, "mm");
         assert!(live.drain_releases().is_empty());
         live.clear();
-        assert_eq!(
-            live.drain_releases().into_iter().collect::<BTreeSet<_>>(),
-            BTreeSet::from(["image".into(), "poses".into(), "view-coordinates".into()])
-        );
+        assert!(live.drain_releases().is_empty());
         std::fs::remove_file(image_path).unwrap();
         std::fs::remove_file(pose_path).unwrap();
         std::fs::remove_file(coordinates_path).unwrap();

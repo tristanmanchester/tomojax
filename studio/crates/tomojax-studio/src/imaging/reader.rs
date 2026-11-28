@@ -4,9 +4,12 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use super::{AxisScale, PlaneData, Statistics, VolumeData, npy::Npy};
-use hdf5::{Hyperslab, SliceOrIndex};
+use super::{AxisScale, PlaneData, Statistics, VolumeData};
+use serde_json::{Value, json};
+use studio_core::engine::FileReads;
 use studio_core::pixels::PlaneSelection;
+use studio_core::pixels::{Encoding, Pixels};
+use studio_core::protocol::ResultValue;
 use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
 
 pub(super) fn identity() -> u64 {
@@ -37,96 +40,31 @@ pub(super) fn validate(descriptor: &ArrayDescriptor) -> Result<(), String> {
     Ok(())
 }
 
-fn selection(
-    storage: &Storage,
-    shape: &[usize],
-    start: &[usize],
-    step: &[usize],
-    count: &[usize],
-) -> Result<Vec<f32>, String> {
-    let elements = count
-        .iter()
-        .try_fold(1usize, |n, &v| n.checked_mul(v))
-        .ok_or("Selection is too large.")?;
-    if elements > 256 * 256 * 256 {
-        return Err("This image selection exceeds the 64 MiB scalar budget.".into());
-    }
-    match storage {
-        Storage::Npy { path, .. } => {
-            let source = Npy::open(path)?;
-            if source.shape() != shape {
-                return Err("The NumPy shape differs from its registered descriptor.".into());
-            }
-            Ok(source.read(start, step, count))
-        }
-        Storage::Hdf5 { path, dataset } => {
-            let file = hdf5::File::open(path).map_err(|e| format!("Cannot open {path}: {e}"))?;
-            let source = file
-                .dataset(dataset)
-                .map_err(|e| format!("Cannot read dataset {dataset}: {e}"))?;
-            let stored_shape = source.shape();
-            // TomoJAX registers a line detector as (view,1,u), while its HDF5 source can be (view,u).
-            let singleton_v =
-                shape.len() == 3 && shape[1] == 1 && stored_shape == [shape[0], shape[2]];
-            if stored_shape != shape && !singleton_v {
-                return Err("The HDF5 shape differs from its registered descriptor.".into());
-            }
-            let slices: Vec<_> = (0..shape.len())
-                .filter(|&axis| !(singleton_v && axis == 1))
-                .map(|axis| SliceOrIndex::SliceCount {
-                    start: start[axis],
-                    step: step[axis],
-                    count: count[axis],
-                    block: 1,
-                })
-                .collect();
-            let pixels = source
-                .read_slice::<f32, _, ndarray::IxDyn>(Hyperslab::from(slices))
-                .map_err(|e| format!("Cannot read the requested scalar hyperslab: {e}"))?;
-            Ok(pixels.into_raw_vec_and_offset().0)
-        }
-        Storage::Member { .. } => Err("The worker member has no independent storage yet.".into()),
+fn pixels(files: &FileReads, command: Value) -> Result<Pixels, String> {
+    match files.request(command)? {
+        ResultValue::Pixels(frame) => Ok(frame),
+        _ => Err("Expected a pixel terminal".into()),
     }
 }
-
-fn coordinates(storage: &Storage, count: usize) -> Result<Vec<f64>, String> {
-    if count > 1_000_000 {
-        return Err("The coordinate vector exceeds the registration budget.".into());
-    }
-    let values = match storage {
-        Storage::Npy { path, .. } => {
-            let source = Npy::open(path)?;
-            if source.shape() != [count] {
-                return Err("The coordinate vector has the wrong length.".into());
-            }
-            source.coordinates()
-        }
-        Storage::Hdf5 { path, dataset } => {
-            let file = hdf5::File::open(path).map_err(|e| e.to_string())?;
-            let source = file.dataset(dataset).map_err(|e| e.to_string())?;
-            if source.shape() != [count] {
-                return Err("The coordinate vector has the wrong length.".into());
-            }
-            source.read_raw::<f64>().map_err(|e| e.to_string())?
-        }
-        Storage::Member { .. } => {
-            return Err("The coordinate vector has not been saved into the project.".into());
-        }
-    };
-    if values.iter().any(|v| !v.is_finite()) {
-        return Err("The coordinate vector contains nonfinite positions.".into());
-    }
-    Ok(values)
+fn doubles(files: &FileReads, storage: &Storage, shape: &[usize]) -> Result<Vec<f64>, String> {
+    pixels(
+        files,
+        json!({"type":"fetch","storage":storage,"shape":shape,"encoding":"float64"}),
+    )?
+    .doubles(shape)
 }
-
-fn scale(axis: &Axis, count: usize, stride: usize) -> Result<AxisScale, String> {
+fn scale(files: &FileReads, axis: &Axis, count: usize, stride: usize) -> Result<AxisScale, String> {
     let (origin, spacing, positions) = match &axis.coordinates {
         Coordinates::Uniform { origin, spacing } => (*origin, *spacing * stride as f64, None),
         Coordinates::Coordinates { values } => {
-            let positions: Vec<_> = coordinates(values, count)?
-                .into_iter()
-                .step_by(stride)
-                .collect();
+            if count > 1_000_000 {
+                return Err("The coordinate vector exceeds the registration budget.".into());
+            }
+            let coordinates = doubles(files, values, &[count])?;
+            if coordinates.iter().any(|v| !v.is_finite()) {
+                return Err("The coordinate vector contains nonfinite positions.".into());
+            }
+            let positions: Vec<_> = coordinates.into_iter().step_by(stride).collect();
             let origin = positions[0];
             let spacing = if positions.len() > 1 {
                 positions[1] - origin
@@ -147,6 +85,7 @@ fn scale(axis: &Axis, count: usize, stride: usize) -> Result<AxisScale, String> 
 }
 
 pub(crate) fn plane(
+    files: &FileReads,
     descriptor: &ArrayDescriptor,
     axis: usize,
     index: usize,
@@ -154,17 +93,13 @@ pub(crate) fn plane(
 ) -> Result<PlaneData, String> {
     validate(descriptor)?;
     let slab = PlaneSelection::new(&descriptor.shape, axis, index, max_edge)?;
-    let values = selection(
-        &descriptor.storage,
-        &descriptor.shape,
-        &slab.start,
-        &slab.step,
-        &slab.count,
-    )?;
-    registered_plane(descriptor, axis, index, &slab, values, true)
+    let values = pixels(files, slab.fetch(descriptor, Encoding::Float32, None))?
+        .decode(&slab, Encoding::Float32)?;
+    registered_plane(files, descriptor, axis, index, &slab, values, true)
 }
 
 pub(super) fn registered_plane(
+    files: &FileReads,
     descriptor: &ArrayDescriptor,
     axis: usize,
     index: usize,
@@ -179,7 +114,7 @@ pub(super) fn registered_plane(
     let source_shape = remaining.map(|a| descriptor.shape[a]);
     let mut fixed = descriptor.fixed.clone();
     if dimensions == 3 {
-        let fixed_axis = scale(&descriptor.axes[axis], descriptor.shape[axis], 1)?;
+        let fixed_axis = scale(files, &descriptor.axes[axis], descriptor.shape[axis], 1)?;
         fixed.push(Fixed {
             name: fixed_axis.name.clone(),
             frame: fixed_axis.frame.clone(),
@@ -196,8 +131,18 @@ pub(super) fn registered_plane(
         shape: [count[remaining[0]], count[remaining[1]]],
         source_shape,
         axes: [
-            scale(&descriptor.axes[remaining[0]], source_shape[0], stride)?,
-            scale(&descriptor.axes[remaining[1]], source_shape[1], stride)?,
+            scale(
+                files,
+                &descriptor.axes[remaining[0]],
+                source_shape[0],
+                stride,
+            )?,
+            scale(
+                files,
+                &descriptor.axes[remaining[1]],
+                source_shape[1],
+                stride,
+            )?,
         ],
         fixed,
         index: if dimensions == 3 { index } else { 0 },
@@ -213,7 +158,10 @@ pub(super) fn registered_plane(
     })
 }
 
-pub(crate) fn table(descriptor: &ArrayDescriptor) -> Result<super::TableData, String> {
+pub(crate) fn table(
+    files: &FileReads,
+    descriptor: &ArrayDescriptor,
+) -> Result<super::TableData, String> {
     validate(descriptor)?;
     if descriptor.shape.len() != 2 || descriptor.columns.len() != descriptor.shape[1] {
         return Err("A registered table needs one column definition per stored column.".into());
@@ -224,32 +172,13 @@ pub(crate) fn table(descriptor: &ArrayDescriptor) -> Result<super::TableData, St
     {
         return Err("The live pose table exceeds the one-million-value display budget.".into());
     }
-    let values = match &descriptor.storage {
-        Storage::Npy { path, .. } => {
-            let source = Npy::open(path)?;
-            if source.shape() != descriptor.shape {
-                return Err("The pose table shape differs from its registered descriptor.".into());
-            }
-            source.table()
-        }
-        Storage::Hdf5 { path, dataset } => {
-            let file = hdf5::File::open(path).map_err(|e| e.to_string())?;
-            let source = file.dataset(dataset).map_err(|e| e.to_string())?;
-            if source.shape() != descriptor.shape {
-                return Err("The pose table shape differs from its registered descriptor.".into());
-            }
-            source.read_raw::<f64>().map_err(|e| e.to_string())?
-        }
-        Storage::Member { .. } => {
-            return Err("Live poses require independently readable storage.".into());
-        }
-    };
+    let values = doubles(files, &descriptor.storage, &descriptor.shape)?;
     Ok(super::TableData {
         values: values.into(),
         shape: [descriptor.shape[0], descriptor.shape[1]],
         axes: [
-            scale(&descriptor.axes[0], descriptor.shape[0], 1)?,
-            scale(&descriptor.axes[1], descriptor.shape[1], 1)?,
+            scale(files, &descriptor.axes[0], descriptor.shape[0], 1)?,
+            scale(files, &descriptor.axes[1], descriptor.shape[1], 1)?,
         ],
         columns: descriptor.columns.clone(),
         domain: descriptor.domain.clone(),
@@ -257,6 +186,7 @@ pub(crate) fn table(descriptor: &ArrayDescriptor) -> Result<super::TableData, St
 }
 
 pub(super) fn volume(
+    files: &FileReads,
     descriptor: &ArrayDescriptor,
     max_edge: usize,
     canceled: &dyn Fn() -> bool,
@@ -279,23 +209,7 @@ pub(super) fn volume(
         .iter()
         .map(|n| n.div_ceil(stride))
         .collect();
-    // Small slabs release HDF5's lock between reads so a second reader can serve navigation.
-    let mut values = Vec::with_capacity(count.iter().product());
-    for first in (0..count[0]).step_by(4) {
-        if canceled() {
-            return Err("Volume loading was superseded.".into());
-        }
-        let mut slab = count.clone();
-        slab[0] = (count[0] - first).min(4);
-        values.extend(selection(
-            &descriptor.storage,
-            &descriptor.shape,
-            &[first * stride, 0, 0],
-            &[stride; 3],
-            &slab,
-        )?);
-        std::thread::yield_now();
-    }
+    let values = volume_samples(files, descriptor, &count, stride, canceled)?;
     let statistics = statistics(&values)?;
     let range = [statistics.min, statistics.max];
     let span = (range[1] - range[0]).max(f32::EPSILON);
@@ -303,7 +217,7 @@ pub(super) fn volume(
     let source_shape = axis_order.map(|a| descriptor.shape[a]);
     let scales: Vec<_> = axis_order
         .iter()
-        .map(|&a| scale(&descriptor.axes[a], descriptor.shape[a], 1))
+        .map(|&a| scale(files, &descriptor.axes[a], descriptor.shape[a], 1))
         .collect::<Result<_, _>>()?;
     if scales
         .iter()
@@ -360,6 +274,33 @@ pub(super) fn volume(
         length_unit: scales[0].unit.clone(),
         stride,
     })
+}
+
+fn volume_samples(
+    files: &FileReads,
+    descriptor: &ArrayDescriptor,
+    count: &[usize],
+    stride: usize,
+    canceled: &dyn Fn() -> bool,
+) -> Result<Vec<f32>, String> {
+    let mut values = Vec::with_capacity(count.iter().product());
+    // A 256-cubed volume exceeds the per-selection limit. Split it across z.
+    let slab_depth = ((16 << 20) / (2 * count[1] * count[2])).max(1);
+    for first in (0..count[0]).step_by(slab_depth) {
+        if canceled() {
+            return Err("Volume loading was superseded.".into());
+        }
+        let end = (first + slab_depth).min(count[0]);
+        let roi = [
+            [first * stride, ((end - 1) * stride + 1)],
+            [0, descriptor.shape[1]],
+            [0, descriptor.shape[2]],
+        ];
+        let command = json!({"type":"fetch","storage":descriptor.storage,"shape":descriptor.shape,
+            "roi":roi,"stride":[stride,stride,stride],"encoding":"uint16"});
+        values.extend(pixels(files, command)?.volume(&[end - first, count[1], count[2]])?);
+    }
+    Ok(values)
 }
 
 pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {

@@ -179,35 +179,32 @@ impl AppState {
             return;
         };
         let id = job.id.clone();
-        self.spawn_local(Some(id.clone()),move|canceled|{
-            let result=(||->Result<(),String>{
-                check_cancel(&canceled)?;
-                let parent=destination.parent().ok_or("Invalid export directory")?;
-                if destination.exists(){return Err("The export directory already exists".into());}
-                let stage=tempfile::Builder::new().prefix(".tomojax-export-").tempdir_in(parent).map_err(|e|e.to_string())?;
-                let mut arrays=input.arrays.clone();
-                for (index,(_name,array)) in arrays.iter_mut().enumerate(){
-                    let copy=|storage:&mut Storage,suffix:&str|->Result<(),String>{
-                        match storage {
-                            Storage::Npy{path,..}=>{
-                                let file=format!("array-{index}{suffix}.npy");
-                                local::copy_file(Path::new(path),&stage.path().join(&file),&canceled)?;
-                                *storage=Storage::Npy{path:file,artifact:None};Ok(())
-                            }
-                            _=>Err("This bundle export supports durable NPY arrays only".into()),
-                        }
+        let files = self.file_reads();
+        self.spawn_local(Some(id.clone()), move |canceled| {
+            let result = (|| {
+                let mut sources = Vec::new();
+                let mut arrays = input.arrays;
+                for (index, array) in arrays.values_mut().enumerate() {
+                    let mut copy = |storage: &mut Storage, suffix: &str| -> Result<(), String> {
+                        let Storage::Npy { path, artifact } = storage else {
+                            return Err("This bundle export supports durable NPY arrays only".into());
+                        };
+                        let name = format!("array-{index}{suffix}.npy");
+                        sources.push(json!({"name":name,"path":path,"artifact":artifact}));
+                        *storage = Storage::Npy {path:name, artifact:None};
+                        Ok(())
                     };
-                    copy(&mut array.storage,"")?;
-                    for (axis_index,axis) in array.axes.iter_mut().enumerate(){if let crate::protocol::Coordinates::Coordinates{values}=&mut axis.coordinates{copy(values,&format!("-axis{axis_index}"))?;}}
+                    copy(&mut array.storage, "")?;
+                    for (axis, dimension) in array.axes.iter_mut().enumerate() {
+                        if let crate::protocol::Coordinates::Coordinates {values} = &mut dimension.coordinates {
+                            copy(values, &format!("-axis{axis}"))?;
+                        }
+                    }
                 }
-                let document=json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
-                std::fs::write(stage.path().join("arrays.json"),serde_json::to_vec_pretty(&document).map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
-                check_cancel(&canceled)?;
-                if destination.exists(){return Err("The export directory was created by another process".into());}
-                std::fs::rename(stage.path(),&destination).map_err(|e|e.to_string())?;
-                Ok(())
+                let document = json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
+                local::copy(files, &destination, sources, json!({"arrays.json":document}), &canceled)
             })();
-            LocalEvent::Exported{job:id,result}
+            LocalEvent::Exported {job:id,result}
         });
     }
 
@@ -403,9 +400,7 @@ impl AppState {
                             .map(|asset| project.resolve(&asset.path))
                     });
                     if let Some(path) = path {
-                        let read = metadata::inspection_arrays(&report, &path)
-                            .map(|arrays| (metadata::suggested_kind(&report).to_owned(), arrays));
-                        self.record_read(&id, read, report);
+                        self.audit_stored(id, path, report, None);
                     }
                 }
             }
@@ -426,54 +421,16 @@ impl AppState {
             }
             Pending::Execute(job) => {
                 if let Product::Inspection { report } = &output.value {
-                    let mut refresh = false;
                     let input = self
                         .project
                         .as_ref()
                         .and_then(|p| p.document.jobs.iter().find(|j| j.id == job))
                         .and_then(|j| j.inputs.first())
                         .cloned();
-                    let root = self.project.as_ref().map(|p| p.root.clone());
-                    if let Some(input) = input
-                        && let Some(root) = root
-                        && let Some(asset) = self
-                            .project
-                            .as_mut()
-                            .and_then(|p| p.document.asset_mut(&input.asset))
-                    {
-                        // The full inspection knows which stored frames are sample
-                        // views, which the header reader may not. Worker results keep
-                        // the worker's own registration.
-                        if !asset.is_result()
-                            && let Ok(arrays) = metadata::inspection_arrays(report, &input.path)
-                        {
-                            match arrays.get("projections").cloned() {
-                                Some(mut projections) => {
-                                    projections.relative_to(&root);
-                                    asset.arrays.insert("projections".into(), projections);
-                                }
-                                None => {
-                                    asset.arrays.remove("projections");
-                                }
-                            }
-                            refresh = true;
-                        }
-                        asset.inspection = report.clone();
-                        asset.issue = report
-                            .get("issues")
-                            .and_then(Value::as_array)
-                            .filter(|a| !a.is_empty())
-                            .map(|a| {
-                                a.iter()
-                                    .map(|v| v.as_str().unwrap_or("Inspection issue"))
-                                    .collect::<Vec<_>>()
-                                    .join("; ")
-                            });
-                    }
-                    self.complete_job(&job, None);
-                    if refresh {
-                        self.image_key.clear();
-                        self.refresh_images();
+                    if let Some(input) = input {
+                        self.audit_stored(input.asset, input.path, report.clone(), Some(job));
+                    } else {
+                        self.complete_job(&job, None);
                     }
                 } else if matches!(output.value, Product::Frames { .. })
                     && self.project.as_ref().is_some_and(|p| {
@@ -697,7 +654,7 @@ impl AppState {
             {
                 let filename = format!("{key}.npy");
                 let path = destination.join(&filename);
-                copies.push((PathBuf::from(source), filename));
+                copies.push(json!({"path":source,"name":filename,"artifact":artifact}));
                 durable.storage = Storage::Npy {
                     path: path.to_string_lossy().into(),
                     artifact: None,
@@ -729,7 +686,7 @@ impl AppState {
                 {
                     let filename = format!("{key}-axis{axis_index}.npy");
                     let path = destination.join(&filename);
-                    copies.push((PathBuf::from(source), filename));
+                    copies.push(json!({"path":source,"name":filename,"artifact":artifact}));
                     if let Some(artifact) = artifact {
                         artifacts.push(artifact.clone());
                     }
@@ -753,23 +710,9 @@ impl AppState {
         }
         self.mark_dirty();
         let job = job.to_owned();
+        let files = self.file_reads();
         self.spawn_local(Some(job.clone()), move |canceled| {
-            let result = (|| -> Result<(), String> {
-                check_cancel(&canceled)?;
-                let stage = tempfile::Builder::new()
-                    .prefix(".arrays-")
-                    .tempdir_in(derived)
-                    .map_err(|e| e.to_string())?;
-                for (source, filename) in copies {
-                    local::copy_file(&source, &stage.path().join(filename), &canceled)?;
-                }
-                check_cancel(&canceled)?;
-                if destination.exists() {
-                    return Err("The result destination already exists".into());
-                }
-                std::fs::rename(stage.path(), &destination).map_err(|e| e.to_string())?;
-                Ok(())
-            })();
+            let result = local::copy(files, &destination, copies, json!({}), &canceled);
             LocalEvent::Persisted {
                 job,
                 asset,

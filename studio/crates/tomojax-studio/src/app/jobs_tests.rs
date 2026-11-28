@@ -15,7 +15,7 @@ fn source(state: &mut AppState, directory: &Path) -> CapturedInput {
 
 fn plane(path: &Path) -> ArrayDescriptor {
     serde_json::from_value(json!({
-        "storage":{"type":"npy","path":path,"artifact":"plane-token"},"shape":[2,2],"dtype":"<f4",
+        "storage":{"type":"npy","path":path,"artifact":null},"shape":[2,2],"dtype":"<f4",
         "axes":[
             {"name":"y","frame":"volume","unit":"mm","coordinates":{"type":"uniform","origin":1.,"spacing":2.}},
             {"name":"x","frame":"volume","unit":"mm","coordinates":{"type":"uniform","origin":-1.,"spacing":0.5}}
@@ -109,7 +109,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
         }),
     };
     assert!(state.project.as_ref().unwrap().document.jobs.is_empty());
-    assert!(state.engine.is_none());
+
     state.model.status = "3 s active work remaining".into();
     let id = state.keep_preview(kept).unwrap();
     let until = Instant::now() + Duration::from_secs(5);
@@ -169,10 +169,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
         std::fs::read(project.resolve(Path::new(stored))).unwrap(),
         std::fs::read(&path).unwrap()
     );
-    assert!(
-        state.engine.is_none(),
-        "Keep must not resubmit numerical work"
-    );
+    assert!(state.running.is_none());
     assert_eq!(state.model.status, "Slice preview complete");
 }
 
@@ -294,7 +291,9 @@ fn selected_processing_result_uses_a_central_sinogram_and_its_own_window() {
     state.window.field_mut(1).replace_text("99");
     state.complete_asset(&id, result);
     let until = Instant::now() + Duration::from_secs(3);
-    while state.imaging.plane(5).is_none() || state.imaging.plane(4).is_none() {
+    while state.imaging.plane(5).is_none_or(|p| !p.lossless)
+        || state.imaging.plane(4).is_none_or(|p| !p.lossless)
+    {
         state.poll();
         assert!(Instant::now() < until, "new result did not load");
         std::thread::yield_now();
@@ -324,7 +323,9 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
     state.demo = crate::app::Demo::Off;
     state.startup_input = None;
     state.ui.workspace = Workspace::Jobs;
-    state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
+    state.engine = Some(
+        Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
+    );
     let drive = |state: &mut AppState, done: &dyn Fn(&AppState) -> bool| {
         let until = Instant::now() + Duration::from_secs(120);
         while !done(state) {

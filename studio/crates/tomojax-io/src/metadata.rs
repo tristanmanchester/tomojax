@@ -184,17 +184,6 @@ pub fn quick_metadata(path: &Path) -> Result<Option<HeaderMetadata>, String> {
     Ok(Some((kind, arrays, report)))
 }
 
-/// A suggested loader, still editable when an acquisition's domain is ambiguous.
-/// Whether `path` names an HDF5 file (NXtomo and other HDF5 layouts).
-pub fn is_hdf5(path: &Path) -> bool {
-    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-        matches!(
-            e.to_ascii_lowercase().as_str(),
-            "nx" | "nxs" | "h5" | "hdf" | "hdf5"
-        )
-    })
-}
-
 /// Whether an HDF5 file reads any of its data from other files: through external
 /// links, virtual datasets or external raw storage, as NXtomo masters often do.
 pub fn reads_other_files(path: &Path) -> Result<bool, String> {

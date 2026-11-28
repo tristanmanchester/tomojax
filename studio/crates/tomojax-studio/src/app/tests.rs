@@ -161,7 +161,8 @@ fn registered_projection_fixture() -> (tempfile::TempDir, AppState) {
     state.ui.main_view = PlaneKind::Projection;
     state.refresh_images();
     drive(&mut state, |state| {
-        state.imaging.plane(4).is_some() && state.imaging.plane(5).is_some()
+        state.imaging.plane(4).is_some_and(|p| p.lossless)
+            && state.imaging.plane(5).is_some_and(|p| p.lossless)
     });
     (directory, state)
 }
@@ -175,7 +176,10 @@ fn default_sinogram_uses_the_central_row_and_preserves_an_explicit_row() {
     state.ui.display.sinogram_row = 0;
     state.refresh_images();
     drive(&mut state, |state| {
-        state.imaging.plane(5).is_some_and(|plane| plane.index == 0)
+        state
+            .imaging
+            .plane(5)
+            .is_some_and(|plane| plane.index == 0 && plane.lossless)
     });
     assert_eq!(state.imaging.plane(5).unwrap().statistics.max, 0.);
     let context = state.capture_workspace();
@@ -289,7 +293,8 @@ fn compared_volumes_of_different_depth_show_the_same_slice() {
     state.ui.display.indices[0] = 5;
     state.refresh_images();
     drive(&mut state, |state| {
-        state.imaging.plane(6).is_some() && state.imaging.plane(7).is_some()
+        state.imaging.plane(6).is_some_and(|p| p.lossless)
+            && state.imaging.plane(7).is_some_and(|p| p.lossless)
     });
     // The shared index stops at the shallower volume's last slice on both sides.
     for slot in [6, 7] {
@@ -334,7 +339,9 @@ fn region_statistics_use_only_samples_whose_centers_are_inside_the_box() {
     state.project.as_mut().unwrap().document.assets = vec![volume];
     state.ui.main_view = PlaneKind::Axial;
     state.refresh_images();
-    drive(&mut state, |state| state.imaging.plane(1).is_some());
+    drive(&mut state, |state| {
+        state.imaging.plane(1).is_some_and(|p| p.lossless)
+    });
     state.ui.inspect_tool = InspectTool::Region;
     // Samples 0.2–1.8 on a 4 × 4 slice hold one sample center, (1, 1).
     let uv = |pixel: f32| (pixel + 0.5) / 4.;
@@ -635,7 +642,9 @@ fn importing_a_scan_clears_the_previous_scans_pixels() {
     state.project.as_mut().unwrap().document.assets = vec![volume];
     state.ui.main_view = PlaneKind::Axial;
     state.refresh_images();
-    drive(&mut state, |state| state.imaging.plane(1).is_some());
+    drive(&mut state, |state| {
+        state.imaging.plane(1).is_some_and(|p| p.lossless)
+    });
     let tiffs = directory.path().join("tiffs");
     std::fs::create_dir(&tiffs).unwrap();
     std::fs::write(tiffs.join("view_0001.tif"), b"not yet inspected").unwrap();
@@ -941,7 +950,9 @@ fn real_application_submits_captured_jobs_persists_results_and_reopens_context()
     state.project = Some(Project::open(directory.path(), true).unwrap());
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
+    state.engine = Some(
+        Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
+    );
     drive(&mut state, |s| s.model.backend.ready);
     state.set_operation("simulate", Some(&json!({"size":16,"n_views":24,"seed":3})));
     state.queue_operation("simulate").unwrap();
@@ -1192,7 +1203,9 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     state.project.as_mut().unwrap().document.name = "Interactive preview verification".into();
     state.startup_input = None;
     state.demo = crate::app::Demo::Off;
-    state.engine = Some(Engine::spawn(PathBuf::from(python), std::sync::Arc::new(|| {})).unwrap());
+    state.engine = Some(
+        Engine::spawn_through(PathBuf::from(python), &[], std::sync::Arc::new(|| {})).unwrap(),
+    );
     drive(&mut state, |state| state.model.backend.ready);
     state.set_operation("simulate", Some(&json!({"size":64,"n_views":96,"seed":3})));
     state.queue_operation("simulate").unwrap();
@@ -1410,24 +1423,6 @@ fn real_preview_slider_replaces_pixels_without_creating_durable_jobs() {
     } else {
         state.shutdown();
     }
-}
-
-#[test]
-fn source_copy_never_recurses_into_its_project_or_overwrites_existing_data() {
-    let canceled = std::sync::atomic::AtomicBool::new(false);
-    let directory = tempfile::tempdir().unwrap();
-    let source = directory.path().join("acquisition");
-    std::fs::create_dir(&source).unwrap();
-    std::fs::write(source.join("view.tif"), b"pixels").unwrap();
-    assert!(stage_copy_input(&source, &source.join("project").join("copied"), &canceled).is_err());
-    let destination = directory.path().join("managed");
-    stage_copy_input(&source, &destination, &canceled).unwrap();
-    assert_eq!(
-        std::fs::read(destination.join("view.tif")).unwrap(),
-        b"pixels"
-    );
-    assert!(stage_copy_input(&source, &destination, &canceled).is_err());
-    assert_eq!(std::fs::read(source.join("view.tif")).unwrap(), b"pixels");
 }
 
 #[test]

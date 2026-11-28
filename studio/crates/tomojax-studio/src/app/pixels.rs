@@ -1,6 +1,38 @@
 use super::*;
+use crate::protocol::{ArrayDescriptor, Coordinates, Storage};
 
 impl AppState {
+    pub(super) fn resolved(&self, descriptor: &ArrayDescriptor) -> ArrayDescriptor {
+        let mut descriptor = descriptor.clone();
+        let resolve = |storage: &mut Storage| match storage {
+            Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } => {
+                if let Some(project) = &self.project
+                    && self.remote_project().is_none()
+                {
+                    *path = project.resolve(Path::new(path)).to_string_lossy().into();
+                }
+            }
+            _ => {}
+        };
+        resolve(&mut descriptor.storage);
+        for axis in &mut descriptor.axes {
+            if let Coordinates::Coordinates { values } = &mut axis.coordinates {
+                resolve(values);
+            }
+        }
+        descriptor
+    }
+    pub(super) fn ensure_image_worker(&mut self) {
+        if self.engine.is_none()
+            && self
+                .project
+                .as_ref()
+                .is_some_and(|p| !p.document.assets.is_empty())
+        {
+            self.start_engine();
+        }
+    }
+
     pub(super) fn configure_planes(&mut self) {
         if let Some(value) = std::env::var_os("TOMOJAX_STUDIO_SLOWLINK") {
             match serde_json::from_str::<Vec<String>>(&value.to_string_lossy()) {
@@ -30,8 +62,7 @@ impl AppState {
 
     pub(super) fn select_project_source(&mut self) {
         self.pane_edges = [1024; 8];
-        self.imaging
-            .select_source(self.relay.is_some() || self.remote_project().is_some());
+        self.imaging.invalidate();
         if !self.native_data_available() {
             self.engine.take();
             self.model.backend.ready = false;
@@ -39,13 +70,13 @@ impl AppState {
                 "Not connected to {}",
                 self.remote_project().unwrap_or_default()
             );
-        } else if self.worker_enabled && self.engine.is_none() {
+        } else if self.engine.is_none() {
             self.start_engine();
         }
     }
 
     pub(super) fn preload_planes(&mut self) {
-        if self.relay.is_some() {
+        if self.engine.is_none() {
             self.start_engine();
         }
         self.refresh_images();
@@ -127,7 +158,11 @@ impl AppState {
             self.relay.as_deref().unwrap_or_default(),
             self.wake.clone(),
         ) {
-            Ok(engine) => self.engine = Some(engine),
+            Ok(engine) => {
+                self.imaging.bind(&engine);
+                self.live.bind(engine.files());
+                self.engine = Some(engine);
+            }
             Err(error) => self.model.error = Some(error),
         }
         self.model.backend.status = "Starting TomoJAX".into();

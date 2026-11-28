@@ -1,7 +1,7 @@
 use super::pixels::plane_view;
 use super::*;
 use crate::imaging::{ColorMap, DisplaySettings, ImagingStatus};
-use crate::protocol::{ArrayDescriptor, Coordinates, Storage};
+use crate::protocol::{ArrayDescriptor, Coordinates};
 use crate::volume::{RenderItem, VolumeSettings};
 
 impl AppState {
@@ -90,26 +90,6 @@ impl AppState {
                     .as_ref()
                     .and_then(|id| project.document.asset(id)?.projections())
             })
-    }
-    fn resolved(&self, descriptor: &ArrayDescriptor) -> ArrayDescriptor {
-        let mut descriptor = descriptor.clone();
-        let resolve = |storage: &mut Storage| match storage {
-            Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } => {
-                if let Some(project) = &self.project
-                    && self.remote_project().is_none()
-                {
-                    *path = project.resolve(Path::new(path)).to_string_lossy().into();
-                }
-            }
-            _ => {}
-        };
-        resolve(&mut descriptor.storage);
-        for axis in &mut descriptor.axes {
-            if let Coordinates::Coordinates { values } = &mut axis.coordinates {
-                resolve(values);
-            }
-        }
-        descriptor
     }
 
     /// Makes `id` the asset being viewed and prepared: its view starts fresh (the
@@ -299,6 +279,7 @@ impl AppState {
     }
 
     pub(super) fn refresh_images(&mut self) {
+        self.ensure_image_worker();
         if let Some(volume) = self.active_volume().cloned() {
             let volume = self.resolved(&volume);
             for axis in 0..3 {

@@ -15,7 +15,7 @@ mod ui;
 pub use app::AppState;
 use rune::{AppSpec, Key, KeyEvent, Tx};
 use studio_core::{engine, operations, previews, progress, project, protocol};
-use tomojax_studio::{imaging, live, metadata, volume};
+use tomojax_studio::{imaging, live, volume};
 use ui::model::{PlaneKind, UiAction, Workspace};
 
 fn setup(state: &mut AppState, wake: rune::Waker) {

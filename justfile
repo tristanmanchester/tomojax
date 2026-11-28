@@ -67,6 +67,7 @@ studio-wheel:
 [env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-check: studio-lint
+    cargo build --locked --manifest-path studio/Cargo.toml -p tomojax-worker
     cargo test --locked --manifest-path studio/Cargo.toml --workspace
 
 # Build Studio and capture every workspace headless into .artifacts/studio-snap.

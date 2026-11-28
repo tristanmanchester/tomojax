@@ -202,33 +202,7 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
                 "window needs two ordered finite limits"
             );
             range = Some(span);
-            let mut plane = shape.clone();
-            if plane.len() == 3 {
-                plane.remove(
-                    plane
-                        .iter()
-                        .position(|&n| n == 1)
-                        .ok_or_else(|| anyhow::anyhow!("JPEG requires a plane"))?,
-                );
-            }
-            let [h, w] = plane[..] else {
-                bail!("JPEG requires a plane");
-            };
-            ensure!(
-                h <= u16::MAX as usize && w <= u16::MAX as usize,
-                "JPEG dimensions exceed 65535"
-            );
-            let gray = doubles
-                .into_iter()
-                .map(|v| level(v, span, 255.) as u8)
-                .collect::<Vec<_>>();
-            let mut bytes = Vec::new();
-            JpegEncoder::new_with_quality(&mut bytes, 60).encode(
-                &gray,
-                w as u32,
-                h as u32,
-                ExtendedColorType::L8,
-            )?;
+            let bytes = jpeg(&shape, doubles, span)?;
             ("jpeg", bytes)
         }
     };
@@ -236,6 +210,37 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
         json!({"type":"pixels","shape":shape,"encoding":name,"bytes":bytes.len(),"range":range}),
         bytes,
     ))
+}
+
+fn jpeg(shape: &[usize], values: Vec<f64>, span: [f64; 2]) -> Result<Vec<u8>> {
+    let mut plane = shape.to_vec();
+    if plane.len() == 3 {
+        plane.remove(
+            plane
+                .iter()
+                .position(|&n| n == 1)
+                .ok_or_else(|| anyhow::anyhow!("JPEG requires a plane"))?,
+        );
+    }
+    let [h, w] = plane[..] else {
+        bail!("JPEG requires a plane");
+    };
+    ensure!(
+        h <= u16::MAX as usize && w <= u16::MAX as usize,
+        "JPEG dimensions exceed 65535"
+    );
+    let gray = values
+        .into_iter()
+        .map(|v| level(v, span, 255.) as u8)
+        .collect::<Vec<_>>();
+    let mut bytes = Vec::new();
+    JpegEncoder::new_with_quality(&mut bytes, 60).encode(
+        &gray,
+        w as u32,
+        h as u32,
+        ExtendedColorType::L8,
+    )?;
+    Ok(bytes)
 }
 
 #[cfg(test)]

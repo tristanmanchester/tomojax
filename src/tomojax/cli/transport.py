@@ -150,7 +150,9 @@ def _transport(
     pending = memoryview(b"")
     lines = _Input()
     try:
-        while not session.closing and not box.lost and not terminated.is_set():
+        while (
+            not running.done() and not session.closing and not box.lost and not terminated.is_set()
+        ):
             if not pending:
                 pending = box.take()
             poll.register(stdout, select.POLLHUP | (select.POLLOUT if pending else 0))
@@ -201,7 +203,7 @@ def serve(
         session = Session(Path(root), execute, box.send, inventory, description, box.lock)
         box.send(inventory)
         running = executor.submit(session.work)
-        running.add_done_callback(_executor_done)
+        running.add_done_callback(lambda _: box.notify())
         try:
             return _transport(session, running, box, reader, stdin, stdout, terminated)
         finally:
@@ -226,12 +228,6 @@ def _stop_on_sigterm(terminated: Event, wake: socket.socket) -> None:
             _ = wake.send(b".")
 
     _ = signal.signal(signal.SIGTERM, terminate)
-
-
-def _executor_done(future: Future[None]) -> None:
-    # The transport may be blocked in poll while the only executor has died.
-    if future.exception() is not None:
-        os._exit(1)
 
 
 def _ready() -> e.Ready:

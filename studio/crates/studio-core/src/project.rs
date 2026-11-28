@@ -258,6 +258,15 @@ impl CapturedInput {
     }
 }
 
+pub fn is_hdf5(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+        matches!(
+            e.to_ascii_lowercase().as_str(),
+            "nx" | "nxs" | "h5" | "hdf" | "hdf5"
+        )
+    })
+}
+
 /// Whether a file holds its whole acquisition. Parameter and header files (Nikon
 /// `.xtekct`, SkyScan `.log`, ESRF `.edf`/`.par`) are read together with the frames
 /// beside them.

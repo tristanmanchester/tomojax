@@ -108,14 +108,7 @@ impl Pool {
     }
 }
 
-fn serve(opts: Options) -> Result<()> {
-    use rustix::event::{PollFd, PollFlags, Timespec, poll};
-    studio_core::connection::process::handle_signals()?;
-    let stdout = io::stdout();
-    let mut disconnected = [PollFd::new(&stdout, PollFlags::empty())];
-    let idle = opts.idle;
-    let (events, incoming) = mpsc::sync_channel(256);
-    let send = events.clone();
+fn read_requests(send: SyncSender<Event>) {
     thread::spawn(move || {
         let mut input = io::stdin().lock();
         loop {
@@ -134,6 +127,16 @@ fn serve(opts: Options) -> Result<()> {
         }
         let _ = send.send(Event::Eof);
     });
+}
+
+fn serve(opts: Options) -> Result<()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    studio_core::connection::process::handle_signals()?;
+    let stdout = io::stdout();
+    let mut disconnected = [PollFd::new(&stdout, PollFlags::empty())];
+    let idle = opts.idle;
+    let (events, incoming) = mpsc::sync_channel(256);
+    read_requests(events.clone());
     let (writer, output) = mpsc::sync_channel::<Vec<u8>>(1);
     let send = events.clone();
     thread::spawn(move || {

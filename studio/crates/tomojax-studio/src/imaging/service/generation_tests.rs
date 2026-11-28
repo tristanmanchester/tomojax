@@ -20,8 +20,9 @@ proptest! {
     fn delayed_decodes_never_cross_a_binding_or_replace_a_newer_plane(
         steps in prop::collection::vec((0u8..6,0u8..2,0usize..4,any::<usize>()),1..100)
     ) {
+        let worker = crate::imaging::tests::file_worker();
         let mut images=Imaging::default();
-        images.select_source(true);
+
         let mut epoch=0;
         let mut bound=None;
         let mut floor=0;
@@ -50,7 +51,7 @@ proptest! {
                     let (sent_epoch,request,exact)=replies.swap_remove(choice%replies.len());
                     let (axis,i)=request.key.plane.unwrap();
                     let selection=PlaneSelection::new(&request.descriptor.shape,axis,i,32).unwrap();
-                    let plane=reader::registered_plane(&request.descriptor,axis,i,&selection,vec![i as f32;16],exact).unwrap();
+                    let plane=reader::registered_plane(&worker.files(),&request.descriptor,axis,i,&selection,vec![i as f32;16],exact).unwrap();
                     let ticket=(request.generation,exact);
                     let expected=sent_epoch==epoch && bound.is_some() && request.generation>=floor
                         && (!exact || wanted==Some(request.generation)) && displayed.is_none_or(|last| ticket>=last);

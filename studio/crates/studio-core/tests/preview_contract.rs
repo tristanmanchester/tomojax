@@ -27,7 +27,7 @@ impl Client {
     fn start() -> Self {
         let python = std::env::var_os("TOMOJAX_TEST_PYTHON").expect("set TOMOJAX_TEST_PYTHON");
         let mut client = Self {
-            engine: Engine::spawn(PathBuf::from(python), Arc::new(|| {})).unwrap(),
+            engine: Engine::spawn_through(PathBuf::from(python), &[], Arc::new(|| {})).unwrap(),
             previews: Previews::default(),
             terminals: HashMap::new(),
             published: BTreeMap::new(),

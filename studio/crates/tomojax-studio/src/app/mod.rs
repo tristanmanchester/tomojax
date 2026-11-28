@@ -20,7 +20,6 @@ use crate::{
     engine::{Engine, EngineEvent},
     forms,
     imaging::Imaging,
-    metadata,
     preferences::Preferences,
     project::{self, Asset, Project},
     protocol::{Output, Product, Response, ResultValue, SchemaCatalog},
@@ -83,9 +82,15 @@ enum LocalEvent {
         handle: Option<String>,
         result: Result<(), String>,
     },
+    Audited {
+        asset: String,
+        job: Option<String>,
+        report: Value,
+        result: Result<Option<local::HeaderMetadata>, String>,
+    },
     Metadata {
         asset: String,
-        result: Result<Option<metadata::HeaderMetadata>, String>,
+        result: Result<Option<local::HeaderMetadata>, String>,
     },
     Exported {
         job: String,
@@ -120,7 +125,6 @@ pub struct AppState {
     engine: Option<Engine>,
     relay: Option<Vec<String>>,
     pane_edges: [usize; 8],
-    worker_enabled: bool,
     pub(crate) catalog: SchemaCatalog,
     pending: HashMap<String, Pending>,
     control_watch: Option<ControlWatch>,
@@ -180,7 +184,6 @@ impl AppState {
             engine: None,
             relay: None,
             pane_edges: [1024; 8],
-            worker_enabled: false,
             catalog,
             pending: HashMap::new(),
             control_watch: None,
@@ -252,8 +255,9 @@ impl AppState {
             self.model.backend.status = "Viewing saved project".into();
             return;
         }
-        self.worker_enabled = true;
-        self.start_engine();
+        if self.engine.is_none() {
+            self.start_engine();
+        }
     }
 
     pub fn has_pending_work(&self) -> bool {
@@ -453,6 +457,14 @@ impl AppState {
                     }
                 }
             },
+            LocalEvent::Audited {
+                asset,
+                job,
+                report,
+                result,
+            } => {
+                self.finish_audit(asset, job, report, result);
+            }
             LocalEvent::Metadata { asset: id, result } => {
                 self.metadata_pending = self.metadata_pending.saturating_sub(1);
                 match result {
@@ -481,7 +493,15 @@ impl AppState {
             return;
         }
         match event {
-            EngineEvent::Ready(ready) => self.model.backend = ready.into(),
+            EngineEvent::Ready(ready) => {
+                self.model.backend = ready.into();
+                self.model.backend.ready = false;
+                self.model.backend.status = "Starting TomoJAX".into();
+                if let Some(engine) = &self.engine {
+                    self.imaging.bind(engine);
+                    self.live.bind(engine.files());
+                }
+            }
             EngineEvent::Reply { response, stale } => self.worker_response(response, stale),
             EngineEvent::Diagnostic(message) => {
                 self.last_diagnostic = message;
@@ -566,7 +586,22 @@ impl AppState {
                     self.model.error = Some(message);
                 }
             }
-            Response::Ready(_) | Response::Executor(_) | Response::Block { .. } => {}
+            Response::Executor(crate::protocol::ExecutorState::Ready(ready)) => {
+                self.model.backend = ready.into()
+            }
+            Response::Executor(crate::protocol::ExecutorState::Starting(detail)) => {
+                self.model.backend.ready = false;
+                self.model.backend.status = detail.as_str().unwrap_or("Starting TomoJAX").into();
+            }
+            Response::Executor(crate::protocol::ExecutorState::Gone(detail)) => {
+                self.model.backend.ready = false;
+                self.model.backend.status = detail.as_str().unwrap_or("Executor stopped").into();
+                self.imaging.invalidate();
+                self.live.disconnected();
+                self.image_key.clear();
+                self.disconnect_interactive();
+            }
+            Response::Ready(_) | Response::Block { .. } => {}
         }
     }
 
@@ -765,8 +800,9 @@ impl AppState {
         for (asset, path, inputs) in copies {
             self.copying += 1;
             let selection = selection.clone();
+            let files = self.file_reads();
             self.spawn_local(Some(IMPORT_COPY.into()), move |canceled| {
-                let result = copy_acquisition(&path, &inputs, &canceled);
+                let result = local::copy_acquisition(files, &path, &inputs, &canceled);
                 LocalEvent::Copied {
                     asset,
                     result,
@@ -799,9 +835,10 @@ impl AppState {
             return;
         };
         let asset = id.to_owned();
+        let files = self.file_reads();
         self.metadata_pending += 1;
         self.spawn_local(None, move |canceled| {
-            let result = check_cancel(&canceled).and_then(|()| metadata::quick_metadata(&path));
+            let result = check_cancel(&canceled).and_then(|()| local::stored(files, &path, None));
             LocalEvent::Metadata { asset, result }
         });
     }
@@ -877,95 +914,4 @@ impl AppState {
         }
         self.imaging.shutdown();
     }
-}
-
-/// Copies a chosen input into `inputs` and returns the copy to open. A header
-/// file brings its folder, whose frames it reads. An HDF5 file that reads data
-/// from other files can't be copied: its links would still reach the originals.
-fn copy_acquisition(
-    path: &Path,
-    inputs: &Path,
-    canceled: &std::sync::atomic::AtomicBool,
-) -> Result<PathBuf, String> {
-    let name = path.file_name().unwrap_or_default();
-    if let Some(folder) = path.parent().filter(|_| path.is_file())
-        && !project::holds_whole_acquisition(path)
-    {
-        let copy = inputs.join(folder.file_name().unwrap_or_default());
-        return stage_copy_input(folder, &copy, canceled).map(|()| copy.join(name));
-    }
-    if crate::metadata::is_hdf5(path) && crate::metadata::reads_other_files(path).unwrap_or(false) {
-        return Err(format!(
-            "{} reads data from other files, so it can't be copied. Import it without copying.",
-            name.to_string_lossy()
-        ));
-    }
-    let copy = inputs.join(name);
-    stage_copy_input(path, &copy, canceled).map(|()| copy)
-}
-
-fn stage_copy_input(
-    source: &Path,
-    destination: &Path,
-    canceled: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    check_cancel(canceled)?;
-    let staging = destination.with_extension(format!("{}-partial", project::new_id("copy")));
-    let result = copy_input(source, &staging, canceled).and_then(|()| {
-        check_cancel(canceled)?;
-        if destination.exists() {
-            return Err("The copy destination already exists".into());
-        }
-        std::fs::rename(&staging, destination).map_err(|e| e.to_string())
-    });
-    if result.is_err() {
-        if staging.is_dir() {
-            let _ = std::fs::remove_dir_all(&staging);
-        } else {
-            let _ = std::fs::remove_file(&staging);
-        }
-    }
-    result
-}
-
-fn copy_input(
-    source: &Path,
-    destination: &Path,
-    canceled: &std::sync::atomic::AtomicBool,
-) -> Result<(), String> {
-    check_cancel(canceled)?;
-    if destination.starts_with(source) {
-        return Err("Choose a project outside the source folder before copying that folder".into());
-    }
-    let meta = std::fs::symlink_metadata(source).map_err(|e| e.to_string())?;
-    if meta.file_type().is_symlink() {
-        return Err(
-            "Copying a source with symbolic links requires choosing its resolved dataset path"
-                .into(),
-        );
-    }
-    if destination.exists() {
-        return Err(format!(
-            "The destination already exists: {}",
-            destination.display()
-        ));
-    }
-    if meta.is_dir() {
-        std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
-        for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
-            let entry = entry.map_err(|e| e.to_string())?;
-            copy_input(
-                &entry.path(),
-                &destination.join(entry.file_name()),
-                canceled,
-            )?;
-        }
-    } else if meta.is_file() {
-        std::fs::create_dir_all(destination.parent().ok_or("Invalid copy destination")?)
-            .map_err(|e| e.to_string())?;
-        local::copy_file(source, destination, canceled)?;
-    } else {
-        return Err("Only regular files and acquisition directories can be copied".into());
-    }
-    Ok(())
 }

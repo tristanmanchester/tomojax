@@ -64,6 +64,8 @@ def locate_binary(*, binary: Path | None = None, build: bool = False) -> Path | 
                 str(target),
                 "--bin",
                 EXECUTABLE,
+                "--bin",
+                "tomojax-worker",
             ],
             check=True,
         )

@@ -118,7 +118,7 @@ impl AppState {
                 tx.open_folder(FileDialogOptions{title:"Import an acquisition folder or a folder of NXtomo scans".into(),..Default::default()},|s:&mut AppState,result,_|match result{
                     Ok(Some(path))=>{
                         if path.extension().is_some_and(|e|e.eq_ignore_ascii_case("npz")){s.model.error=Some("NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition.".into());return;}
-                        let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&crate::metadata::is_hdf5(p)).collect();
+                        let mut scans:Vec<_>=std::fs::read_dir(&path).into_iter().flatten().filter_map(Result::ok).map(|e|e.path()).filter(|p|p.is_file()&&studio_core::project::is_hdf5(p)).collect();
                         scans.sort();
                         // A folder of NXtomo/HDF5 scans imports each scan; a folder of
                         // TIFF frames is one acquisition.

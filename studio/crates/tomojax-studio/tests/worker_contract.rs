@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use studio_core::engine::{Engine, EngineEvent};
 use studio_core::project;
 use studio_core::protocol::{ErrorKind, Output, Product, Progress, Response, ResultValue, Storage};
-use tomojax_studio::metadata;
+use tomojax_io::metadata;
 
 struct Client {
     engine: Engine,
@@ -25,7 +25,7 @@ impl Client {
         let python = std::env::var_os("TOMOJAX_TEST_PYTHON")
             .expect("set TOMOJAX_TEST_PYTHON to the locked Python executable");
         let mut client = Self {
-            engine: Engine::spawn(Path::new(&python), Arc::new(|| {})).unwrap(),
+            engine: Engine::spawn_through(Path::new(&python), &[], Arc::new(|| {})).unwrap(),
             terminals: HashMap::new(),
             paused: HashSet::new(),
             previews: Vec::new(),

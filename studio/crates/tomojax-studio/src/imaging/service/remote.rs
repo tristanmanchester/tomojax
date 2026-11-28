@@ -7,6 +7,7 @@ use studio_core::protocol::{Response, ResultValue};
 use super::*;
 
 struct Flight {
+    files: studio_core::engine::FileReads,
     request: Request,
     selection: PlaneSelection,
     encoding: Encoding,
@@ -21,6 +22,7 @@ impl Flight {
             .plane
             .ok_or("A plane selection is required")?;
         let data = reader::registered_plane(
+            &self.files,
             &self.request.descriptor,
             axis,
             index,
@@ -116,6 +118,7 @@ impl Remote {
                     Ok((
                         rid,
                         Arc::new(Flight {
+                            files: engine.files(),
                             request: request.clone(),
                             selection,
                             encoding,

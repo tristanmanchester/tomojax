@@ -5,7 +5,10 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, mpsc};
 use std::thread::JoinHandle;
 use std::time::Instant;
-use studio_core::{engine::Engine, protocol::Response};
+use studio_core::{
+    engine::{Engine, FileReads},
+    protocol::Response,
+};
 
 use super::{PlaneData, VolumeData, reader};
 use studio_core::protocol::ArrayDescriptor;
@@ -114,6 +117,7 @@ struct Inbox {
 }
 
 struct Shared {
+    files: Mutex<Option<FileReads>>,
     inbox: Mutex<Inbox>,
     changed: Condvar,
     cache: Mutex<Cache>,
@@ -155,6 +159,7 @@ impl Default for Imaging {
 impl Imaging {
     pub fn with_budget(bytes: usize) -> Self {
         let shared = Arc::new(Shared {
+            files: Mutex::new(None),
             inbox: Mutex::new(Inbox::default()),
             changed: Condvar::new(),
             cache: Mutex::new(Cache {
@@ -175,7 +180,7 @@ impl Imaging {
             })
             .collect();
         Self {
-            remote: None,
+            remote: Some(Remote::new(shared.clone())),
             shared,
             events: Some(events),
             threads,
@@ -186,14 +191,9 @@ impl Imaging {
         }
     }
 
-    /// Project replacement changes the source of every pane together.
-    pub fn select_source(&mut self, fetch: bool) {
-        self.invalidate();
-        if fetch != self.remote.is_some() {
-            self.remote = fetch.then(|| Remote::new(self.shared.clone()));
-        }
+    pub fn bind(&mut self, engine: &Engine) {
+        *self.shared.files.locked() = Some(engine.files());
     }
-
     pub fn dispatch(&mut self, engine: &mut Engine, windows: &[Option<[f32; 2]>]) -> bool {
         // Consume completed reads before opening another round of up to MAX_SLOTS fetches.
         let changed = self.poll();
@@ -303,7 +303,7 @@ impl Imaging {
             return Ok(());
         }
         self.next_generation += 1;
-        let remote_plane = self.remote.is_some() && plane.is_some();
+        let remote_plane = plane.is_some();
         let previous = self.slots.remove(&slot).filter(|s| {
             s.request.key.source == key.source
                 && s.request.key.plane.map(|p| p.0) == plane.map(|p| p.0)
@@ -325,11 +325,7 @@ impl Imaging {
             submitted: Instant::now(),
             lineage,
         };
-        let cached = if remote_plane {
-            None
-        } else {
-            self.shared.cache.locked().get(&key)
-        };
+        let cached = self.shared.cache.locked().get(&key);
         let mut inbox = self.shared.inbox.locked();
         if inbox.desired.len() >= MAX_SLOTS && !inbox.desired.contains_key(&slot) {
             return Err("The workbench already has 32 active image views.".into());
@@ -401,6 +397,12 @@ impl Imaging {
                 } else {
                     ImagingStatus::Refining
                 };
+                if event.finished && event.request.key.plane.is_some() {
+                    self.shared
+                        .cache
+                        .locked()
+                        .insert(event.request.key.clone(), asset.clone());
+                }
                 self.record(&event.request, &asset, event.cache_hit, event.finished);
             }
             // The previous pixels are no longer the requested plane.
@@ -535,20 +537,17 @@ fn load(shared: &Shared, request: &Request, key: &Key) -> Result<(Asset, bool), 
     if let Some(asset) = shared.cache.locked().get(key) {
         return Ok((asset, true));
     }
-    let asset = if let Some((axis, index)) = key.plane {
-        Asset::Plane(Arc::new(reader::plane(
-            &request.descriptor,
-            axis,
-            index,
-            key.edge,
-        )?))
-    } else {
-        Asset::Volume(Arc::new(reader::volume(
-            &request.descriptor,
-            key.edge,
-            &|| !current(shared, request),
-        )?))
-    };
+    let files = shared
+        .files
+        .locked()
+        .clone()
+        .ok_or("The file worker is disconnected")?;
+    let asset = Asset::Volume(Arc::new(reader::volume(
+        &files,
+        &request.descriptor,
+        key.edge,
+        &|| !current(shared, request),
+    )?));
     shared.cache.locked().insert(key.clone(), asset.clone());
     Ok((asset, false))
 }
@@ -581,7 +580,7 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
             shared: &shared,
             generation: request.generation,
         };
-        let coarse = if request.key.plane.is_some() { 384 } else { 80 };
+        let coarse = 80;
         let edges =
             if request.key.edge > coarse && request.descriptor.shape.iter().any(|&n| n > coarse) {
                 vec![coarse, request.key.edge]
@@ -618,24 +617,6 @@ fn worker(shared: Arc<Shared>, events: mpsc::SyncSender<Completion>) {
             wake();
             if failed {
                 break;
-            }
-        }
-        // Prefetch only neighbors of a completed current view, yielding to foreground work.
-        if let Some((axis, index)) = request.key.plane {
-            if request.descriptor.shape.len() != 3 {
-                continue;
-            }
-            for offset in [1isize, -1, 2, -2] {
-                if !current(&shared, &request) || !shared.inbox.locked().pending.is_empty() {
-                    break;
-                }
-                let neighbor = index as isize + offset;
-                if neighbor < 0 || neighbor as usize >= request.descriptor.shape[axis] {
-                    continue;
-                }
-                let mut key = request.key.clone();
-                key.plane = Some((axis, neighbor as usize));
-                let _ = load(&shared, &request, &key);
             }
         }
     }

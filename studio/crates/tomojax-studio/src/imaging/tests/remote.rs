@@ -7,7 +7,7 @@ fn worker(relay: &[String]) -> Engine {
     Engine::spawn_through(PathBuf::from(python), relay, Arc::new(|| {})).unwrap()
 }
 
-fn advance(imaging: &mut Imaging, engine: &mut Engine) -> bool {
+pub(super) fn advance(imaging: &mut Imaging, engine: &mut Engine) -> bool {
     for event in engine.poll() {
         match event {
             EngineEvent::Reply { response, stale } => {
@@ -100,13 +100,13 @@ fn fetched_planes_match_native_npy_and_hdf5_bit_for_bit() {
     let (npy, hdf, lines) = fixtures(directory.path());
     let mut engine = worker(&[]);
     let mut images = Imaging::default();
-    images.select_source(true);
+    images.bind(&engine);
     images.request_volume(8, hdf.clone(), 32).unwrap();
     images.request_plane(1, npy.clone(), 0, 0, 32).unwrap();
     // Scroll before polling either completion. Both slots must retain their registration.
     for desc in [&npy, &hdf] {
         for axis in 0..3 {
-            let expected = reader::plane(desc, axis, 2, 32).unwrap();
+            let expected = reader::plane(&engine.files(), desc, axis, 2, 32).unwrap();
             images.request_plane(1, desc.clone(), axis, 2, 32).unwrap();
             let until = Instant::now() + Duration::from_secs(15);
             while !matches!(images.status(1), ImagingStatus::Ready) {
@@ -182,7 +182,7 @@ fn killing_slowlink_mid_scroll_retires_old_frames() {
         "6".into(),
     ]);
     let mut images = Imaging::default();
-    images.select_source(true);
+    images.bind(&engine);
     let until = Instant::now() + Duration::from_secs(15);
     let mut shown = 0;
     let mut index = 0;

@@ -129,13 +129,15 @@ impl Queue {
         }
         self.waiting.retain(|(id, _)| *id != ticket);
     }
-    pub fn submit(&mut self, ticket: u64, id: &str) -> Option<Sender<Value>> {
+    pub fn sender(&self, ticket: u64) -> Option<Sender<Value>> {
         let (owner, tx) = self.active.as_ref()?;
         if *owner != ticket {
             return None;
         }
-        self.requests.insert(id.into(), (ticket, tx.clone()));
         Some(tx.clone())
+    }
+    pub fn track(&mut self, id: &str, ticket: u64, tx: Sender<Value>) {
+        self.requests.insert(id.into(), (ticket, tx));
     }
     pub fn reply(&mut self, id: &str, row: &Value, terminal: bool) -> bool {
         if let Some((_, send)) = self.requests.get(id) {

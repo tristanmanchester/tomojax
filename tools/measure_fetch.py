@@ -73,7 +73,7 @@ class Viewer:
     ) -> None:
         assert process.stdin is not None
         assert process.stdout is not None
-        self.decode: msgspec.json.Decoder[e.Response] = msgspec.json.Decoder(e.Response)
+        self.decode = msgspec.json.Decoder(e.ExecutorEvent | e.Block | e.ResultReply | e.ErrorReply)
         self.pipe = process.stdin
         self.stream = process.stdout
         self.path = path
@@ -125,11 +125,9 @@ class Viewer:
     async def reply(self) -> None:
         """Consume one block or finish decoding a frame."""
         line = await self.stream.readline()
-        if json.loads(line)["type"] == "executor":
-            return
         row = self.decode.decode(line)
-        if not isinstance(row, e.Block | e.ResultReply | e.ErrorReply):
-            raise ValueError(f"unexpected fetch reply {row}")
+        if isinstance(row, e.ExecutorEvent):
+            return
         rid = row.request
         req = self.inflight[rid]
         pane = self.panes[req.pane]

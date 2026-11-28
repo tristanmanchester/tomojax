@@ -406,6 +406,15 @@ pub struct Output {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResultValue {
+    Stored {
+        kind: Option<String>,
+        arrays: BTreeMap<String, ArrayDescriptor>,
+        report: Value,
+    },
+    Copy {
+        path: String,
+        bytes: u64,
+    },
     Pixels(crate::pixels::Pixels),
     Output(Box<Output>),
     Description {

@@ -212,9 +212,9 @@ impl Session {
                 let Some(id) = row["id"].as_str() else {
                     return;
                 };
-                if let Some(tx) = self.scripts.submit(ticket, id) {
+                if let Some(tx) = self.scripts.sender(ticket) {
                     let result =
-                        if self.permanent.insert(id.into()) && !self.active.contains_key(id) {
+                        if !self.active.contains_key(id) && self.permanent.insert(id.into()) {
                             self.executor
                                 .as_ref()
                                 .context("executor gone")
@@ -224,9 +224,10 @@ impl Session {
                         };
                     if let Err(e) = result {
                         let error = json!({"type":"protocol_error","request":id,"kind":"invalid_request","message":e.to_string()});
-                        self.scripts.reply(id, &error, true);
+                        let _ = tx.send(error);
+                    } else {
+                        self.scripts.track(id, ticket, tx);
                     }
-                    drop(tx);
                 }
             }
         }
@@ -485,23 +486,7 @@ impl Session {
         let result = if side == Side::Executor {
             self.forward(cmd, bytes)
         } else if let Some(work) = work {
-            let send = self.events.clone();
-            let id = r.id.clone();
-            let pool = if matches!(work, Work::Job(..)) {
-                &self.job_pool
-            } else {
-                &self.pool
-            };
-            pool.submit(move || {
-                if cancel.load(Ordering::Acquire) {
-                    let _ = send.send(Event::Done(id, sequence, Err(anyhow::anyhow!("canceled"))));
-                    return;
-                }
-                let result = work.run(&cancel, |n| {
-                    let _ = send.send(Event::Progress(id.clone(), sequence, n));
-                });
-                let _ = send.send(Event::Done(id, sequence, result));
-            })
+            self.schedule(work, r.id.clone(), sequence, cancel)
         } else {
             self.fast(kind, cmd, &reply)
         };
@@ -510,6 +495,31 @@ impl Session {
             self.leases.remove(&sequence);
         }
         Ok(())
+    }
+
+    fn schedule(
+        &self,
+        work: Work,
+        id: String,
+        sequence: u64,
+        cancel: Arc<AtomicBool>,
+    ) -> Result<()> {
+        let send = self.events.clone();
+        let pool = if matches!(work, Work::Job(..)) {
+            &self.job_pool
+        } else {
+            &self.pool
+        };
+        pool.submit(move || {
+            if cancel.load(Ordering::Acquire) {
+                let _ = send.send(Event::Done(id, sequence, Err(anyhow::anyhow!("canceled"))));
+                return;
+            }
+            let result = work.run(&cancel, |n| {
+                let _ = send.send(Event::Progress(id.clone(), sequence, n));
+            });
+            let _ = send.send(Event::Done(id, sequence, result));
+        })
     }
 
     fn prepare(&self, kind: &str, cmd: &Value, leases: &mut Vec<String>) -> Result<Option<Work>> {
@@ -531,7 +541,11 @@ impl Session {
                 }
                 Work::Copy(request)
             }
-            "list" | "stored" | "peek" | "download" => {
+            "stored" => Work::Stored(
+                files::resolve(cmd["path"].as_str().context("expected path")?)?,
+                cmd.get("inspection").cloned(),
+            ),
+            "list" | "peek" | "download" => {
                 let path = cmd["path"]
                     .as_str()
                     .or_else(|| (kind == "list" && cmd["path"].is_null()).then_some("~"))
@@ -741,6 +755,7 @@ enum Work {
     ),
     Fetch(pixels::Fetch),
     Copy(files::Copy),
+    Stored(PathBuf, Option<Value>),
     File(String, PathBuf, Option<String>),
 }
 pub enum Output {
@@ -766,9 +781,16 @@ impl Work {
                 })
             }
             Work::Copy(request) => Output::Result(files::copy(&request, cancel, progress)?),
+            Work::Stored(path, report) => Output::Result(match report {
+                Some(report) => {
+                    let arrays = crate::metadata::inspection_arrays(&report, &path)
+                        .map_err(anyhow::Error::msg)?;
+                    json!({"type":"stored","kind":crate::metadata::suggested_kind(&report),"arrays":arrays,"report":report})
+                }
+                None => files::stored(&path)?,
+            }),
             Work::File(kind, path, after) => match kind.as_str() {
                 "list" => Output::Result(files::list(&path, after.as_deref())?),
-                "stored" => Output::Result(files::stored(&path)?),
                 "peek" => Output::Result(files::peek(&path)?),
                 "download" => Output::Stream(Payload::File(transfer::Download::open(&path)?)),
                 _ => bail!("unknown file operation"),
