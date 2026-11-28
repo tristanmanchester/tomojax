@@ -1,6 +1,6 @@
 # Large scans and several GPUs
 
-TomoJAX automatically streams projections from host memory and reconstructs volumes in slabs when a scan exceeds GPU memory, and spills large host arrays to disk when they exceed half of available RAM. Streaming applies to projections held as NumPy arrays or memmaps (what `tj.load` returns); JAX arrays already on the GPU stay resident. For long runs on a cluster, pass `checkpoint=` in Python, `--checkpoint DIR` on the CLI, or `checkpoint` to the worker or MCP server to save state to disk and [resume after a kill](#resume-a-run-after-a-kill).
+TomoJAX automatically streams projections from host memory and reconstructs volumes in slabs when a scan exceeds GPU memory, and backs large host arrays with temporary files when their working set will not fit in RAM. Streaming applies to projections held as NumPy arrays or memmaps (what `tj.load` returns); JAX arrays already on the GPU stay resident. For long runs on a cluster, pass `checkpoint=` in Python, `--checkpoint DIR` on the CLI, or `checkpoint` to the worker or MCP server to save state to disk and [resume after a kill](#resume-a-run-after-a-kill).
 
 ## GPU allocator
 
@@ -10,11 +10,11 @@ Several TomoJAX processes can share one GPU on demand; set `XLA_PYTHON_CLIENT_ME
 
 ## What has to fit in host memory
 
-When a large host array would exceed half of available host RAM, TomoJAX backs it with an unlinked temporary file in `TMPDIR` and returns a NumPy memmap:
+TomoJAX uses available host RAM, including the job’s memory limit, to choose between a resident array and an unlinked temporary file. A file-backed array is returned as a NumPy memmap.
 
 | Array | Spills to a temporary file when |
 | --- | --- |
-| Corrected projection stack from `tj.load` or `Frames.corrected` | Stack exceeds half of available RAM |
+| Raw counts corrected by `tj.load` or `Frames.corrected` | The output would leave less room than the batch workspace or one eighth of available RAM, whichever is larger. Stages that need a full intermediate stack retain the half-RAM limit. |
 | Host-slab volume (FBP, FDK, Fourier, MLEM, SIRT) | Volume exceeds half of available RAM |
 | Multi-volume solver state (host-slab CGLS, FISTA-TV, accelerated SIRT) | Combined output and work volumes exceed half of available RAM |
 
@@ -22,7 +22,7 @@ During raw-frame slab reconstruction (`tj.reconstruct_slabs`), raw row blocks ta
 
 `tj.load` logs the spill location; `tj.reconstruct` logs it and records the directory in `info["temporary_file"]`. Because the temporary file is unlinked, it disappears once the array is garbage-collected. Save it with `tj.save`, or pass your own writable memmap as `out=` so the volume is written straight to a named file (an explicit `out=` array is never moved, and solver work files are placed beside it when `out=` is a memmap).
 
-A full-size synchrotron scan easily hits this limit (Diamond I13 159815 is 73 GB corrected). If `TMPDIR` lacks enough free space, TomoJAX raises `MemoryError` listing the required size and free space. On Linux systems where `/tmp` is `tmpfs` (RAM-backed), point `TMPDIR` to a fast local disk before loading, or reduce size with `binning=` or `Frames.selected(...)`.
+The file goes in Python’s standard temporary directory. A cluster job whose `TMPDIR` points to node-local disk uses that disk automatically. To choose another disk, set `TMPDIR` before starting Python. If the directory lacks enough free space, TomoJAX raises `MemoryError` listing the required size and free space. On Linux systems where `/tmp` is `tmpfs` (RAM-backed), point `TMPDIR` to a fast local disk before loading, or reduce size with `binning=` or `Frames.selected(...)`.
 
 ## What has to fit on the GPU
 

@@ -1,6 +1,6 @@
 # Large scans and several GPUs
 
-TomoJAX streams projections and reconstructs in slabs on its own when a scan or volume exceeds GPU memory, and backs large host arrays with temporary files when they exceed half of the available RAM. The full account, with each method's limits, is at https://tomojax.dev/large-scans/.
+TomoJAX streams projections and reconstructs in slabs on its own when a scan or volume exceeds GPU memory, and backs large host arrays with temporary files when their working set exceeds available host or job memory. The full account, with each method's limits, is at https://tomojax.dev/large-scans/.
 
 ## Before a large job
 

@@ -293,7 +293,7 @@ A joint fit uses a working grid of at most 16 million voxels and a detector of a
 
 The fit reads native projections in batches of views and prepares all working resolutions in one pass. It sums finite blocks in `float64`. Where detector pixels are missing, it averages the observed samples and stores their fraction as the weight. The fit releases ordinary memory-mapped input pages as each batch finishes. A scan supplied as a resident NumPy array stays in RAM. Both remain available through `result.scan`.
 
-When correction puts the projections in a temporary file, allow four bytes of disk space per native detector pixel in every view. For Diamond K11-52544 (8,000 × 2,160 × 2,560) that is 164.8 GiB. Set `TMPDIR` to a disk with that much free space before loading the scan. The file occupies that space for as long as the corrected scan, the alignment result, or another reference retains the projections.
+When correction puts the projections in a temporary file, allow four bytes of disk space per native detector pixel in every view. For Diamond K11-52544 (8,000 × 2,160 × 2,560) that is 164.8 GiB. Alignment uses the same temporary directory as reconstruction. If the scheduler sets `TMPDIR` to node-local disk with enough free space, leave it in place. To choose a different disk, set `TMPDIR` before starting Python. The file occupies that space for as long as the corrected scan, the alignment result, or another reference retains the projections.
 
 TomoJAX uses the host or job memory limit when choosing between RAM and disk. In a 32 GiB job, this scan peaked at 6.05 GiB process RSS on one V100S and 6.69 GiB on two. The fits took 1,322 s and 1,272 s after correction. [Large scans](large-scans.md) · [Alignment measurements](measurements.md#alignment)
 
