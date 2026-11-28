@@ -68,21 +68,31 @@ impl Tasks {
             }
         });
         tokio::spawn(async move {
-            let mut reply = CANCEL
+            let reply = CANCEL
                 .scope(
                     cancel,
                     super::activity::CURRENT.scope(activity, server.execute(&name, args)),
                 )
                 .await;
-            reply["resultType"] = json!("complete");
+
             if let Some(task) = server.tasks.0.lock().unwrap().get_mut(&id) {
                 let state = &mut task.state;
                 state.as_object_mut().unwrap().shift_remove("statusMessage");
-                if reply.pointer("/structuredContent/kind") == Some(&json!("canceled")) {
-                    state["status"] = json!("cancelled");
-                } else {
-                    state["status"] = json!("completed");
-                    state["result"] = reply;
+                match reply {
+                    Err(e) => {
+                        state["status"] = json!("failed");
+                        state["error"] = json!(e);
+                    }
+                    Ok(reply)
+                        if reply.pointer("/structuredContent/kind") == Some(&json!("canceled")) =>
+                    {
+                        state["status"] = json!("cancelled");
+                    }
+                    Ok(mut reply) => {
+                        state["status"] = json!("completed");
+                        reply["resultType"] = json!("complete");
+                        state["result"] = reply;
+                    }
                 }
                 state["lastUpdatedAt"] = json!(jiff::Timestamp::now().to_string());
             }

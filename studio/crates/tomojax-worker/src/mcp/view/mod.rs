@@ -72,7 +72,7 @@ struct Panel {
 
 fn source(session: &Session, inventory: &Inventory, name: &str) -> Result<Value> {
     if name.starts_with('@') {
-        return session.ledger.lock().unwrap().resolve(name, false);
+        return session.space.ledger.lock().unwrap().resolve(name, false);
     }
     if let Some((path, dataset)) = name.split_once("::/") {
         return Ok(
@@ -354,7 +354,8 @@ impl Reader<'_> {
         for name in &form.features {
             let id = name.split('.').next().unwrap_or(name);
             ensure!(
-                self.session.ledger.lock().unwrap().record(id)?["product"]["type"] == "feature",
+                self.session.space.ledger.lock().unwrap().record(id)?["product"]["type"]
+                    == "feature",
                 "{name} is not a feature handle"
             );
             let source = source(self.session, self.inventory, name)?;
@@ -473,9 +474,11 @@ impl Reader<'_> {
         }
         let first = self
             .session
+            .history
             .renders
-            .fetch_add(panels.len().div_ceil(3) as u64, Ordering::Relaxed);
-        draw::render(&panels, form, first, Some(&self.session.placements))
+            .fetch_add(panels.len().div_ceil(3) as u64, Ordering::Relaxed)
+            + 1;
+        draw::render(&panels, form, first, Some(&self.session.space.placements))
     }
 }
 
@@ -487,7 +490,7 @@ pub async fn run(
     mut args: Value,
 ) -> Result<(Value, Vec<Value>)> {
     if let Some(marks) = args.get_mut("marks").and_then(Value::as_array_mut) {
-        session.placements.lock().unwrap().locate(marks)?;
+        session.space.placements.lock().unwrap().locate(marks)?;
     }
     let mut form: View = serde_json::from_value(args)?;
     if matches!(form.mode.as_deref(), Some("pose_table" | "pose_plot"))

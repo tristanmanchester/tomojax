@@ -7,6 +7,7 @@ mod images;
 mod inspect;
 mod jobs;
 mod ledger;
+mod namespace;
 mod parts;
 mod schema;
 mod tasks;
@@ -54,10 +55,13 @@ struct Server {
 }
 
 impl Server {
-    async fn execute(&self, name: &str, arguments: Value) -> Value {
+    async fn execute(&self, name: &str, arguments: Value) -> Result<Value, McpError> {
         let reply = match tools::call(&self.connections, name, arguments).await {
             Ok(reply) => reply,
             Err(error) => {
+                if let Some(lost) = error.downcast_ref::<namespace::Lost>() {
+                    return Err(McpError::internal_error(lost.to_string(), None));
+                }
                 let message = error.to_string();
                 let wire = error
                     .downcast_ref::<connection::WorkerError>()
@@ -95,7 +99,7 @@ impl Server {
                 json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],"structuredContent":data,"isError":true})
             }
         };
-        self.parts.lock().unwrap().bounded(reply)
+        Ok(self.parts.lock().unwrap().bounded(reply))
     }
 }
 
@@ -151,7 +155,7 @@ impl ServerHandler for Server {
         } else {
             call.await
         };
-        let result: CallToolResult = response(reply, &ctx)?;
+        let result: CallToolResult = response(reply?, &ctx)?;
         Ok(result.into())
     }
     async fn get_task(&self, req: GetTaskParams, ctx: Context) -> Result<GetTaskResult, McpError> {
@@ -251,16 +255,28 @@ pub async fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
         _ => bail!("Usage: tomojax-worker mcp [--connection NAME]"),
     };
     let connections = std::sync::Arc::new(connection::Connections::new(name));
-    let serving = tasks::Service(Server {
-        tasks: Default::default(),
-        parts: Default::default(),
-        connections: connections.clone(),
-    })
-    .serve(rmcp::transport::stdio())
-    .await?
-    .waiting()
-    .await;
-    connections.close().await;
-    serving?;
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let serving = async {
+        tasks::Service(Server {
+            tasks: Default::default(),
+            parts: Default::default(),
+            connections: connections.clone(),
+        })
+        .serve(rmcp::transport::stdio())
+        .await?
+        .waiting()
+        .await?;
+        anyhow::Ok(())
+    };
+    let result = tokio::select! {
+        done=serving=>done.map(|()| None),
+        _=terminate.recv()=>Ok(Some(signal_hook::consts::SIGTERM)),
+        _=interrupt.recv()=>Ok(Some(signal_hook::consts::SIGINT)),
+    };
+    connections.close("Server shutdown").await;
+    if let Some(signal) = result? {
+        signal_hook::low_level::emulate_default_handler(signal)?;
+    }
     Ok(())
 }

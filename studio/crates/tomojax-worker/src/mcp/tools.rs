@@ -150,13 +150,13 @@ pub async fn run(
             let mut report = json!({
                 "connection":connections.name,
                 "host":state.worker["host"],"directory":state.worker["directory"],"launcher":state.worker["jobs"],
-                "executor":state.executor["state"],"handles":{},"worker_loss":null,
+                "executor":state.executor["state"],"handles":{},"worker_loss":connections.history.report(),
             });
             let executor = &state.executor["detail"];
             if state.executor["state"] == "ready" {
                 let status = query(&session, json!({"type":"status"})).await?;
                 let full = args["detail"] == "full";
-                for (id, entry) in &session.ledger.lock().unwrap().records {
+                for (id, entry) in &session.space.ledger.lock().unwrap().records {
                     let mut summary = entry["summary"].clone();
                     if full {
                         summary["manifest"] = entry["manifest"].clone();

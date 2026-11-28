@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
+import subprocess
 import sys
 import time
 
@@ -342,6 +344,39 @@ def test_cancel_task_on_running_reconstruction(tmp_path, native, server):
         client.task("cancel", tid)
         assert client.terminal(tid)["status"] == "cancelled"
         assert not checked(client, "status")["structuredContent"]["jobs"]
+
+
+def test_task_fails_with_lost_handles_after_executor_exit(native):
+    with native() as client:
+        source = checked(client, "python", code="register(np.array([3]))")["structuredContent"][
+            "value"
+        ]
+        task = client.call("python", tasks=True, code="import os\nos._exit(21)")
+        failed = client.terminal(task["taskId"])
+        assert failed["status"] == "failed" and failed["error"]["code"] == -32603
+        assert source in failed["error"]["message"]
+        ready(client)
+        status = checked(client, "status")["structuredContent"]
+        assert status["worker_loss"]["lost"] == [source] and not status["handles"]
+        state = checked(client, "python", code="len(handles)")["structuredContent"]
+        assert state["value"] == 0 and state["namespace_generation"] == 2
+
+
+def test_sigterm_reaps_stopped_native_connection(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOMOJAX_STUDIO_PYTHON", sys.executable)
+    with connection(tmp_path, executable=binary(), exit_code=-signal.SIGTERM) as client:
+        ready(client)
+        processes = subprocess.check_output(["ps", "-A", "-o", "pid=,ppid="], text=True)
+        (child,) = (
+            pid
+            for pid, parent in (map(int, line.split()) for line in processes.splitlines())
+            if parent == client.process.pid
+        )
+        os.kill(child, signal.SIGSTOP)
+        client.process.terminate()
+        assert client.process.wait(timeout=10) == -signal.SIGTERM
+        with pytest.raises(ProcessLookupError):
+            os.kill(child, 0)
 
 
 def test_saved_paths_link_to_local_outputs_and_reopen(tmp_path, native):
