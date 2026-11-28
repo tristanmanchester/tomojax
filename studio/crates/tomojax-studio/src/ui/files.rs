@@ -58,6 +58,7 @@ pub fn view(state: &AppState) -> El {
 
 fn editor(state: &AppState) -> El {
     let panel = &state.files;
+    let launcher = launcher(panel);
     let mut fields = col().w_full().max_w(650.).gap(16.);
     for (i, (title, hint, explanation)) in [
         (
@@ -80,11 +81,7 @@ fn editor(state: &AppState) -> El {
             "Optional",
             "A command that TomoJAX runs under for interactive work, such as an srun line on a cluster.",
         ),
-        (
-            "Job launcher",
-            "inline, process or slurm",
-            "How submitted jobs run: inline in the session, as a separate process, or through Slurm.",
-        ),
+        ("Job launcher", "", ""),
         (
             "Scheduler options",
             "Optional",
@@ -99,17 +96,21 @@ fn editor(state: &AppState) -> El {
     .into_iter()
     .enumerate()
     {
-        let field = if i == 0 && panel.original.is_some() {
-            property(title, &panel.editor[0].text)
-        } else {
-            field_hint(
+        let field = match i {
+            0 if panel.original.is_some() => property(title, &panel.editor[0].text),
+            4 => {
+                fields = fields.child(launcher_choice(launcher));
+                continue;
+            }
+            5 if launcher != "slurm" => continue,
+            _ => field_hint(
                 &format!("connection-field-{i}"),
                 &panel.editor[i],
                 title,
                 "",
                 hint,
                 move |s| &mut s.files.editor[i],
-            )
+            ),
         };
         fields = fields.child(col().w_full().gap(5.).child(field).child(help(explanation)));
     }
@@ -120,6 +121,84 @@ fn editor(state: &AppState) -> El {
         true,
         Action::Save,
     )))
+}
+
+/// The launcher the editor shows as chosen: the saved one, or the worker's default for
+/// the SSH destinations entered (inline on this computer, a process elsewhere).
+fn launcher(panel: &crate::app::files::FilePanel) -> &str {
+    match panel.editor[4].text.trim() {
+        "" if panel.editor[1].text.trim().is_empty() => "inline",
+        "" => "process",
+        chosen => chosen,
+    }
+}
+
+fn launcher_choice(chosen: &str) -> El {
+    let mut options = col()
+        .key("job-launcher")
+        .role("radiogroup")
+        .label("Job launcher")
+        .w_full()
+        .gap(6.)
+        .child(label("Job launcher", 11., muted()));
+    for (value, title, meaning) in [
+        (
+            "inline",
+            "In the session",
+            "Runs in TomoJAX’s session while Studio is connected. Disconnecting interrupts it.",
+        ),
+        (
+            "process",
+            "Separate process",
+            "Keeps running on that machine after you disconnect.",
+        ),
+        (
+            "slurm",
+            "Slurm batch job",
+            "Queued with Slurm and run on the cluster, with or without Studio.",
+        ),
+    ] {
+        let selected = chosen == value;
+        options = options.child(
+            row()
+                .key(format!("job-launcher-{value}"))
+                .role("radio")
+                .label(title)
+                .checked(selected)
+                .focusable(true)
+                .w_full()
+                .px(12.)
+                .py(9.)
+                .gap(10.)
+                .items_center()
+                .radius(6.)
+                .border(1., if selected { forest() } else { line() })
+                .fill(if selected { sage() } else { paper() })
+                .hover(forest().alpha(0.06))
+                .focus_ring(1.5, 1., forest())
+                .on_press(move |s: &mut AppState| {
+                    s.files.editor[4] = rune::TextEdit::new(value);
+                })
+                .child(
+                    el().size(14., 14.)
+                        .radius(7.)
+                        .border(
+                            if selected { 4.5 } else { 1.5 },
+                            if selected { forest() } else { muted() },
+                        )
+                        .fill(paper()),
+                )
+                .child(
+                    col()
+                        .grow(1.)
+                        .min_w(0.)
+                        .gap(3.)
+                        .child(strong(title, 12., ink()))
+                        .child(label(meaning, 11., muted()).wrap().w_full()),
+                ),
+        );
+    }
+    options
 }
 
 /// One machine in the catalog: its name, what Studio knows about it, and what can be done next.

@@ -281,6 +281,8 @@ impl AppState {
     fn save_connection(&mut self, tx: &mut Tx) -> Result<(), String> {
         let [name, ssh, python, session, jobs, sbatch, results] =
             self.files.editor.each_ref().map(|edit| edit.text.trim());
+        // Scheduler options only mean something to Slurm; the editor hides them otherwise.
+        let sbatch = if jobs == "slurm" { sbatch } else { "" };
         let mut draft = json!({"ssh":ssh.split_whitespace().collect::<Vec<_>>()});
         for (key, value) in [
             ("python", python),
