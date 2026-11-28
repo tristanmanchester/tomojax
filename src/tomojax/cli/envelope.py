@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
+
+import msgspec
 
 from tomojax.cli.operations import ExecutionInput, Window
 from tomojax.cli.products import Output, Snapshot
@@ -63,6 +65,16 @@ class Credit(Record):
     """Return consumed pixel bytes to the shared flow-control window."""
 
     credit: Positive
+
+
+PixelBytes = Annotated[int, msgspec.Meta(ge=65536, le=1048576)]
+INITIAL_PIXEL_CREDIT = 262144
+
+
+class PixelWindow(Record):
+    """Set the shared limit on outstanding pixel bytes."""
+
+    window: PixelBytes
 
 
 class Block(Record, tag="block"):
@@ -127,6 +139,7 @@ class Ready(Record, tag="ready"):
     versions: Versions
     capabilities: tuple[Id, ...]
     devices: tuple[Device, ...]
+    pixel_credit: PixelBytes = INITIAL_PIXEL_CREDIT
 
 
 class ChannelRevision(Record):

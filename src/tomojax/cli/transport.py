@@ -113,17 +113,25 @@ class _Input:
         try:
             request = self.decode.decode(self.buffer)
         except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as err:
-            try:
-                credit = msgspec.json.decode(self.buffer, type=e.Credit)
-            except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
-                self.reject(session, err)
-            else:
-                try:
-                    session.pixels.acknowledge(credit.credit)
-                except ValueError as invalid:
-                    self.reject(session, invalid)
+            self.flow_control(session, err)
         else:
             session.admit(request)
+
+    def flow_control(self, session: Session, request_error: Exception) -> None:
+        try:
+            credit = msgspec.json.decode(self.buffer, type=e.Credit)
+        except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
+            try:
+                window = msgspec.json.decode(self.buffer, type=e.PixelWindow)
+            except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
+                self.reject(session, request_error)
+            else:
+                session.pixels.resize(window.window)
+        else:
+            try:
+                session.pixels.acknowledge(credit.credit)
+            except ValueError as invalid:
+                self.reject(session, invalid)
 
     def reject(self, session: Session, err: Exception) -> None:
         rid = None

@@ -40,7 +40,9 @@ fn interleaved_blocks_decode_handmade_ramps_and_return_even_discarded_credit() {
     let mut wire = wire::WireReader::new(Cursor::new(data));
     let mut read = || {
         wire.next(|n| {
-            credit += n;
+            if let wire::Flow::Credit(bytes) = n {
+                credit += bytes;
+            }
             Ok(())
         })
         .unwrap()
@@ -93,7 +95,9 @@ fn stalled_decoder_keeps_the_latest_frame_and_all_reliable_messages() {
     queue.push(None, "state".to_string());
     while let Some(response) = reader
         .next(|n| {
-            returned += n;
+            if let wire::Flow::Credit(bytes) = n {
+                returned += bytes;
+            }
             Ok(())
         })
         .unwrap()
@@ -110,6 +114,23 @@ fn stalled_decoder_keeps_the_latest_frame_and_all_reliable_messages() {
     assert_eq!(queue.pop().as_deref(), Some("another pane"));
     assert_eq!(queue.pop().as_deref(), Some("settled"));
     assert_eq!(returned, 100 * GREY.len());
+}
+
+#[test]
+fn motion_coalesces_while_jpeg_is_in_flight_and_interrupts_lossless_immediately() {
+    let mut pane = PaneStream::Idle;
+    assert_eq!(pane.next(1), Some(Encoding::Jpeg));
+    pane = PaneStream::Waiting(1, Encoding::Jpeg);
+    assert_eq!(pane.next(2), None);
+    assert!(pane.receive(1, Encoding::Jpeg));
+    assert_eq!(pane.next(3), Some(Encoding::Jpeg));
+    pane = PaneStream::Waiting(3, Encoding::Jpeg);
+    assert!(pane.receive(3, Encoding::Jpeg));
+    assert_eq!(pane.next(3), Some(Encoding::Float32));
+    pane = PaneStream::Waiting(3, Encoding::Float32);
+    assert_eq!(pane.next(4), Some(Encoding::Jpeg));
+    assert!(pane.receive(3, Encoding::Float32));
+    assert_eq!(pane.next(3), None);
 }
 
 proptest! {

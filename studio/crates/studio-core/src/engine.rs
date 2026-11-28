@@ -572,8 +572,9 @@ fn read_worker(
 ) {
     let mut wire = crate::pixels::wire::WireReader::new(BufReader::new(output));
     loop {
-        let message = match wire.next(|bytes| {
-            let line = format!("{{\"credit\":{bytes}}}\n").into_bytes();
+        let message = match wire.next(|flow| {
+            let mut line = serde_json::to_vec(&flow).map_err(|e| e.to_string())?;
+            line.push(b'\n');
             credits
                 .send(Outgoing::Line(line))
                 .map_err(|e| e.to_string())
