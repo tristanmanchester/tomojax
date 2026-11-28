@@ -38,7 +38,11 @@ pub enum Account {
     Pending,
     Allocated,
     LocalLockHeld,
-    Absent { accounted: bool },
+    Absent {
+        accounted: bool,
+    },
+    /// The launcher reports a successful exit, which the runner gives only after publishing.
+    Finished,
 }
 
 impl Account {
@@ -76,6 +80,9 @@ pub fn state(files: Files, account: Account) -> State {
         Account::Pending => State::Queued,
         Account::LocalLockHeld if files.attempt == 0 => State::Queued,
         Account::LocalLockHeld | Account::Allocated => State::Running,
+        // Finished, and its result not yet visible here: a network filesystem can show
+        // the runner's files late.
+        Account::Finished => State::Running,
         Account::Absent { accounted: true } => ended_state(files),
         _ if files.abandoned && !ended => State::Canceled,
         Account::Absent { .. } if ended => ended_state(files),
@@ -84,12 +91,12 @@ pub fn state(files: Files, account: Account) -> State {
 }
 
 fn ended_state(files: Files) -> State {
-    if files.end == Some(Outcome::Failed) {
-        State::Failed
-    } else if files.cancel {
-        State::Canceled
-    } else {
-        State::Interrupted
+    match files.end {
+        Some(Outcome::Failed) => State::Failed,
+        // The runner records completion only after publishing its result.
+        Some(Outcome::Completed) => State::Running,
+        _ if files.cancel => State::Canceled,
+        _ => State::Interrupted,
     }
 }
 

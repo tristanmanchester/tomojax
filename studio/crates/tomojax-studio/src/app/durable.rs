@@ -471,8 +471,8 @@ impl AppState {
     }
 }
 
-// A scheduler can finish before a network filesystem exposes the receipt. Recheck
-// interrupted jobs and outstanding cancellations even after their reply log drains.
+// Recheck outstanding cancellations, and stopped jobs a requeue may resume, even after
+// their reply log drains.
 fn next_read(row: &Reading, focused: bool) -> Option<Duration> {
     if row.records.is_empty() {
         match row.state.as_str() {
@@ -481,8 +481,8 @@ fn next_read(row: &Reading, focused: bool) -> Option<Duration> {
                 return Some(Duration::from_secs(5));
             }
             "canceled" if !row.abandoned => return None,
-            "interrupted" if row.launcher.as_deref() == Some("inline") => return None,
-            "interrupted" | "not_launched" | "canceled" => return Some(Duration::from_secs(5)),
+            "interrupted" => return None,
+            "not_launched" | "canceled" => return Some(Duration::from_secs(5)),
             _ => {}
         }
     }

@@ -202,10 +202,10 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
         let account = match phase {
             "PENDING" | "SPECIAL_EXIT" | "REQUEUED" | "REQUEUE_FED" | "REQUEUE_HOLD"
             | "RESV_DEL_HOLD" => Account::Pending,
-            "COMPLETED" | "CANCELLED" | "FAILED" | "TIMEOUT" | "OUT_OF_MEMORY" | "PREEMPTED"
-            | "NODE_FAIL" | "BOOT_FAIL" | "DEADLINE" | "REVOKED" => {
-                Account::Absent { accounted: true }
-            }
+            // The batch shell exits with the runner's status: 0 only once it published.
+            "COMPLETED" => Account::Finished,
+            "CANCELLED" | "FAILED" | "TIMEOUT" | "OUT_OF_MEMORY" | "PREEMPTED" | "NODE_FAIL"
+            | "BOOT_FAIL" | "DEADLINE" | "REVOKED" => Account::Absent { accounted: true },
             _ => Account::Allocated,
         };
         return Ok(Report {
@@ -238,8 +238,11 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
         })
         .next_back();
     Ok(Report {
-        account: Account::Absent {
-            accounted: detail.is_some(),
+        account: match detail {
+            Some("COMPLETED") => Account::Finished,
+            _ => Account::Absent {
+                accounted: detail.is_some(),
+            },
         },
         id: None,
         detail: detail.unwrap_or("").into(),
