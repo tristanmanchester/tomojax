@@ -123,7 +123,7 @@ On Walnut 1, alignment lowers FDK support error from 0.26 to 0.11, matching the 
 
 ![Each orbit's height relative to orbit 1, recovered by tj.align, against the authors' correction](images/walnut_alignment_heights.png)
 
-- **Single GPU and host RAM:** joint alignment uses one GPU even when several are visible. The full single-precision projection stack sets host memory, which reaches 173 GiB on 8,000-view `k11-52544` (1073 s on V100S).
+- On 8,000-view `k11-52544`, alignment in a 32 GiB job peaked at 6.05 GiB process RSS with one V100S and 6.69 GiB with two. The fits took 1,322 s and 1,272 s after correction (2,054 s and 1,998 s from loading through saving). The corrected projections occupied 164.8 GiB on shared scratch.
 - **Crossing shadows:** attenuation crossing the detector is fitted as motion, pulling horizontal translation on `k11-52544` to 22.4 px versus 2.89 px without the shadow.
 - **Axial rotations:** per-view rotations are weakly determined on axial parallel scans, worsening 5 of 13 synthetic scans and raising held-out error by 2% on `k11-52544`.
 
