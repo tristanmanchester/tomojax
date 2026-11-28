@@ -294,6 +294,7 @@ pub fn peek(path: &Path) -> Result<Value> {
         // Open members by name: an external link resolves into its own file, whose
         // object tokens mean nothing in this one. Names are paths in this file.
         let file = hdf5::File::open(path)?;
+        metadata::native_format(&file).map_err(anyhow::Error::msg)?;
         let mut groups = vec![(String::new(), file.group("/")?)];
         let mut visited = Vec::new();
         while let Some((prefix, group)) = groups.pop() {

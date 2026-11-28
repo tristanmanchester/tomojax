@@ -1241,6 +1241,16 @@ def test_projection_dry_run_reads_only_layout(tmp_path, monkeypatch, forward):
     assert not any(getattr(e, "name", None) in ("load", "correction") for e in events)
 
 
+def test_worker_inventory_reports_the_migration_for_an_rc6_file(worker, tmp_path):
+    from ._helpers import write_rc6_dataset
+
+    path = tmp_path / "legacy.nxs"
+    write_rc6_dataset(path)
+    for command in ("peek", "stored", "inspect"):
+        error = worker(command, path=str(path))["error"]
+        assert "python -m pip install tomojax==1.0.0rc7" in error["message"]
+
+
 def test_feature_open_preflight_checks_the_file_without_reading_the_mask(tmp_path, monkeypatch):
     from tests.worker_adapter import Stage, admitted
     from tomojax.cli import operations as op

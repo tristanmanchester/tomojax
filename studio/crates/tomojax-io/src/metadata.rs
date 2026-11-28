@@ -551,9 +551,8 @@ fn is_rc6(file: &hdf5::File) -> Result<bool, String> {
     Ok(file.link_exists("/entry/processing/tomojax") || legacy_json || bare_rc6)
 }
 
-fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetadata>, String> {
-    use hdf5::types::VarLenUnicode;
-
+/// Recognize supported native files before a caller interprets an acquisition layout.
+pub fn native_format(file: &hdf5::File) -> Result<bool, String> {
     if !file
         .attr_names()
         .map_err(|e| e.to_string())?
@@ -563,7 +562,7 @@ fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetada
         if is_rc6(file)? {
             return Err("Re-save this rc6 file with TomoJAX 1.0.0rc7 (install with `python -m pip install tomojax==1.0.0rc7`): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
         }
-        return Ok(None);
+        return Ok(false);
     }
     let number = file
         .attr("tomojax_format")
@@ -575,6 +574,15 @@ fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetada
         return Err(format!(
             "Unsupported TomoJAX format {number} written by {version}"
         ));
+    }
+    Ok(true)
+}
+
+fn native_metadata(file: &hdf5::File, path: &Path) -> Result<Option<HeaderMetadata>, String> {
+    use hdf5::types::VarLenUnicode;
+
+    if !native_format(file)? {
+        return Ok(None);
     }
     let encoded = file
         .dataset("/entry/record")
