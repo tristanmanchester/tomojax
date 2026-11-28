@@ -12,6 +12,14 @@ pub(in crate::imaging) struct CoordinateWindow {
 }
 
 impl CoordinateWindow {
+    pub(in crate::imaging) fn new(start: usize, step: usize, positions: Arc<[f64]>) -> Self {
+        Self {
+            start,
+            step,
+            positions,
+        }
+    }
+
     fn sample(&self, [lo, hi]: [usize; 2], stride: usize) -> Option<Arc<[f64]>> {
         let offset = lo.checked_sub(self.start)?;
         if !offset.is_multiple_of(self.step) || !stride.is_multiple_of(self.step) {
@@ -63,25 +71,10 @@ pub(super) fn selected(
         "roi":[[start,end]],"stride":[step],"encoding":"float64"}),
     )?
     .doubles(&[(end - start).div_ceil(step)])?;
-    let window = cached.insert(CoordinateWindow {
-        start,
-        step,
-        positions: values.into(),
-    });
-    Ok(window
+    let window = cached.insert(CoordinateWindow::new(start, step, values.into()));
+    window
         .sample(region, stride)
-        .expect("the fetched grid covers the request"))
-}
-
-#[cfg(test)]
-impl Default for CoordinateWindow {
-    fn default() -> Self {
-        Self {
-            start: 0,
-            step: 1,
-            positions: Arc::from([2.0, -1.0]),
-        }
-    }
+        .ok_or_else(|| "The fetched coordinates do not cover the requested region.".into())
 }
 
 #[cfg(test)]

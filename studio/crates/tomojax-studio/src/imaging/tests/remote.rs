@@ -177,11 +177,11 @@ fn fetched_planes_match_native_npy_and_hdf5_bit_for_bit() {
     let p = reader::registered_plane(
         &engine.files(),
         &npy,
-        2,
-        2,
+        (2, 2),
         &selection,
         vec![f32::NAN; 6],
         true,
+        &mut Default::default(),
     )
     .unwrap();
     assert_eq!(

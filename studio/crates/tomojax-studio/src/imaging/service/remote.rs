@@ -301,12 +301,12 @@ mod tests {
             edge: 1024,
             encoding: Encoding::Float32,
         };
-        reg.axes(&key)[0] = Some(Default::default());
+        reg.axes(&key)[0] = Some(super::reader::CoordinateWindow::new(0, 1, [0.0].into()));
         key.plane = Some((0, 1));
         assert!(reg.axes(&key)[0].is_some());
         key.epoch += 1;
         assert!(reg.axes(&key)[0].is_none());
-        reg.axes(&key)[0] = Some(Default::default());
+        reg.axes(&key)[0] = Some(super::reader::CoordinateWindow::new(0, 1, [0.0].into()));
         key.source = "b".into();
         assert!(reg.axes(&key)[0].is_none());
     }
