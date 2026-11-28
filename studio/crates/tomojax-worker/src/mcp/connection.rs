@@ -103,6 +103,7 @@ impl Connections {
             }
             _ => {
                 let session = Arc::new(Transport::start(&self.name, self.history.clone())?);
+                tokio::spawn(heartbeat(Arc::downgrade(&session)));
                 *current = Some((Instant::now(), session.clone()));
                 session
             }
@@ -351,6 +352,25 @@ impl Transport {
             );
         permit.send(line);
         Ok((id, recv))
+    }
+}
+
+/// The worker stops after 120 s without input from its client (a link that died without
+/// closing); a client says it is still there every 15 s, as Studio's owner does.
+async fn heartbeat(transport: std::sync::Weak<Transport>) {
+    loop {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        let Some(transport) = transport.upgrade() else {
+            return;
+        };
+        if transport.inventory.borrow().failure.is_some() {
+            return;
+        }
+        let Ok((_, reply)) = transport.begin(json!({"type": "status"}), None).await else {
+            return;
+        };
+        drop(transport);
+        let _ = reply.await;
     }
 }
 

@@ -475,3 +475,18 @@ def test_queued_executor_leaves_worker_tools_available(tmp_path, monkeypatch, na
         assert checked(client, "inspect", path=str(tmp_path))["structuredContent"][
             "directory"
         ] == str(tmp_path)
+
+
+@pytest.mark.slow
+def test_a_call_longer_than_the_worker_idle_limit_completes(native):
+    # The worker stops after 120 s without client input; the server keeps it alive.
+    with native() as client:
+        ready(client)
+        task = client.call("python", code="import time\ntime.sleep(135)\n7", tasks=True)
+        end = time.monotonic() + 200
+        while (row := client.task("get", task["taskId"]))["status"] == "working":
+            assert time.monotonic() < end
+            time.sleep(1)
+        assert row["status"] == "completed"
+        assert not row["result"].get("isError"), row["result"]["content"][0]
+        assert row["result"]["structuredContent"]["value"] == 7
