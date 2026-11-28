@@ -150,7 +150,7 @@ class DetectorRows:
     ) -> np.ndarray:
         """Rectify a band of parallel data and continue its actual measured horizontal chords."""
         from tomojax.core.host_volume import host_array
-        from tomojax.geometry.coverage import conjugate_weights
+        from tomojax.geometry.coverage import conjugate_weights, outer_edge
 
         from ._continuation import Continuation, parallel_axis_distance
 
@@ -171,18 +171,24 @@ class DetectorRows:
             width = hi - lo
             if not width:
                 continue
-            u = np.clip(u[:, lo:hi], 0, self.measured.nu - 1)
-            v = np.clip(v[:, lo:hi], 0, self.measured.nv - 1)
-            samples = RowSamples(u, v).read(projections, native)[:, 0]
+            sampling = RowSamples.on_panel(
+                u[:, lo:hi],
+                v[:, lo:hi],
+                self.measured,
+                edge_slopes=bool(pad and self.full_parallel_turn),
+            )
+            samples = sampling.read(projections, native)[:, 0]
             begin = pad + lo
             x = (lo + (width - det.nu) / 2) * det.du + det.center[0]
-            outer_only = self.full_parallel_turn and not self.quarter_turn and x != 0
-            measured = samples * conjugate_weights(width, x / det.du) if outer_only else samples
+            edge = outer_edge(x, full_turn=self.full_parallel_turn and not self.quarter_turn)
+            measured = (
+                samples * conjugate_weights(width, x / det.du) if edge is not None else samples
+            )
             result[:, row - first, begin : begin + width] = measured
             if pad:
                 chord = replace(det, nu=width, center=(x, det.center[1]))
                 fit = Continuation(
-                    parallel_axis_distance(chord, width, width), width, width, outer_only=outer_only
+                    parallel_axis_distance(chord, width, width), width, width, edge=edge
                 )
                 low, high = samples[:, : fit.window], samples[:, -fit.window :]
                 radius = fit.radius(np.asarray, low.astype(np.float64), high.astype(np.float64))
@@ -198,10 +204,26 @@ class RowSamples:
 
     u: Float64Array
     v: Float64Array
+    edge_slopes: bool = False
 
-    @staticmethod
-    def taps(coordinate: Float64Array, size: int) -> list[tuple[NDArray[np.int64], Float32Array]]:
+    @classmethod
+    def on_panel(
+        cls, u: Float64Array, v: Float64Array, detector: Detector, *, edge_slopes: bool
+    ) -> RowSamples:
+        """Sample a measured chord, including the physical half pixels at its ends."""
+        margin = 0.5 if edge_slopes else 0.0
+        return cls(
+            np.clip(u, -margin, detector.nu - 1 + margin),
+            np.clip(v, -margin, detector.nv - 1 + margin),
+            edge_slopes=edge_slopes,
+        )
+
+    def taps(
+        self, coordinate: Float64Array, size: int
+    ) -> list[tuple[NDArray[np.int64], Float32Array]]:
         lower = np.floor(coordinate).astype(int)
+        if self.edge_slopes and size > 1:
+            lower = np.clip(lower, 0, size - 2)
         t = (coordinate - lower).astype(np.float32)
         weights = (
             -0.5 * t * (1 - t) ** 2,
@@ -209,6 +231,14 @@ class RowSamples:
             t * (0.5 + t * (2 - 1.5 * t)),
             -0.5 * t * t * (1 - t),
         )
+        if self.edge_slopes and size > 1:
+            # Clamping a tilted chord at the last pixel center flattens its slope.
+            # In the end cells use the line through the two measured centers.
+            end = (coordinate < 1) | (coordinate > size - 2)
+            weights = tuple(
+                np.where(end, linear, w)
+                for linear, w in zip((0, 1 - t, t, 0), weights, strict=True)
+            )
         return [
             (np.clip(lower + delta, 0, size - 1), w)
             for delta, w in zip(range(-1, 3), weights, strict=True)

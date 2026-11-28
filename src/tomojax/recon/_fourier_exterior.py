@@ -27,11 +27,11 @@ class FourierExterior:
         flipped: np.ndarray | tuple[int, ...],
         nfft: int,
         *,
-        outer_only: bool = False,
+        edge: int | None = None,
     ) -> None:
         self.xp, self.nfft = xp, nfft
         idx = np.arange(views, dtype=np.intp)
-        if outer_only:
+        if edge is not None:
             # Measured sides are separate circles, each in directed view order.
             orbit = np.concatenate((idx[::2], idx[1::2]))
             circles = np.stack((orbit, orbit + views))
@@ -44,7 +44,7 @@ class FourierExterior:
             )[None, :]
         self.circles = xp.asarray(circles)
         self.restore = xp.asarray(np.argsort(circles.ravel()))
-        self.fits = row_fits(detector, outer_only=outer_only)
+        self.fits = row_fits(detector, edge=edge)
         self.sharing = xp.asarray(radius_views(views, order))
         if xp is not np:
             phase, taper, _ = radial_coefficients(3 * detector.nu, 3 * nfft, detector.du)

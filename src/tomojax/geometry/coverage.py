@@ -149,6 +149,21 @@ def full_parallel_turn(geometry: Geometry) -> bool:
     return shifts is None and full_rotation(angles)
 
 
+def outer_edge(center: float, *, full_turn: bool) -> int | None:
+    """The only truncated end of an offset full-turn chord, or None for both ends.
+
+    Zero denotes the low-coordinate end and one the high-coordinate end.
+    Opposing axial rays cover the near side of an offset detector.
+    """
+    return int(center > 0) if full_turn and center != 0 else None
+
+
+def scan_outer_edge(geometry: Geometry, detector: Detector) -> int | None:
+    """Outer edge of an axis-aligned detector on the measured trajectory."""
+    center = detector.center[0]
+    return outer_edge(center, full_turn=bool(center) and full_parallel_turn(geometry))
+
+
 def panel_field(width: int, center_px: float) -> tuple[float, float]:
     """Near and far edge distances for a horizontal detector chord, in pixels."""
     return width / 2 - abs(center_px), width / 2 + abs(center_px)

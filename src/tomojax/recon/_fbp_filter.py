@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior
-from tomojax.geometry.coverage import conjugate_weights, full_parallel_turn
+from tomojax.geometry.coverage import conjugate_weights, full_parallel_turn, outer_edge
 
 from ._continuation import Continuation, continued_columns, parallel_axis_distance
 from ._row_filter import filter_rows, filtered_profiles
@@ -84,15 +84,14 @@ def row_filter(
     """The filter of the rows of a ``(views, nv, nu)`` stack, read over the filter ``detector``."""
     nu = projections.shape[-1]
     offset = detector.center[0] / detector.du
-    redundancy = jnp.asarray(conjugate_weights(nu, offset)) if full_turn and offset else None
+    edge = outer_edge(offset, full_turn=full_turn)
+    redundancy = jnp.asarray(conjugate_weights(nu, offset)) if edge is not None else None
     if exterior == "zero":
         spectrum = rfft_filter_array(filter, detector.nu, float(detector.du), jnp.float32)
         return RowFilter(spectrum, None, spectrum, None, redundancy)
     pad = continued_columns(nu)
     distance = parallel_axis_distance(detector, nu, pad)
-    radius2 = jnp.asarray(
-        Continuation(distance, nu, pad, outer_only=redundancy is not None).stack_radius(projections)
-    )
+    radius2 = jnp.asarray(Continuation(distance, nu, pad, edge=edge).stack_radius(projections))
     reach = (detector.nu - nu) // 2
     wide, measured = _spectra(filter, nu, pad, reach, float(detector.du))
     spectrum = jnp.asarray(wide)
@@ -143,7 +142,10 @@ def ramp_rows(rows: jnp.ndarray, filter: RowFilter, detector: Detector) -> jnp.n
     if radius is None or profiles is None:
         return result
     fits = Continuation(
-        parallel_axis_distance(detector, nu, nu), nu, nu, outer_only=filter.redundancy is not None
+        parallel_axis_distance(detector, nu, nu),
+        nu,
+        nu,
+        edge=outer_edge(detector.center[0], full_turn=filter.redundancy is not None),
     )
     place = partial(jnp.asarray, dtype=rows.dtype)
     low, high = fits.amplitudes(place, rows[..., : fits.window], rows[..., -fits.window :], radius)

@@ -18,7 +18,13 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from tomojax.core.geometry.cone import cone_parts
-from tomojax.geometry.coverage import conjugate_weights, full_parallel_turn, panel_field
+from tomojax.geometry.coverage import (
+    conjugate_weights,
+    full_parallel_turn,
+    outer_edge,
+    panel_field,
+    scan_outer_edge,
+)
 
 from ._continuation import (
     Continuation,
@@ -122,13 +128,16 @@ class ChordSample:
                 coordinates = distance.tobytes()
                 if row in global_rows:
                     field[z, coordinates] = _field_radius(
-                        distance, width, outer_only=full_turn and x != 0
+                        distance, width, edge=outer_edge(x, full_turn=full_turn)
                     )
                 if row in local:
-                    sample = RowSamples(
-                        np.clip(u[i, left:right], 0, own.nu - 1),
-                        np.clip(v[i, left:right], 0, own.nv - 1) - first,
+                    sample = RowSamples.on_panel(
+                        u[i, left:right],
+                        v[i, left:right],
+                        own,
+                        edge_slopes=full_turn and not layout.quarter_turn,
                     )
+                    sample.v = sample.v - first
                     band = lower.item(row) - first, upper.item(row) - first
                     chords.append(_Chord(sample, views, band, coordinates, z))
         return cls(
@@ -136,16 +145,19 @@ class ChordSample:
         )
 
     def add(self, first: int, data: np.ndarray | jax.Array) -> None:
-        pending: dict[bytes, list[_Chord]] = {}
+        pending: dict[tuple[bytes, bool], list[_Chord]] = {}
         for chord in self.chords:
             lo, hi = chord.native
             if chord.values is None and first <= lo and hi <= first + data.shape[1]:
-                pending.setdefault(chord.views.tobytes(), []).append(chord)
+                pending.setdefault((chord.views.tobytes(), chord.samples.edge_slopes), []).append(
+                    chord
+                )
         for group in pending.values():
             # One gather per tap covers every sampled chord in this native band.
             samples = RowSamples(
                 np.concatenate([c.samples.u for c in group]),
                 np.concatenate([c.samples.v for c in group]),
+                edge_slopes=group[0].samples.edge_slopes,
             )
             views = group[0].views
             blocks = [samples.read(data, first, views[i : i + 4]) for i in range(0, len(views), 4)]
@@ -170,10 +182,12 @@ class ChordSample:
             data: npt.NDArray[np.float32] = np.concatenate(pieces, dtype=np.float32)[:, None, :]
             distance = np.frombuffer(coordinates, np.float64)
             width = data.shape[-1]
-            outer_only = self.full_turn and distance.item(width) != -distance.item(2 * width - 1)
+            edge = outer_edge(
+                distance.item(width) + distance.item(2 * width - 1), full_turn=self.full_turn
+            )
             with np.errstate(invalid="ignore", divide="ignore"):
                 terms: Host = np.asarray(
-                    _measure(coordinates, host=True, by_row=True, outer_only=outer_only)(data),
+                    _measure(coordinates, host=True, by_row=True, edge=edge)(data),
                     np.float64,
                 ).reshape(7)
             if distance.item(width) <= 0 <= distance.item(2 * width - 1):
@@ -200,7 +214,7 @@ class ScanSample:
     def __init__(self, geometry: ScanGeometry, detector: Detector) -> None:
         distance = axis_distance(geometry, detector, continued_columns(detector.nu))
         self.coordinates = distance.tobytes()
-        self.outer_only = bool(detector.center[0]) and full_parallel_turn(geometry)
+        self.edge = scan_outer_edge(geometry, detector)
         self.views, self.rows = _record_indices(len(geometry.angles), detector.nv)
         self.statistics = np.empty((len(self.rows), 7), np.float64)
         self.present = np.zeros(len(self.rows), bool)
@@ -213,16 +227,16 @@ class ScanSample:
             selected = self.rows[indices] - first
             if isinstance(data, np.ndarray):
                 self.statistics[indices] = _measure(
-                    self.coordinates, outer_only=self.outer_only, host=True, by_row=True
+                    self.coordinates, edge=self.edge, host=True, by_row=True
                 )(data[self.views[:, None], selected])
             else:
                 import jax
 
                 with jax.enable_x64(True):
                     self.statistics[indices] = np.asarray(
-                        _measure(
-                            self.coordinates, outer_only=self.outer_only, host=False, by_row=True
-                        )(data[self.views[:, None], selected])
+                        _measure(self.coordinates, edge=self.edge, host=False, by_row=True)(
+                            data[self.views[:, None], selected]
+                        )
                     )
             self.present[indices] = True
 
@@ -293,7 +307,7 @@ def truncation_values(
     measure = _measure(
         distance.tobytes(),
         host=host,
-        outer_only=bool(detector.center[0]) and full_parallel_turn(geometry),
+        edge=scan_outer_edge(geometry, detector),
     )
     if host:
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -325,9 +339,9 @@ def _combine(rows: np.ndarray | jax.Array) -> np.ndarray | jax.Array:
     )
 
 
-def _field_radius(distance: Host, nu: int, *, outer_only: bool) -> float:
+def _field_radius(distance: Host, nu: int, *, edge: int | None) -> float:
     left, right = distance.item(nu), distance.item(2 * nu - 1)
-    if outer_only:
+    if edge is not None:
         pitch = distance.item(nu) - distance.item(nu - 1)
         return pitch * panel_field(nu, (left + right) / (2 * pitch))[1]
     return min(abs(left), abs(right))
@@ -335,18 +349,18 @@ def _field_radius(distance: Host, nu: int, *, outer_only: bool) -> float:
 
 @lru_cache(maxsize=16)
 def _measure(
-    coordinates: bytes, *, host: bool, outer_only: bool, by_row: bool = False
+    coordinates: bytes, *, host: bool, edge: int | None, by_row: bool = False
 ) -> Callable[[np.ndarray | jax.Array], np.ndarray | jax.Array]:
     """Reduce sampled rows, returning either their individual terms or the scan record."""
     distance: Host = np.frombuffer(coordinates, np.float64)
     nu = len(distance) // 3
     pad = continued_columns(nu)
-    fits = Continuation(distance, nu, pad, outer_only=outer_only)
+    fits = Continuation(distance, nu, pad, edge=edge)
     width: Host = np.abs(np.gradient(distance))
     outside = np.r_[0:pad, pad + nu : pad + nu + pad]
-    fov = _field_radius(distance, nu, outer_only=outer_only)
+    fov = _field_radius(distance, nu, edge=edge)
     measured_width = width[pad : pad + nu]
-    if outer_only:
+    if edge is not None:
         offset = (distance.item(pad) + distance.item(pad + nu - 1)) / (2 * measured_width.item(0))
         measured_width = measured_width * conjugate_weights(nu, offset)
     # An axis outside a panel can coincide with a padded pixel. Only rays

@@ -15,7 +15,7 @@ from tomojax import progress
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
 from tomojax.errors import InvalidParameter
 from tomojax.geometry import Detector, Grid, grid_volume_origin
-from tomojax.geometry.coverage import conjugate_weights
+from tomojax.geometry.coverage import conjugate_weights, outer_edge
 
 from ._continuation import continued_width
 from ._fourier_exterior import FourierExterior
@@ -434,9 +434,10 @@ class FourierPlan:
             progress.preparing("plan fourier transform"),
             self.compute if self.compute is not None else nullcontext(),
         ):
+            edge = outer_edge(detector.center[0], full_turn=full_turn)
             self.opposites = (
                 OpposedDirections(angles, flipped, xp.asarray)
-                if full_turn and (detector.center[0] or weighted_chords)
+                if edge is not None or (full_turn and weighted_chords)
                 else None
             )
             self.redundancy = None
@@ -460,7 +461,7 @@ class FourierPlan:
                     order,
                     flipped,
                     geometry.nfft,
-                    outer_only=bool(full_turn and detector.center[0]),
+                    edge=edge,
                 )
                 if exterior == "cylinder"
                 else None
