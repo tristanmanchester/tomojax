@@ -1,7 +1,7 @@
 //! Encode a registered storage-order hyperslab. The descriptor stays with the client.
 use anyhow::{Result, bail, ensure};
 use hdf5::{Hyperslab, SliceOrIndex};
-use image::{ExtendedColorType, codecs::jpeg::JpegEncoder};
+use jpeg_encoder::{ColorType, Encoder};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use studio_core::protocol::Storage;
@@ -234,12 +234,9 @@ fn jpeg(shape: &[usize], values: Vec<f64>, span: [f64; 2]) -> Result<Vec<u8>> {
         .map(|v| level(v, span, 255.) as u8)
         .collect::<Vec<_>>();
     let mut bytes = Vec::new();
-    JpegEncoder::new_with_quality(&mut bytes, 60).encode(
-        &gray,
-        w as u32,
-        h as u32,
-        ExtendedColorType::L8,
-    )?;
+    let mut encoder = Encoder::new(&mut bytes, 60);
+    encoder.set_optimized_huffman_tables(true);
+    encoder.encode(&gray, w as u16, h as u16, ColorType::Luma)?;
     Ok(bytes)
 }
 
