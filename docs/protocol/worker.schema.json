@@ -311,6 +311,7 @@
             "float32",
             "float64",
             "jpeg",
+            "pco32",
             "uint16"
           ]
         },
@@ -897,6 +898,7 @@
             "float32",
             "float64",
             "jpeg",
+            "pco32",
             "uint16"
           ]
         },

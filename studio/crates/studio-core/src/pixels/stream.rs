@@ -86,7 +86,11 @@ impl PaneStream {
     pub fn next(&self, wanted: u64) -> Option<Encoding> {
         match *self {
             Self::Waiting(_, Encoding::Jpeg) => None,
-            Self::Waiting(g, _) | Self::Received(g, Encoding::Float32) if g == wanted => None,
+            Self::Waiting(g, _) | Self::Received(g, Encoding::Float32 | Encoding::Pco32)
+                if g == wanted =>
+            {
+                None
+            }
             Self::Received(g, Encoding::Jpeg) if g == wanted => Some(Encoding::Float32),
             _ => Some(Encoding::Jpeg),
         }

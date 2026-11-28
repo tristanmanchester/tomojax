@@ -29,7 +29,7 @@ impl Flight {
             index,
             &self.selection,
             values,
-            self.encoding == Encoding::Float32,
+            self.encoding != Encoding::Jpeg,
         )?;
         Ok(Asset::Plane(Arc::new(data)))
     }
@@ -38,7 +38,7 @@ impl Flight {
         Completion {
             request: self.request.clone(),
             asset,
-            finished: self.encoding == Encoding::Float32,
+            finished: self.encoding != Encoding::Jpeg,
             cache_hit: false,
         }
     }
@@ -47,6 +47,7 @@ impl Flight {
 struct Pane {
     stream: PaneStream,
     preview_edge: usize,
+    compact: bool,
 }
 
 impl Default for Pane {
@@ -54,6 +55,7 @@ impl Default for Pane {
         Self {
             stream: PaneStream::default(),
             preview_edge: 384,
+            compact: false,
         }
     }
 }
@@ -70,6 +72,13 @@ impl Pane {
             self.preview_edge = (self.preview_edge * 3 / 2).min(512);
         }
     }
+}
+
+fn integer_detector(dtype: &str) -> bool {
+    matches!(
+        dtype.trim_start_matches(['<', '>', '=', '|']),
+        "u1" | "u2" | "i1" | "i2" | "uint8" | "uint16" | "int8" | "int16"
+    )
 }
 
 pub(super) struct Remote {
@@ -134,6 +143,14 @@ impl Remote {
             let Some(encoding) = pane.stream.next(request.generation) else {
                 continue;
             };
+            let encoding = if encoding == Encoding::Float32
+                && pane.compact
+                && integer_detector(&request.descriptor.dtype)
+            {
+                Encoding::Pco32
+            } else {
+                encoding
+            };
             let mut edge = request.crop.map_or(request.key.edge, |crop| crop.edge);
             if encoding == Encoding::Jpeg {
                 edge = edge.min(pane.preview_edge);
@@ -194,7 +211,13 @@ impl Remote {
             } => {
                 if flight.encoding == Encoding::Jpeg {
                     let edge = flight.selection.count.iter().copied().max().unwrap_or(1);
-                    pane.preview_received(edge, flight.sent.elapsed());
+                    let elapsed = flight.sent.elapsed();
+                    pane.preview_received(edge, elapsed);
+                    // Dense integer frames save about a sixth of their bytes. Below
+                    // this link rate the saving pays for the numerical encoder.
+                    pane.compact = frame
+                        .transfer_rate()
+                        .map_or(elapsed.as_millis() > 40, |rate| rate < 6_000_000.);
                 }
                 self.queue.push(
                     (flight.encoding == Encoding::Jpeg).then_some(request.slot),

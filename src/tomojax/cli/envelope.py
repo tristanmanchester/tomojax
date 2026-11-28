@@ -49,7 +49,7 @@ class Shutdown(Record, tag="shutdown"):
     """Cancel outstanding work and close the session."""
 
 
-PixelEncoding = Literal["jpeg", "float32", "float64", "uint16"]
+PixelEncoding = Literal["jpeg", "float32", "float64", "uint16", "pco32"]
 
 
 class Fetch(Window, tag="fetch", kw_only=True):

@@ -174,6 +174,7 @@ impl<R: BufRead> WireReader<R> {
                     result: ResultValue::Pixels(pixels),
                     ..
                 } => {
+                    pixels.wire_rate = self.credit.rate;
                     let payload = self
                         .partial
                         .remove(request)
