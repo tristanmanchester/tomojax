@@ -28,6 +28,10 @@ class InvalidParameter(ValueError):
         self.path = path
 
 
+class HardwareUnavailable(InvalidParameter):
+    """The selected backend or device is unavailable on this executor."""
+
+
 class Canceled(Exception):
     """The operation stopped at a work boundary.
 
@@ -51,7 +55,7 @@ def within(path: str) -> Iterator[None]:
     try:
         yield
     except InvalidParameter as exc:
-        raise InvalidParameter(f"{path}.{exc.path}", str(exc)) from exc
+        raise type(exc)(f"{path}.{exc.path}", str(exc)) from exc
 
 
 def _causes(exc: BaseException) -> Iterator[BaseException]:
@@ -133,6 +137,8 @@ def classify(exc: Exception) -> Error:
     """Classify a failure by exception type and status along its cause chain."""
     kind = "internal"
     for cause in _causes(exc):
+        if isinstance(cause, HardwareUnavailable):
+            return Error(2, "unavailable", str(exc), cause.path)
         if isinstance(cause, InvalidParameter):
             return Error(2, "invalid_parameter", str(exc), cause.path)
         if isinstance(cause, Canceled):

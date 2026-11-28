@@ -9,7 +9,13 @@ import msgspec
 from tomojax.wire.arrays import Array, Count, Id, Positive, Record, Seconds
 
 type ErrorKind = Literal[
-    "input", "invalid_parameter", "out_of_memory", "canceled", "superseded", "internal"
+    "input",
+    "invalid_parameter",
+    "unavailable",
+    "out_of_memory",
+    "canceled",
+    "superseded",
+    "internal",
 ]
 type Scalar = str | int | float | bool | None
 

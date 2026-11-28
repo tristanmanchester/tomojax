@@ -174,7 +174,7 @@ def _replace_settings(base: MethodConfig, settings: dict[str, object]) -> Method
     except InvalidParameter as err:
         if err.path in settings:
             raise
-        raise InvalidParameter(f"config.{err.path}", str(err)) from err
+        raise type(err)(f"config.{err.path}", str(err)) from err
 
 
 def solver_name(method: str, geometry: Geometry) -> str:

@@ -540,7 +540,8 @@
             "internal",
             "invalid_parameter",
             "out_of_memory",
-            "superseded"
+            "superseded",
+            "unavailable"
           ]
         },
         "message": {

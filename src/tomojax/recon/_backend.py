@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Literal
 from tomojax._parameters import check_backend
 from tomojax.core.backend_policy import cuda_backend
 from tomojax.core.cone import use_cuda_cone
-from tomojax.errors import InvalidParameter
+from tomojax.errors import HardwareUnavailable
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -44,5 +44,5 @@ def reconstruction_backend(
             "fbp_host": "fbp_host: CUDA requires CUDA",
             "fdk": "fdk: the CUDA kernel needs CuPy on a CUDA device",
         }.get(context, f"{context}: {detail}")
-        raise InvalidParameter("config.backend", message)
+        raise HardwareUnavailable("config.backend", message)
     return "jax"

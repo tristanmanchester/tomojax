@@ -13,7 +13,7 @@ import numpy as np
 
 from tomojax import progress
 from tomojax._parameters import DEFAULT_EXTERIOR, Exterior, Filter
-from tomojax.errors import InvalidParameter
+from tomojax.errors import HardwareUnavailable
 from tomojax.geometry import Detector, Grid, grid_volume_origin
 from tomojax.geometry.coverage import conjugate_weights, outer_edge
 
@@ -36,11 +36,11 @@ def _cupy_device() -> int:
     try:
         import cupy
     except ImportError as err:
-        raise InvalidParameter(
+        raise HardwareUnavailable(
             "config.backend", "fourier_reconstruct: backend='cupy' requires tomojax[fourier-cuda12]"
         ) from err
     if not cupy.cuda.is_available():
-        raise InvalidParameter("config.backend", "fourier_reconstruct: CuPy needs a CUDA device")
+        raise HardwareUnavailable("config.backend", "fourier_reconstruct: CuPy needs a CUDA device")
     return cupy.cuda.runtime.getDevice()
 
 
@@ -62,7 +62,7 @@ def resolve_fourier_backend(backend: str) -> Literal["numpy", "cupy"]:
         try:
             if _cupy_device() == device.local_hardware_id:
                 return "cupy"
-        except InvalidParameter:
+        except HardwareUnavailable:
             pass
     return "numpy"
 

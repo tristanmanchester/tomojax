@@ -669,7 +669,7 @@ def test_unavailable_cuda_backend_is_rejected_in_preflight(
         reply = worker(command, operation=recipe)
         assert reply["type"] == "error", reply
         assert (reply["error"]["kind"], reply["error"]["path"]) == (
-            "invalid_parameter",
+            "unavailable",
             "config.backend",
         )
 

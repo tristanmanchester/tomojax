@@ -486,6 +486,7 @@ pub enum Progress {
 pub enum ErrorKind {
     Input,
     InvalidParameter,
+    Unavailable,
     OutOfMemory,
     Canceled,
     Superseded,

@@ -18,7 +18,7 @@ from tomojax.cli import execution as ex, operations as op
 from tomojax.cli._parameter_types import option_types
 from tomojax.core.devices import as_devices
 from tomojax.core.files import validate_virtual_pixels
-from tomojax.errors import InvalidParameter, within
+from tomojax.errors import HardwareUnavailable, InvalidParameter, within
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
 
 
@@ -59,7 +59,7 @@ def _decode_argument(
     if name == "devices":
         inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
         if any(d not in inventory for d in value):
-            raise InvalidParameter(name, f"expected distinct device ids from {tuple(inventory)}")
+            raise HardwareUnavailable(name, f"expected distinct device ids from {tuple(inventory)}")
         return as_devices(tuple(inventory[d] for d in value))
     if isinstance(value, tuple):
         return tuple(
