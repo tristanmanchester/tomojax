@@ -98,6 +98,7 @@ impl Handshake {
                                 progress: 2,
                                 versions,
                                 devices,
+                                ..
                             },
                         ..
                     }) => (session, versions, devices),

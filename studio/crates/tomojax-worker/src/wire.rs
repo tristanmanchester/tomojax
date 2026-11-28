@@ -211,3 +211,43 @@ impl Outbox {
         Some((frame, None))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn outstanding_blocks_follow_every_ack_and_window(actions in prop::collection::vec((0..3u8,1..=1048576usize),1..80)) {
+            let mut out = Outbox::default();
+            let reply = Reply {id:"plane".into(),channel:Value::Null};
+            out.streams.insert(reply.id.clone(), (reply, Payload::Frame{bytes:vec![0;8 << 20],offset:0,result:Value::Null}));
+            let (mut window, mut outstanding) = (CREDIT, 0usize);
+            for (action, n) in actions {
+                match action {
+                    0 => {window = n.max(BLOCK); out.window(window as u64).unwrap();}
+                    1 if outstanding != 0 => {
+                        let amount = outstanding.min(n);
+                        out.credit(amount as u64).unwrap();
+                        outstanding -= amount;
+                    }
+                    _ => {
+                        let expected = BLOCK.min(window.saturating_sub(outstanding));
+                        if expected == 0 {
+                            prop_assert!(out.take().is_none());
+                        } else {
+                            let (bytes, _) = out.take().unwrap();
+                            let boundary = bytes.iter().position(|&v| v == b'\n').unwrap();
+                            let header: Value = serde_json::from_slice(&bytes[..boundary]).unwrap();
+                            prop_assert_eq!(header["bytes"].as_u64(), Some(expected as u64));
+                            prop_assert_eq!(bytes.len() - boundary - 1, expected);
+                            outstanding += expected;
+                        }
+                    }
+                }
+                prop_assert!(out.credit((outstanding+1) as u64).is_err());
+            }
+        }
+    }
+}

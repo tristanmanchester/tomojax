@@ -201,6 +201,7 @@ class StatusReport(Record, tag="status"):
     handles: dict[str, Count]
     allocators: tuple[Snapshot, ...]
     python_namespace_bytes: Count = 0
+    executor: ExecutorEvent | None = None
 
 
 class Ack(Record, tag="ack"):

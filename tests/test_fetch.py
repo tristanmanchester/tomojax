@@ -71,6 +71,8 @@ def test_lossless_plane(tmp_path, stored, line_detector):
     frame, payload = fetch(request)
     expected = samples[1:15, y : y + 1, 2:20:3]
     byte_planes = np.frombuffer(imagecodecs.zstd_decode(payload), dtype="u1").reshape(4, -1)
+    reference = np.ascontiguousarray(expected, dtype="<f4").reshape(-1)
+    assert payload == imagecodecs.zstd_encode(imagecodecs.byteshuffle_encode(reference), level=1)
     assert byte_planes.T.copy().tobytes() == expected.astype("<f4").tobytes()
     assert frame.shape == expected.shape and frame.bytes == len(payload)
 

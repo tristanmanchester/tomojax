@@ -1093,6 +1093,17 @@
           "type": "integer",
           "minimum": 0,
           "default": 0
+        },
+        "executor": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExecutorEvent"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -1100,6 +1111,49 @@
         "requests",
         "handles",
         "allocators"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutorEvent": {
+      "title": "ExecutorEvent",
+      "description": "A generation of the numerical executor started, became ready or ended.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "executor"
+          ]
+        },
+        "state": {
+          "enum": [
+            "gone",
+            "ready",
+            "starting"
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Ready"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "state",
+        "detail",
+        "generation"
       ],
       "additionalProperties": false
     },
@@ -1250,49 +1304,6 @@
         "directory",
         "jobs",
         "pixel_credit"
-      ],
-      "additionalProperties": false
-    },
-    "ExecutorEvent": {
-      "title": "ExecutorEvent",
-      "description": "A generation of the numerical executor started, became ready or ended.",
-      "type": "object",
-      "properties": {
-        "type": {
-          "enum": [
-            "executor"
-          ]
-        },
-        "state": {
-          "enum": [
-            "gone",
-            "ready",
-            "starting"
-          ]
-        },
-        "detail": {
-          "anyOf": [
-            {
-              "type": "string"
-            },
-            {
-              "$ref": "#/$defs/Ready"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "generation": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        }
-      },
-      "required": [
-        "type",
-        "state",
-        "detail",
-        "generation"
       ],
       "additionalProperties": false
     }

@@ -65,6 +65,9 @@ class Frame:
     decoded_ms: float
 
 
+type ViewerReply = e.ExecutorEvent | e.Block | e.ResultReply | e.ErrorReply
+
+
 class Viewer:
     """Drive the three pane channels against one worker."""
 
@@ -73,7 +76,7 @@ class Viewer:
     ) -> None:
         assert process.stdin is not None
         assert process.stdout is not None
-        self.decode = msgspec.json.Decoder(e.ExecutorEvent | e.Block | e.ResultReply | e.ErrorReply)
+        self.decode: msgspec.json.Decoder[ViewerReply] = msgspec.json.Decoder(ViewerReply)
         self.pipe = process.stdin
         self.stream = process.stdout
         self.path = path

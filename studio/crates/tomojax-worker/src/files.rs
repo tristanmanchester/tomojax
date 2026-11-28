@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{ErrorKind, Read, Write};
+use std::os::unix::fs::FileExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
@@ -25,12 +26,20 @@ pub fn resolve(path: &str) -> Result<PathBuf> {
     }
 }
 
-fn signature(path: &Path) -> bool {
+fn signature(path: &Path) -> Result<bool> {
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    // An HDF5 user block may precede the superblock at any power of two from 512.
+    let mut offset: u64 = 0;
     let mut bytes = [0; 8];
-    File::open(path)
-        .and_then(|mut file| file.read_exact(&mut bytes))
-        .is_ok()
-        && bytes == *b"\x89HDF\r\n\x1a\n"
+    while offset + 8 <= size {
+        file.read_exact_at(&mut bytes, offset)?;
+        if bytes == *b"\x89HDF\r\n\x1a\n" {
+            return Ok(true);
+        }
+        offset = (offset * 2).max(512);
+    }
+    Ok(false)
 }
 
 pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
@@ -77,7 +86,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
         } else {
             "other"
         };
-        entries.push(json!({"name":name,"kind":kind,"size":meta.len(),"modified": meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs_f64(), "hdf5":meta.is_file() && signature(&child)}));
+        entries.push(json!({"name":name,"kind":kind,"size":meta.len(),"modified": meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs_f64(), "hdf5":meta.is_file() && signature(&child).unwrap_or(false)}));
     }
     Ok(
         json!({"type":"list","path":path,"writable":access(&path, Access::WRITE_OK).is_ok(),"entries":entries,"after":next}),
@@ -110,6 +119,10 @@ fn relative(name: &str) -> Result<&Path> {
 }
 
 pub fn copy(request: &Copy, canceled: &AtomicBool, mut progress: impl FnMut(u64)) -> Result<Value> {
+    ensure!(
+        !request.sources.is_empty() || !request.documents.is_empty(),
+        "copy requires a source or document"
+    );
     let dest = resolve(&request.destination)?;
     let parent = dest
         .parent()
@@ -147,7 +160,7 @@ pub fn copy(request: &Copy, canceled: &AtomicBool, mut progress: impl FnMut(u64)
                     pending.push((entry.path(), to.join(entry.file_name())));
                 }
             } else if meta.is_file() {
-                if signature(&from)
+                if signature(&from)?
                     && metadata::reads_other_files(&from).map_err(anyhow::Error::msg)?
                 {
                     bail!(
@@ -270,7 +283,7 @@ pub fn peek(path: &Path) -> Result<Value> {
             json!({"type":"peek","directory":path,"datasets":datasets,"candidate_count":candidates,"subdirectories":names,"subdirectory_count":directories,"tiff_files":frames,"checkpoints":checkpoints,"omitted":candidates-datasets.len()}),
         );
     }
-    if signature(path) {
+    if signature(path)? {
         let file = hdf5::File::open(path)?;
         let mut groups = vec![file.group("/")?];
         let mut visited = Vec::new();

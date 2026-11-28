@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import termios
+import time
 
 from jsonschema import Draft202012Validator
 import numpy as np
@@ -429,11 +430,18 @@ def test_only_adjacent_advances_coalesce_behind_blocked_writer(client):
     assert select.select([fd], [], [], 8)[0]
     c.send("ticks", "inspect", path="ticks")
     c.mark(b"D")
+    # Keep stdout blocked until Rust has read the executor's final record.
+    directory = Path(c.rows[-1]["detail"]["root"]).parent
+    c.proc.stdin.close()
+    deadline = time.monotonic() + 4
+    while directory.exists():
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
     c.end("ticks")
     events = [row["record"] for row in c.rows if row["type"] == "progress"]
     assert [event["event"] for event in events] == ["advanced", "note"]
     assert events[0]["done"] == 99
-    c.shutdown()
+    assert c.proc.wait(8) == 0
 
 
 def test_broken_stdout_wakes_paused_executor_and_cleans_session(client, tmp_path):
@@ -615,8 +623,6 @@ def test_resize_with_unacknowledged_blocks(client, tmp_path):
 
 
 def test_fetch_admission_spans_files_and_executor(client, tmp_path):
-    import imagecodecs
-
     path = tmp_path / "values.npy"
     np.save(path, np.arange(4).reshape(2, 2))
     fields = {"storage": {"type": "npy", "path": str(path)}, "shape": [2, 2], "encoding": "float32"}
@@ -633,17 +639,21 @@ def test_fetch_admission_spans_files_and_executor(client, tmp_path):
     assert client.read()["type"] == "protocol_error"
     client.proceed()
     assert client.end("running")["type"] == "result"
-    client.send("open", "open", path="volume", kind="reconstruction")
-    handle = client.end("open")["result"]["value"]["handle"]
-    client.send(
-        "plane",
-        "plane",
-        source={"type": "member", "handle": handle, "member": "volume"},
-        axis="x",
-        index=1,
-    )
-    ref = client.end("plane")["result"]["value"]["plane"]["storage"]
-    fields = {"storage": ref, "shape": [2, 3], "encoding": "float32"}
+    client.shutdown()
+
+
+def test_fetch_pins_a_read_of_a_member_until_release_and_close(worker, tmp_path):
+    import imagecodecs
+
+    client = worker
+    lines = (DOCS / "transcripts/simulation.jsonl").read_text().splitlines()
+    client.send("sim", "run", operation=json.loads(lines[0])["command"]["operation"])
+    source = client.end("sim")["result"]["value"]["phantom"]["storage"]
+    client.send("read", "read", source=source)
+    array = client.end("read")["result"]["value"]["array"]
+    ref = array["storage"]
+    expected = np.load(ref["path"])
+    fields = {"storage": ref, "shape": array["shape"], "encoding": "float32"}
     client.send("wrong", "fetch", **{**fields, "storage": {**ref, "artifact": "wrong"}})
     assert client.read()["type"] == "protocol_error"
     # Occupy all four file readers before admitting the leased read.
@@ -659,7 +669,7 @@ def test_fetch_admission_spans_files_and_executor(client, tmp_path):
         )
     client.send("leased", "fetch", **fields)
     client.send("release", "release", artifact=ref["artifact"])
-    client.send("close", "close", handle=handle)
+    client.send("close", "close", handle="sim")
     client.send("heartbeat", "status")
     client.end("heartbeat")
     assert Path(ref["path"]).exists() and "release" not in client.terminal
@@ -672,15 +682,16 @@ def test_fetch_admission_spans_files_and_executor(client, tmp_path):
     data = imagecodecs.zstd_decode(client.blocks["leased"])
     np.testing.assert_array_equal(
         np.frombuffer(data, dtype="u1").reshape(4, -1).T.copy().view("<f4").ravel(),
-        [1, 5, 9, 13, 17, 21],
+        expected.ravel(),
     )
     client.end("release")
     client.end("close")
     assert not Path(ref["path"]).exists()
-    client.shutdown()
 
 
 def test_executor_generation_ends_waiters_once(client):
+    client.send("before", "status", channel="heartbeat")
+    assert client.end("before")["channel"]["revision"] == 1
     client.send("bad", "inspect", path="executor-exit")
     client.send("waiting", "inspect", path="wait")
     assert client.end("bad")["error"]["kind"] == "input"
@@ -688,6 +699,7 @@ def test_executor_generation_ends_waiters_once(client):
     while (row := client.read()).get("state") != "ready":
         pass
     assert row["generation"] == 2
-    client.send("again", "status")
-    assert client.end("again")["result"]["handles"] == {}
+    client.send("again", "status", channel="heartbeat")
+    reply = client.end("again")
+    assert reply["result"]["handles"] == {} and reply["channel"]["revision"] == 2
     client.shutdown()

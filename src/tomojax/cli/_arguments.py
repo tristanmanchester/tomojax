@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import h5py
 import jax
@@ -20,6 +20,9 @@ from tomojax.core.devices import as_devices
 from tomojax.core.files import validate_virtual_pixels
 from tomojax.errors import HardwareUnavailable, InvalidParameter, within
 from tomojax.wire.arrays import Hdf5, Member, Npy, Record
+
+if TYPE_CHECKING:
+    from tomojax._typed_arrays import Device
 
 
 @cache
@@ -57,21 +60,26 @@ def _decode_argument(
                 **arguments(value, context, layout_only=layout_only)
             )
     if name == "devices":
-        inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
-        if any(
-            not d.partition(":")[2].isdecimal() or d.partition(":")[0] not in {"cpu", "gpu", "tpu"}
-            for d in value
-        ):
-            raise InvalidParameter(name, "expected platform:index device IDs")
-        if any(d not in inventory for d in value):
-            raise HardwareUnavailable(name, f"expected distinct device ids from {tuple(inventory)}")
-        return as_devices(tuple(inventory[d] for d in value))
+        return _resolve_devices(value)
     if isinstance(value, tuple):
         return tuple(
             _decode_argument(f"{name}[{i}]", item, context, layout_only=layout_only)
             for i, item in enumerate(value)
         )
     return value
+
+
+def _resolve_devices(ids: tuple[str, ...]) -> tuple[Device, ...] | None:
+    inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
+    for device in ids:
+        platform, _, index = device.partition(":")
+        if not index.isdecimal() or platform not in {"cpu", "gpu", "tpu"}:
+            raise InvalidParameter("devices", "expected platform:index device IDs")
+    if any(device not in inventory for device in ids):
+        raise HardwareUnavailable(
+            "devices", f"expected distinct device ids from {tuple(inventory)}"
+        )
+    return as_devices(tuple(inventory[device] for device in ids))
 
 
 def handle_member(

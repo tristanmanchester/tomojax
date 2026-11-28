@@ -26,6 +26,10 @@ pub enum Peer {
     Executor {
         progress: u8,
         versions: Versions,
+        #[serde(default)]
+        schema: String,
+        #[serde(default)]
+        root: String,
         devices: Vec<Device>,
     },
 }

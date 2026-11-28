@@ -2,9 +2,12 @@
 use crate::{
     Event, Options,
     executor::Executor,
-    files, pixels, transfer,
-    wire::{Input, Outbox, Payload, Reply},
+    files, transfer,
+    wire::{Input, Outbox, Reply},
 };
+mod work;
+pub use work::Output;
+
 use anyhow::{Context, Result, bail, ensure};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -65,6 +68,7 @@ pub struct Session {
     opts: Options,
     pub out: Outbox,
     pub closing: Option<Instant>,
+    shutdown: Option<Reply>,
     pub executor: Option<Executor>,
     generation: u64,
     root: Option<PathBuf>,
@@ -101,6 +105,7 @@ impl Session {
             opts,
             out,
             closing: None,
+            shutdown: None,
             executor: None,
             generation: 0,
             root: None,
@@ -159,7 +164,7 @@ impl Session {
     }
 
     pub fn gone(&mut self, generation: u64, reason: String) {
-        if generation != self.generation {
+        if generation != self.generation || self.detail["state"] == "gone" {
             return;
         }
         self.executor.take();
@@ -250,7 +255,7 @@ impl Session {
         if self.generation != generation || self.executor.is_none() {
             return Ok(());
         }
-        let value: Value = serde_json::from_slice(&bytes)?;
+        let mut value: Value = serde_json::from_slice(&bytes)?;
         if value["type"] == "ready" {
             ensure!(
                 self.root.is_none() && value["protocol"] == 1,
@@ -282,17 +287,56 @@ impl Session {
         if matches!(value["type"].as_str(), Some("result" | "progress")) {
             self.record_tokens(id, &value);
         }
-        if matches!(
-            value["type"].as_str(),
-            Some("result" | "protocol_error" | "error")
-        ) {
-            self.active.remove(id);
-        }
+        let mut changed = false;
         if value["type"] == "protocol_error" {
             self.permanent.remove(id);
+            if let Some(active) = self.active.remove(id) {
+                self.reject_revision(&active);
+            }
+        } else if let Some(active) = self.active.get(id) {
+            // The executor starts counting at one again after a generation change.
+            let channel = active.reply.channel.clone();
+            let status = value["result"]["type"] == "status";
+            let request = id.to_owned();
+            if terminal {
+                self.active.remove(&request);
+            }
+            if status {
+                self.add_status(&mut value["result"], &request);
+                changed = true;
+            }
+            if value["channel"] != channel {
+                value["channel"] = channel;
+                changed = true;
+            }
         }
-        self.out.queue_record(&value, bytes);
+        if changed {
+            self.out.send(value);
+        } else {
+            self.out.queue_record(&value, bytes);
+        }
         Ok(())
+    }
+
+    fn reject_revision(&mut self, refused: &Active) {
+        let Some(name) = refused.reply.channel["name"].as_str() else {
+            return;
+        };
+        if let Some((_, revision)) = self.channels.get_mut(name) {
+            *revision -= 1;
+            if *revision == 0 {
+                self.channels.remove(name);
+            }
+        }
+        for later in self
+            .active
+            .values_mut()
+            .filter(|a| a.sequence > refused.sequence && a.reply.channel["name"] == name)
+        {
+            if let Some(n) = later.reply.channel["revision"].as_u64() {
+                later.reply.channel["revision"] = json!(n - 1);
+            }
+        }
     }
 
     fn record_tokens(&mut self, id: &str, value: &Value) {
@@ -395,6 +439,16 @@ impl Session {
         }
     }
 
+    fn side(&self, kind: &str, cmd: &Value) -> Side {
+        let target = cmd["target"].as_str().unwrap_or("");
+        match kind {
+            "control" => self.active.get(target).map_or(Side::Executor, |a| a.side),
+            "status" if self.root.is_some() => Side::Executor,
+            t if CAPABILITIES.contains(&t) => Side::Native,
+            _ => Side::Executor,
+        }
+    }
+
     fn admit(&mut self, r: Request, bytes: Vec<u8>) -> Result<()> {
         let id = &r.id;
         ensure!(
@@ -411,13 +465,7 @@ impl Session {
         );
         let cmd = &r.command;
         let kind = cmd["type"].as_str().context("missing command type")?;
-        let target = cmd["target"].as_str().unwrap_or("");
-        let side = match kind {
-            "control" => self.active.get(target).map_or(Side::Executor, |a| a.side),
-            "status" if self.root.is_some() => Side::Executor,
-            t if CAPABILITIES.contains(&t) => Side::Native,
-            _ => Side::Executor,
-        };
+        let side = self.side(kind, cmd);
         let channel = if let Some(name) = &r.channel {
             let (owner, rev) = self.channels.get(name).copied().unwrap_or((side, 0));
             ensure!(owner == side, "channel belongs to the other side");
@@ -497,69 +545,6 @@ impl Session {
         Ok(())
     }
 
-    fn schedule(
-        &self,
-        work: Work,
-        id: String,
-        sequence: u64,
-        cancel: Arc<AtomicBool>,
-    ) -> Result<()> {
-        let send = self.events.clone();
-        let pool = if matches!(work, Work::Job(..)) {
-            &self.job_pool
-        } else {
-            &self.pool
-        };
-        pool.submit(move || {
-            if cancel.load(Ordering::Acquire) {
-                let _ = send.send(Event::Done(id, sequence, Err(anyhow::anyhow!("canceled"))));
-                return;
-            }
-            let result = work.run(&cancel, |n| {
-                let _ = send.send(Event::Progress(id.clone(), sequence, n));
-            });
-            let _ = send.send(Event::Done(id, sequence, result));
-        })
-    }
-
-    fn prepare(&self, kind: &str, cmd: &Value, leases: &mut Vec<String>) -> Result<Option<Work>> {
-        Ok(Some(match kind {
-            "submit" | "jobs" | "job" | "job_control" => {
-                Work::Job(serde_json::from_value(cmd.clone())?, Arc::clone(&self.jobs))
-            }
-            "fetch" => {
-                let fetch: pixels::Fetch = serde_json::from_value(cmd.clone())?;
-                if let Some(path) = cmd["storage"]["path"].as_str() {
-                    leases.extend(self.lease(path, fetch.storage.artifact())?);
-                }
-                Work::Fetch(fetch)
-            }
-            "copy" => {
-                let request: files::Copy = serde_json::from_value(cmd.clone())?;
-                for source in &request.sources {
-                    leases.extend(self.lease(&source.path, source.artifact.as_deref())?);
-                }
-                Work::Copy(request)
-            }
-            "stored" => Work::Stored(
-                files::resolve(cmd["path"].as_str().context("expected path")?)?,
-                cmd.get("inspection").cloned(),
-            ),
-            "list" | "peek" | "download" => {
-                let path = cmd["path"]
-                    .as_str()
-                    .or_else(|| (kind == "list" && cmd["path"].is_null()).then_some("~"))
-                    .context("expected path")?;
-                Work::File(
-                    kind.into(),
-                    files::resolve(path)?,
-                    cmd["after"].as_str().map(str::to_owned),
-                )
-            }
-            _ => return Ok(None),
-        }))
-    }
-
     fn forward(&mut self, cmd: &Value, bytes: Vec<u8>) -> Result<()> {
         ensure!(
             self.root.is_some(),
@@ -620,24 +605,58 @@ impl Session {
         Ok(())
     }
 
+    fn add_status(&self, status: &mut Value, request: &str) {
+        status["executor"] = self.detail.clone();
+        for (id, active) in &self.active {
+            if active.side == Side::Native && id != request {
+                status["requests"][id] = json!("running");
+            }
+        }
+    }
+
+    pub fn finish_shutdown(&mut self) -> bool {
+        if let Some(reply) = self.shutdown.take() {
+            self.out.send(reply.result(json!({"type":"ack"})));
+            return false;
+        }
+        true
+    }
+
     fn fast(&mut self, kind: &str, cmd: &Value, reply: &Reply) -> Result<()> {
-        match kind{
-            "shutdown"=>{self.finish(reply,json!({"type":"ack"}));self.stop();},
-            "status"=>self.finish(reply,json!({"type":"status","requests":{},"handles":{},"allocators":[],"python_namespace_bytes":0,"executor":self.detail})),
-            "control"=>{
-                ensure!(cmd["action"]=="cancel","file work supports cancel");
-                let id=cmd["target"].as_str().context("missing target")?;
-                if let Some(a)=self.active.get(id){a.cancel.store(true,Ordering::Release);}
-                if self.out.streams.contains_key(id) || self.uploads.contains_key(id){self.cancel(id,"canceled","canceled");}
-                self.finish(reply,json!({"type":"ack"}));
-            },
-            "upload"=>{
-                let path=files::resolve(cmd["path"].as_str().context("missing upload destination")?)?;
-                let upload=transfer::Upload::start(path,cmd["bytes"].as_u64().context("missing size")?,cmd["sha256"].as_str().context("missing digest")?.into())?;
-                self.uploads.insert(reply.id.clone(),upload);
-                self.block(&reply.id,&[])?;
-            },
-            _=>bail!("unknown native command"),
+        match kind {
+            "shutdown" => {
+                self.active.remove(&reply.id);
+                self.shutdown = Some(reply.clone());
+                self.stop();
+            }
+            "status" => {
+                let mut status = json!({"type":"status","requests":{},"handles":{},"allocators":[],"python_namespace_bytes":0});
+                self.add_status(&mut status, &reply.id);
+                self.finish(reply, status);
+            }
+            "control" => {
+                ensure!(cmd["action"] == "cancel", "file work supports cancel");
+                let id = cmd["target"].as_str().context("missing target")?;
+                if let Some(a) = self.active.get(id) {
+                    a.cancel.store(true, Ordering::Release);
+                }
+                if self.out.streams.contains_key(id) || self.uploads.contains_key(id) {
+                    self.cancel(id, "canceled", "canceled");
+                }
+                self.finish(reply, json!({"type":"ack"}));
+            }
+            "upload" => {
+                let path =
+                    files::resolve(cmd["path"].as_str().context("missing upload destination")?)?;
+                let upload = transfer::Upload::start(
+                    path,
+                    cmd["bytes"].as_u64().context("missing size")?,
+                    cmd["sha256"].as_str().context("missing digest")?.into(),
+                )?;
+                self.uploads.insert(reply.id.clone(), upload);
+                self.block(&reply.id, &[])?;
+            }
+            _ => bail!("unknown native command"),
         }
         Ok(())
     }
@@ -745,56 +764,5 @@ impl Session {
         } else if let Some(executor) = &mut self.executor {
             executor.eof();
         }
-    }
-}
-
-enum Work {
-    Job(
-        tomojax_jobs::commands::Command,
-        Arc<tomojax_jobs::service::Service>,
-    ),
-    Fetch(pixels::Fetch),
-    Copy(files::Copy),
-    Stored(PathBuf, Option<Value>),
-    File(String, PathBuf, Option<String>),
-}
-pub enum Output {
-    Result(Value),
-    Stream(Payload),
-}
-impl Work {
-    fn run(self, cancel: &AtomicBool, progress: impl FnMut(u64)) -> Result<Output> {
-        Ok(match self {
-            Work::Job(command, service) => Output::Result(command.execute(&service, |path| {
-                files::resolve(
-                    path.to_str()
-                        .ok_or_else(|| std::io::Error::other("expected a UTF-8 path"))?,
-                )
-                .map_err(std::io::Error::other)
-            })?),
-            Work::Fetch(request) => {
-                let (result, bytes) = pixels::fetch(&request)?;
-                Output::Stream(Payload::Frame {
-                    result,
-                    bytes,
-                    offset: 0,
-                })
-            }
-            Work::Copy(request) => Output::Result(files::copy(&request, cancel, progress)?),
-            Work::Stored(path, report) => Output::Result(match report {
-                Some(report) => {
-                    let arrays = crate::metadata::inspection_arrays(&report, &path)
-                        .map_err(anyhow::Error::msg)?;
-                    json!({"type":"stored","kind":crate::metadata::suggested_kind(&report),"arrays":arrays,"report":report})
-                }
-                None => files::stored(&path)?,
-            }),
-            Work::File(kind, path, after) => match kind.as_str() {
-                "list" => Output::Result(files::list(&path, after.as_deref())?),
-                "peek" => Output::Result(files::peek(&path)?),
-                "download" => Output::Stream(Payload::File(transfer::Download::open(&path)?)),
-                _ => bail!("unknown file operation"),
-            },
-        })
     }
 }

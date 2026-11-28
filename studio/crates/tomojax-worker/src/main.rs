@@ -173,6 +173,9 @@ fn serve(opts: Options) -> Result<()> {
                     session.stream_done(&id);
                 }
             } else if session.closing.is_some() && session.executor.is_none() {
+                if !session.finish_shutdown() {
+                    continue;
+                }
                 break;
             }
         }
