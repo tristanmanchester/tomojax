@@ -174,7 +174,7 @@ class _Sampling:
         fitting = min(rows, max(1, (128 << 20) // (4 * views * 3 * self.detector.nu)))
         if room is not None:
             fitting = min(fitting, max(1, room // resident_bytes(self.grid, shape)))
-        return 2 ** (fitting.bit_length() - 1)
+        return 1 << (fitting.bit_length() - 1)
 
     def has_edge_signal(self, data: np.ndarray | jax.Array | CuPyValue, edge: int | None) -> bool:
         nu = data.shape[-1]
@@ -280,7 +280,8 @@ def storage(
     project = 4 * (wide.nz + 2) * wide.ny * wide.nx + images
     # Rolled chords have a distinct measured interval on each horizontal row.
     mask = math.prod(shape) if oblique is not None else 0
-    host = full_data + completed + completed // 3 + 3 * volume + 4 * images + mask
+    support = d.nv * 3 * d.nu if oblique is not None and oblique.full_turn else 3 * d.nu
+    host = full_data + completed + completed // 3 + 3 * volume + 4 * images + mask + support
     fitted_shape = (len(range(0, views, view_stride(geometry, wide))), *shape[1:])
     device = max(resident_bytes(wide, fitted_shape), project)
     return host, device + (full_data if turns else 0)

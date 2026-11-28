@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING, NamedTuple
 
 import numpy as np
 
-from tomojax._typed_arrays import Float32Array, Float64Array, max_float, numpy_float32_array
+from tomojax._typed_arrays import (
+    Float32Array,
+    Float64Array,
+    max_float,
+    numpy_float32_array,
+    numpy_float64_array,
+)
 from tomojax.core import checkpoint
 from tomojax.core.geometry.cone import cone_parts
 from tomojax.core.geometry.views import host_view_poses
@@ -111,7 +117,9 @@ class CompletedRows:
 
     def mass(self) -> Float64Array:
         """Positive attenuation on virtual rays that no voxel of the requested grid can reach."""
-        observed = np.sum(self.data, axis=-1, where=self.unseen, dtype=np.float64)
+        observed = numpy_float64_array(
+            np.sum(self.data, axis=-1, where=self.unseen, dtype=np.float64)
+        )
         views = len(self.data)
         uncertainty: Float64Array | float = (
             np.sqrt(np.mean(np.diff(observed, axis=0) ** 2, axis=0) / (2 * views))
@@ -147,7 +155,7 @@ class CompletedRows:
         panel = replace(detector, nv=1, center=(detector.center[0], 0.0))
         volume = host_array(wide.shape)
         for row in range(detector.nv):
-            measured: NDArray[np.bool_] = self.support[row]
+            measured = self.support[row : row + 1].reshape(-1)
             if measured.any():
                 chord, columns = _crop(panel, measured)
                 with checkpoint.scope(f"exterior-chord-{row}"):
