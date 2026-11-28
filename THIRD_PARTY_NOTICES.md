@@ -46,7 +46,9 @@ The embedded font in Pillow credits the typeface as “No Rights Reserved.”
 ## Pillow
 
 The MCP annotation rasterizer ports the line, polygon and ellipse rules from
-Pillow 12.2.0, `src/libImaging/Draw.c` at commit `3c41c095`.
+Pillow 12.2.0, `src/libImaging/Draw.c` at commit `3c41c095`. The thumbnail
+filters port the same release’s `src/PIL/Image.py`, `src/libImaging/Resample.c`
+and `src/libImaging/Reduce.c`.
 
 The Python Imaging Library (PIL) is
 

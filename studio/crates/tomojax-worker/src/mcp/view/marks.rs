@@ -4,7 +4,7 @@ use super::{
     draw::{self, Cell},
 };
 use anyhow::{Result, ensure};
-use image::{Rgb, RgbImage};
+use image::{Rgb, RgbImage, Rgba, RgbaImage};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -67,7 +67,7 @@ impl Shape {
         }
     }
 }
-mod raster;
+pub(super) mod raster;
 mod shapes;
 mod snapping;
 use snapping::Snap;
@@ -324,7 +324,12 @@ impl Overlay<'_> {
         }
         sorted
     }
-    pub fn draw(&self, canvas: &mut RgbImage, mark: &Mark) -> Result<Value> {
+    pub fn draw(
+        &self,
+        canvas: &mut RgbImage,
+        shapes: &mut RgbaImage,
+        mark: &Mark,
+    ) -> Result<Value> {
         let p = self.panel;
         let c = self.cell;
         let label = &mark.label;
@@ -338,7 +343,7 @@ impl Overlay<'_> {
             p.source_axes.join(", ")
         );
         let Shape::Point { at, snap, within } = &mark.shape else {
-            return shapes::draw(self, mark, canvas, tint);
+            return shapes::draw(self, mark, canvas, shapes, tint);
         };
         let mut reply = json!({"panel":self.index});
         if let Some(d) = p.normal {
@@ -370,7 +375,11 @@ impl Overlay<'_> {
                 for dx in 0..9 {
                     let (ix, iy) = (cx + dx - 4, cy + dy as i32 - 4);
                     if c.contains(ix, iy) && (line & (1 << dx) != 0 || dx == 4 && dy == 4) {
-                        canvas.put_pixel(ix as u32, iy as u32, rgb);
+                        shapes.put_pixel(
+                            ix as u32 - c.left as u32,
+                            iy as u32 - c.top as u32,
+                            Rgba([rgb[0], rgb[1], rgb[2], 255]),
+                        );
                     }
                 }
             }

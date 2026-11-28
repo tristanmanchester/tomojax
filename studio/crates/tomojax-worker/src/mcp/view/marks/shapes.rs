@@ -2,7 +2,7 @@
 use super::raster::Mask;
 use super::{Cell, Mark, Overlay, Panel, Shape, draw, nearby, round};
 use anyhow::{Result, ensure};
-use image::{Rgb, RgbImage};
+use image::{Rgb, RgbImage, Rgba, RgbaImage};
 use serde_json::{Value, json};
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -183,7 +183,7 @@ impl Projection {
             },
         ))
     }
-    fn outline(&self, target: &mut RgbImage, cell: Cell, color: Rgb<u8>) -> Result<()> {
+    fn outline(&self, target: &mut RgbaImage, cell: Cell, color: Rgb<u8>) -> Result<()> {
         if self.kind != Kind::Text {
             let mut layer = Mask::new(cell.width, cell.height);
             self.paint(&mut layer, Some(cell), 4, 1);
@@ -195,9 +195,13 @@ impl Projection {
                 .filter(|(_, ink)| *ink != 0)
             {
                 target.put_pixel(
-                    (cell.left + i % cell.width) as u32,
-                    (cell.top + i / cell.width) as u32,
-                    if ink == 1 { Rgb([0; 3]) } else { color },
+                    (i % cell.width) as u32,
+                    (i / cell.width) as u32,
+                    if ink == 1 {
+                        Rgba([0, 0, 0, 255])
+                    } else {
+                        Rgba([color[0], color[1], color[2], 255])
+                    },
                 );
             }
         }
@@ -208,6 +212,7 @@ pub(super) fn draw(
     o: &Overlay<'_>,
     mark: &Mark,
     target: &mut RgbImage,
+    shapes: &mut RgbaImage,
     color: Rgb<u8>,
 ) -> Result<Value> {
     let s = Projection::new(mark, o.panel)?;
@@ -220,7 +225,7 @@ pub(super) fn draw(
     if !inside {
         return Ok(json!({"panel":o.index,"drawn":false,"reason":"outside_roi"}));
     }
-    s.outline(target, o.cell, color)?;
+    s.outline(shapes, o.cell, color)?;
     if let Some(label) = &mark.label {
         let [x, y] = o.cell.pixel(s.anchor[0], s.anchor[1]);
         draw::mark_label(target, [x, y], label, color, s.kind == Kind::Text);

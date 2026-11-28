@@ -130,3 +130,56 @@ pub(super) fn tagged(field: &str, args: &Value, node: &Value) -> Result<(), Argu
     }
     Ok(())
 }
+
+pub fn output(name: &str) -> Value {
+    let workflow = super::workflow::OPERATIONS.contains(&name) && name != "preview";
+    let object = json!({"type":"object"});
+    let array = json!({"type":"array"});
+    let text = json!({"type":"string"});
+    let integer = json!({"type":"integer"});
+    let mut properties = match name {
+        "status" => {
+            json!({"versions":object,"devices":array,"allocators":array,"jobs":object,"handles":object,"python_namespace_bytes":integer,"connection":text,"host":text,"directory":text,"executor":text})
+        }
+        "inspect" => {
+            json!({"valid":{"type":"boolean"},"issues":array,"projection":object,"volume":object,"geometry":object,"directory":text,"datasets":object,"loading":object,"checkpoints":array,"run":object,"request":{},"entries":object,"resume":text})
+        }
+        "describe" => json!({"operation":text,"parameters":object}),
+        "control" => json!({"action":text}),
+        "python" => json!({"stdout":text,"stderr":text,"value":{},"handles":object}),
+        "view" => {
+            json!({"count":integer,"mean":{"type":["number","null"]},"histogram":array,"profile":array,"columns":array,"table":array})
+        }
+        "preview" => json!({"handle":text,"bounds":array}),
+        "submit" | "cancel_job" => json!({"job":text}),
+        "jobs" => json!({"jobs":array,"state":text,"offset":integer}),
+        "download" | "upload" => json!({"bytes":integer,"sha256":text}),
+        _ => {
+            json!({"handle":text,"kind":text,"members":object,"paths":{"type":"array","items":text},"type":text,"wall_seconds":{"type":"number"},"method":text,"manifest":object,"info":object})
+        }
+    };
+    if matches!(name, "view" | "preview") {
+        for key in ["panels", "images", "marks", "features"] {
+            properties[key] = json!({"type":"array","items":object});
+        }
+        properties["image_limits"] = object;
+        properties["intensity_limits"] = array.clone();
+    }
+    for key in ["continuation", "message", "next", "checkpoint"] {
+        properties[key] = text.clone();
+    }
+    properties["notes"] = array;
+    let mut spec = json!({"type":"object","properties":properties});
+    if workflow {
+        spec["anyOf"] = json!(
+            ["handle", "paths", "type", "message", "continuation"].map(|k| json!({"required":[k]}))
+        );
+    }
+    spec
+}
+
+pub fn annotations(name: &str) -> Value {
+    json!({"readOnlyHint":matches!(name,"status"|"inspect"|"describe"|"view"|"preview"|"jobs"),
+           "destructiveHint":matches!(name,"save"|"export"|"reconstruct_slabs"|"control"|"python"|"cancel_job"),
+           "openWorldHint":false})
+}

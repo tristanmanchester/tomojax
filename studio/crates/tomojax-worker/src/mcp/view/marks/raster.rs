@@ -2,7 +2,7 @@
 //! The same integer coverage rules for sample footprints and displayed outlines.
 use std::ops::RangeInclusive;
 type Point = [i64; 2];
-pub(super) struct Mask {
+pub(in crate::mcp::view) struct Mask {
     pub width: usize,
     pub height: usize,
     pub pixels: Vec<u8>,

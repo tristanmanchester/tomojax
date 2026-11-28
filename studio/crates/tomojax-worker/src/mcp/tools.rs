@@ -36,7 +36,7 @@ pub fn list(local: bool) -> Vec<Value> {
      ].into_iter().filter(|(name,_,_,_)| local || *name != "python").map(|(name,description,properties,required)| {
         let schema=if name=="submit" {super::jobs::submission_schema()} else {json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})};
         json!({"name":name,"description":description,"inputSchema":schema,
-            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"|"upload"|"download"|"python"|"control"),"openWorldHint":false}})
+            "outputSchema":super::schema::output(name),"annotations":super::schema::annotations(name)})
     }).collect();
     tools.extend(
         super::workflow::OPERATIONS
@@ -156,7 +156,8 @@ pub async fn run(
             if state.executor["state"] == "ready" {
                 let status = query(&session, json!({"type":"status"})).await?;
                 let full = args["detail"] == "full";
-                for (id, entry) in &session.space.ledger.lock().unwrap().records {
+                let records = session.space.ledger.lock().unwrap().records.clone();
+                for (id, entry) in records {
                     let mut summary = entry["summary"].clone();
                     if full {
                         summary["manifest"] = entry["manifest"].clone();
@@ -168,6 +169,9 @@ pub async fn run(
                     }
                     if let Some(worker) = entry["product"]["handle"].as_str() {
                         summary["bytes"] = status["handles"][worker].clone();
+                    } else if let Some(path) = entry["product"].pointer("/array/storage/path") {
+                        let listing = query(&session, json!({"type":"list","path":path})).await?;
+                        summary["bytes"] = listing["entries"][0]["size"].clone();
                     }
                     report["handles"][id] = summary;
                 }

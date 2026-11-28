@@ -396,3 +396,26 @@ def test_saved_paths_link_to_local_outputs_and_reopen(tmp_path, native):
         ]
         reopened = checked(client, "open", path=path.name, kind="reconstruction")
         assert reopened["structuredContent"]["shape"] == [8, 8, 8]
+
+
+def test_show_resizes_gray_and_rgb_snapshots(tmp_path, native):
+    from tests.test_mcp_python import full_result
+
+    with native() as rust, connection(tmp_path) as python:
+        for shape in [(19, 1311), (181, 4187), (1321, 3), (75, 1153, 3)]:
+            code = f"show(np.random.default_rng(92).integers(0, 240, {shape}, dtype=np.uint8))"
+            images = [
+                image(full_result(c, checked(c, "python", code=code))["content"][1])
+                for c in (rust, python)
+            ]
+            np.testing.assert_array_equal(*images)
+
+
+def test_inspect_resizes_after_converting_the_full_plane(tmp_path, native):
+    values = np.random.default_rng(34).standard_normal((3, 92, 5237)).astype(np.float32)
+    with h5py.File(tmp_path / "scan.nxs", "w") as dataset:
+        dataset["entry/instrument/detector/data"] = values
+        dataset["entry/sample/rotation_angle"] = [0, 60, 120]
+    with native() as rust, connection(tmp_path) as python:
+        results = [checked(c, "inspect", path="scan.nxs", preview=True) for c in (rust, python)]
+        np.testing.assert_array_equal(*(image(v["content"][1]) for v in results))

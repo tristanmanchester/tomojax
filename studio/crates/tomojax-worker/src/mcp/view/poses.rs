@@ -12,32 +12,6 @@ fn range(values: impl Iterator<Item = f64>) -> [f64; 2] {
 fn normalize(v: f64, [lo, hi]: [f64; 2]) -> f64 {
     if hi > lo { (v - lo) / (hi - lo) } else { 0.5 }
 }
-fn line(image: &mut RgbImage, from: [i32; 2], to: [i32; 2], color: Rgb<u8>, wide: bool) {
-    let [mut x, mut y] = from;
-    let [x1, y1] = to;
-    let (dx, dy) = ((x1 - x).abs(), -(y1 - y).abs());
-    let (sx, sy) = ((x1 - x).signum(), (y1 - y).signum());
-    let mut error = dx + dy;
-    loop {
-        image.put_pixel(x as u32, y as u32, color);
-        if wide {
-            let (ox, oy) = if dx >= -dy { (0, 1) } else { (1, 0) };
-            image.put_pixel((x + ox) as u32, (y + oy) as u32, color);
-        }
-        if (x, y) == (x1, y1) {
-            break;
-        }
-        let twice = 2 * error;
-        if twice >= dy {
-            error += dy;
-            x += sx;
-        }
-        if twice <= dx {
-            error += dx;
-            y += sy;
-        }
-    }
-}
 pub(super) fn image(pixels: &[f64], columns: &Value, views: &[f64], unit: &str) -> Result<Value> {
     let columns = columns.as_array().context("Missing pose columns")?;
     ensure!(
@@ -66,27 +40,31 @@ pub(super) fn image(pixels: &[f64], columns: &Value, views: &[f64], unit: &str) 
             [left + 256, top + 146],
             [left + 2, top + 146],
         ];
+        let mut mask =
+            super::marks::raster::Mask::new(canvas.width() as usize, canvas.height() as usize);
         for k in 0..4 {
-            line(
-                &mut canvas,
-                corners[k],
-                corners[(k + 1) % 4],
-                Rgb([171, 180, 189]),
-                false,
+            mask.stroke(
+                corners[k].map(i64::from),
+                corners[(k + 1) % 4].map(i64::from),
+                1,
+                1,
             );
         }
         let mut last = None;
         for (&view, &v) in views.iter().zip(pixels.iter().skip(i).step_by(6)) {
             let point = [
-                (f64::from(left + 2) + 254. * normalize(view, x_range)) as i32,
-                (f64::from(top + 146) - 124. * normalize(v, y_range)) as i32,
+                (f64::from(left + 2) + 254. * normalize(view, x_range)) as i64,
+                (f64::from(top + 146) - 124. * normalize(v, y_range)) as i64,
             ];
-            if let Some(last) = last {
-                line(&mut canvas, last, point, Rgb([11, 85, 125]), true);
-            } else {
-                canvas.put_pixel(point[0] as u32, point[1] as u32, Rgb([11, 85, 125]));
-            }
+            mask.stroke(last.unwrap_or(point), point, 2, 2);
             last = Some(point);
+        }
+        for (pixel, ink) in canvas.pixels_mut().zip(mask.pixels) {
+            match ink {
+                1 => *pixel = Rgb([171, 180, 189]),
+                2 => *pixel = Rgb([11, 85, 125]),
+                _ => (),
+            }
         }
         label(
             &mut canvas,
