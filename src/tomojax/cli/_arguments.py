@@ -58,6 +58,11 @@ def _decode_argument(
             )
     if name == "devices":
         inventory = {f"{d.platform}:{d.id}": d for d in jax.devices()}
+        if any(
+            not d.partition(":")[2].isdecimal() or d.partition(":")[0] not in {"cpu", "gpu", "tpu"}
+            for d in value
+        ):
+            raise InvalidParameter(name, "expected platform:index device IDs")
         if any(d not in inventory for d in value):
             raise HardwareUnavailable(name, f"expected distinct device ids from {tuple(inventory)}")
         return as_devices(tuple(inventory[d] for d in value))

@@ -1,7 +1,7 @@
 //! Own one executor process group, including a pending scheduler launcher.
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::process::CommandExt;
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, SyncSender};
@@ -44,20 +44,8 @@ impl Executor {
             .env("TMPDIR", directory.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .process_group(0);
-        // The launcher must receive a signal even if the SSH peer kills the worker.
-        let parent = rustix::process::getpid();
-        unsafe {
-            command.pre_exec(move || {
-                rustix::process::set_parent_process_death_signal(Some(Signal::TERM))?;
-                if rustix::process::getppid() != Some(parent) {
-                    return Err(std::io::Error::other("worker exited during spawn"));
-                }
-                Ok(())
-            });
-        }
-        let mut child = command
+            .stderr(Stdio::piped());
+        let mut child = studio_core::connection::process::own_group(&mut command)
             .spawn()
             .with_context(|| format!("start {}", args[0]))?;
         let mut stdin = child.stdin.take().context("missing executor stdin")?;
@@ -145,6 +133,15 @@ impl Drop for Executor {
     fn drop(&mut self) {
         self.eof();
         if let Some(group) = Pid::from_raw(self.child.id() as i32) {
+            let _ = kill_process_group(group, Signal::TERM);
+            // Slurm uses TERM on its launcher to withdraw a pending allocation.
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(500);
+            while std::time::Instant::now() < until {
+                if self.child.try_wait().ok().flatten().is_some() {
+                    return;
+                }
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
             let _ = kill_process_group(group, Signal::KILL);
         }
         let _ = self.child.wait();

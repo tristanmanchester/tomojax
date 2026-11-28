@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shlex
 import socket
 import subprocess
 import sys
@@ -15,6 +16,8 @@ from jsonschema import Draft202012Validator
 import numpy as np
 import pytest
 from referencing import Registry, Resource
+
+from .worker_process import command
 
 DOCS = Path(__file__).resolve().parents[1] / "docs/protocol"
 pytestmark = pytest.mark.surface
@@ -38,6 +41,13 @@ class Client:
         self.blocks = {}
         self.rows = []
         self.terminal = {}
+
+    def start(self):
+        assert self.read()["type"] == "ready"
+        while (row := self.read())["state"] == "starting":
+            pass
+        assert row["state"] == "ready", row
+        return row["detail"]
 
     def send(self, rid, tag, *, channel=None, **fields):
         request = {"id": rid, "command": {"type": tag, **fields}, "channel": channel}
@@ -95,11 +105,16 @@ def client(schema, tmp_path):
     with parent, child:
         parent.settimeout(8)
         with subprocess.Popen(
-            [
-                sys.executable,
-                str(Path(__file__).with_name("worker_fixture.py")),
-                str(child.fileno()),
-            ],
+            command(
+                "--session",
+                shlex.join(
+                    [
+                        sys.executable,
+                        str(Path(__file__).with_name("worker_fixture.py")),
+                        str(child.fileno()),
+                    ]
+                ),
+            ),
             env={**os.environ, "TMPDIR": str(tmp_path)},
             pass_fds=(child.fileno(),),
             stdin=subprocess.PIPE,
@@ -109,7 +124,7 @@ def client(schema, tmp_path):
             child.close()
             try:
                 c = Client(proc, parent, schema)
-                assert c.read()["type"] == "ready"
+                c.start()
                 yield c
             finally:
                 if proc.poll() is None:
@@ -378,7 +393,10 @@ def test_dispatches_every_other_execution_tag_through_adapter(client):
 def test_replays_fixed_session_transcript(client):
     c = client
     lines = (DOCS / "transcripts/session.jsonl").read_text().splitlines()
-    assert c.rows[0] == json.loads(lines[0])
+    ready = c.rows[-1]["detail"].copy()
+    assert Path(ready.pop("root")).is_dir()
+    assert len(ready.pop("schema")) == 64
+    assert ready == json.loads(lines[0])
     for line in lines[1:]:
         expected = json.loads(line)
         if "id" in expected:
@@ -436,14 +454,14 @@ def test_oversized_line_is_drained_through_one_newline(client):
 @pytest.fixture
 def worker(schema):
     with subprocess.Popen(
-        [sys.executable, "-m", "tomojax.cli.main", "serve"],
+        command(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         bufsize=0,
     ) as proc:
         try:
             client = Client(proc, None, schema)
-            assert client.read()["type"] == "ready"
+            client.start()
             yield client
             client.shutdown()
         finally:

@@ -5,7 +5,7 @@ mod command;
 mod config;
 mod deploy;
 pub use deploy::worker_path;
-pub(crate) mod process;
+pub mod process;
 mod registry;
 pub use registry::Registry;
 mod stream;

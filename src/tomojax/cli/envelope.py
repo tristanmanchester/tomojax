@@ -141,6 +141,27 @@ class Ready(Record, tag="ready"):
     root: str = ""
 
 
+class WorkerReady(Record, tag="ready"):
+    """The native worker can serve files immediately on connection."""
+
+    protocol: Literal[1]
+    progress: Literal[2]
+    capabilities: tuple[Id, ...]
+    host: str
+    home: str
+    directory: str
+    jobs: Literal["inline", "process", "slurm"]
+    pixel_credit: Positive
+
+
+class ExecutorEvent(Record, tag="executor"):
+    """A generation of the numerical executor started, became ready or ended."""
+
+    state: Literal["starting", "ready", "gone"]
+    detail: Ready | str | None
+    generation: Positive
+
+
 class ChannelRevision(Record):
     """Atomic channel name and revision pair."""
 

@@ -10,7 +10,7 @@ from typing import Any, get_args
 
 import msgspec
 
-from tomojax.cli.envelope import Credit, PixelWindow, Request, Response
+from tomojax.cli.envelope import Credit, ExecutorEvent, PixelWindow, Request, Response, WorkerReady
 from tomojax.cli.operations import ExecutionInput
 from tomojax.cli.products import Output
 from tomojax.wire.arrays import Array, PoseColumn
@@ -30,7 +30,7 @@ def documents() -> dict[str, dict[str, Any]]:
         ("progress", (ProgressRecord,)),
         ("operations", (ExecutionInput,)),
         ("products", (Output,)),
-        ("worker", (Credit, PixelWindow, Request, Response)),
+        ("worker", (Credit, PixelWindow, Request, Response, WorkerReady, ExecutorEvent)),
     ):
         filename = f"{name}.schema.json"
         roots, defs = msgspec.json.schema_components(types)

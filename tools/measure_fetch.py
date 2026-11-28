@@ -124,7 +124,10 @@ class Viewer:
 
     async def reply(self) -> None:
         """Consume one block or finish decoding a frame."""
-        row = self.decode.decode(await self.stream.readline())
+        line = await self.stream.readline()
+        if json.loads(line)["type"] == "executor":
+            return
+        row = self.decode.decode(line)
         if not isinstance(row, e.Block | e.ResultReply | e.ErrorReply):
             raise ValueError(f"unexpected fetch reply {row}")
         rid = row.request
@@ -189,7 +192,9 @@ class Viewer:
         """Scroll the main pane, let it settle, then interrupt a known lossless frame halfway."""
         if (
             "fetch"
-            not in msgspec.json.decode(await self.stream.readline(), type=e.Ready).capabilities
+            not in msgspec.json.decode(
+                await self.stream.readline(), type=e.WorkerReady
+            ).capabilities
         ):
             raise ValueError("worker lacks fetch")
         started = monotonic()
@@ -252,7 +257,7 @@ async def measure(args: Options, path: Path, shape: tuple[int, ...]) -> dict[str
     command = args.command
     if command[:1] == ["--"]:
         command = command[1:]
-    command = command or [sys.executable, "-m", "tomojax.cli.main", "serve"]
+    command = command or ["tomojax-worker", "serve", "--python", sys.executable]
     proc = await asyncio.create_subprocess_exec(*command, stdin=-1, stdout=-1)
     try:
         viewer = Viewer(proc, path, shape)

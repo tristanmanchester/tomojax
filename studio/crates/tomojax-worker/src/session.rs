@@ -133,7 +133,9 @@ impl Session {
         }
         self.retry = Instant::now() + self.delay;
         self.delay = (self.delay * 2).min(Duration::from_secs(300));
-        self.state("gone", json!(reason));
+        if self.closing.is_none() {
+            self.state("gone", json!(reason));
+        }
         let failed = self
             .active
             .iter()
@@ -199,13 +201,16 @@ impl Session {
         ) {
             self.active.remove(id);
         }
-        self.out.queue(bytes);
+        if value["type"] == "protocol_error" {
+            self.permanent.remove(id);
+        }
+        self.out.queue_record(&value, bytes);
         Ok(())
     }
 
     fn record_tokens(&mut self, id: &str, value: &Value) {
         match value {
-            Value::Object(object) if value["type"] == "npy" => {
+            Value::Object(_) if value["type"] == "npy" => {
                 if let (Some(token), Some(path), Some(root)) = (
                     value["artifact"].as_str(),
                     value["path"].as_str(),
@@ -222,7 +227,6 @@ impl Session {
                             });
                     }
                 }
-                let _ = object;
             }
             Value::Array(items) => {
                 for v in items {

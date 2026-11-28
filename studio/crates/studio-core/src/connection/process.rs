@@ -16,9 +16,9 @@ extern "C" fn interrupt(_: libc::c_int) {
     INTERRUPTED.store(true, Ordering::Relaxed);
 }
 
-/// Install only in the dedicated connect process. Its owner can cancel a login,
+/// Install in the dedicated worker or connection process. Its owner can cancel a login,
 /// a probe or a live session with the same signal.
-pub(super) fn handle_signals() -> io::Result<()> {
+pub fn handle_signals() -> io::Result<()> {
     // SAFETY: the handler only sets a lock-free atomic flag.
     unsafe {
         let parent = libc::getppid();
@@ -37,7 +37,7 @@ pub(super) fn handle_signals() -> io::Result<()> {
     Ok(())
 }
 
-pub(super) fn active() -> Result<(), Failure> {
+pub fn active() -> Result<(), Failure> {
     if INTERRUPTED.load(Ordering::Relaxed) {
         Err(Failure::interrupted())
     } else {
@@ -46,7 +46,7 @@ pub(super) fn active() -> Result<(), Failure> {
 }
 
 /// The unreaped leader pins the process-group ID until its owner waits.
-pub(crate) fn own_group(command: &mut Command) -> &mut Command {
+pub fn own_group(command: &mut Command) -> &mut Command {
     // SAFETY: only async-signal-safe, allocation-free Linux operations run between fork and exec.
     unsafe {
         let parent = libc::getpid();

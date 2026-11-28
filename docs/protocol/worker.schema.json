@@ -43,6 +43,12 @@
           "protocol_error": "#/$defs/ProtocolError"
         }
       }
+    },
+    {
+      "$ref": "#/$defs/WorkerReady"
+    },
+    {
+      "$ref": "#/$defs/ExecutorEvent"
     }
   ],
   "$defs": {
@@ -93,115 +99,118 @@
                 {
                   "anyOf": [
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane"
+                      "anyOf": [
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
+                        }
+                      ],
+                      "discriminator": {
+                        "propertyName": "type",
+                        "mapping": {
+                          "plane": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane",
+                          "slice": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice",
+                          "center_sweep": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep",
+                          "correction_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview",
+                          "region_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
+                        }
+                      }
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice"
-                    },
-                    {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep"
-                    },
-                    {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview"
-                    },
-                    {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
+                      "anyOf": [
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan"
+                        },
+                        {
+                          "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                        }
+                      ],
+                      "discriminator": {
+                        "propertyName": "type",
+                        "mapping": {
+                          "python": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python",
+                          "read": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read",
+                          "statistics": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics",
+                          "run": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run",
+                          "inspect": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect",
+                          "open": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open",
+                          "plan": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan",
+                          "validate": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                        }
+                      }
                     }
-                  ],
-                  "discriminator": {
-                    "propertyName": "type",
-                    "mapping": {
-                      "plane": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plane",
-                      "slice": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Slice",
-                      "center_sweep": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CenterSweep",
-                      "correction_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/CorrectionPreview",
-                      "region_preview": "https://tomojax.dev/protocol/operations.schema.json#/$defs/RegionPreview"
-                    }
-                  }
+                  ]
                 },
                 {
                   "anyOf": [
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python"
+                      "$ref": "#/$defs/Describe"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read"
+                      "$ref": "#/$defs/Devices"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics"
+                      "$ref": "#/$defs/Close"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run"
+                      "$ref": "#/$defs/Release"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect"
+                      "$ref": "#/$defs/ControlRequest"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open"
+                      "$ref": "#/$defs/Status"
                     },
                     {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan"
-                    },
-                    {
-                      "$ref": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                      "$ref": "#/$defs/Shutdown"
                     }
                   ],
                   "discriminator": {
                     "propertyName": "type",
                     "mapping": {
-                      "python": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Python",
-                      "read": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Read",
-                      "statistics": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Statistics",
-                      "run": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Run",
-                      "inspect": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Inspect",
-                      "open": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Open",
-                      "plan": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Plan",
-                      "validate": "https://tomojax.dev/protocol/operations.schema.json#/$defs/Validate"
+                      "describe": "#/$defs/Describe",
+                      "devices": "#/$defs/Devices",
+                      "close": "#/$defs/Close",
+                      "release": "#/$defs/Release",
+                      "control": "#/$defs/ControlRequest",
+                      "status": "#/$defs/Status",
+                      "shutdown": "#/$defs/Shutdown"
                     }
                   }
                 }
               ]
             },
             {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/Fetch"
-                },
-                {
-                  "$ref": "#/$defs/Describe"
-                },
-                {
-                  "$ref": "#/$defs/Devices"
-                },
-                {
-                  "$ref": "#/$defs/Close"
-                },
-                {
-                  "$ref": "#/$defs/Release"
-                },
-                {
-                  "$ref": "#/$defs/ControlRequest"
-                },
-                {
-                  "$ref": "#/$defs/Status"
-                },
-                {
-                  "$ref": "#/$defs/Shutdown"
-                }
-              ],
-              "discriminator": {
-                "propertyName": "type",
-                "mapping": {
-                  "fetch": "#/$defs/Fetch",
-                  "describe": "#/$defs/Describe",
-                  "devices": "#/$defs/Devices",
-                  "close": "#/$defs/Close",
-                  "release": "#/$defs/Release",
-                  "control": "#/$defs/ControlRequest",
-                  "status": "#/$defs/Status",
-                  "shutdown": "#/$defs/Shutdown"
-                }
-              }
+              "$ref": "#/$defs/Fetch"
             }
           ]
         },
@@ -1180,6 +1189,110 @@
         "type",
         "kind",
         "message"
+      ],
+      "additionalProperties": false
+    },
+    "WorkerReady": {
+      "title": "WorkerReady",
+      "description": "The native worker can serve files immediately on connection.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "ready"
+          ]
+        },
+        "protocol": {
+          "enum": [
+            1
+          ]
+        },
+        "progress": {
+          "enum": [
+            2
+          ]
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "host": {
+          "type": "string"
+        },
+        "home": {
+          "type": "string"
+        },
+        "directory": {
+          "type": "string"
+        },
+        "jobs": {
+          "enum": [
+            "inline",
+            "process",
+            "slurm"
+          ]
+        },
+        "pixel_credit": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "protocol",
+        "progress",
+        "capabilities",
+        "host",
+        "home",
+        "directory",
+        "jobs",
+        "pixel_credit"
+      ],
+      "additionalProperties": false
+    },
+    "ExecutorEvent": {
+      "title": "ExecutorEvent",
+      "description": "A generation of the numerical executor started, became ready or ended.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "executor"
+          ]
+        },
+        "state": {
+          "enum": [
+            "gone",
+            "ready",
+            "starting"
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/Ready"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "generation": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "state",
+        "detail",
+        "generation"
       ],
       "additionalProperties": false
     }

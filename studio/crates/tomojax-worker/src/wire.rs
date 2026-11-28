@@ -51,7 +51,7 @@ pub fn read(input: &mut impl BufRead) -> Result<Input> {
     }
 }
 
-pub fn line(value: Value) -> Vec<u8> {
+pub fn line(value: &Value) -> Vec<u8> {
     let mut bytes = value.to_string().into_bytes();
     bytes.push(b'\n');
     bytes
@@ -109,6 +109,7 @@ impl Payload {
 pub struct Outbox {
     pub streams: HashMap<String, (Reply, Payload)>,
     lines: VecDeque<Vec<u8>>,
+    last_advance: Option<(String, u64)>,
     backlog: usize,
     outstanding: usize,
     window: usize,
@@ -119,6 +120,7 @@ impl Default for Outbox {
         Self {
             streams: HashMap::new(),
             lines: VecDeque::new(),
+            last_advance: None,
             backlog: 0,
             outstanding: 0,
             window: CREDIT,
@@ -144,11 +146,31 @@ impl Outbox {
         Ok(())
     }
     pub fn queue(&mut self, bytes: Vec<u8>) {
+        self.last_advance = None;
         self.backlog += bytes.len();
         self.lines.push_back(bytes);
     }
+    pub fn queue_record(&mut self, row: &Value, bytes: Vec<u8>) {
+        let key = if row["type"] == "progress" && row["record"]["event"] == "advanced" {
+            row["request"]
+                .as_str()
+                .zip(row["record"]["task"].as_u64())
+                .map(|(id, task)| (id.to_owned(), task))
+        } else {
+            None
+        };
+        if key.is_some()
+            && key == self.last_advance
+            && let Some(prev) = self.lines.pop_back()
+        {
+            self.backlog -= prev.len();
+        }
+        self.queue(bytes);
+        self.last_advance = key;
+    }
     pub fn send(&mut self, value: Value) {
-        self.queue(line(value));
+        let bytes = line(&value);
+        self.queue_record(&value, bytes);
     }
     pub fn overloaded(&self) -> bool {
         self.backlog > 16 << 20
@@ -173,7 +195,7 @@ impl Outbox {
         if let Ok(data) = &data
             && !data.is_empty()
         {
-            frame = line(json!({"type":"block","request":id,"bytes":size}));
+            frame = line(&json!({"type":"block","request":id,"bytes":size}));
             frame.extend_from_slice(data);
             self.outstanding += size;
         }

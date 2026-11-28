@@ -109,6 +109,10 @@ impl Pool {
 }
 
 fn serve(opts: Options) -> Result<()> {
+    use rustix::event::{PollFd, PollFlags, Timespec, poll};
+    studio_core::connection::process::handle_signals()?;
+    let stdout = io::stdout();
+    let mut disconnected = [PollFd::new(&stdout, PollFlags::empty())];
     let idle = opts.idle;
     let (events, incoming) = mpsc::sync_channel(256);
     let send = events.clone();
@@ -145,7 +149,12 @@ fn serve(opts: Options) -> Result<()> {
     let mut last = Instant::now();
     let mut writing = false;
     loop {
-        if idle.is_some_and(|d| last.elapsed() >= d) {
+        if poll(&mut disconnected, Some(&Timespec::default()))? > 0 {
+            bail!("worker output closed");
+        }
+        if studio_core::connection::process::active().is_err()
+            || idle.is_some_and(|d| last.elapsed() >= d)
+        {
             session.stop();
         }
         session.tick();
@@ -171,7 +180,7 @@ fn serve(opts: Options) -> Result<()> {
                 session.expired();
             }
             if at.elapsed() > Duration::from_secs(7) {
-                break;
+                bail!("worker output stalled during shutdown");
             }
         }
         match incoming.recv_timeout(Duration::from_millis(100)) {
