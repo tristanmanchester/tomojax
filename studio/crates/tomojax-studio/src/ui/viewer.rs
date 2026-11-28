@@ -645,41 +645,31 @@ fn image_footer(state: &AppState, kind: PlaneKind) -> El {
     } else {
         0.
     };
-    col()
-        .px(15.)
-        .py(7.)
-        .fill(canvas_bg())
-        .child(
-            label(
-                if state.ui.workspace == Workspace::Compare {
-                    state.model.comparison_planes[0]
-                        .as_ref()
-                        .map_or("", |p| p.quality.as_str())
-                } else {
-                    info.map_or("", |p| p.quality.as_str())
-                },
-                11.,
-                canvas_muted(),
-            )
-            .truncate(),
-        )
-        .child(canvas_slider(
-            "image-index",
-            kind.title(),
-            value,
-            &format!("{} / {}", if count > 0 { index + 1 } else { 0 }, count),
-            count > 1,
-            move |f| {
-                let index = (f * count.saturating_sub(1) as f32).round() as usize;
-                if let Some(axis) = kind.axis() {
-                    UiAction::SetSlice { axis, index }
-                } else if kind == PlaneKind::Projection {
-                    UiAction::SetProjectionIndex(index)
-                } else {
-                    UiAction::SetSinogramRow(index)
-                }
-            },
-        ))
+    let caption = if state.ui.workspace == Workspace::Compare {
+        state.model.comparison_planes[0]
+            .as_ref()
+            .map_or("", |p| p.quality.as_str())
+    } else {
+        info.map_or("", |p| p.quality.as_str())
+    };
+    col().px(15.).py(7.).fill(canvas_bg()).child(canvas_slider(
+        "image-index",
+        kind.title(),
+        caption,
+        value,
+        &format!("{} / {}", if count > 0 { index + 1 } else { 0 }, count),
+        count > 1,
+        move |f| {
+            let index = (f * count.saturating_sub(1) as f32).round() as usize;
+            if let Some(axis) = kind.axis() {
+                UiAction::SetSlice { axis, index }
+            } else if kind == PlaneKind::Projection {
+                UiAction::SetProjectionIndex(index)
+            } else {
+                UiAction::SetSinogramRow(index)
+            }
+        },
+    ))
 }
 
 fn compare(state: &AppState) -> El {

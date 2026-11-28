@@ -64,7 +64,7 @@ pub fn live(state: &AppState, compact: bool) -> El {
         if let Some(plane) = frame.planes.get(axis) {
             let fixed = plane.fixed.iter().find(|fixed| fixed.name == axis);
             let coordinate = fixed
-                .map(|fixed| format!("{} = {:.4} {}", axis, fixed.coordinate, fixed.unit))
+                .and_then(|fixed| coordinate(axis, fixed.coordinate, &fixed.unit))
                 .unwrap_or_else(|| axis.into());
             let mut caption = col()
                 .px(9.)
