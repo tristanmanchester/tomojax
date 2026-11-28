@@ -72,8 +72,13 @@ impl FileReads {
         )
     }
 
-    pub fn list(&self, path: Option<&WorkerPath>, after: Option<&str>) -> Result<Listing, String> {
-        match self.request(json!({"type":"list","path":path,"after":after}))? {
+    pub fn list(
+        &self,
+        path: Option<&WorkerPath>,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Listing, String> {
+        match self.request(json!({"type":"list","path":path,"after":after,"limit":limit}))? {
             ResultValue::List(list) => Ok(list),
             _ => Err("Expected a file listing".into()),
         }

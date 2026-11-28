@@ -4,6 +4,8 @@ use crate::protocol::Listing;
 use rune::{FileDialogOptions, TextEdit, Tx};
 use studio_core::{connection::Profile, engine::FileReads, worker_path::WorkerPath};
 
+const BROWSER_PAGE: usize = 128;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Purpose {
     Import,
@@ -152,7 +154,7 @@ impl AppState {
             });
             let source = managed_source(scan.as_ref(), managed);
             for path in [directory, last, profile].into_iter().flatten() {
-                if let Ok(list) = files.list(Some(&path), None)
+                if let Ok(list) = files.list(Some(&path), None, BROWSER_PAGE)
                     && list.directory
                     && list.writable
                     && outside_source(&list.path, &project, source.as_ref())
@@ -160,7 +162,7 @@ impl AppState {
                     return Ok(list);
                 }
             }
-            files.list(None, None)
+            files.list(None, None, BROWSER_PAGE)
         });
         Ok(())
     }
@@ -188,7 +190,7 @@ impl AppState {
     ) -> Result<(), String> {
         let files = self.browsing_files()?;
         self.begin_listing(cursor.is_some(), move || {
-            files.list(path.as_ref(), cursor.as_deref())
+            files.list(path.as_ref(), cursor.as_deref(), BROWSER_PAGE)
         });
         Ok(())
     }
@@ -593,7 +595,7 @@ fn acquisitions(files: &FileReads, folder: &WorkerPath) -> Result<Vec<(PathBuf, 
     let mut answer = vec![];
     let mut after = None;
     loop {
-        let page = files.list(Some(folder), after.as_deref())?;
+        let page = files.list(Some(folder), after.as_deref(), 4096)?;
         for entry in page.entries {
             if entry.kind == "file" && (entry.hdf5 || project::is_hdf5(Path::new(&entry.name))) {
                 answer.push((PathBuf::from(folder.join(&entry.name).lexical()), false));

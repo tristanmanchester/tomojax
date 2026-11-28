@@ -42,10 +42,15 @@ fn signature(path: &Path) -> Result<bool> {
     Ok(false)
 }
 
-pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
+pub fn list(path: &Path, after: Option<&str>, limit: usize) -> Result<Value> {
+    ensure!(
+        (1..=4096).contains(&limit),
+        "list limit must be between 1 and 4096"
+    );
     let path = path.canonicalize()?;
+    let directory = path.is_dir();
     let mut names = BTreeSet::new();
-    if path.is_dir() {
+    if directory {
         for entry in fs::read_dir(&path)? {
             let name = entry?
                 .file_name()
@@ -53,7 +58,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
                 .map_err(|_| anyhow::anyhow!("filename is not UTF-8"))?;
             if after.is_none_or(|cursor| name.as_str() > cursor) {
                 names.insert(name);
-                if names.len() > 4097 {
+                if names.len() > limit + 1 {
                     names.pop_last();
                 }
             }
@@ -63,7 +68,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
     {
         names.insert(name.to_owned());
     }
-    let next = if names.len() > 4096 {
+    let next = if names.len() > limit {
         names.pop_last();
         names.last().cloned()
     } else {
@@ -71,7 +76,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
     };
     let mut entries = Vec::with_capacity(names.len());
     for name in names {
-        let child = if path.is_dir() {
+        let child = if directory {
             path.join(&name)
         } else {
             path.clone()
@@ -89,7 +94,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
         entries.push(json!({"name":name,"kind":kind,"size":meta.len(),"modified": meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs_f64(), "hdf5":meta.is_file() && signature(&child).unwrap_or(false)}));
     }
     Ok(
-        json!({"type":"list","directory":path.is_dir(),"path":path,"writable":access(&path, Access::WRITE_OK).is_ok(),"entries":entries,"after":next}),
+        json!({"type":"list","directory":directory,"path":path,"writable":access(&path, Access::WRITE_OK).is_ok(),"entries":entries,"after":next}),
     )
 }
 
@@ -384,6 +389,28 @@ mod tests {
                 "/entry/rotation_angle": {"shape": [5], "dtype": "float64"},
             })
         );
+    }
+
+    #[test]
+    fn listing_pages_resume_at_an_exclusive_filename() {
+        let tmp = tempfile::tempdir().unwrap();
+        for name in ["b", "aa", "a", "bb"] {
+            fs::write(tmp.path().join(name), []).unwrap();
+        }
+        let page = list(tmp.path(), None, 2).unwrap();
+        assert_eq!(page["entries"][0]["name"], "a");
+        assert_eq!(page["after"], "aa");
+        let last = list(tmp.path(), page["after"].as_str(), 2).unwrap();
+        assert_eq!(last["entries"][0]["name"], "b");
+        assert_eq!(last["entries"][1]["name"], "bb");
+        assert!(last["after"].is_null());
+        assert_eq!(list(tmp.path(), Some("ab"), 1).unwrap()["after"], "b");
+        assert_eq!(
+            list(tmp.path(), Some("bb"), 1).unwrap()["entries"],
+            json!([])
+        );
+        assert!(list(tmp.path(), None, 0).is_err());
+        assert!(list(tmp.path(), None, 4097).is_err());
     }
 
     #[test]
