@@ -7,6 +7,7 @@
     clippy::unwrap_used
 )]
 mod app;
+mod askpass;
 mod forms;
 mod preferences;
 mod ui;
@@ -137,6 +138,9 @@ fn app_spec() -> AppSpec<AppState> {
 }
 
 fn main() {
+    if std::env::var_os("TOMOJAX_STUDIO_ASKPASS").is_some() {
+        askpass::run();
+    }
     rune::tooling::set_app_id("org.tomojax.studio");
     let app = rune::App::new(app_spec())
         .compositor(volume::ScientificCompositor::new(AppState::render_items))
