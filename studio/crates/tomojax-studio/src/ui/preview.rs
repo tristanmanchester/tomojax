@@ -156,14 +156,14 @@ pub fn footer(state: &AppState) -> El {
                     .child(
                         action_button(
                             "preview-blocker-control",
-                            if job.status == JobStatus::Paused {
+                            if job.status == JobStatus::Paused || job.pause_requested {
                                 "Resume job"
                             } else {
                                 "Pause job"
                             },
                             false,
                             job.can_pause,
-                            if job.status == JobStatus::Paused {
+                            if job.status == JobStatus::Paused || job.pause_requested {
                                 UiAction::ResumeJob(job.id.clone())
                             } else {
                                 UiAction::PauseJob(job.id.clone())

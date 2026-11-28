@@ -104,112 +104,63 @@ fn job_color(status: JobStatus) -> rune::Color {
 
 fn job_actions(job: &JobView, compact: bool) -> El {
     let mut actions = row().gap(7.).justify_end();
+    let control = |key: &str, label: &str, action: fn(String) -> UiAction| {
+        action_button(
+            &format!("{key}-job-{}", job.id),
+            label,
+            false,
+            true,
+            action(job.id.clone()),
+        )
+        .h(30.)
+    };
     match job.status {
-        JobStatus::Running => {
-            if job.can_pause {
-                actions = actions.child(
-                    action_button(
-                        &format!("pause-job-{}", job.id),
-                        "Pause",
-                        false,
-                        true,
-                        UiAction::PauseJob(job.id.clone()),
-                    )
-                    .h(30.),
-                );
+        JobStatus::Running | JobStatus::Paused => {
+            if job.status == JobStatus::Paused || job.pause_requested {
+                actions = actions.child(control("resume", "Resume", UiAction::ResumeJob));
+            } else if job.can_pause {
+                actions = actions.child(control("pause", "Pause", UiAction::PauseJob));
             }
-            actions = actions.child(
-                action_button(
-                    &format!("cancel-job-{}", job.id),
-                    "Cancel",
-                    false,
-                    true,
-                    UiAction::CancelJob(job.id.clone()),
-                )
-                .h(30.),
-            );
-        }
-        JobStatus::Paused => {
-            actions = actions
-                .child(
-                    action_button(
-                        &format!("resume-job-{}", job.id),
-                        "Resume",
-                        false,
-                        true,
-                        UiAction::ResumeJob(job.id.clone()),
-                    )
-                    .h(30.),
-                )
-                .child(
-                    action_button(
-                        &format!("cancel-job-{}", job.id),
-                        "Cancel",
-                        false,
-                        true,
-                        UiAction::CancelJob(job.id.clone()),
-                    )
-                    .h(30.),
-                );
+            actions = actions.child(control("cancel", "Cancel", UiAction::CancelJob));
         }
         JobStatus::Queued => {
-            if !compact {
-                let before = job.id.clone();
-                let after = job.id.clone();
-                actions = actions
-                    .child(icon_button(
-                        &format!("job-up-{}", job.id),
-                        "Move earlier in queue",
-                        Icon::Up,
+            if !compact && job.waiting {
+                for (key, label, icon, delta) in [
+                    ("up", "Move earlier in queue", Icon::Up, -1),
+                    ("down", "Move later in queue", Icon::Down, 1),
+                ] {
+                    let id = job.id.clone();
+                    actions = actions.child(icon_button(
+                        &format!("job-{key}-{id}"),
+                        label,
+                        icon,
                         true,
                         move |s, tx| {
                             s.dispatch(
                                 UiAction::MoveJob {
-                                    id: before.clone(),
-                                    delta: -1,
-                                },
-                                tx,
-                            )
-                        },
-                    ))
-                    .child(icon_button(
-                        &format!("job-down-{}", job.id),
-                        "Move later in queue",
-                        Icon::Down,
-                        true,
-                        move |s, tx| {
-                            s.dispatch(
-                                UiAction::MoveJob {
-                                    id: after.clone(),
-                                    delta: 1,
+                                    id: id.clone(),
+                                    delta,
                                 },
                                 tx,
                             )
                         },
                     ));
+                }
             }
-            actions = actions.child(
-                action_button(
-                    &format!("cancel-job-{}", job.id),
-                    "Remove",
-                    false,
-                    true,
-                    UiAction::CancelJob(job.id.clone()),
-                )
-                .h(30.),
-            );
+            actions = actions.child(control(
+                "cancel",
+                if job.waiting { "Remove" } else { "Cancel" },
+                UiAction::CancelJob,
+            ));
+        }
+        JobStatus::Unknown => {
+            actions = actions.child(control("abandon", "Abandon", UiAction::AbandonJob));
         }
         JobStatus::Failed | JobStatus::Interrupted | JobStatus::Canceled => {
-            actions = actions.child(
-                action_button(
-                    &format!("retry-job-{}", job.id),
-                    "Retry job",
-                    false,
-                    true,
-                    UiAction::RetryJob(job.id.clone()),
-                )
-                .h(30.),
-            );
+            if job.can_resume {
+                actions = actions.child(control("resume", "Resume", UiAction::ResumeJob));
+            }
+            actions = actions.child(control("retry", "Retry job", UiAction::RetryJob));
         }
         JobStatus::Completed => {
             if let Some(asset) = &job.result_asset {
@@ -265,7 +216,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 .child(strong(&job.name, 12., ink()).truncate().help(&job.name))
                 .child(label(&job.operation, 11., muted()).truncate()),
         )
-        .child(label(job.status.title(), 11., job_color(job.status)));
+        .child(label(job.state_label, 11., job_color(job.status)));
     if !compact && let Some(elapsed) = &job.elapsed {
         heading = heading.child(number(elapsed, 11., muted()));
     }
@@ -276,7 +227,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
             forest(),
         ));
     }
-    let mut body = col()
+    let body = col()
         .key(format!("job-{}", job.id))
         .w_full()
         .min_w(0.)
@@ -294,7 +245,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                         .label(format!(
                             "{}: {}. {} progress history, metrics and captured settings",
                             job.name,
-                            job.status.title(),
+                            job.state_label,
                             if expanded { "Hide" } else { "Show" }
                         ))
                         .focusable(!compact)
@@ -308,7 +259,14 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
                 )
                 .child(job_actions(job, compact)),
         );
-    if !job.stage.is_empty() && job.stage != job.status.title() {
+    job_body(state, job, body, compact, expanded)
+}
+
+fn job_body(state: &AppState, job: &JobView, mut body: El, compact: bool, expanded: bool) -> El {
+    if !job.stage.is_empty()
+        && job.stage != job.state_label
+        && job.error.as_ref() != Some(&job.stage)
+    {
         body = body.child(label(&job.stage, 11., muted()).wrap());
     }
     if let Some(progress) = job
@@ -337,6 +295,14 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
     if let Some(error) = &job.error {
         body = body.child(label(error, 11.5, tokens::error()).wrap());
     }
+    if compact || expanded {
+        if !job.scheduler_options.is_empty() {
+            body = body.child(property("Scheduler options", &job.scheduler_options));
+        }
+        if !job.devices.is_empty() {
+            body = body.child(property("Job devices", &job.devices));
+        }
+    }
     body = body.child(super::progress::telemetry(state, job, compact, expanded));
     if expanded && (!job.settings.is_empty() || !job.inputs.is_empty()) {
         let mut details =
@@ -362,9 +328,12 @@ fn job_files(state: &AppState, job: &JobView, mut body: El, show_files: bool) ->
             .as_ref()
             .and_then(|p| p.document.jobs.iter().find(|j| j.id == job.id))
     {
-        if state.data_offline() {
+        if state.data_offline() || (record.script.is_some() && !state.job_seen(&job.id)) {
             let seen = record
-                .finished
+                .script
+                .as_ref()
+                .and_then(|s| s.seen)
+                .or(record.finished)
                 .or(record.started)
                 .unwrap_or(record.submitted);
             let seconds = crate::project::now_ms().saturating_sub(seen) / 1000;
@@ -404,8 +373,8 @@ pub fn jobs_drawer(state: &AppState) -> El {
         .filter(|j| {
             matches!(
                 j.status,
-                JobStatus::Running | JobStatus::Paused | JobStatus::Queued
-            ) || (j.status == JobStatus::Failed && state.ui.activity.tracks(&j.id))
+                JobStatus::Running | JobStatus::Paused | JobStatus::Queued | JobStatus::Unknown
+            ) || state.ui.activity.tracks(&j.id)
         })
         .collect();
     let mut rows = col().gap(8.);

@@ -31,7 +31,7 @@ pub fn view(state: &AppState) -> El {
                 Purpose::Folder => "Import an acquisition folder",
                 Purpose::Relink(..) => "Reconnect the original data",
                 Purpose::Browse => "Files",
-                Purpose::Bundle => "Export array bundle",
+                Purpose::Export { .. } => "Choose an output folder",
             };
             (title, browser(state, purpose))
         }
@@ -369,7 +369,7 @@ fn file_actions(state: &AppState, purpose: &Purpose, list: &crate::protocol::Lis
         Purpose::Relink(..) => "Reconnect",
         Purpose::Import | Purpose::Folder => "Import",
         Purpose::Browse => "Done",
-        Purpose::Bundle => "Export bundle",
+        Purpose::Export { .. } => "Use this folder",
     };
     let mut actions = row().gap(8.).child(action(
         "choose-worker-path",

@@ -221,13 +221,25 @@ impl AppState {
             }
             Err(error) => asset.issue = Some(error),
         }
-        let kind = asset.kind.clone();
+        self.refresh_registration(id, &previous, first);
+        self.mark_dirty();
+    }
+
+    pub(super) fn refresh_registration(&mut self, id: &str, previous: &str, first: bool) {
+        let Some(kind) = self
+            .project
+            .as_ref()
+            .and_then(|p| p.document.asset(id))
+            .map(|a| a.kind.clone())
+        else {
+            return;
+        };
         self.model
             .measurements
             .retain(|measurement| measurement.asset != id);
         if self.model.active_asset.as_deref() == Some(id) {
             if self.ui.operation == "open"
-                && self.ui.parameter_choices.get("kind") == Some(&previous)
+                && self.ui.parameter_choices.get("kind").map(String::as_str) == Some(previous)
             {
                 self.ui.parameter_choices.insert("kind".into(), kind);
             }
@@ -240,7 +252,6 @@ impl AppState {
         }
         self.imaging.invalidate();
         self.image_key.clear();
-        self.mark_dirty();
         self.refresh_images();
     }
 
@@ -856,6 +867,10 @@ impl AppState {
                     .map(|(key, edit)| (format!("correction:{key}"), edit.text.clone())),
             )
             .collect();
+        draft_edits.insert(
+            "studio:scheduler_options".into(),
+            self.ui.scheduler_options.text.clone(),
+        );
         draft_choices.insert("studio:export_format".into(), self.ui.export_format.clone());
         if let Some(path) = &self.ui.export_path {
             draft_edits.insert(
@@ -941,23 +956,19 @@ impl AppState {
         }
     }
 
-    pub(super) fn restore_workspace(&mut self, context: &project::Workspace) {
-        self.model.active_asset = context.active.clone();
-        self.model.selected_assets = context.selected.clone();
-        self.model.compare_left = context.compare[0].clone();
-        self.model.compare_right = context.compare[1].clone();
-        self.ui.workspace = match context.workspace.as_str() {
-            "Prepare" => Workspace::Prepare,
-            "Reconstruct" => Workspace::Reconstruct,
-            "Compare" => Workspace::Compare,
-            "Jobs" => Workspace::Jobs,
-            _ => Workspace::Explore,
-        };
+    fn restore_submission_drafts(&mut self, context: &project::Workspace) {
         self.ui.export_format = context
             .draft_choices
             .get("studio:export_format")
             .cloned()
             .unwrap_or_else(|| "nxs".into());
+        self.ui.scheduler_options.replace_text(
+            context
+                .draft_edits
+                .get("studio:scheduler_options")
+                .cloned()
+                .unwrap_or_default(),
+        );
         self.ui.export_path = context
             .draft_edits
             .get("studio:export_path")
@@ -970,6 +981,21 @@ impl AppState {
                     .map(|name| (name.to_string(), rune::TextEdit::new(value.clone())))
             })
             .collect();
+    }
+
+    pub(super) fn restore_workspace(&mut self, context: &project::Workspace) {
+        self.model.active_asset = context.active.clone();
+        self.model.selected_assets = context.selected.clone();
+        self.model.compare_left = context.compare[0].clone();
+        self.model.compare_right = context.compare[1].clone();
+        self.ui.workspace = match context.workspace.as_str() {
+            "Prepare" => Workspace::Prepare,
+            "Reconstruct" => Workspace::Reconstruct,
+            "Compare" => Workspace::Compare,
+            "Jobs" => Workspace::Jobs,
+            _ => Workspace::Explore,
+        };
+        self.restore_submission_drafts(context);
         self.restore_view(context);
         self.set_operation(
             if context.operation.is_empty() {
@@ -1060,13 +1086,18 @@ impl AppState {
 
     /// Open Activity as the user's choice, over the jobs it shows now.
     pub(crate) fn show_activity(&mut self) {
-        let jobs = self
+        let mut jobs: Vec<_> = self
             .project
             .iter()
-            .flat_map(|project| &project.document.jobs)
-            .filter(|job| job.status.active())
-            .map(|job| job.id.clone())
+            .flat_map(|p| &p.document.jobs)
+            .filter(|j| j.status.active())
+            .map(|j| j.id.clone())
             .collect();
+        if jobs.is_empty()
+            && let Some(last) = self.project.as_ref().and_then(|p| p.document.jobs.last())
+        {
+            jobs.push(last.id.clone());
+        }
         self.ui.activity.show(jobs);
     }
 
@@ -1201,81 +1232,15 @@ impl AppState {
                     .collect()
             })
             .unwrap_or_default();
-        self.model.jobs =
-            self.project
-                .as_ref()
-                .map(|p| {
-                    p.document
-                        .jobs
-                        .iter()
-                        .map(|j| JobView {
-                            id: j.id.clone(),
-                            name: j
-                                .result
-                                .as_ref()
-                                .and_then(|id| p.document.asset(id))
-                                .map(|asset| asset.name.clone())
-                                .unwrap_or_else(|| j.subject()),
-                            inputs: j
-                                .inputs
-                                .iter()
-                                .map(|input| input.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join(", "),
-                            operation: j.display_operation(),
-                            status: match j.status {
-                                project::JobStatus::Queued => JobStatus::Queued,
-                                project::JobStatus::Running => JobStatus::Running,
-                                project::JobStatus::Paused => JobStatus::Paused,
-                                project::JobStatus::Completed => JobStatus::Completed,
-                                project::JobStatus::Failed => JobStatus::Failed,
-                                project::JobStatus::Canceled => JobStatus::Canceled,
-                                project::JobStatus::Interrupted => JobStatus::Interrupted,
-                            },
-                            stage: j.stage.clone(),
-                            progress: j.progress,
-                            error: j.error.clone(),
-                            settings: j
-                                .parameters
-                                .as_object()
-                                .map(|o| {
-                                    o.iter()
-                                        .map(|(k, v)| {
-                                            (
-                                                k.clone(),
-                                                v.as_str()
-                                                    .map(str::to_owned)
-                                                    .unwrap_or_else(|| v.to_string()),
-                                            )
-                                        })
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
-                            elapsed: j.started.map(|s| {
-                                format!(
-                                    "{}{:.1} s",
-                                    if j.kept_preview.is_some() {
-                                        "save "
-                                    } else {
-                                        ""
-                                    },
-                                    (j.finished.unwrap_or_else(project::now_ms).saturating_sub(s))
-                                        as f64
-                                        / 1000.
-                                )
-                            }),
-                            result_asset: j.result.clone(),
-                            can_pause: matches!(
-                                j.status,
-                                project::JobStatus::Running | project::JobStatus::Paused
-                            ) && !self.local_job(&j.id)
-                                && self.pending.values().any(
-                                    |pending| matches!(pending,Pending::Execute(id) if id==&j.id),
-                                ),
-                        })
-                        .collect()
+        self.model.jobs = self
+            .project
+            .iter()
+            .flat_map(|p| {
+                p.document.jobs.iter().map(|job| {
+                    JobView::from_record(p, job, self.jobs.waiting.contains_key(&job.id))
                 })
-                .unwrap_or_default();
+            })
+            .collect();
         self.model.recipes = self
             .project
             .as_ref()

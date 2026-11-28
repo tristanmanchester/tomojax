@@ -95,12 +95,6 @@ impl AppState {
     }
 
     pub(super) fn export_dialog(&mut self, format: &str, tx: &mut Tx) -> Result<(), String> {
-        if self.remote_project().is_some() {
-            if format == "array" {
-                return self.file_action(files::Action::Browse(files::Purpose::Bundle), tx);
-            }
-            return Err("Remote processing jobs are unavailable. Use Copy to this computer to copy a saved file.".into());
-        }
         let id = self
             .model
             .active_asset
@@ -120,6 +114,16 @@ impl AppState {
             .map(|f| f.suffixes.first().map_or("-slices", String::as_str))
             .unwrap_or(if format == "array" { "-array" } else { ".nxs" });
         let name = format!("{}{suffix}", input.name.replace(['/', '\\', ':'], "_"));
+        if self.remote_project().is_some() {
+            return self.file_action(
+                files::Action::Browse(files::Purpose::Export {
+                    format: format.into(),
+                    name,
+                    asset: input.asset,
+                }),
+                tx,
+            );
+        }
         let format = format.to_string();
         let choose = move |state: &mut AppState, path: PathBuf| {
             if state.active_export_format() != format
@@ -217,11 +221,8 @@ impl AppState {
             format!("Export {format}")
         };
         job.destination = Some(path.into());
-        let project = self.project.as_mut().ok_or("No project")?;
-        let id = job.id.clone();
-        project.document.jobs.push(job);
-        self.mark_dirty();
-        self.ui.activity.follow(vec![id]);
+        let ids = self.capture_jobs(vec![job])?;
+        self.ui.activity.follow(ids);
         self.refresh_model();
         Ok(())
     }

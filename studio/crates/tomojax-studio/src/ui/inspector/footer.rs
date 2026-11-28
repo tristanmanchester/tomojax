@@ -18,17 +18,28 @@ pub(super) fn footer(state: &AppState) -> El {
             let invalid = state
                 .current_validation_error(&state.ui.operation)
                 .is_some();
-            let available = state.operation_available_here(&state.ui.operation)
-                && !state.data_offline()
-                && state.model.backend.ready
+            let available = !state.data_offline()
+                && (state.model.backend.ready || state.detached_jobs())
                 && (state.model.selection_count() > 0 || state.ui.operation == "simulate")
                 && state.model.active().is_none_or(|a| !a.missing)
                 && !invalid;
+            if state.launcher() == Some("slurm")
+                && !matches!(state.ui.operation.as_str(), "plan" | "inspect" | "open")
+            {
+                content = content
+                    .child(label("Scheduler options", 12., muted()))
+                    .child(input_hint(
+                        "scheduler-options",
+                        &state.ui.scheduler_options,
+                        "Scheduler options",
+                        "",
+                        "--time=00:30:00",
+                        |s| &mut s.ui.scheduler_options,
+                    ));
+            }
             if !available {
                 let reason = if state.data_offline() {
                     "Not connected"
-                } else if !state.operation_available_here(&state.ui.operation) {
-                    "Processing jobs currently run on this computer. You can inspect scans and keep previews on this connection."
                 } else if !state.model.backend.ready {
                     if state.model.backend.status.is_empty() {
                         "Waiting for TomoJAX"

@@ -1,8 +1,8 @@
 //! Edit-time preflight uses the worker's exact operation and rejects obsolete drafts.
 use super::AppState;
-use super::projection::ProjectionRoles;
 use crate::engine::EngineEvent;
 use crate::forms::{self, DraftError, FieldIssue};
+use crate::project::script::ProjectionRoles;
 use crate::protocol::{ErrorKind, Product, Response, ResultValue, SchemaCatalog};
 use crate::ui::model::{JobStatus, Workspace};
 use serde_json::{Value, json};
@@ -476,43 +476,38 @@ impl AppState {
         // Forward and back projection: the array and the geometry are chosen from
         // the opened inputs exactly as execution chooses them.
         if let Some(key) = array_key {
-            let mut products = Vec::new();
-            for input in &inputs {
-                if let Some(product) = super::jobs::registered_array(input) {
-                    products.push(product);
-                    continue;
-                }
-                self.previews
-                    .ensure_input(input.clone())
-                    .map_err(|message| DraftError::new("source", message))?;
-                match self
-                    .previews
-                    .source_product(input)
-                    .map_err(|message| DraftError::new("source", message))?
-                {
-                    Some(product) => products.push(product.clone()),
-                    None => return Ok(None),
+            let mut operation = Value::Object(value);
+            let roles = ProjectionRoles::choose(&self.ui.operation, &inputs, &operation)
+                .map_err(|e| DraftError::new(key, e))?;
+            let mut handles = HashMap::new();
+            for index in std::iter::once(roles.geometry).chain(roles.array) {
+                let input = &inputs[index];
+                if input.dataset() {
+                    self.previews
+                        .ensure_input(input.clone())
+                        .map_err(|e| DraftError::new("source", e))?;
+                    let Some(handle) = self
+                        .previews
+                        .source_product(input)
+                        .map_err(|e| DraftError::new("source", e))?
+                        .and_then(Product::handle)
+                    else {
+                        return Ok(None);
+                    };
+                    handles.insert(index, handle.to_owned());
                 }
             }
-            let products: Vec<_> = products.iter().collect();
-            let parameters = Value::Object(value.clone());
-            let roles = ProjectionRoles::choose(&self.ui.operation, &products, &parameters)
-                .map_err(|error| DraftError::new(key, error))?;
-            roles
-                .apply(&mut value)
-                .map_err(|error| DraftError::new(key, error))?;
             let Some(source) = self
                 .previews
                 .source_ref(&inputs[roles.geometry])
-                .map_err(|message| DraftError::new("source", message))?
+                .map_err(|e| DraftError::new("source", e))?
             else {
                 return Ok(None);
             };
-            value.insert("source".into(), json!(source));
-            // The roles are shown, so the user sees which input supplies what.
-            let names: Vec<_> = inputs.iter().map(|input| input.name.clone()).collect();
-            self.validation.view.scope = roles.describe(&names);
-            return Ok(Some(Value::Object(value)));
+            roles.apply(&mut operation, |i| handles[&i].clone());
+            operation["source"] = json!(source);
+            self.validation.view.scope = roles.describe(&inputs);
+            return Ok(Some(operation));
         }
         let mut sources = Vec::new();
         for input in &inputs {
@@ -573,6 +568,26 @@ impl AppState {
         );
         // Revealing a JSON editor preserves the submitted values; it is not a new edit.
         self.validation.signature = Some(self.validation_signature());
+    }
+
+    fn validation_worker_error(&mut self, error: &crate::protocol::WorkerError) {
+        self.validation.in_flight = None;
+        if matches!(error.kind, ErrorKind::Unavailable) && self.detached_jobs() {
+            self.validation.next = Next::Complete;
+            self.validation.status(
+                Phase::Unavailable,
+                "Device availability will be checked when the job starts.",
+            );
+        } else if matches!(error.kind, ErrorKind::Canceled | ErrorKind::Superseded) {
+            self.validation.next = Next::Complete;
+            self.validation
+                .status(Phase::Unavailable, "Validation did not complete.");
+        } else {
+            self.validation_error(DraftError::new(
+                error.path.clone().unwrap_or_default(),
+                &error.message,
+            ));
+        }
     }
 
     /// Returns true only for requests owned by this controller.
@@ -698,17 +713,7 @@ impl AppState {
                 self.release_response(response);
             }
             Response::Error { error, .. } => {
-                self.validation.in_flight = None;
-                if matches!(error.kind, ErrorKind::Canceled | ErrorKind::Superseded) {
-                    self.validation.next = Next::Complete;
-                    self.validation
-                        .status(Phase::Unavailable, "Validation did not complete.");
-                } else {
-                    self.validation_error(DraftError::new(
-                        error.path.clone().unwrap_or_default(),
-                        &error.message,
-                    ));
-                }
+                self.validation_worker_error(error);
             }
             Response::ProtocolError { message, .. } => {
                 self.validation.in_flight = None;

@@ -3,7 +3,9 @@ mod actions;
 #[cfg(test)]
 #[cfg(unix)]
 mod connection_tests;
-mod controls;
+#[cfg(all(test, unix))]
+mod crash_tests;
+mod durable;
 mod editing;
 mod export;
 pub(crate) mod files;
@@ -12,7 +14,6 @@ mod jobs;
 mod local;
 mod pixels;
 mod previewing;
-mod projection;
 mod session;
 #[cfg(test)]
 mod state_machine_tests;
@@ -31,7 +32,7 @@ use crate::{
     protocol::{Output, Product, Response, ResultValue, SchemaCatalog},
     ui::model::*,
 };
-use controls::ControlWatch;
+use durable::{JobSession, Pending};
 use local::{CANCELED, LocalMessage, LocalTask, check_cancel};
 
 /// The local-task key of copies into a project, which **Cancel copy** stops.
@@ -42,38 +43,6 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-#[derive(Clone)]
-enum Pending {
-    Inspect(String),
-    OpenInput {
-        job: String,
-        index: usize,
-    },
-    Execute(String),
-    Save {
-        job: String,
-        asset: String,
-        path: PathBuf,
-        output: Box<Output>,
-    },
-    Control {
-        job: String,
-        target: String,
-        action: String,
-    },
-    ControlStatus {
-        job: String,
-        target: String,
-        action: String,
-    },
-}
-
-struct Running {
-    job: String,
-    handles: Vec<String>,
-    products: Vec<Product>,
-    next_input: usize,
-}
 enum LocalEvent {
     Identity(Result<(), String>),
     FilePanel(files::FileReply),
@@ -90,13 +59,9 @@ enum LocalEvent {
         handle: Option<String>,
         result: Result<(), String>,
     },
-    Audited {
-        asset: String,
-        job: Option<String>,
-        report: Value,
-        result: Result<Option<local::HeaderMetadata>, String>,
-    },
     Metadata {
+        inspect_if_unknown: bool,
+        intent: u64,
         asset: String,
         result: Result<Option<local::HeaderMetadata>, String>,
     },
@@ -138,9 +103,8 @@ pub struct AppState {
     pane_edges: [usize; 8],
     pub(crate) catalog: SchemaCatalog,
     pending: HashMap<String, Pending>,
-    control_watch: Option<ControlWatch>,
-    imports: VecDeque<String>,
-    running: Option<Running>,
+    jobs: JobSession,
+    imports: VecDeque<(String, u64)>,
     wake: rune::Waker,
     window_wake: std::sync::Arc<std::sync::OnceLock<rune::Waker>>,
     local_send: mpsc::Sender<LocalMessage>,
@@ -203,9 +167,8 @@ impl AppState {
             pane_edges: [1024; 8],
             catalog,
             pending: HashMap::new(),
-            control_watch: None,
+            jobs: JobSession::default(),
             imports: VecDeque::new(),
-            running: None,
             wake: std::sync::Arc::new(move || {
                 if let Some(wake) = event_wake.get() {
                     wake();
@@ -285,7 +248,7 @@ impl AppState {
     }
 
     pub fn has_pending_work(&self) -> bool {
-        self.running.is_some()
+        !self.jobs.waiting.is_empty()
             || !self.pending.is_empty()
             || !self.local_tasks.is_empty()
             || self.previews.has_work()
@@ -358,7 +321,6 @@ impl AppState {
             changed = true;
             self.engine_event(event);
         }
-        self.poll_control();
         while let Ok(message) = self.local_receive.try_recv() {
             changed = true;
             self.finish_local(&message.task);
@@ -377,12 +339,6 @@ impl AppState {
         changed |= self.poll_form_context();
         changed |= self.poll_interactive();
         changed |= self.poll_validation();
-        self.previews
-            .retire_resources(self.live.drain_releases().into_iter().collect(), None);
-        for handle in self.live.drain_handles() {
-            self.previews
-                .retire_resources(Default::default(), Some(handle));
-        }
         if let Some(engine) = self.engine.as_mut() {
             self.previews
                 .collect_retired(engine, |tokens| self.imaging.artifacts_in_use(tokens));
@@ -406,6 +362,8 @@ impl AppState {
                     .map_err(|e| self.model.error = Some(e));
             }
             self.submit_imports();
+        }
+        if !self.shutting_down {
             self.schedule();
         }
         if self.project.is_some() && self.last_autosave.elapsed() > Duration::from_millis(400) {
@@ -452,7 +410,7 @@ impl AppState {
                                 self.activate(id.clone());
                             }
                             self.mark_dirty();
-                            self.start_metadata(&id);
+                            self.start_metadata(&id, true);
                         }
                     }
                     Err(error) if error == CANCELED => self.model.status = "Copy canceled".into(),
@@ -474,13 +432,8 @@ impl AppState {
                         }
                     }
                 }
-                if !handle
-                    .as_ref()
-                    .is_some_and(|handle| self.live.retire_handle(handle))
-                {
-                    self.previews
-                        .retire_resources(artifacts.into_iter().collect(), handle);
-                }
+                self.previews
+                    .retire_resources(artifacts.into_iter().collect(), handle);
             }
             LocalEvent::Exported { job, result } => match result {
                 Ok(()) => self.complete_job(&job, None),
@@ -490,21 +443,27 @@ impl AppState {
                     }
                 }
             },
-            LocalEvent::Audited {
-                asset,
-                job,
-                report,
+            LocalEvent::Metadata {
+                inspect_if_unknown,
+                asset: id,
+                intent,
                 result,
             } => {
-                self.finish_audit(asset, job, report, result);
-            }
-            LocalEvent::Metadata { asset: id, result } => {
                 self.metadata_pending = self.metadata_pending.saturating_sub(1);
+                if !self
+                    .project
+                    .as_ref()
+                    .and_then(|p| p.document.asset(&id))
+                    .is_some_and(|a| a.intent == intent)
+                {
+                    return;
+                }
                 match result {
                     Ok(Some((kind, arrays, report))) => {
                         self.record_read(&id, Ok((kind, arrays)), report);
                     }
-                    Ok(None) => self.imports.push_back(id),
+                    Ok(None) if inspect_if_unknown => self.imports.push_back((id, intent)),
+                    Ok(None) => {}
                     Err(error) => {
                         if let Some(asset) = self
                             .project
@@ -558,9 +517,8 @@ impl AppState {
                 self.live.disconnected();
                 self.model.backend.ready = false;
                 self.model.backend.status = "Worker disconnected".into();
-                if let Some(running) = self.running.take() {
-                    self.fail_job(&running.job, &reason, false);
-                }
+                self.jobs = JobSession::default();
+                self.imports.clear();
                 self.pending.clear();
                 if self.remote_project().is_none() {
                     self.model.error = Some(reason);
@@ -573,15 +531,6 @@ impl AppState {
         let Some(response) = self.imaging.worker_reply(response, stale) else {
             return;
         };
-        if let Response::Result {
-            request,
-            result: ResultValue::Output(output),
-            ..
-        } = &response
-            && let Some(handle) = output.value.handle()
-        {
-            self.live.bind_result(request, handle);
-        }
         let Some(response) = self.previews.consume(response, stale) else {
             return;
         };
@@ -590,9 +539,7 @@ impl AppState {
             return;
         }
         match response {
-            Response::Progress {
-                request, record, ..
-            } => self.progress(&request, record),
+            Response::Progress { .. } => self.release_response(&response),
             Response::Result {
                 request, result, ..
             } => {
@@ -603,32 +550,19 @@ impl AppState {
                     self.model.parameters = forms::refresh_catalog(&mut self.ui, &self.catalog);
                 }
                 if let Some(pending) = self.pending.remove(&request) {
-                    match pending {
-                        Pending::Control { .. } | Pending::ControlStatus { .. } => {
-                            self.control_result(pending, result)
-                        }
-                        _ => self.result(pending, result),
-                    }
+                    self.job_reply(pending, result);
                 }
             }
             Response::Error { request, error, .. } => {
                 if let Some(pending) = self.pending.remove(&request) {
-                    self.request_failed(
-                        pending,
-                        error.message,
-                        matches!(
-                            error.kind,
-                            crate::protocol::ErrorKind::Canceled
-                                | crate::protocol::ErrorKind::Superseded
-                        ),
-                    );
+                    self.job_request_failed(pending, error.message);
                 }
             }
             Response::ProtocolError {
                 request, message, ..
             } => {
                 if let Some(pending) = request.and_then(|id| self.pending.remove(&id)) {
-                    self.request_failed(pending, message, false);
+                    self.job_request_failed(pending, message);
                 } else {
                     self.model.error = Some(message);
                 }
@@ -702,11 +636,11 @@ impl AppState {
                     && (project.document.connection.is_none() || self.local_job(&job.id))
             })
         });
-        if self.running.is_some()
+        if !self.jobs.waiting.is_empty()
             || running_job
             || self.copying > 0
             || self.metadata_pending > 0
-            || !self.pending.is_empty()
+            || (self.remote_project().is_none() && !self.pending.is_empty())
         {
             return Err("Finish or cancel active work before switching projects".into());
         }
@@ -804,7 +738,7 @@ impl AppState {
         self.refresh_model();
         self.refresh_images();
         for id in unread {
-            self.start_metadata(&id);
+            self.start_metadata(&id, false);
         }
         if self.remote_project().is_none()
             && let Some(input) = self.startup_input.take()
@@ -828,13 +762,7 @@ impl AppState {
         }
         self.previews.reset();
         self.imaging.shutdown();
-        let live_artifacts = self.live.shutdown();
-        self.previews
-            .retire_resources(live_artifacts.into_iter().collect(), None);
-        for handle in self.live.drain_handles() {
-            self.previews
-                .retire_resources(Default::default(), Some(handle));
-        }
+        self.live.shutdown();
         if let Some(engine) = self.engine.as_mut() {
             self.previews.collect_retired(engine, |_| false);
         }

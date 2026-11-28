@@ -367,6 +367,10 @@ pub struct Job {
 }
 
 impl Job {
+    pub fn session_operation(&self) -> bool {
+        matches!(self.operation.as_str(), "inspect" | "plan" | "open")
+    }
+
     pub fn display_operation(&self) -> String {
         let old = self.operation.replace('_', " ");
         if let Some(suffix) = self.name.strip_prefix(&old) {

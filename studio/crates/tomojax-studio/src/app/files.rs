@@ -12,7 +12,11 @@ pub enum Purpose {
     Results,
     FirstScan,
     Browse,
-    Bundle,
+    Export {
+        format: String,
+        name: String,
+        asset: String,
+    },
 }
 
 #[derive(Clone)]
@@ -467,17 +471,44 @@ impl AppState {
                 }
                 self.relink(&id, path.lexical());
             }
-            Purpose::Bundle => {
-                if !folder {
-                    return Err("Choose a folder for the array bundle".into());
-                }
-                let input = self.current_form_input().ok_or("Select a result")?;
-                let name = format!("{}-array", input.name.replace(['/', '\\'], "_"));
-                self.queue_export(input, PathBuf::from(path.join(&name).lexical()), "array")?;
+            Purpose::Export {
+                format,
+                name,
+                asset,
+            } => {
+                self.export_to_folder(&asset, &format, &name, &path, folder)?;
             }
             Purpose::Browse => {}
         }
         self.files.close_browser();
+        Ok(())
+    }
+
+    fn export_to_folder(
+        &mut self,
+        asset: &str,
+        format: &str,
+        name: &str,
+        path: &WorkerPath,
+        folder: bool,
+    ) -> Result<(), String> {
+        if !folder {
+            return Err("Choose a destination folder".into());
+        }
+        let dest = path.join(name).lexical().to_owned();
+        if self.model.active_asset.as_deref() != Some(asset) {
+            return Err("Select the result to export".into());
+        }
+        if self.interchange_format().is_some() {
+            self.ui.export_path = Some(dest);
+        } else {
+            let input = self
+                .project
+                .as_ref()
+                .ok_or("Open a project")?
+                .capture(asset)?;
+            self.queue_export(input, dest, format)?;
+        }
         Ok(())
     }
 

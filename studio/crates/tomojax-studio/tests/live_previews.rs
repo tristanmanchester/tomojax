@@ -95,15 +95,6 @@ impl Client {
                         );
                         continue;
                     }
-                    if let Response::Result {
-                        request,
-                        result: ResultValue::Output(output),
-                        ..
-                    } = &response
-                        && let Some(handle) = output.value.handle()
-                    {
-                        self.live.bind_result(request, handle);
-                    }
                     if let Response::Progress {
                         request, record, ..
                     } = &response
@@ -166,21 +157,19 @@ impl Client {
         }
         self.live.poll();
         assert!(self.live.error().is_none(), "{:?}", self.live.error());
-        for token in self.live.drain_releases() {
-            assert!(
-                self.released.insert(token.clone()),
-                "artifact released twice: {token}"
-            );
-            self.send_cleanup(json!({"type":"release","artifact":token}));
-        }
-        for handle in self.live.drain_handles() {
-            assert!(
-                self.closed.insert(handle.clone()),
-                "result handle closed twice"
-            );
-            self.send_cleanup(json!({"type":"close","handle":handle}));
-        }
     }
+
+    // Direct protocol client. frame() has finished reading the last generation.
+    fn retire(&mut self, handle: &str) {
+        for token in self.paths.keys().cloned().collect::<Vec<_>>() {
+            if self.released.insert(token.clone()) {
+                self.send_cleanup(json!({"type":"release","artifact":token}));
+            }
+        }
+        assert!(self.closed.insert(handle.into()));
+        self.send_cleanup(json!({"type":"close","handle":handle}));
+    }
+
     fn output(&mut self, command: Value) -> (String, Box<Output>) {
         let request = self.send(command);
         let until = Instant::now() + Duration::from_secs(120);
@@ -305,11 +294,7 @@ fn real_iterative_and_alignment_previews_are_registered_and_released_after_displ
     // A durable save would close this result next. It owns the live files too:
     // retain native pixels while releasing files first, then close once.
     let reconstructed_plane = client.live.frame().unwrap().planes["z"].clone();
-    assert!(
-        client
-            .live
-            .retire_handle(reconstruction.value.handle().unwrap())
-    );
+    client.retire(reconstruction.value.handle().unwrap());
     let until = Instant::now() + Duration::from_secs(5);
     loop {
         client.pump();
@@ -381,7 +366,7 @@ fn real_iterative_and_alignment_previews_are_registered_and_released_after_displ
             .any(|(depth, _)| *depth > 0)
     );
     client.evidence(&align, "align");
-    assert!(client.live.retire_handle(alignment.value.handle().unwrap()));
+    client.retire(alignment.value.handle().unwrap());
     let until = Instant::now() + Duration::from_secs(5);
     loop {
         client.pump();
@@ -403,17 +388,11 @@ fn real_iterative_and_alignment_previews_are_registered_and_released_after_displ
         "retirement removed owned display data"
     );
     client.live.clear();
-    assert!(
-        client.live.drain_releases().is_empty(),
-        "next job released already-retired files"
-    );
     client
         .engine
         .close_handle(simulation.value.handle().unwrap())
         .unwrap();
-    for token in client.live.shutdown() {
-        client.engine.release(&token).unwrap();
-    }
+    client.live.shutdown();
     let ending = client.engine.drain_shutdown(Duration::from_secs(5));
     assert!(ending.iter().any(|event|matches!(event,EngineEvent::Disconnected {code:Some(0),unfinished,..} if unfinished.is_empty())));
 }

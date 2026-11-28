@@ -78,18 +78,18 @@ impl AppState {
         self.mark_dirty();
         self.refresh_model();
         for id in metadata {
-            self.start_metadata(&id);
+            self.start_metadata(&id, true);
         }
     }
 
-    pub(super) fn start_metadata(&mut self, id: &str) {
+    pub(super) fn start_metadata(&mut self, id: &str, inspect_if_unknown: bool) {
         if self.shutting_down || !self.native_data_available() {
             return;
         }
-        let Some(path) = self
+        let Some((path, intent)) = self
             .project
             .as_ref()
-            .and_then(|p| p.document.asset(id).map(|a| p.resolve(&a.path)))
+            .and_then(|p| p.document.asset(id).map(|a| (p.resolve(&a.path), a.intent)))
         else {
             return;
         };
@@ -99,33 +99,35 @@ impl AppState {
         self.spawn_local(None, move |canceled| {
             let result =
                 check_cancel(&canceled).and_then(|()| local::stored(files, path.lexical(), None));
-            LocalEvent::Metadata { asset, result }
+            LocalEvent::Metadata {
+                inspect_if_unknown,
+                asset,
+                intent,
+                result,
+            }
         });
     }
 
     pub(super) fn submit_imports(&mut self) {
-        while let Some(id) = self.imports.pop_front() {
+        while let Some((id, intent)) = self.imports.pop_front() {
             if self
                 .engine
                 .as_ref()
                 .is_none_or(|e| e.execution_capacity() < 58)
             {
-                self.imports.push_front(id);
+                self.imports.push_front((id, intent));
                 break;
             }
-            let path = self
-                .project
-                .as_ref()
-                .and_then(|p| p.document.asset(&id).map(|a| p.resolve(&a.path)));
-            if let Some(path) = path
-                && let Err(error) = self.send(
-                    json!({"type":"inspect","path":path}),
-                    Pending::Inspect(id.clone()),
-                )
+            if let Some(project) = &self.project
+                && project
+                    .document
+                    .asset(&id)
+                    .is_some_and(|a| a.intent == intent)
+                && let Ok(input) = project.capture(&id)
+                && let Err(error) =
+                    self.capture_jobs(vec![project::Job::new("inspect", json!({}), vec![input])])
             {
-                self.imports.push_front(id);
                 self.model.error = Some(error);
-                break;
             }
         }
     }
@@ -156,7 +158,7 @@ impl AppState {
             .retain(|measurement| measurement.asset != id);
         self.imaging.invalidate();
         if reread {
-            self.start_metadata(id);
+            self.start_metadata(id, true);
         }
         self.image_key.clear();
         self.mark_dirty();

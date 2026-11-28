@@ -30,25 +30,24 @@ fn durable_commands_request_previews_only_for_a_connected_consumer() {
     let mut state = AppState::init();
     let input = source(&mut state, directory.path());
     let mut job = Job::new("reconstruct", json!({"method":"cgls"}), vec![input]);
-    state.running = Some(Running {
-        job: job.id.clone(),
-        handles: vec!["scan".into()],
-        products: vec![Product::Scan {
-            handle: "scan".into(),
-            projections: plane(Path::new("unused.npy")),
-        }],
-        next_input: 1,
-    });
-    assert_eq!(state.job_command(&job).unwrap()["previews"], true);
+    let command = |state: &AppState, job: &Job| {
+        project::script::Script::build(job, state.live.enabled(), String::new(), None)
+            .unwrap()
+            .lines
+            .pop()
+            .unwrap()["command"]
+            .clone()
+    };
+    assert_eq!(command(&state, &job)["previews"], true);
     state.live.set_enabled(false);
-    assert_eq!(state.job_command(&job).unwrap()["previews"], false);
+    assert_eq!(command(&state, &job)["previews"], false);
     state.live.set_enabled(true);
     job.operation = "align".into();
-    assert_eq!(state.job_command(&job).unwrap()["previews"], true);
+    assert_eq!(command(&state, &job)["previews"], true);
     for operation in ["correct", "simulate", "crop"] {
         job.operation = operation.into();
         assert_eq!(
-            state.job_command(&job).unwrap()["previews"],
+            command(&state, &job)["previews"],
             false,
             "{operation} has no live preview consumer"
         );
@@ -169,7 +168,7 @@ fn explicit_keep_copies_registered_arrays_and_captured_provenance_without_recomp
         std::fs::read(project.resolve_storage(Path::new(stored))).unwrap(),
         std::fs::read(&path).unwrap()
     );
-    assert!(state.running.is_none());
+    assert!(state.jobs.waiting.is_empty());
     assert_eq!(state.model.status, "Slice preview complete");
 }
 
@@ -603,7 +602,7 @@ fn real_alignment_displays_registered_slices_pose_rows_and_metric_history() {
             "starting another job released a live artifact twice: {:?}",
             runtime.state.model.error
         );
-        runtime.state.refresh_model();
+        runtime.update(|s, _| s.refresh_model());
         runtime.frame(1.);
         runtime.frame(2.);
         let job = runtime

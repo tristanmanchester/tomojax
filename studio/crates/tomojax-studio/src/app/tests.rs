@@ -11,6 +11,10 @@ pub(crate) fn capture_native_viewport(mut state: AppState, path: &Path, size: &s
     // Match the ordinary actions a reviewer would take before inspecting the
     // result. Numerical values and observed worker state remain untouched.
     state.ui.activity.close();
+    render_native_viewport(state, path, size, scale);
+}
+
+pub(crate) fn render_native_viewport(mut state: AppState, path: &Path, size: &str, scale: &str) {
     if let Some(control) = state
         .model
         .validation
@@ -84,14 +88,9 @@ fn preview_job_controls_target_the_worker_job_instead_of_a_local_keep_copy() {
             ..Default::default()
         },
     ];
-    state.running = Some(Running {
-        job: "device-run".into(),
-        handles: vec![],
-        products: vec![],
-        next_input: 0,
-    });
+    state.model.jobs[1].can_pause = true;
     assert_eq!(state.preview_blocker().unwrap().id, "device-run");
-    state.running = None;
+    state.model.jobs[1].can_pause = false;
     assert!(
         state.preview_blocker().is_none(),
         "a local copy does not hold the numerical device"
@@ -450,6 +449,8 @@ fn header_metadata_keeps_worker_registered_arrays() {
     let mut arrays = std::collections::BTreeMap::new();
     arrays.insert("projections".to_owned(), header);
     state.local_event(LocalEvent::Metadata {
+        inspect_if_unknown: true,
+        intent: 0,
         asset: id.clone(),
         result: Ok(Some(("scan".into(), arrays, json!({})))),
     });
@@ -461,6 +462,8 @@ fn header_metadata_keeps_worker_registered_arrays() {
     let asset = project.document.asset_mut(&id).unwrap();
     asset.kind = "scan".into();
     state.local_event(LocalEvent::Metadata {
+        inspect_if_unknown: true,
+        intent: 0,
         asset: id.clone(),
         result: Ok(Some((
             "reconstruction".into(),
@@ -542,72 +545,37 @@ fn a_back_projection_belongs_to_the_projections_it_used() {
     let directory = tempfile::tempdir().unwrap();
     let mut state = AppState::init();
     state.project = Some(Project::open(&directory.path().join("project"), true).unwrap());
-    let first = ramp_volume(directory.path(), "first", 2);
-    let second = ramp_volume(directory.path(), "second", 2);
-    let array = first.arrays["volume"].clone();
+    let mut scan = ramp_volume(directory.path(), "scan", 2);
+    let mut projected = ramp_volume(directory.path(), "projections", 2);
+    scan.kind = "scan".into();
+    projected.kind = "projections".into();
+    projected
+        .arrays
+        .insert("projections".into(), scan.arrays["volume"].clone());
     let project = state.project.as_mut().unwrap();
-    project.document.assets = vec![first.clone(), second.clone()];
-    let job = project::Job::new(
+    project.document.assets = vec![scan.clone(), projected.clone()];
+    let mut job = project::Job::new(
         "backproject",
         json!({}),
         vec![
-            project.capture(&first.id).unwrap(),
-            project.capture(&second.id).unwrap(),
+            project.capture(&scan.id).unwrap(),
+            project.capture(&projected.id).unwrap(),
         ],
     );
+    job.script = Some(project::script::Script::build(&job, false, String::new(), None).unwrap());
     let id = job.id.clone();
     project.document.jobs.push(job);
-    let output = Output {
-        value: Product::Volume {
-            volume: array.clone(),
-        },
-        info: crate::protocol::Info {
-            summary: Default::default(),
-            arrays: Default::default(),
-        },
-        manifest: crate::protocol::Provenance {
-            operation: "backproject".into(),
-            parameters: json!({}),
-            inputs: vec![],
-        },
-    };
-    let simulation = Product::Simulation {
-        handle: "simulation".into(),
-        scan: crate::protocol::Storage::Member {
-            handle: "simulation".into(),
-            member: "scan".into(),
-        },
-        phantom: array.clone(),
-    };
-    let scan = Product::Scan {
-        handle: "binned".into(),
-        projections: array.clone(),
-    };
-    let selected = Product::Projections {
-        projections: array.clone(),
-    };
-    // The parent is the input whose projections execution read: a selected
-    // projection result, else a scan before a simulation, as execution ranks them.
-    for (products, parent) in [
-        (vec![scan.clone(), selected], &second.id),
-        (vec![simulation, scan], &second.id),
-    ] {
-        state.running = Some(Running {
-            job: id.clone(),
-            handles: vec![String::new(); 2],
-            products,
-            next_input: 2,
-        });
-        let result = state
-            .result_asset(
-                &id,
-                "result-volume",
-                &directory.path().join("v.npy"),
-                &output,
-            )
-            .unwrap();
-        assert_eq!(result.parent.as_ref(), Some(parent));
-    }
+    let row=serde_json::from_value(json!({"directory":project.job_directory(&id),"state":"completed","launcher":"process","detail":"","cancel_requested":false,"receipt":{
+        "type":"arrays","product":"volume","arrays":{"volume":scan.arrays["volume"]},"manifest":{"operation":"backproject","parameters":{},"inputs":[]}}})).unwrap();
+    let asset = project
+        .apply_job(&id, 0, &row, None)
+        .unwrap()
+        .asset
+        .unwrap();
+    assert_eq!(
+        project.document.asset(&asset).unwrap().parent.as_ref(),
+        Some(&projected.id)
+    );
 }
 
 #[test]
@@ -845,35 +813,26 @@ fn view_undo_stays_with_its_project() {
 
 #[test]
 fn projection_roles_name_the_geometry_scan_and_the_array_input() {
-    use super::projection::ProjectionRoles;
+    use project::script::ProjectionRoles;
     let directory = tempfile::tempdir().unwrap();
     let saved = ramp_volume(directory.path(), "forward", 2).arrays["volume"].clone();
-    let member = |handle: &str, member: &str| crate::protocol::Storage::Member {
-        handle: handle.into(),
-        member: member.into(),
+    let input = |kind: &str, keys: &[&str]| {
+        let mut asset = Asset::input("input.nxs".into(), false);
+        asset.kind = kind.into();
+        for key in keys {
+            asset.arrays.insert((*key).into(), saved.clone());
+        }
+        project::CapturedInput::from_asset(&asset, directory.path())
     };
-    let selected = Product::Projections {
-        projections: saved.clone(),
-    };
-    let scan = |handle: &str| Product::Scan {
-        handle: handle.into(),
-        projections: saved.clone(),
-    };
-    let (first, second) = (scan("first"), scan("second"));
-    let reconstruction = Product::Reconstruction {
-        handle: "reconstruction".into(),
-        volume: saved.clone(),
-        scan: Some(member("reconstruction", "scan")),
-        method: "fbp".into(),
-    };
-    let simulation = Product::Simulation {
-        handle: "simulation".into(),
-        scan: member("simulation", "scan"),
-        phantom: saved.clone(),
-    };
-    let roles = |operation: &str, products: &[&Product]| {
-        let roles = ProjectionRoles::choose(operation, products, &json!({})).unwrap();
-        (roles.geometry, roles.array)
+    let selected = input("projections", &["projections"]);
+    let first = input("scan", &["projections"]);
+    let second = first.clone();
+    let reconstruction = input("reconstruction", &["volume", "projections"]);
+    let simulation = input("simulation", &["projections", "phantom"]);
+    let roles = |op: &str, products: &[&project::CapturedInput]| {
+        let inputs: Vec<_> = products.iter().map(|i| (*i).clone()).collect();
+        let r = ProjectionRoles::choose(op, &inputs, &json!({})).unwrap();
+        (r.geometry, r.array)
     };
     // Back projection: a selected projection result wherever it sits, else the
     // projections of the scan that supplies the geometry.
@@ -893,7 +852,7 @@ fn projection_roles_name_the_geometry_scan_and_the_array_input() {
     // An array given by reference is used as given and belongs to no input.
     let referenced = ProjectionRoles::choose(
         "backproject",
-        &[&first],
+        std::slice::from_ref(&first),
         &json!({"projections": {"type": "npy", "path": "/residuals.npy"}}),
     )
     .unwrap();
@@ -910,12 +869,12 @@ fn projection_roles_name_the_geometry_scan_and_the_array_input() {
             spacing: 0.5,
         };
     }
-    let volume = Product::Volume { volume };
-    let mut operation = serde_json::Map::new();
-    ProjectionRoles::choose("project", &[&first, &volume], &json!({"grid": null}))
+    let mut v = input("volume", &[]);
+    v.arrays.insert("volume".into(), volume);
+    let mut operation = json!({});
+    ProjectionRoles::choose("project", &[first, v], &json!({"grid":null}))
         .unwrap()
-        .apply(&mut operation)
-        .unwrap();
+        .apply(&mut operation, |_| unreachable!());
     assert_eq!(
         operation["volume"],
         serde_json::to_value(&saved.storage).unwrap()

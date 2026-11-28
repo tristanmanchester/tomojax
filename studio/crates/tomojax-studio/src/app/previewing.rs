@@ -99,9 +99,8 @@ impl AppState {
     }
 
     pub(crate) fn preview_blocker(&self) -> Option<&JobView> {
-        let running = self.running.as_ref()?;
         self.model.jobs.iter().find(|job| {
-            job.id == running.job && matches!(job.status, JobStatus::Running | JobStatus::Paused)
+            job.can_pause && matches!(job.status, JobStatus::Running | JobStatus::Paused)
         })
     }
 

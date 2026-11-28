@@ -62,6 +62,9 @@ impl AppState {
     }
 
     pub(super) fn select_project_source(&mut self) {
+        self.jobs = JobSession::default();
+        self.pending.clear();
+        self.imports.clear();
         self.pane_edges = [1024; 8];
         self.imaging.invalidate();
         if self.remote_project().is_some() || self.engine.owner().is_some() {

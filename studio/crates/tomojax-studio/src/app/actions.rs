@@ -1,5 +1,5 @@
 use super::*;
-use crate::project::{JobStatus, Recipe, new_id};
+use crate::project::{Recipe, new_id};
 use rune::{FileDialogOptions, Tx};
 
 impl AppState {
@@ -281,18 +281,8 @@ impl AppState {
             }
             UiAction::PauseJob(id) => self.control_job(&id, "pause")?,
             UiAction::ResumeJob(id) => self.control_job(&id, "resume")?,
-            UiAction::CancelJob(id) => {
-                let status = self
-                    .project
-                    .as_ref()
-                    .and_then(|p| p.document.jobs.iter().find(|j| j.id == id))
-                    .map(|j| j.status);
-                if status == Some(JobStatus::Queued) {
-                    self.fail_job(&id, "Canceled before execution", true);
-                } else {
-                    self.control_job(&id, "cancel")?;
-                }
-            }
+            UiAction::CancelJob(id) => self.control_job(&id, "cancel")?,
+            UiAction::AbandonJob(id) => self.control_job(&id, "abandon")?,
             UiAction::RetryJob(id) => {
                 let project = self.project.as_mut().ok_or("No project")?;
                 let old = project
@@ -301,11 +291,6 @@ impl AppState {
                     .iter()
                     .find(|j| j.id == id)
                     .ok_or("Job not found")?;
-                if project.document.connection.is_some()
-                    && !matches!(old.operation.as_str(), "inspect" | "export_array")
-                {
-                    return Err("Remote processing jobs are unavailable".into());
-                }
                 if old.status.active() {
                     return Err("This job is still active".into());
                 }
@@ -323,8 +308,7 @@ impl AppState {
                     project::Job::new(&old.operation, old.parameters.clone(), old.inputs.clone());
                 job.name = format!("{} · retry", old.name);
                 job.destination.clone_from(&old.destination);
-                project.document.jobs.push(job);
-                self.mark_dirty();
+                self.capture_jobs(vec![job])?;
             }
             UiAction::MoveJob { id, delta } => {
                 let project = self.project.as_mut().ok_or("No project")?;
@@ -334,16 +318,21 @@ impl AppState {
                     .iter()
                     .position(|j| j.id == id)
                     .ok_or("Job not found")?;
-                if project.document.jobs[index].status != JobStatus::Queued {
+                if !self.jobs.waiting.contains_key(&id) {
                     return Err("Only waiting jobs can be reordered".into());
                 }
                 let target = if delta < 0 {
-                    (0..index)
-                        .rev()
-                        .find(|i| project.document.jobs[*i].status == JobStatus::Queued)
+                    (0..index).rev().find(|i| {
+                        self.jobs
+                            .waiting
+                            .contains_key(&project.document.jobs[*i].id)
+                    })
                 } else {
-                    (index + 1..project.document.jobs.len())
-                        .find(|i| project.document.jobs[*i].status == JobStatus::Queued)
+                    (index + 1..project.document.jobs.len()).find(|i| {
+                        self.jobs
+                            .waiting
+                            .contains_key(&project.document.jobs[*i].id)
+                    })
                 };
                 if let Some(target) = target {
                     project.document.jobs.swap(index, target);

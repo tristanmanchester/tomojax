@@ -1,4 +1,3 @@
-use super::projection::ProjectionRoles;
 use super::*;
 use crate::project::{Job, JobStatus, new_id, now_ms};
 use crate::protocol::{Progress, Storage};
@@ -30,7 +29,7 @@ impl AppState {
         let id = job.id.clone();
         project.document.jobs.push(job);
         self.mark_dirty();
-        self.persist_arrays(&id, preview.output);
+        self.copy_kept_preview(&id, preview.output);
         self.refresh_model();
         Ok(id)
     }
@@ -47,12 +46,6 @@ impl AppState {
             .retire_resources(artifacts, output.value.handle().map(str::to_owned));
     }
 
-    pub(crate) fn operation_available_here(&self, operation: &str) -> bool {
-        self.remote_project().is_none()
-            || operation == "inspect"
-            || previewing::kind(operation).is_some()
-    }
-
     pub(super) fn queue_operation(&mut self, operation: &str) -> Result<(), String> {
         if matches!(
             operation,
@@ -60,11 +53,8 @@ impl AppState {
         ) {
             return self.request_interactive(operation);
         }
-        if !self.operation_available_here(operation) {
-            return Err("Run processing jobs in a project on this computer.".into());
-        }
-        if !self.model.backend.ready {
-            return Err("Wait for the TomoJAX worker to become ready".into());
+        if !self.model.backend.ready && !self.detached_jobs() {
+            return Err("Wait for TomoJAX to connect".into());
         }
         self.poll_form_context();
         if let Some(error) = self.current_validation_error(operation) {
@@ -89,10 +79,6 @@ impl AppState {
         }) {
             return Err("NPZ inputs are not supported by the native workspace; use NXtomo/HDF5 or a recognized acquisition".into());
         }
-        let project = self
-            .project
-            .as_mut()
-            .ok_or("Create or open a project first")?;
         // Results are saved as datasets, which hold scans, not raw frames.
         if matches!(operation, "crop" | "select")
             && inputs.iter().any(|input| input.kind == "frames")
@@ -101,415 +87,22 @@ impl AppState {
                 "Raw frames can't be saved after cropping or selecting views. Run Corrections first, then crop or select views of the corrected scan.".into(),
             );
         }
-        let first = project.document.jobs.len();
-        if operation == "simulate" {
-            project
-                .document
-                .jobs
-                .push(Job::new(operation, parameters, vec![]));
-        } else if matches!(operation, "combine" | "project" | "backproject") {
-            project
-                .document
-                .jobs
-                .push(Job::new(operation, parameters, inputs));
+        let jobs = if matches!(
+            operation,
+            "simulate" | "combine" | "project" | "backproject"
+        ) {
+            vec![Job::new(operation, parameters, inputs)]
         } else {
-            for input in inputs {
-                project
-                    .document
-                    .jobs
-                    .push(Job::new(operation, parameters.clone(), vec![input]));
-            }
-        }
-        let queued = project.document.jobs[first..]
-            .iter()
-            .map(|job| job.id.clone())
-            .collect();
-        self.mark_dirty();
+            inputs
+                .into_iter()
+                .map(|input| Job::new(operation, parameters.clone(), vec![input]))
+                .collect()
+        };
+        let queued = self.capture_jobs(jobs)?;
         self.ui.activity.follow(queued);
         self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())
-    }
-
-    pub(super) fn schedule(&mut self) {
-        if self.running.is_some()
-            || self.previews.has_priority_work()
-            || self
-                .engine
-                .as_ref()
-                .is_none_or(|e| e.execution_capacity() == 0)
-            || self
-                .project
-                .as_ref()
-                .is_none_or(|p| p.dirty() || p.save_error.is_some())
-        {
-            return;
-        }
-        let job = self
-            .project
-            .as_ref()
-            .and_then(|p| {
-                p.document.jobs.iter().find(|j| {
-                    j.status == JobStatus::Queued
-                        && (p.document.connection.is_none()
-                            || matches!(j.operation.as_str(), "inspect" | "export_array"))
-                })
-            })
-            .cloned();
-        let Some(job) = job else { return };
-        self.live.clear();
-        if let Some(project) = &mut self.project
-            && let Some(active) = project.document.job_mut(&job.id)
-        {
-            active.status = JobStatus::Running;
-            active.started = Some(now_ms());
-            active.stage = "Starting".into();
-        }
-        self.running = Some(Running {
-            job: job.id.clone(),
-            handles: Vec::new(),
-            products: Vec::new(),
-            next_input: 0,
-        });
-        self.mark_dirty();
-        self.advance_job();
-    }
-
-    pub(super) fn advance_job(&mut self) {
-        if self.shutting_down {
-            return;
-        }
-        let Some(running) = &mut self.running else {
-            return;
-        };
-        let Some(job) = self.project.as_ref().and_then(|project| {
-            project
-                .document
-                .jobs
-                .iter()
-                .find(|job| job.id == running.job)
-                .cloned()
-        }) else {
-            return;
-        };
-        let index = running.next_input;
-        if job.operation == "export_array" {
-            self.export_array(&job);
-            return;
-        }
-        if !matches!(job.operation.as_str(), "open" | "inspect") && index < job.inputs.len() {
-            let input = &job.inputs[index];
-            if let Some(product) = registered_array(input) {
-                running.handles.push(String::new());
-                running.products.push(product);
-                running.next_input += 1;
-                self.advance_job();
-                return;
-            }
-            let mut command = input
-                .open_parameters
-                .as_object()
-                .cloned()
-                .unwrap_or_default();
-            command.insert("type".into(), json!("open"));
-            command.insert("path".into(), json!(input.path));
-            command.insert("kind".into(), json!(input.kind));
-            if let Err(error) = self.send(
-                Value::Object(command),
-                Pending::OpenInput {
-                    job: job.id.clone(),
-                    index,
-                },
-            ) {
-                self.fail_job(&job.id, &error, false);
-            }
-            return;
-        }
-        match self.job_command(&job) {
-            Ok(command) => {
-                if let Err(error) = self.send(command, Pending::Execute(job.id.clone())) {
-                    self.fail_job(&job.id, &error, false);
-                }
-            }
-            Err(error) => self.fail_job(&job.id, &error, false),
-        }
-    }
-
-    fn job_command(&self, job: &Job) -> Result<Value, String> {
-        let mut operation = job
-            .parameters
-            .as_object()
-            .cloned()
-            .ok_or("Job parameters must be an object")?;
-        operation.insert(
-            "type".into(),
-            json!(if job.operation == "plan" {
-                "reconstruct"
-            } else {
-                &job.operation
-            }),
-        );
-        let running = self.running.as_ref().ok_or("No active job")?;
-        let source = |index: usize, scan: bool| -> Result<Value, String> {
-            job.inputs
-                .get(index)
-                .ok_or("This operation needs an input")?;
-            let handle = running
-                .handles
-                .get(index)
-                .ok_or("The input was not opened")?;
-            if scan {
-                let product = running
-                    .products
-                    .get(index)
-                    .ok_or("No opened input metadata")?;
-                if let Some(source) = product.scan_source() {
-                    return serde_json::to_value(source).map_err(|e| e.to_string());
-                }
-                if !matches!(product, Product::Frames { .. }) {
-                    return Err("This result does not retain a source scan. Select its original scan for processing.".into());
-                }
-            }
-            Ok(json!({"type":"member","handle":handle,"member":"self"}))
-        };
-        match job.operation.as_str() {
-            "simulate" => {}
-            "open" => {
-                let input = job.inputs.first().ok_or("Open needs an input")?;
-                operation.insert("path".into(), json!(input.path));
-                operation.entry("kind").or_insert_with(|| json!(input.kind));
-                return Ok(Value::Object(operation));
-            }
-            "inspect" => {
-                return Ok(
-                    json!({"type":"inspect","path":job.inputs.first().ok_or("Inspect needs an input")?.path}),
-                );
-            }
-            "combine" => {
-                let sources = (0..job.inputs.len())
-                    .map(|i| source(i, true))
-                    .collect::<Result<Vec<_>, _>>()?;
-                operation.insert("sources".into(), json!(sources));
-            }
-            "save" | "export" => {
-                let mut member = source(0, false)?;
-                if let Some(selected) = operation.remove("member") {
-                    member["member"] = selected;
-                }
-                operation.insert("source".into(), member);
-                operation.insert("force".into(), Value::Bool(false));
-            }
-            "project" | "backproject" => {
-                let products: Vec<_> = running.products.iter().collect();
-                let roles = ProjectionRoles::choose(&job.operation, &products, &job.parameters)?;
-                operation.insert("source".into(), source(roles.geometry, true)?);
-                roles.apply(&mut operation)?;
-            }
-            _ => {
-                operation.insert("source".into(), source(0, true)?);
-            }
-        }
-        if matches!(
-            job.operation.as_str(),
-            "slice" | "center_sweep" | "correction_preview" | "region_preview"
-        ) {
-            return Ok(Value::Object(operation));
-        }
-        if job.operation == "plan" {
-            Ok(json!({"type":"plan","operation":operation}))
-        } else {
-            let previews =
-                self.live.enabled() && matches!(job.operation.as_str(), "reconstruct" | "align");
-            Ok(json!({"type":"run","operation":operation,"previews":previews}))
-        }
-    }
-
-    pub(super) fn result(&mut self, pending: Pending, result: ResultValue) {
-        let ResultValue::Output(output) = result else {
-            return;
-        };
-        let job = match &pending {
-            Pending::OpenInput { job, .. } | Pending::Execute(job) | Pending::Save { job, .. } => {
-                Some(job.clone())
-            }
-            _ => None,
-        };
-        if let Some(id) = job {
-            if self.shutting_down && !matches!(pending, Pending::Save { .. }) {
-                self.release_output(&output);
-                return;
-            }
-            let known = self
-                .project
-                .as_ref()
-                .is_some_and(|p| p.document.jobs.iter().any(|j| j.id == id));
-            if !known {
-                self.release_output(&output);
-                return;
-            }
-        }
-        self.result_checked(pending, output);
-    }
-
-    pub(super) fn result_checked(&mut self, pending: Pending, output: Box<Output>) {
-        if self.shutting_down && matches!(pending, Pending::OpenInput { .. } | Pending::Execute(_))
-        {
-            self.release_output(&output);
-            return;
-        }
-        match pending {
-            Pending::Inspect(id) => {
-                if let Product::Inspection { report } = output.value {
-                    let path = self.project.as_ref().and_then(|project| {
-                        project
-                            .document
-                            .asset(&id)
-                            .map(|asset| project.resolve(&asset.path))
-                    });
-                    if let Some(path) = path {
-                        self.audit_stored(id, path, report, None);
-                    }
-                }
-            }
-            Pending::OpenInput { job, index } => {
-                if let Some(handle) = output.value.handle() {
-                    if let Some(running) = &mut self.running
-                        && running.job == job
-                        && running.next_input == index
-                    {
-                        running.handles.push(handle.into());
-                        running.products.push(output.value.clone());
-                        running.next_input += 1;
-                        self.advance_job();
-                    }
-                } else {
-                    self.fail_job(&job, "The input did not return a reusable handle", false);
-                }
-            }
-            Pending::Execute(job) => {
-                if let Product::Inspection { report } = &output.value {
-                    let input = self
-                        .project
-                        .as_ref()
-                        .and_then(|p| p.document.jobs.iter().find(|j| j.id == job))
-                        .and_then(|j| j.inputs.first())
-                        .cloned();
-                    if let Some(input) = input {
-                        self.audit_stored(input.asset, input.path, report.clone(), Some(job));
-                    } else {
-                        self.complete_job(&job, None);
-                    }
-                } else if matches!(output.value, Product::Frames { .. })
-                    && self.project.as_ref().is_some_and(|p| {
-                        p.document
-                            .jobs
-                            .iter()
-                            .any(|j| j.id == job && j.operation == "open")
-                    })
-                {
-                    // Open & calibrate records its settings on the source asset;
-                    // frames from crop or view selection are saved as new results.
-                    let captured = self
-                        .project
-                        .as_ref()
-                        .and_then(|p| p.document.jobs.iter().find(|j| j.id == job))
-                        .cloned();
-                    if let Some(captured) = captured
-                        && let Some(input) = captured.inputs.first()
-                    {
-                        if let Some(asset) = self
-                            .project
-                            .as_mut()
-                            .and_then(|p| p.document.asset_mut(&input.asset))
-                        {
-                            asset.kind = "frames".into();
-                            asset.open_parameters = captured.parameters.clone();
-                            asset.issue = None;
-                            asset.provenance = Some(output.manifest.clone());
-                        }
-                        self.complete_job(&job, Some(input.asset.clone()));
-                    }
-                    self.release_output(&output);
-                } else if matches!(output.value, Product::Region { .. }) {
-                    self.persist_arrays(&job, output);
-                } else if let Product::Files { paths } = &output.value {
-                    self.complete_export(&job, paths);
-                } else if output.value.is_plan()
-                    || matches!(output.value, Product::Validated { .. })
-                {
-                    let summary = serde_json::to_string_pretty(&output.value).unwrap_or_default();
-                    if let Some(project) = &mut self.project
-                        && let Some(j) = project.document.job_mut(&job)
-                    {
-                        j.stage = summary;
-                    }
-                    self.complete_job(&job, None);
-                } else if let Some(handle) = output.value.handle().map(str::to_owned) {
-                    let id = new_id("result");
-                    let Some(project) = &mut self.project else {
-                        self.release_output(&output);
-                        return;
-                    };
-                    let path = project.root.join("derived").join(format!("{id}.nxs"));
-                    if let Some(j) = project.document.job_mut(&job) {
-                        j.destination = Some(path.clone().into());
-                        j.stage = "Saving result into project".into();
-                        j.progress = None;
-                    }
-                    // A reconstruction opened without its scan has none to save.
-                    let include_scan =
-                        !matches!(output.value, Product::Reconstruction { scan: None, .. });
-                    let command = json!({"type":"run","operation":{"type":"save","source":{"type":"member","handle":handle,"member":"self"},"path":path,"include_scan":include_scan}});
-                    if let Err(error) = self.send(
-                        command,
-                        Pending::Save {
-                            job: job.clone(),
-                            asset: id,
-                            path,
-                            output,
-                        },
-                    ) {
-                        self.release_handle(&handle);
-                        self.fail_job(&job, &error, false);
-                    }
-                    self.mark_dirty();
-                } else {
-                    self.persist_arrays(&job, output);
-                }
-            }
-            Pending::Save {
-                job,
-                asset,
-                path,
-                output: original,
-            } => {
-                if !matches!(output.value, Product::Files { .. }) {
-                    self.release_output(&original);
-                    self.fail_job(&job, "Saving did not return a committed file set", false);
-                    return;
-                }
-                let result = match self.result_asset(&job, &asset, &path, &original) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        self.release_output(&original);
-                        self.fail_job(&job, &error, false);
-                        return;
-                    }
-                };
-                self.release_output(&original);
-                self.complete_asset(&job, result);
-                self.start_metadata(&asset);
-            }
-            Pending::Control { .. } | Pending::ControlStatus { .. } => {}
-        }
-    }
-
-    fn complete_export(&mut self, job: &str, paths: &[String]) {
-        if let Some(entry) = self.project.as_mut().and_then(|p| p.document.job_mut(job)) {
-            entry.outputs = paths.iter().map(|p| p.as_str().into()).collect();
-        }
-        self.complete_job(job, None);
-        self.model.status = format!("Exported {} output files", paths.len());
     }
 
     pub(super) fn result_asset(
@@ -532,24 +125,7 @@ impl AppState {
         let mut asset = Asset::at(project.stored_path(path), true, false);
         asset.id = id.into();
         asset.kind = output.value.kind().into();
-        // A projection's result belongs to the input its roles name (for a back
-        // projection, the projections it read, which Explore shows beside it).
-        let roles = matches!(job.operation.as_str(), "project" | "backproject")
-            .then(|| {
-                self.running
-                    .as_ref()
-                    .filter(|running| running.job == job.id)
-            })
-            .flatten()
-            .map(|running| {
-                let products: Vec<_> = running.products.iter().collect();
-                ProjectionRoles::choose(&job.operation, &products, &job.parameters)
-            });
-        asset.parent = match roles {
-            Some(Ok(roles)) => roles.parent().and_then(|index| job.inputs.get(index)),
-            _ => job.inputs.first(),
-        }
-        .map(|input| input.asset.clone());
+        asset.parent = job.inputs.first().map(|input| input.asset.clone());
         asset.simulated = job.operation == "simulate"
             || job.inputs.iter().any(|i| {
                 project
@@ -567,7 +143,7 @@ impl AppState {
         Ok(asset)
     }
 
-    fn persist_arrays(&mut self, job: &str, output: Box<Output>) {
+    fn copy_kept_preview(&mut self, job: &str, output: Box<Output>) {
         let id = new_id("result");
         let Some(project) = &self.project else {
             self.retire_output(&output);
@@ -762,7 +338,6 @@ impl AppState {
                 job.stage = "Complete".into();
             }
         }
-        self.close_running(id);
         self.mark_dirty();
     }
 
@@ -784,132 +359,7 @@ impl AppState {
                 if canceled { "canceled" } else { "failed" }
             );
         }
-        self.close_running(id);
         self.mark_dirty();
-    }
-
-    fn close_running(&mut self, id: &str) {
-        if let Some(running) = self.running.take_if(|running| running.job == id)
-            && let Some(engine) = self.engine.as_mut()
-        {
-            for handle in running.handles {
-                if !handle.is_empty() {
-                    let _ = engine.close_handle(&handle);
-                }
-            }
-        }
-    }
-
-    pub(super) fn request_failed(&mut self, pending: Pending, error: String, canceled: bool) {
-        match pending {
-            Pending::Inspect(id) => {
-                if let Some(project) = &mut self.project
-                    && let Some(asset) = project.document.asset_mut(&id)
-                {
-                    asset.issue = Some(error.clone());
-                }
-                self.model.error = Some(error);
-                self.mark_dirty();
-            }
-            Pending::OpenInput { job, .. } | Pending::Execute(job) => {
-                self.fail_job(&job, &error, canceled)
-            }
-            Pending::Save { job, output, .. } => {
-                self.release_output(&output);
-                self.fail_job(&job, &error, canceled);
-            }
-            Pending::Control {
-                job,
-                target,
-                action,
-            }
-            | Pending::ControlStatus {
-                job,
-                target,
-                action,
-            } => {
-                self.control_failed(&job, &target, &action, error);
-            }
-        }
-    }
-
-    pub(super) fn progress(&mut self, request: &str, record: Progress) {
-        let id = match self.pending.get(request) {
-            Some(
-                Pending::OpenInput { job, .. } | Pending::Execute(job) | Pending::Save { job, .. },
-            ) => job.clone(),
-            _ => {
-                if let Progress::Preview { arrays, .. } = record {
-                    self.live.discard(arrays);
-                }
-                return;
-            }
-        };
-        if let Progress::Preview {
-            task, time, arrays, ..
-        } = record
-        {
-            let job = self
-                .project
-                .as_ref()
-                .and_then(|project| project.document.jobs.iter().find(|job| job.id == id));
-            if let Some(job) = job
-                && matches!(job.operation.as_str(), "reconstruct" | "align")
-                && matches!(self.pending.get(request), Some(Pending::Execute(_)))
-            {
-                let position = job.telemetry.task(request, task).map(|task| {
-                    crate::live::SolverPreviewPosition {
-                        done: task.done,
-                        total: task.total,
-                        unit: task.unit.clone(),
-                    }
-                });
-                self.live.accept(&id, request, task, time, position, arrays);
-            } else {
-                self.live.discard(arrays);
-            }
-            return;
-        }
-        let mut persist = !matches!(record, Progress::Advanced { .. });
-        if let Some(job) = self.project.as_mut().and_then(|p| p.document.job_mut(&id)) {
-            if let Progress::Advanced { task, time, .. } = &record {
-                persist = job
-                    .telemetry
-                    .task(request, *task)
-                    .is_none_or(|task| time.floor() > task.time.floor());
-            }
-            job.telemetry.apply(request, &record);
-            match &record {
-                Progress::Paused { .. } => {
-                    job.status = JobStatus::Paused;
-                }
-                Progress::Resumed { .. } => {
-                    job.status = JobStatus::Running;
-                }
-                _ => {}
-            }
-            if let Some(task) = job.telemetry.current() {
-                job.stage = task.title().into();
-                job.progress = task.fraction();
-                if let Some(seconds) = task.eta {
-                    self.model.status = format!(
-                        "{} · about {:.0}s active work remaining",
-                        task.title(),
-                        seconds
-                    );
-                } else {
-                    self.model.status = task.title().into();
-                }
-            } else {
-                // A Finished task does not commit a job; the terminal and durable
-                // result save still determine completion.
-                job.progress = None;
-                self.model.status = format!("{} · waiting for result", job.name);
-            }
-        }
-        if persist {
-            self.mark_dirty();
-        }
     }
 
     pub(super) fn release_response(&mut self, response: &Response) {
@@ -918,7 +368,13 @@ impl AppState {
             ..
         } = response
         {
-            self.live.discard(arrays.clone());
+            self.previews.retire_resources(
+                arrays
+                    .values()
+                    .flat_map(|a| a.artifacts().map(str::to_owned))
+                    .collect(),
+                None,
+            );
         }
         if let Response::Result {
             result: ResultValue::Output(output),
@@ -938,35 +394,76 @@ impl AppState {
     }
 
     fn release_handle(&mut self, handle: &str) {
-        // A result handle owns its request's preview artifacts too. The
-        // native reader must surrender those leases before the final close.
-        if !self.live.retire_handle(handle) {
-            self.previews
-                .retire_resources(std::collections::BTreeSet::new(), Some(handle.into()));
-        }
+        self.previews
+            .retire_resources(Default::default(), Some(handle.into()));
     }
 }
 
-/// An array-only result (a saved volume or projections) is used as registered,
-/// without opening it in the worker; `None` for inputs the worker opens.
-pub(super) fn registered_array(input: &crate::project::CapturedInput) -> Option<Product> {
-    if matches!(
-        input.kind.as_str(),
-        "scan" | "frames" | "reconstruction" | "simulation" | "alignment"
-    ) {
-        return None;
+impl JobView {
+    pub(super) fn from_record(p: &Project, job: &Job, waiting: bool) -> Self {
+        let script = job.script.as_ref();
+        let state_label = if job.status == JobStatus::Queued && waiting {
+            "Waiting to submit"
+        } else if job.status == JobStatus::Queued && script.is_some_and(|s| s.seen.is_none()) {
+            "Awaiting confirmation"
+        } else {
+            job.status.title()
+        };
+        Self {
+            id: job.id.clone(),
+            name: job
+                .result
+                .as_deref()
+                .and_then(|id| p.document.asset(id))
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| job.subject()),
+            inputs: job
+                .inputs
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+            operation: job.display_operation(),
+            status: job.status,
+            state_label,
+            stage: job.stage.clone(),
+            progress: job.progress,
+            error: job.error.clone(),
+            settings: job
+                .parameters
+                .as_object()
+                .into_iter()
+                .flatten()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        v.as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| v.to_string()),
+                    )
+                })
+                .collect(),
+            scheduler_options: script.map(|s| s.options.clone()).unwrap_or_default(),
+            devices: script.map(|s| s.devices.join(", ")).unwrap_or_default(),
+            elapsed: job.started.map(|start| {
+                let seconds =
+                    job.finished.unwrap_or_else(now_ms).saturating_sub(start) as f64 / 1000.;
+                let prefix = if job.kept_preview.is_some() {
+                    "save "
+                } else {
+                    ""
+                };
+                format!("{prefix}{seconds:.1} s")
+            }),
+            result_asset: job.result.clone(),
+            can_pause: matches!(job.status, JobStatus::Running | JobStatus::Paused)
+                && script.and_then(|s| s.launcher.as_deref()) == Some("inline"),
+            pause_requested: script.is_some_and(|s| s.pause_requested),
+            can_resume: matches!(job.status, JobStatus::Interrupted | JobStatus::Canceled)
+                && script
+                    .and_then(|s| s.checkpoint.as_ref())
+                    .is_some_and(|c| c.usable),
+            waiting,
+        }
     }
-    Some(if let Some(array) = input.arrays.get("volume") {
-        Product::Volume {
-            volume: array.clone(),
-        }
-    } else if let Some(array) = input.arrays.get("projections") {
-        Product::Projections {
-            projections: array.clone(),
-        }
-    } else {
-        Product::Validated {
-            details: Value::Null,
-        }
-    })
 }

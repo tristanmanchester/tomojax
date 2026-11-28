@@ -115,6 +115,7 @@ pub struct UiState {
     pub tree_open: bool,
     pub inspector_open: bool,
     pub activity: Activity,
+    pub scheduler_options: TextEdit,
     pub palette_open: bool,
     pub shortcuts_open: bool,
     pub advanced_open: bool,
@@ -172,6 +173,7 @@ impl Default for UiState {
             tree_open: true,
             inspector_open: true,
             activity: Activity::Closed,
+            scheduler_options: TextEdit::default(),
             palette_open: false,
             shortcuts_open: false,
             advanced_open: false,
@@ -375,30 +377,8 @@ pub struct AssetView {
     pub simulated: bool,
     pub operation: Option<String>,
 }
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum JobStatus {
-    #[default]
-    Queued,
-    Running,
-    Paused,
-    Completed,
-    Failed,
-    Canceled,
-    Interrupted,
-}
-impl JobStatus {
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::Queued => "Queued",
-            Self::Running => "Running",
-            Self::Paused => "Paused",
-            Self::Completed => "Complete",
-            Self::Failed => "Failed",
-            Self::Canceled => "Canceled",
-            Self::Interrupted => "Interrupted",
-        }
-    }
-}
+pub use crate::project::JobStatus;
+
 #[derive(Clone, Debug, Default)]
 pub struct JobView {
     pub id: String,
@@ -406,6 +386,9 @@ pub struct JobView {
     pub inputs: String,
     pub operation: String,
     pub status: JobStatus,
+    pub state_label: &'static str,
+    pub scheduler_options: String,
+    pub devices: String,
     pub stage: String,
     pub progress: Option<f32>,
     pub error: Option<String>,
@@ -413,6 +396,9 @@ pub struct JobView {
     pub elapsed: Option<String>,
     pub result_asset: Option<String>,
     pub can_pause: bool,
+    pub pause_requested: bool,
+    pub can_resume: bool,
+    pub waiting: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -598,9 +584,11 @@ impl Activity {
             .filter(|job| listed.contains(&job.id))
             .all(|job| match job.status {
                 JobStatus::Completed | JobStatus::Canceled | JobStatus::Interrupted => true,
-                JobStatus::Queued | JobStatus::Running | JobStatus::Paused | JobStatus::Failed => {
-                    false
-                }
+                JobStatus::Queued
+                | JobStatus::Running
+                | JobStatus::Paused
+                | JobStatus::Unknown
+                | JobStatus::Failed => false,
             });
         if finished && matches!(self, Self::Following { .. }) {
             self.close();
@@ -658,6 +646,7 @@ pub enum UiAction {
     ApplyRecipe(String),
     PauseJob(String),
     ResumeJob(String),
+    AbandonJob(String),
     CancelJob(String),
     RetryJob(String),
     MoveJob {

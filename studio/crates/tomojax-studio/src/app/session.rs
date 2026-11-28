@@ -24,7 +24,17 @@ impl Session {
             owner: Box::new(Owner::new(
                 WorkerCommand::binary()?,
                 name.into(),
-                &["fetch", "project_results", "list", "copy", "stored"],
+                &[
+                    "fetch",
+                    "project_results",
+                    "list",
+                    "copy",
+                    "stored",
+                    "submit",
+                    "jobs",
+                    "job",
+                    "job_control",
+                ],
                 wake,
             )),
             verified: false,
@@ -154,7 +164,7 @@ impl AppState {
             .map(|a| a.id.clone())
             .collect();
         for id in unread {
-            self.start_metadata(&id);
+            self.start_metadata(&id, false);
         }
     }
 }

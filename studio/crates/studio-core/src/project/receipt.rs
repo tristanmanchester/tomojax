@@ -88,6 +88,7 @@ impl Project {
             .ok_or("Job no longer in project")?;
         let script = job.script.as_ref().ok_or("Job has no script")?;
         if script.offset != offset
+            || (job.status == JobStatus::Completed && row.state != "completed")
             || (row.state == "not_launched" && job.status == JobStatus::Failed)
         {
             return Ok(Adoption::default());

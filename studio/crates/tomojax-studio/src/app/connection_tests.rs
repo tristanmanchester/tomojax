@@ -521,3 +521,397 @@ fn exercise_kept_bundle(state: &mut AppState, root: &Path, python: &str) {
         assert!(fs::read(dest).unwrap().starts_with(b"\x93NUMPY"));
     }
 }
+
+#[test]
+#[ignore = "real slow link with a held fake Slurm allocation; TOMOJAX_TEST_BATCH_GPU exercises CUDA"]
+fn batch_jobs_reconnect_with_the_session_executor_queued() {
+    if let Ok(root) = std::env::var("TOMOJAX_BATCH_FIXTURE") {
+        return batch_reconnect(Path::new(&root));
+    }
+    if std::env::var_os("TOMOJAX_CONNECTION_CAPTURES").is_some() {
+        for scene in [
+            "queued",
+            "running",
+            "finished",
+            "failed",
+            "interrupted",
+            "unknown",
+            "cancelled",
+        ] {
+            batch_child(scene);
+        }
+    } else {
+        batch_child("");
+    }
+}
+
+fn batch_child(scene: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let tools = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tomojax-jobs/tests/slurm");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "app::connection_tests::batch_jobs_reconnect_with_the_session_executor_queued",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env("TOMOJAX_BATCH_SCENE", scene)
+        .env("TOMOJAX_BATCH_FIXTURE", root.path())
+        .env("FAKE_SLURM", root.path().join("slurm"))
+        .env(
+            "PATH",
+            std::env::join_paths(
+                [tools]
+                    .into_iter()
+                    .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+            )
+            .unwrap(),
+        )
+        .env("TOMOJAX_TEST_WORKER", WorkerCommand::binary().unwrap())
+        .env("TOMOJAX_TEST_SLOWLINK", repo.join("tools/slowlink.py"))
+        .env("TOMOJAX_TEST_PYTHON", repo.join(".venv/bin/python"))
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("TOMOJAX_STUDIO_SETTINGS", root.path().join("settings.json"))
+        .env_remove("TOMOJAX_STUDIO_INPUT")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+fn batch_reconnect(root: &Path) {
+    let python = std::env::var_os("TOMOJAX_TEST_PYTHON").unwrap();
+    let gpu = std::env::var_os("TOMOJAX_TEST_BATCH_GPU").is_some();
+    let batch = root.join("slurm");
+    fs::create_dir(&batch).unwrap();
+    fs::write(batch.join("hold"), "").unwrap();
+    let session = root.join("session");
+    executable(
+        &session,
+        r#"#!/bin/sh
+while test -f "$TOMOJAX_BATCH_FIXTURE/hold-session"; do sleep .05; done
+export JAX_PLATFORMS=cpu
+exec "$@"
+"#,
+    );
+    let interpreter = root.join("python");
+    executable(
+        &interpreter,
+        r#"#!/bin/sh
+if test -n "$SLURM_JOB_ID" && test -n "$TOMOJAX_TEST_BATCH_GPU"; then export JAX_PLATFORMS=cuda; fi
+exec "$TOMOJAX_TEST_PYTHON" "$@"
+"#,
+    );
+    let relay = root.join("relay");
+    executable(
+        &relay,
+        r#"#!/bin/sh
+exec "$TOMOJAX_TEST_PYTHON" "$TOMOJAX_TEST_SLOWLINK" -- "$TOMOJAX_TEST_WORKER" "$@"
+"#,
+    );
+    let data = root.join("worker");
+    fs::create_dir(&data).unwrap();
+    let profile = serde_json::from_value(
+        json!({"jobs":"slurm","python":interpreter,"session":session,"results":data}),
+    )
+    .unwrap();
+    Profile::save("Batch", None, &profile).unwrap();
+    let raw = data.join("Sphere scan.nxs");
+    assert!(Command::new(python).args(["-c","import sys,tomojax as tj; tj.save(sys.argv[1],tj.simulate('sphere',size=16,n_views=24,seed=2).scan)"]).arg(&raw).env("JAX_PLATFORMS","cpu").status().unwrap().success());
+    let project = root.join("Reconstruction study");
+    let open = |create| {
+        let mut state = AppState::init();
+        if create {
+            state.files.new_connection = Some("Batch".into());
+        }
+        state.open_project(&project, create).unwrap();
+        state.engine = session::Session::Named {
+            owner: Box::new(Owner::new(
+                relay.clone(),
+                "Batch".into(),
+                &["submit", "job", "jobs", "job_control"],
+                state.wake.clone(),
+            )),
+            verified: false,
+        };
+        state
+    };
+    let mut state = open(true);
+    wait(&mut state, "results folder", |s| s.files.listing.is_some());
+    state.files.first_scan = Some((raw.as_path().into(), false));
+    state
+        .file_action(Action::Accept, &mut Tx::default())
+        .unwrap();
+    wait(&mut state, "session CPU and input", |s| {
+        s.model.backend.ready && s.current_form_input().is_some_and(|i| !i.arrays.is_empty())
+    });
+    let config = if gpu { "cuda" } else { "jax" };
+    state.set_workspace(Workspace::Reconstruct);
+    state.set_operation(
+        "reconstruct",
+        Some(&json!({"method":"fbp","config":{"type":"FBPConfig","backend":config}})),
+    );
+    if gpu {
+        wait(&mut state, "hardware checked on the job", |s| {
+            s.model.validation.phase == validation::Phase::Unavailable
+                && s.model.validation.message.contains("job starts")
+        });
+    }
+    state.ui.scheduler_options.replace_text("--time=00:03:00");
+    let queued = |s: &AppState, id: &str| {
+        s.project.as_ref().unwrap().document.jobs.iter().any(|j| {
+            j.id == id
+                && j.status == project::JobStatus::Queued
+                && j.script.as_ref().and_then(|s| s.launcher.as_deref()) == Some("slurm")
+        })
+    };
+    let scene = std::env::var("TOMOJAX_BATCH_SCENE").unwrap_or_default();
+    if matches!(scene.as_str(), "running" | "interrupted") {
+        state.set_operation(
+            "reconstruct",
+            Some(&json!({"method":"sirt","iterations":360})),
+        );
+    }
+    state.queue_operation("reconstruct").unwrap();
+    let id = state
+        .project
+        .as_ref()
+        .unwrap()
+        .document
+        .jobs
+        .last()
+        .unwrap()
+        .id
+        .clone();
+    wait(&mut state, "first allocation queued", |s| queued(s, &id));
+    if !scene.is_empty() {
+        return capture_batch_state(state, &batch, &raw, &scene, &id);
+    }
+    state.queue_operation("reconstruct").unwrap();
+    let cancel = state
+        .project
+        .as_ref()
+        .unwrap()
+        .document
+        .jobs
+        .last()
+        .unwrap()
+        .id
+        .clone();
+    wait(&mut state, "second allocation queued", |s| {
+        queued(s, &cancel)
+    });
+    state.queue_operation("reconstruct").unwrap();
+    let abandon = state
+        .project
+        .as_ref()
+        .unwrap()
+        .document
+        .jobs
+        .last()
+        .unwrap()
+        .id
+        .clone();
+    wait(&mut state, "third allocation queued", |s| {
+        queued(s, &abandon)
+    });
+    state.shutdown();
+    drop(state);
+    fs::write(root.join("hold-session"), "").unwrap();
+    let time = Instant::now();
+    let mut reopened = open(false);
+    wait(&mut reopened, "project reconciled", |s| {
+        s.launcher() == Some("slurm") && s.job_seen(&id) && s.job_seen(&cancel)
+    });
+    assert!(!reopened.model.backend.ready);
+    reopened.control_job(&cancel, "cancel").unwrap();
+    wait(&mut reopened, "cancel while Python is queued", |s| {
+        s.project
+            .as_ref()
+            .unwrap()
+            .document
+            .jobs
+            .iter()
+            .any(|j| j.id == cancel && j.status == project::JobStatus::Canceled)
+    });
+    assert!(queued(&reopened, &id));
+    fs::write(batch.join("offline"), "").unwrap();
+    let has_status = |s: &AppState, id: &str, status| {
+        s.model
+            .jobs
+            .iter()
+            .any(|j| j.id == id && j.status == status)
+    };
+    wait(&mut reopened, "unknown allocation", |s| {
+        has_status(s, &abandon, project::JobStatus::Unknown)
+    });
+    reopened.control_job(&abandon, "abandon").unwrap();
+    wait(&mut reopened, "abandon recorded", |s| {
+        has_status(s, &abandon, project::JobStatus::Canceled)
+    });
+    fs::remove_file(batch.join("offline")).unwrap();
+    let dir = reopened.project.as_ref().unwrap().job_directory(&abandon);
+    let submission: Value =
+        serde_json::from_slice(&fs::read(dir.join("submission.json").lexical()).unwrap()).unwrap();
+    let allocation = submission["accepted"].as_u64().unwrap();
+    wait(
+        &mut reopened,
+        "standing cancel reached the rediscovered job",
+        |_| batch.join(allocation.to_string()).join("cancel").exists(),
+    );
+    assert!(queued(&reopened, &id));
+    fs::remove_file(batch.join("hold")).unwrap();
+    wait(&mut reopened, "published volume", |s| {
+        s.project
+            .as_ref()
+            .unwrap()
+            .document
+            .jobs
+            .iter()
+            .any(|j| j.id == id && j.status == project::JobStatus::Completed)
+    });
+    let p = reopened.project.as_ref().unwrap();
+    let job = p.document.jobs.iter().find(|j| j.id == id).unwrap();
+    let s = job.script.as_ref().unwrap();
+    assert_eq!(s.options, "--time=00:03:00");
+    if gpu {
+        let activity = reopened.model.jobs.iter().find(|j| j.id == id).unwrap();
+        assert!(activity.devices.contains("NVIDIA"), "{}", activity.devices);
+        assert!(
+            s.devices.iter().any(|d| d.contains("NVIDIA")),
+            "{:?}",
+            s.devices
+        );
+    }
+    let asset = job.result.clone().unwrap();
+    assert_eq!(
+        p.document.assets.iter().filter(|a| a.id == asset).count(),
+        1
+    );
+    let directory = p.job_directory(&id);
+    assert_eq!(
+        fs::read_to_string(directory.join("replies.jsonl").lexical())
+            .unwrap()
+            .matches("\"type\":\"attempt\"")
+            .count(),
+        1
+    );
+    assert_eq!(
+        fs::read_to_string(batch.join("next")).unwrap().trim(),
+        "103"
+    );
+    reopened.activate(asset);
+    wait(&mut reopened, "open the reconnected result", |s| {
+        s.imaging.plane(1).is_some()
+    });
+    eprintln!(
+        "Reconnect, cancel and abandon the two other allocations, run and open the volume: {:.3}s",
+        time.elapsed().as_secs_f64()
+    );
+    reopened.shutdown();
+}
+
+fn capture_batch_state(mut state: AppState, batch: &Path, scan: &Path, scene: &str, id: &str) {
+    use project::JobStatus;
+    let dir = state.project.as_ref().unwrap().job_directory(id);
+    let wanted = match scene {
+        "queued" => JobStatus::Queued,
+        "unknown" => {
+            fs::write(batch.join("offline"), "").unwrap();
+            JobStatus::Unknown
+        }
+        "cancelled" => {
+            state.control_job(id, "cancel").unwrap();
+            JobStatus::Canceled
+        }
+        "failed" => {
+            fs::remove_file(scan).unwrap();
+            fs::remove_file(batch.join("hold")).unwrap();
+            JobStatus::Failed
+        }
+        "finished" => {
+            fs::remove_file(batch.join("hold")).unwrap();
+            JobStatus::Completed
+        }
+        "running" | "interrupted" => {
+            fs::remove_file(batch.join("hold")).unwrap();
+            wait(&mut state, "solver iterations", |s| {
+                s.project.as_ref().unwrap().document.jobs.iter().any(|j| {
+                    j.id == id
+                        && j.telemetry
+                            .tasks
+                            .iter()
+                            .any(|t| t.unit == "iterations" && t.done > 0)
+                })
+            });
+            if scene == "interrupted" {
+                fs::write(batch.join("fail-requeue"), "").unwrap();
+                let runner: Value =
+                    serde_json::from_slice(&fs::read(dir.join("runner.json").lexical()).unwrap())
+                        .unwrap();
+                assert!(
+                    Command::new("kill")
+                        .arg("-TERM")
+                        .arg(runner["pid"].as_u64().unwrap().to_string())
+                        .status()
+                        .unwrap()
+                        .success()
+                );
+                JobStatus::Interrupted
+            } else {
+                JobStatus::Running
+            }
+        }
+        _ => unreachable!(),
+    };
+    wait(&mut state, scene, |s| {
+        s.model
+            .jobs
+            .iter()
+            .any(|j| j.id == id && j.status == wanted && (scene != "interrupted" || j.can_resume))
+    });
+    state.ui.activity.show(vec![id.into()]);
+    state.refresh_model();
+    // Freeze the observed UI. Close this fixture's live allocation before its temporary
+    // scheduler directory goes away; the native capture runs without an application poll.
+    if wanted.active() {
+        if scene == "unknown" {
+            fs::remove_file(batch.join("offline")).unwrap();
+        }
+        state
+            .file_reads()
+            .unwrap()
+            .request(json!({"type":"job_control","directory":dir,"action":"cancel"}))
+            .unwrap();
+        let until = Instant::now() + Duration::from_secs(30);
+        while fs::read_to_string(batch.join("100/state"))
+            .unwrap_or_default()
+            .trim()
+            != "CANCELLED"
+        {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    let (out, size, scale): (PathBuf, String, String) =
+        serde_json::from_str(&std::env::var("TOMOJAX_CONNECTION_CAPTURES").unwrap()).unwrap();
+    let path = out.join(format!("activity-{scene}.png"));
+    tests::render_native_viewport(state, &path, &size, &scale);
+    let tree = fs::read_to_string(path.with_extension("tree.json")).unwrap();
+    let control = match wanted {
+        JobStatus::Completed => "open-job-result",
+        JobStatus::Interrupted => "resume-job",
+        JobStatus::Unknown => "abandon-job",
+        JobStatus::Failed | JobStatus::Canceled => "retry-job",
+        _ => "cancel-job",
+    };
+    assert!(
+        tree.contains("jobs-drawer")
+            && tree.contains(&format!("{control}-{id}"))
+            && tree.contains("Scheduler options"),
+        "{scene}: drawer, options or action missing"
+    );
+}

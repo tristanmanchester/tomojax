@@ -6,14 +6,6 @@ use serde_json::Value;
 
 pub(super) fn form(state: &AppState) -> El {
     let selected = state.active_export_format();
-    if state.remote_project().is_some() && selected != "array" {
-        return section(
-            "Output",
-            help(
-                "To copy a saved file, open Files on this connection and choose Copy to this computer.",
-            ),
-        );
-    }
     let name = match selected {
         "nxs" => "TomoJAX result (.nxs)",
         "array" => "NPY array bundle",
@@ -141,20 +133,6 @@ fn format_picker(state: &AppState, selected: &str, name: &str) -> El {
 
 pub(super) fn submit(state: &AppState) -> El {
     let format = state.active_export_format();
-    if state.remote_project().is_some() && format != "array" {
-        return action_button_icon(
-            "browse-outputs",
-            "Browse files…",
-            Icon::Folder,
-            false,
-            !state.data_offline(),
-            UiAction::Files(crate::app::files::Action::Browse(
-                crate::app::files::Purpose::Browse,
-            )),
-        )
-        .w_full()
-        .h(40.);
-    }
     let selected = state.interchange_format().is_some();
     let queue = selected && state.ui.export_path.is_some();
     let title = if queue {

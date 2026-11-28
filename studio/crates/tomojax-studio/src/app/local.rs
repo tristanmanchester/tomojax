@@ -22,74 +22,11 @@ pub(super) struct LocalMessage {
 }
 
 impl AppState {
-    pub(super) fn finish_audit(
-        &mut self,
-        asset: String,
-        job: Option<String>,
-        report: Value,
-        result: Result<Option<HeaderMetadata>, String>,
-    ) {
-        let read = result
-            .and_then(|header| header.ok_or("No stored metadata".into()))
-            .map(|(kind, arrays, _)| (kind, arrays));
-        if let Some(job) = job {
-            if let Some(project) = &mut self.project {
-                let root = project.data_root().to_owned();
-                if let Some(asset) = project.document.asset_mut(&asset) {
-                    if !asset.is_result()
-                        && let Ok((_, arrays)) = &read
-                    {
-                        if let Some(mut projections) = arrays.get("projections").cloned() {
-                            projections.relative_to(&root);
-                            asset.arrays.insert("projections".into(), projections);
-                        } else {
-                            asset.arrays.remove("projections");
-                        }
-                    }
-                    asset.issue = report["issues"]
-                        .as_array()
-                        .filter(|v| !v.is_empty())
-                        .map(|v| {
-                            v.iter()
-                                .map(|s| s.as_str().unwrap_or("Inspection issue"))
-                                .collect::<Vec<_>>()
-                                .join("; ")
-                        });
-                    asset.inspection = report;
-                }
-            }
-            self.complete_job(&job, None);
-            self.image_key.clear();
-            self.refresh_images();
-        } else {
-            self.record_read(&asset, read, report);
-        }
-    }
-
     pub(super) fn file_reads(&mut self) -> Option<studio_core::engine::FileReads> {
         if self.engine.is_none() {
             self.start_engine();
         }
         self.engine.as_ref().map(Engine::files)
-    }
-
-    pub(super) fn audit_stored(
-        &mut self,
-        asset: String,
-        path: studio_core::worker_path::WorkerPath,
-        report: Value,
-        job: Option<String>,
-    ) {
-        let files = self.file_reads();
-        self.spawn_local(job.clone(), move |_| {
-            let result = stored(files, path.lexical(), Some(&report));
-            LocalEvent::Audited {
-                asset,
-                job,
-                report,
-                result,
-            }
-        });
     }
 
     pub(super) fn spawn_local(
