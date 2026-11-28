@@ -868,10 +868,16 @@ fn capture_batch_state(mut state: AppState, batch: &Path, scan: &Path, scene: &s
         _ => unreachable!(),
     };
     wait(&mut state, scene, |s| {
-        s.model
-            .jobs
-            .iter()
-            .any(|j| j.id == id && j.status == wanted && (scene != "interrupted" || j.can_resume))
+        s.model.jobs.iter().any(|j| {
+            j.id == id
+                && j.status == wanted
+                && match scene {
+                    "interrupted" => j.can_resume,
+                    "running" => s.live.frame().is_some_and(|frame| frame.info.job == id),
+                    "finished" => s.imaging.plane(1).is_some_and(|plane| plane.lossless),
+                    _ => true,
+                }
+        })
     });
     state.ui.activity.show(vec![id.into()]);
     state.refresh_model();
