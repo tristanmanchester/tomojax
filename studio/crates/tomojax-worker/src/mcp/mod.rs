@@ -101,7 +101,7 @@ impl Server {
                 json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],"structuredContent":data,"isError":true})
             }
         };
-        Ok(self.parts.lock().unwrap().bounded(reply))
+        Ok(parts::Parts::bound(&self.parts, reply))
     }
 }
 

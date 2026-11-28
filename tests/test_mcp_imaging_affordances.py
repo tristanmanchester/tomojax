@@ -126,6 +126,9 @@ def test_a_plane_with_nothing_on_it_is_flat_without_a_nearest_structure(session)
 def test_the_imaging_eval_meets_its_bars(tmp_path):
     script = Path(__file__).parents[1] / "tools" / "eval_mcp_imaging.py"
     env = {**os.environ, "JAX_PLATFORMS": "cpu", "TMPDIR": str(tmp_path)}
+    from tests.worker_process import binary
+
+    env["PATH"] = os.pathsep.join((str(Path(binary()).parent), env["PATH"]))
     run = subprocess.run(
         [sys.executable, str(script), "--size", "32"],
         env=env,

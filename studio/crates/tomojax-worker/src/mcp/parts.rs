@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
@@ -17,6 +18,7 @@ struct Entry {
 #[derive(Default)]
 pub struct Parts {
     entries: VecDeque<Entry>,
+    expiring: bool,
     size: usize,
 }
 
@@ -63,7 +65,36 @@ impl Parts {
             (end < found.bytes.len()).then(|| format!("tomojax://result/{id}/{}", index + 1));
         Ok(json!({"data":&found.bytes[start..end],"next":next}))
     }
-    pub fn bounded(&mut self, reply: Value) -> Value {
+    pub fn bound(store: &Arc<Mutex<Self>>, reply: Value) -> Value {
+        let mut pages = store.lock().unwrap();
+        let reply = pages.bounded(reply);
+        if !pages.expiring
+            && let Some(entry) = pages.entries.front()
+        {
+            let mut deadline = entry.expires;
+            pages.expiring = true;
+            let store = Arc::downgrade(store);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep_until(deadline.into()).await;
+                    let Some(store) = store.upgrade() else {
+                        break;
+                    };
+                    let mut pages = store.lock().unwrap();
+                    pages.expire(Instant::now());
+                    if let Some(entry) = pages.entries.front() {
+                        deadline = entry.expires;
+                    } else {
+                        pages.expiring = false;
+                        break;
+                    }
+                }
+            });
+        }
+        reply
+    }
+
+    fn bounded(&mut self, reply: Value) -> Value {
         if cost(&reply) <= REPLY_BUDGET {
             return reply;
         }

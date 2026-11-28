@@ -1,237 +1,20 @@
 """Use real stdio for both MCP eras, including concurrent subscriptions and tasks."""
 
 import json
-import os
 from pathlib import Path
-import shutil
-import subprocess
 import time
 
 import h5py
-import msgspec
 import pytest
 
-from tests.mcp_client import TASKS, connection
+from tests.mcp_client import connection
 import tomojax as tj
-from tomojax.cli.mcp import tools
-from tomojax.cli.mcp.tools import Open
 
 pytestmark = pytest.mark.surface
 ACK = {
     "resultType": "complete",
     "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "tomojax", "version": tj.__version__}},
 }
-
-
-# A copy of the tool package gains handlers during the test. Every request,
-# including calls still running during a registry swap, uses the SDK dispatcher.
-PROBE = """
-from tomojax.cli.mcp.supervisor import activity
-from tomojax.cli.mcp.tools import registry as previous_registry
-class Probe(Record):
-    mode: str = "success"
-
-def registry(core):
-    records = previous_registry(core)
-    async def probe(args):
-        base = core.supervisor.base
-        if args.mode in ("wait", "finishing"):
-            activity.get().record(dict(event="started", task=1, name="fit", label="center"))
-            if args.mode == "finishing":
-                activity.get().record(dict(event="advanced", done=1, total=100, metrics={}, eta=90))
-            (base / "entered").touch()
-            while not (base / "finish").exists():
-                if activity.get().requested and args.mode == "wait":
-                    return result({"kind":"canceled"},error=True)
-                await asyncio.sleep(.005)
-        if args.mode == "error":
-            raise ValueError("bad specimen")
-        if args.mode == "protocol":
-            g = await core.supervisor.worker()
-            await g.request({"type": "unknown_command"})
-        if args.mode == "loss":
-            import os, signal
-            g = await core.supervisor.worker()
-            os.kill(g.process.pid,signal.SIGSTOP)
-            _, job = g.submit({"type":"status"})
-            os.kill(g.process.pid,signal.SIGKILL)
-            await job.result
-        return result({"generation": GENERATION})
-    record = binding(Probe,probe,{})
-    for number in range(GENERATION+1):
-        records.append({**record,"name":"probe"+str(number),"long":True})
-    return records
-"""
-
-
-def install_overlay(tmp_path):
-    target = tmp_path / "tools"
-    shutil.copytree(
-        Path(tools.__file__).parent, target, ignore=shutil.ignore_patterns("__pycache__")
-    )
-    package = target / "__init__.py"
-    initial = package.read_text() + PROBE
-
-    def version(n):
-        package.write_text(initial + f"\nGENERATION={n}\n")
-
-    version(0)
-    return version
-
-
-@pytest.mark.parametrize("legacy", [True, False])
-def test_adapter_schema_validation_and_capability_scope(tmp_path, legacy):
-    install_overlay(tmp_path)
-    with connection(tmp_path, legacy=legacy, overlay=True) as c:
-        listing = c.rpc("tools/list", {})["result"]["tools"]
-        opened = next(t for t in listing if t["name"] == "open")
-        expected = msgspec.json.schema(Open)["$defs"]["Open"]
-        assert (
-            opened["inputSchema"]["properties"]["detector"]["anyOf"]
-            == expected["properties"]["detector"]["anyOf"]
-        )
-        assert opened["inputSchema"]["type"] == opened["outputSchema"]["type"] == "object"
-        probe = next(t for t in listing if t["name"] == "probe0")
-
-        class Probe(msgspec.Struct, forbid_unknown_fields=True, frozen=True):
-            mode: str = "success"
-
-        assert probe["inputSchema"] == msgspec.json.schema(Probe)["$defs"]["Probe"]
-        invalid = c.call("open", path="unused", detector={"nu": "bad", "nv": 1, "du": 1, "dv": 1})
-        assert invalid["isError"]
-        assert "$.detector.nu" in invalid["content"][0]["text"]
-        assert c.call("probe0")["structuredContent"] == {"generation": 0}
-        if legacy:
-            assert c.call("probe0", tasks=True)["structuredContent"] == {"generation": 0}
-        else:
-            task = c.call("probe0", tasks=True)
-            assert task["resultType"] == "task"
-            assert c.terminal(task["taskId"])["result"]["structuredContent"] == {"generation": 0}
-            assert c.call("probe0")["resultType"] == "complete"
-
-
-def test_open_inspect_reload_subscription_and_worker_loss(tmp_path):
-    install = install_overlay(tmp_path)
-    tj.save(tmp_path / "scan.nxs", tj.simulate("sphere", size=8, n_views=12).scan)
-    with connection(tmp_path, overlay=True) as c:
-        listened = c.send("subscriptions/listen", {"notifications": {"toolsListChanged": True}})
-        c.receive("method", "notifications/subscriptions/acknowledged")
-        report = c.call("inspect", path="scan.nxs", preview=True)
-        assert report["structuredContent"]["valid"]
-        assert report["content"][1]["mimeType"] == "image/png"
-        opened = c.call("open", path="scan.nxs")["structuredContent"]
-        assert opened["shape"] == [12, 8, 8]
-        ref = opened["handle"]
-        pending = c.send("tools/call", {"name": "probe0", "arguments": {"mode": "wait"}})
-        end = time.monotonic() + 10
-        while not (tmp_path / "entered").exists():
-            assert time.monotonic() < end
-            assert c.process.poll() is None
-            time.sleep(0.01)
-        for n in (1, 2):
-            install(n)
-            assert (
-                "probe" + str(n) in c.call("control", action="reload")["structuredContent"]["tools"]
-            )
-            event = c.receive("method", "notifications/tools/list_changed")
-            assert event["params"]["_meta"]["io.modelcontextprotocol/subscriptionId"] == listened
-            assert c.call("probe" + str(n))["structuredContent"]["generation"] == n
-            assert c.call("status")["structuredContent"]["handles"][ref]["bytes"] > 0
-        (tmp_path / "finish").touch()
-        assert c.receive("id", pending)["result"]["structuredContent"]["generation"] == 0
-        assert (
-            "filter"
-            in c.call("describe", operation="reconstruct", method="fbp")["structuredContent"][
-                "parameters"
-            ]
-        )
-        failure = c.call("probe2", tasks=True, mode="loss")
-        failed = c.terminal(failure["taskId"])
-        assert failed["status"] == "failed"
-        assert ref in failed["error"]["message"]
-        state = c.call("status")["structuredContent"]
-        assert ref in state["worker_loss"]["lost"]
-        assert not state["handles"]
-        closed = c.call("control", action="close", target=ref)["content"][0]["text"]
-        assert "Unknown reference" in closed
-        new = c.call("open", path="scan.nxs")["structuredContent"]["handle"]
-        assert new != ref
-        assert new in c.call("control", action="restart")["structuredContent"]["lost"]
-    assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
-
-
-def test_task_methods_cancel_race_and_expiry(tmp_path):
-    install_overlay(tmp_path)
-    with connection(tmp_path, overlay=True) as c:
-        task = c.call("probe0", tasks=True, mode="wait")
-        tid = task["taskId"]
-        working = c.task("get", tid)
-        assert working["resultType"] == "complete"
-        assert working["status"] == "working"
-        for method, params in (("get", {}), ("cancel", {}), ("update", {"inputResponses": {}})):
-            missing = c.rpc("tasks/" + method, {"taskId": tid, **params})["error"]
-            assert missing["code"] == -32021
-            assert missing["data"] == {"requiredCapabilities": {"extensions": {TASKS: {}}}}
-        assert c.rpc("tasks/get", {"taskId": "unknown"}, tasks=True)["error"]["code"] == -32602
-        assert (
-            c.task("update", tid, inputResponses={"stale": {"action": "accept", "content": {}}})
-            == ACK
-        )
-        assert c.task("cancel", tid) == ACK
-        assert c.terminal(tid)["status"] == "cancelled"
-        failure = c.call("probe0", tasks=True, mode="error")["taskId"]
-        assert c.terminal(failure)["result"]["isError"]
-        assert c.task("cancel", failure)["resultType"] == "complete"
-        assert c.terminal(failure)["status"] == "completed"
-        c.call("status")
-        paged = c.call("python", code="print('x' * 18000)", tasks=True)
-        page = c.terminal(paged["taskId"])["result"]["structuredContent"]["continuation"]
-        assert "result" in c.rpc("resources/read", {"uri": page})
-        time.sleep(task["ttlMs"] / 1000)
-        assert c.rpc("tasks/get", {"taskId": tid}, tasks=True)["error"]["code"] == -32602
-        assert "error" in c.rpc("resources/read", {"uri": page})
-
-
-def test_task_progress_outlives_handoff_and_completion_wins_cancel(tmp_path):
-    install_overlay(tmp_path)
-    with connection(tmp_path, overlay=True) as c:
-        c.call("status")  # Warm the worker before starting the shortened expiry clock.
-        task = c.rpc(
-            "tools/call",
-            {
-                "name": "probe0",
-                "arguments": {"mode": "finishing"},
-                "_meta": {"progressToken": "fit"},
-            },
-            tasks=True,
-        )["result"]
-        tid = task["taskId"]
-        # Wait through two heartbeat notifications on a concurrent blocking call.
-        other = c.send(
-            "tools/call",
-            {
-                "name": "probe0",
-                "arguments": {"mode": "wait"},
-                "_meta": {"progressToken": "blocking"},
-            },
-        )
-        for _ in range(3):
-            event = c.receive("method", "notifications/progress")
-            assert event["params"]["progressToken"] == "blocking"
-        working = c.task("get", tid)
-        assert working["statusMessage"] == "fit center 1/100 · eta 90 s"
-        assert working["pollIntervalMs"] == 10_000
-        assert working["lastUpdatedAt"] > task["createdAt"]
-        assert "result" not in working
-        assert c.task("cancel", tid) == ACK
-        (tmp_path / "finish").touch()
-        success = c.terminal(tid)
-        assert success["status"] == "completed" and success["resultType"] == "complete"
-        assert success["result"]["structuredContent"] == {"generation": 0}
-        assert c.receive("id", other)["result"]["resultType"] == "complete"
-        failed = c.terminal(c.call("probe0", tasks=True, mode="protocol")["taskId"])
-        assert failed["status"] == "failed" and failed["error"]["code"] == -32603
-        assert "unknown_command" in failed["error"]["message"]
 
 
 def test_worker_tasks_use_production_tools_and_ttl(tmp_path):
@@ -296,26 +79,6 @@ def test_directory_inspection_and_unrecognized_hdf5(tmp_path):
         (root / "text").write_text("unrelated")
         scanned = c.call("inspect", path=str(root))["structuredContent"]
         assert list(scanned["datasets"]) == [str(root / "scan.nxs")]
-
-
-def test_sigterm_reaps_a_stopped_worker_with_stdin_open(tmp_path):
-    import signal
-
-    install_overlay(tmp_path)
-    with connection(tmp_path, overlay=True, exit_code=-signal.SIGTERM) as c:
-        assert c.call("status")["structuredContent"]["devices"]
-        processes = subprocess.check_output(["ps", "-A", "-o", "pid=,ppid="], text=True)
-        (worker,) = (
-            pid
-            for pid, parent in (map(int, row.split()) for row in processes.splitlines())
-            if parent == c.process.pid
-        )
-        os.kill(worker, signal.SIGSTOP)
-        c.process.terminate()
-        assert c.process.wait(timeout=10) == -signal.SIGTERM
-        with pytest.raises(ProcessLookupError):
-            os.kill(worker, 0)
-        assert not list((tmp_path / "cache").glob("tomojax-mcp-*"))
 
 
 def test_joint_alignment_reports_disturbances_and_explicit_exclusions(tmp_path):
@@ -513,41 +276,13 @@ def check_scores(phantom, candidates, table, size):
         )
 
 
-def test_directory_discovery_counts_frames_without_worker_calls(tmp_path):
-    import asyncio
-
-    for i in range(1572):
-        (tmp_path / f"clay_{i}.tif").touch()
-    for name in ("clay.xtekct", "clay_recon.xtekct"):
-        (tmp_path / name).touch()
-
-    class Supervisor:
-        base = tmp_path
-        ledger = None
-
-        async def worker(self):
-            pytest.fail("Directory discovery opened a worker request")
-
-    from types import SimpleNamespace
-
-    with_tool = tools.Tools(SimpleNamespace(supervisor=Supervisor()))
-    reply = asyncio.run(with_tool.inspect(tools.Inspect(str(tmp_path))))
-    data = reply.structured_content
-    assert data["tiff_files"] == 1572
-    assert set(data["datasets"]) == {
-        str(tmp_path / n) for n in ("clay.xtekct", "clay_recon.xtekct")
-    }
-    assert len(reply.content[0].text) < 1024
-
-
-def test_read_result_parts_after_reload(tmp_path):
+def test_read_directory_result_parts(tmp_path):
     with h5py.File(tmp_path / "custom.h5", "w") as f:
         for n in range(600):
             f[f"diagnostics/{n}"] = n
     with connection(tmp_path) as c:
         clipped = c.call("inspect", path="custom.h5")
         uri = clipped["structuredContent"]["continuation"]
-        c.call("control", action="reload")
         chunks = []
         while uri:
             reply = c.rpc("resources/read", {"uri": uri})
@@ -561,8 +296,7 @@ def test_read_result_parts_after_reload(tmp_path):
 
 
 def test_client_cancellation_and_task_progress_scope(tmp_path):
-    install_overlay(tmp_path)
-    with connection(tmp_path, overlay=True) as c:
+    with connection(tmp_path) as c:
         ref = c.call("simulate", size=16)["structuredContent"]["members"]["scan"]
         params = {
             "name": "reconstruct",
@@ -582,8 +316,8 @@ def test_client_cancellation_and_task_progress_scope(tmp_path):
         task = c.rpc(
             "tools/call",
             {
-                "name": "probe0",
-                "arguments": {"mode": "wait"},
+                "name": "reconstruct",
+                "arguments": params["arguments"],
                 "_meta": {"progressToken": "handed-off"},
             },
             tasks=True,

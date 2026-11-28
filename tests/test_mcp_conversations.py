@@ -6,23 +6,21 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
-import sys
 
 from PIL import Image
 import pytest
 
 from tests.mcp_client import connection
-from tests.worker_process import binary
 import tomojax as tj
 
 pytestmark = pytest.mark.surface
 
 
 def record_saved_scan(c, directory, names, record):
-    scan = c.call("python", code="register(tj.simulate(size=8, n_views=8).scan)")[
-        "structuredContent"
-    ]["value"]
+    registered = c.call("python", code="register(tj.simulate(size=8, n_views=8).scan)")
+    scan = registered["structuredContent"]["value"]
     names[scan] = "@scan-HANDLE"
+    record(registered)
     saved = c.call("save", source=scan, path="trace #1.nxs")
     assert not saved["isError"]
     links = [p["uri"] for p in saved["content"] if p["type"] == "resource_link"]
@@ -40,7 +38,7 @@ def record_saved_scan(c, directory, names, record):
     record(c.call("control", action="close", target=scan))
 
 
-def conversation(directory, *, legacy, executable=None):
+def conversation(directory, *, legacy):
     """Return decoded replies in order, following this session's actual IDs."""
     transcript = []
     names = {str(directory): "PROJECT"}
@@ -73,7 +71,7 @@ def conversation(directory, *, legacy, executable=None):
         transcript.append(visit(value))
         return value
 
-    with connection(directory, legacy=legacy, executable=executable) as c:
+    with connection(directory, legacy=legacy) as c:
         registered = c.call("python", code="register(np.arange(12).reshape(3, 4))")
         assert not registered["isError"], registered
         handle = registered["structuredContent"]["value"]
@@ -113,12 +111,8 @@ def conversation(directory, *, legacy, executable=None):
 
 
 @pytest.mark.parametrize("legacy", [True, False], ids=["2025-11-25", "2026-07-28"])
-@pytest.mark.parametrize("server", ["python", "rust"])
-def test_recorded_conversation(tmp_path, monkeypatch, legacy, server):
-    monkeypatch.setenv("TOMOJAX_STUDIO_PYTHON", sys.executable)
-    replies = conversation(
-        tmp_path, legacy=legacy, executable=binary() if server == "rust" else None
-    )
+def test_recorded_conversation(tmp_path, legacy):
+    replies = conversation(tmp_path, legacy=legacy)
     fingerprints = [
         sha256(json.dumps(r, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
         for r in replies

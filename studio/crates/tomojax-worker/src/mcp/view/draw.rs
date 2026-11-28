@@ -405,6 +405,33 @@ fn panel_labels(p: &Panel, [lo, hi]: [f64; 2], decorated: bool) -> Vec<String> {
         .collect()
 }
 
+fn draw_marks(
+    canvas: &mut RgbImage,
+    cell: Cell,
+    overlay: marks::Overlay<'_>,
+    marks: &[marks::Mark],
+    reports: &mut [Value],
+) -> Result<()> {
+    if !marks.is_empty() {
+        let mut shapes = image::RgbaImage::new(cell.width as u32, cell.height as u32);
+        for (mark, report) in marks.iter().zip(reports) {
+            report["panels"].as_array_mut().unwrap().push(overlay.draw(
+                canvas,
+                &mut shapes,
+                mark,
+            )?);
+        }
+        for (x, y, ink) in shapes.enumerate_pixels().filter(|(_, _, p)| p[3] != 0) {
+            canvas.put_pixel(
+                cell.left as u32 + x,
+                cell.top as u32 + y,
+                Rgb([ink[0], ink[1], ink[2]]),
+            );
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn render(
     panels: &[Panel],
     form: &View,
@@ -461,23 +488,7 @@ pub(super) fn render(
                 image: &id,
                 limits: [lo, hi],
             };
-            if !form.marks.is_empty() {
-                let mut shapes = image::RgbaImage::new(cell.width as u32, cell.height as u32);
-                for (mark, report) in form.marks.iter().zip(&mut reports) {
-                    report["panels"].as_array_mut().unwrap().push(overlay.draw(
-                        &mut canvas,
-                        &mut shapes,
-                        mark,
-                    )?);
-                }
-                for (x, y, ink) in shapes.enumerate_pixels().filter(|(_, _, p)| p[3] != 0) {
-                    canvas.put_pixel(
-                        cell.left as u32 + x,
-                        cell.top as u32 + y,
-                        Rgb([ink[0], ink[1], ink[2]]),
-                    );
-                }
-            }
+            draw_marks(&mut canvas, cell, overlay, &form.marks, &mut reports)?;
             for (i, line) in labels[j].iter().enumerate() {
                 label(
                     &mut canvas,

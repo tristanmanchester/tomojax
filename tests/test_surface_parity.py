@@ -262,6 +262,9 @@ class Agent:
 def agent(tmp_path_factory):
     directory = tmp_path_factory.mktemp("agent")
     env = {**os.environ, "TMPDIR": str(directory), "CLAUDE_PROJECT_DIR": str(directory)}
+    from tests.worker_process import binary
+
+    env["PATH"] = os.pathsep.join((str(Path(binary()).parent), env["PATH"]))
     with subprocess.Popen(
         [sys.executable, "-m", "tomojax.cli.main", "mcp"],
         env=env,

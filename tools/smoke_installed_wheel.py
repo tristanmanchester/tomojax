@@ -12,20 +12,26 @@ import tempfile
 
 from _smoke_workflow import verify_workflow_outputs, workflow_steps
 
-MCP_SMOKE = """
-import asyncio
-import os
+MCP_SMOKE = r"""
+import json
+import subprocess
 import sys
-from mcp import Client, StdioServerParameters
 
-async def smoke():
-    server = StdioServerParameters(command=sys.argv[1], args=["mcp"], env=dict(os.environ))
-    async with Client(server) as client:
-        result = await client.get_prompt("reconstruct-scan")
-        assert result.messages and "reconstruct" in result.messages[0].content.text
-        print("Installed MCP server returned the reconstruction guide")
-
-asyncio.run(smoke())
+with subprocess.Popen([sys.argv[1], "mcp"], stdin=-1, stdout=-1, text=True) as server:
+    request = {
+        "jsonrpc": "2.0", "id": 1, "method": "prompts/get",
+        "params": {"name":"reconstruct-scan", "_meta":{
+            "io.modelcontextprotocol/protocolVersion":"2026-07-28",
+            "io.modelcontextprotocol/clientInfo":{"name":"wheel-smoke","version":"1"},
+            "io.modelcontextprotocol/clientCapabilities":{}
+        }}
+    }
+    server.stdin.write(json.dumps(request) + "\n")
+    server.stdin.flush()
+    reply = json.loads(server.stdout.readline())
+    assert "reconstruct" in reply["result"]["messages"][0]["content"]["text"], reply
+    server.stdin.close()
+    assert server.wait(10) == 0
 """
 
 
@@ -92,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
         install = ["uv", "pip", "install", "--no-cache", "--python", str(python)]
         if args.find_links is not None:
             install += ["--offline", "--no-index", "--find-links", str(args.find_links.resolve())]
-        _run([*install, f"{artifact}[{args.extra},mcp]"], cwd=root, env=env)
+        _run([*install, f"{artifact}[{args.extra}]"], cwd=root, env=env)
         _run(["uv", "pip", "check", "--python", str(python)], cwd=root, env=env)
         _run(
             [
@@ -107,6 +113,14 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
         )
         _run([str(tomojax), "--help"], cwd=work, env=env)
+        studio = Path(__file__).resolve().parents[1] / "studio"
+        target = Path(os.environ.get("CARGO_TARGET_DIR", studio / "target")).resolve()
+        _run(
+            ["cargo", "build", "--locked", "-p", "tomojax-worker", "--target-dir", str(target)],
+            cwd=studio,
+            env=env,
+        )
+        env["PATH"] = os.pathsep.join((str(target / "debug"), env["PATH"]))
         _run([str(python), "-c", MCP_SMOKE, str(tomojax)], cwd=work, env=env)
         _run(
             [
@@ -143,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
         )
         print(
-            f"Installed {artifact.name}[{args.extra},mcp] and reconstructed successfully",
+            f"Installed {artifact.name}[{args.extra}] and reconstructed successfully",
             flush=True,
         )
     return 0

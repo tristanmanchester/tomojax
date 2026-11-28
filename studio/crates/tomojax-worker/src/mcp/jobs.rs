@@ -262,6 +262,12 @@ pub(super) fn parameter_defs(names: &[&str], session: bool) -> serde_json::Map<S
             continue;
         }
         let mut node = super::describe::definitions()[&name].clone();
+        if session && node["properties"].get("config").is_some() {
+            node["properties"]["config"] = json!({
+                "anyOf":[{"type":"object"},{"type":"null"}],"default":null,
+                "description":"Expert settings. Use describe for the method’s keys."
+            });
+        }
         if name == "Npy" {
             node["properties"]
                 .as_object_mut()
