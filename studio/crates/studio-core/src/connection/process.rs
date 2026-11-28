@@ -47,11 +47,20 @@ pub fn active() -> Result<(), Failure> {
 
 /// The unreaped leader pins the process-group ID until its owner waits.
 pub fn own_group(command: &mut Command) -> &mut Command {
+    owned_group(command, libc::SIGTERM)
+}
+
+/// A direct numerical child may hold a GPU or be stuck in Python shutdown.
+pub fn own_executor(command: &mut Command) -> &mut Command {
+    owned_group(command, libc::SIGKILL)
+}
+
+fn owned_group(command: &mut Command, death_signal: libc::c_int) -> &mut Command {
     // SAFETY: only async-signal-safe, allocation-free Linux operations run between fork and exec.
     unsafe {
         let parent = libc::getpid();
         command.process_group(0).pre_exec(move || {
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) < 0 {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, death_signal) < 0 {
                 return Err(io::Error::last_os_error());
             }
             if libc::getppid() != parent {

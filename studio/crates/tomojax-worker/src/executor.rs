@@ -55,7 +55,12 @@ impl Executor {
                 .env("JAX_PLATFORMS", "cpu")
                 .env("CUDA_VISIBLE_DEVICES", "");
         }
-        let mut child = studio_core::connection::process::own_group(&mut command)
+        let command = if options.session.is_empty() {
+            studio_core::connection::process::own_executor(&mut command)
+        } else {
+            studio_core::connection::process::own_group(&mut command)
+        };
+        let mut child = command
             .spawn()
             .with_context(|| format!("start {}", args[0]))?;
         let mut stdin = child.stdin.take().context("missing executor stdin")?;
@@ -91,25 +96,7 @@ impl Executor {
             };
             let _ = send.send(Event::Gone(generation, reason));
         });
-        let send = events.clone();
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            loop {
-                let mut line = Vec::new();
-                if !matches!(reader.by_ref().take(65536).read_until(b'\n',&mut line),Ok(n) if n>0) {
-                    return;
-                }
-                if send
-                    .send(Event::Diagnostic(
-                        generation,
-                        String::from_utf8_lossy(&line).trim_end().into(),
-                    ))
-                    .is_err()
-                {
-                    return;
-                }
-            }
-        });
+        diagnostics(stderr, generation, events.clone());
         Ok(Self {
             child,
             input: Some(input),
@@ -137,6 +124,27 @@ impl Executor {
         );
         Ok(root)
     }
+}
+
+fn diagnostics(stderr: std::process::ChildStderr, generation: u64, send: SyncSender<Event>) {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        loop {
+            let mut line = Vec::new();
+            if !matches!(reader.by_ref().take(65536).read_until(b'\n',&mut line),Ok(n) if n>0) {
+                return;
+            }
+            if send
+                .send(Event::Diagnostic(
+                    generation,
+                    String::from_utf8_lossy(&line).trim_end().into(),
+                ))
+                .is_err()
+            {
+                return;
+            }
+        }
+    });
 }
 
 impl Drop for Executor {
