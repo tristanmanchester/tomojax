@@ -95,6 +95,9 @@ jobs:
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      RUSTUP_TOOLCHAIN: "1.99.1"
+      CARGO_TARGET_DIR: ${{ github.workspace }}/studio/target
     strategy:
       fail-fast: false
       matrix:
@@ -127,6 +130,26 @@ jobs:
           key: jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-${{ github.run_id }}
           restore-keys: |
             jax-cache-${{ matrix.shard }}-${{ hashFiles('uv.lock') }}-
+
+      # The worker tests start the Rust worker, which tests/worker_process.py builds with
+      # cargo into CARGO_TARGET_DIR. Building it here keeps that build out of the test times.
+      - name: Worker build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            studio/target
+          key: worker-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('studio/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            worker-${{ env.RUSTUP_TOOLCHAIN }}-${{ hashFiles('studio/Cargo.lock') }}-
+
+      - name: Build the worker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libhdf5-dev
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
+          cargo build --locked --manifest-path studio/Cargo.toml -p tomojax-worker
 
       - name: Tests
         env:
