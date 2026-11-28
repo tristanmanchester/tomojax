@@ -24,10 +24,21 @@ fn wait(state: &mut AppState, why: &str, done: impl Fn(&AppState) -> bool) {
         state.poll();
         assert!(
             Instant::now() < until,
-            "{why}: {} {:?} {} {:?}",
+            "{why}: {} {:?} {} jobs {:?} live {:?} {:?}",
             state.connection_status(),
             state.model.error,
             state.model.backend.status,
+            state
+                .model
+                .jobs
+                .iter()
+                .map(|j| (j.status, j.stage.as_str()))
+                .collect::<Vec<_>>(),
+            (
+                state.live.loading(),
+                state.live.error(),
+                state.live.frame().map(|f| &f.info.job)
+            ),
             state.model.validation
         );
         std::thread::sleep(Duration::from_millis(5));
