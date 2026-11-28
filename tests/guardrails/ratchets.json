@@ -73,13 +73,13 @@
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
-    "studio/crates/tomojax-studio/src/app/mod.rs": 987,
+    "studio/crates/tomojax-studio/src/app/mod.rs": 975,
     "studio/crates/tomojax-studio/src/app/viewing.rs": 1479,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 1053,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 999
   },
   "studio_long_functions": {
-    "studio/crates/studio-core/src/engine.rs::spawn": 144,
+    "studio/crates/studio-core/src/engine.rs::spawn": 137,
     "studio/crates/studio-core/src/previews.rs::poll": 130,
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,

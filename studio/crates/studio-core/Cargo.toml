@@ -13,6 +13,9 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 blake3 = "1"
+toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
+libc = "0.2"
+fastrand = "2"
 
 [dev-dependencies]
 proptest.workspace = true

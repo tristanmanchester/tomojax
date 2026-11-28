@@ -495,19 +495,7 @@ impl AppState {
             return;
         }
         match event {
-            EngineEvent::Ready(ready) => {
-                self.model.backend = BackendView {
-                    ready: true,
-                    device: ready
-                        .devices
-                        .iter()
-                        .map(|d| d.name.clone())
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    status: format!("TomoJAX {}", ready.versions.tomojax),
-                    capabilities: ready.capabilities,
-                };
-            }
+            EngineEvent::Ready(ready) => self.model.backend = ready.into(),
             EngineEvent::Reply { response, stale } => {
                 if let Response::Result {
                     request,
@@ -570,7 +558,7 @@ impl AppState {
                             self.model.error = Some(message);
                         }
                     }
-                    Response::Ready(_) => {}
+                    Response::Ready(_) | Response::Executor(_) => {}
                 }
             }
             EngineEvent::Diagnostic(message) => {

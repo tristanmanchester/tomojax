@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
-use crate::protocol::{Ready, Response, ResultValue, SchemaCatalog};
+use crate::connection::process::{own_group, terminate as terminate_worker};
+use crate::protocol::{ExecutorState, Peer, Ready, Response, ResultValue, SchemaCatalog};
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 const REQUEST_BYTES: usize = 1024 * 1024;
@@ -118,6 +119,7 @@ impl Requests {
 pub struct Engine {
     lifecycle: Lifecycle,
     ready: Option<Ready>,
+    executor: Option<Ready>,
     catalog: Option<SchemaCatalog>,
     requests: Requests,
     incoming: Option<mpsc::Receiver<Incoming>>,
@@ -127,30 +129,41 @@ pub struct Engine {
     _workspace: tempfile::TempDir,
 }
 
+/// A local Python executor or a named Rust worker connection.
+pub struct WorkerCommand(Command);
+impl<P: AsRef<Path>> From<P> for WorkerCommand {
+    fn from(python: P) -> Self {
+        let mut command = Command::new(python.as_ref());
+        command.args(["-u", "-m", "tomojax.cli.main", "serve"]);
+        Self(command)
+    }
+}
+impl WorkerCommand {
+    pub(crate) fn profile(worker: &Path, profile: &str) -> Self {
+        let mut command = Command::new(worker);
+        command.args(["connect", profile]);
+        Self(command)
+    }
+}
+
 impl Engine {
-    pub fn spawn(python: impl AsRef<Path>, wake: Wake) -> Result<Self, String> {
+    pub fn spawn(worker: impl Into<WorkerCommand>, wake: Wake) -> Result<Self, String> {
+        let WorkerCommand(mut command) = worker.into();
         let workspace = tempfile::Builder::new()
             .prefix("tomojax-studio-serve-")
             .tempdir()
             .map_err(|error| format!("Could not create the worker's private workspace: {error}"))?;
-        let mut child = Command::new(python.as_ref())
-            .args(["-u", "-m", "tomojax.cli.main", "serve"])
+        let mut child = own_group(&mut command)
             .env("TMPDIR", workspace.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| {
-                format!(
-                    "Could not start TomoJAX with {}: {e}",
-                    python.as_ref().display()
-                )
-            })?;
+            .map_err(|e| format!("Could not start {:?}: {e}", command.get_program()))?;
         let (Some(mut input), Some(output), Some(errors)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
-            let _ = child.kill();
-            let _ = child.wait();
+            let _ = terminate_worker(&mut child);
             return Err("TomoJAX worker started without its protocol pipes".into());
         };
         let (send, incoming) = mpsc::sync_channel(128);
@@ -234,15 +247,13 @@ impl Engine {
                         let _ = send.send(Incoming::Fault(format!(
                             "Could not observe worker exit: {error}"
                         )));
-                        let _ = child.kill();
-                        break child.wait().ok();
+                        break terminate_worker(&mut child).ok();
                     }
                     Ok(None) => {}
                 }
                 match stopping.recv_timeout(Duration::from_millis(25)) {
                     Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        let _ = child.kill();
-                        break child.wait().ok();
+                        break terminate_worker(&mut child).ok();
                     }
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
@@ -263,6 +274,7 @@ impl Engine {
         Ok(Self {
             lifecycle: Lifecycle::Starting,
             ready: None,
+            executor: None,
             catalog: None,
             requests: Requests::default(),
             incoming: Some(incoming),
@@ -271,6 +283,11 @@ impl Engine {
             supervisor: Some(supervisor),
             _workspace: workspace,
         })
+    }
+
+    pub(crate) fn abort(&mut self, reason: &str) {
+        self.lifecycle = Lifecycle::Failed(reason.into());
+        let _ = self.terminate.send(());
     }
 
     pub fn lifecycle(&self) -> &Lifecycle {
@@ -326,7 +343,11 @@ impl Engine {
             return Err("The TomoJAX worker is not accepting commands".into());
         }
         if let Some(ready) = &self.ready
-            && !ready.capabilities.iter().any(|c| c == tag)
+            && !ready
+                .capabilities
+                .iter()
+                .chain(self.executor.iter().flat_map(|e| &e.capabilities))
+                .any(|c| c == tag)
         {
             return Err(format!("This TomoJAX build does not support {tag}"));
         }
@@ -454,7 +475,7 @@ impl Engine {
         for message in messages {
             match message {
                 Incoming::Response(Response::Ready(ready)) => {
-                    if self.ready.is_some() || ready.protocol != 1 || ready.progress != 2 {
+                    if self.ready.is_some() || !ready.supported() {
                         self.lifecycle =
                             Lifecycle::Failed("Unsupported or repeated worker handshake".into());
                         let _ = self.terminate.send(());
@@ -463,12 +484,32 @@ impl Engine {
                     self.ready = Some(ready.clone());
                     if self.lifecycle == Lifecycle::Starting {
                         self.lifecycle = Lifecycle::Ready;
-                        if let Err(error) = self.request(json!({"type":"describe"}), None) {
+                        if matches!(ready.peer, Peer::Executor { .. })
+                            && let Err(error) = self.request(json!({"type":"describe"}), None)
+                        {
                             self.lifecycle = Lifecycle::Failed(error);
                             let _ = self.terminate.send(());
                         }
                     }
                     events.push(EngineEvent::Ready(ready));
+                }
+                Incoming::Response(Response::Executor(state)) => {
+                    self.executor = match &state {
+                        ExecutorState::Ready(executor) if executor.supported() => {
+                            Some(executor.clone())
+                        }
+                        _ => None,
+                    };
+                    if self.executor.is_some()
+                        && self.lifecycle == Lifecycle::Ready
+                        && let Err(error) = self.request(json!({"type":"describe"}), None)
+                    {
+                        events.push(EngineEvent::Diagnostic(error));
+                    }
+                    events.push(EngineEvent::Reply {
+                        response: Response::Executor(state),
+                        stale: false,
+                    });
                 }
                 Incoming::Response(response) => match self.requests.observe(&response) {
                     Ok(stale) => {
@@ -596,6 +637,7 @@ mod tests {
         let mut engine = Engine {
             lifecycle: Lifecycle::Ready,
             ready: None,
+            executor: None,
             catalog: None,
             requests: Requests::default(),
             incoming: None,

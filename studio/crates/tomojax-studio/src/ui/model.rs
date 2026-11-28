@@ -440,6 +440,31 @@ pub struct BackendView {
     pub status: String,
     pub capabilities: Vec<String>,
 }
+
+impl From<crate::protocol::Ready> for BackendView {
+    fn from(ready: crate::protocol::Ready) -> Self {
+        let (device, status) = match ready.peer {
+            crate::protocol::Peer::Executor {
+                devices, versions, ..
+            } => (
+                devices
+                    .iter()
+                    .map(|d| d.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" · "),
+                format!("TomoJAX {}", versions.tomojax),
+            ),
+            crate::protocol::Peer::Worker { host, .. } => (String::new(), host),
+        };
+        Self {
+            ready: true,
+            device,
+            status,
+            capabilities: ready.capabilities,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct PlaneView {
     pub available: bool,

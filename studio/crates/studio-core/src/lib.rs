@@ -6,6 +6,7 @@
     clippy::unused_self,
     clippy::unwrap_used
 )]
+pub mod connection;
 pub mod engine;
 pub mod operations;
 pub mod previews;

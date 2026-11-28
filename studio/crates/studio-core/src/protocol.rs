@@ -122,14 +122,8 @@ pub struct Versions {
     pub cupy: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Ready {
-    pub protocol: u8,
-    pub progress: u8,
-    pub versions: Versions,
-    pub capabilities: Vec<String>,
-    pub devices: Vec<Device>,
-}
+mod handshake;
+pub use handshake::{ExecutorState, Peer, Ready};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ChannelRevision {
@@ -514,6 +508,7 @@ pub struct WorkerError {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
     Ready(Ready),
+    Executor(ExecutorState),
     Progress {
         request: String,
         channel: Option<ChannelRevision>,
@@ -543,7 +538,7 @@ impl Response {
             | Self::Result { request, .. }
             | Self::Error { request, .. } => Some(request),
             Self::ProtocolError { request, .. } => request.as_deref(),
-            Self::Ready(_) => None,
+            Self::Ready(_) | Self::Executor(_) => None,
         }
     }
 
