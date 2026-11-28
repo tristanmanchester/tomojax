@@ -1,5 +1,6 @@
 //! Per-pane fetch channels and a single off-UI decoder. Connection lifetimes own their requests.
 use std::sync::Weak;
+use std::time::Duration;
 use studio_core::engine::{Engine, Lifecycle};
 use studio_core::pixels::{Encoding, FrameQueue, PaneStream, Pixels, PlaneSelection};
 use studio_core::protocol::{Response, ResultValue};
@@ -68,6 +69,7 @@ struct Pane {
     stream: PaneStream,
     preview_edge: usize,
     compact: bool,
+    fast_delivery_remaining: Duration,
 }
 
 impl Default for Pane {
@@ -76,6 +78,7 @@ impl Default for Pane {
             stream: PaneStream::default(),
             preview_edge: 384,
             compact: false,
+            fast_delivery_remaining: Duration::ZERO,
         }
     }
 }
@@ -83,13 +86,19 @@ impl Default for Pane {
 impl Pane {
     // Use request-to-arrival time, which includes storage and transport. A broad
     // dead band keeps the sampled grid stable while a user scrolls similar slices.
-    fn preview_received(&mut self, actual_edge: usize, elapsed: std::time::Duration) {
+    fn preview_received(&mut self, actual_edge: usize, elapsed: Duration) {
         let seconds = elapsed.as_secs_f64();
         if seconds > 0.120 {
             let factor = (0.1 / seconds).sqrt().max(0.7);
             self.preview_edge = ((actual_edge as f64 * factor) as usize).clamp(192, 512);
+            // One compressed chunk supplies several cheap neighboring slices. Give
+            // the smaller grid time to cross a chunk boundary before enlarging it.
+            self.fast_delivery_remaining = Duration::from_secs(2);
         } else if seconds < 0.075 {
-            self.preview_edge = (self.preview_edge * 3 / 2).min(512);
+            self.fast_delivery_remaining = self.fast_delivery_remaining.saturating_sub(elapsed);
+            if self.fast_delivery_remaining.is_zero() {
+                self.preview_edge = (self.preview_edge * 3 / 2).min(512);
+            }
         }
     }
 }
@@ -325,6 +334,15 @@ mod tests {
         assert_eq!(pane.preview_edge, slow_edge);
         for _ in 0..10 {
             pane.preview_received(205, Duration::from_millis(300));
+        }
+        assert_eq!(pane.preview_edge, 192);
+        for _ in 0..10 {
+            pane.preview_received(205, Duration::from_millis(40));
+        }
+        assert_eq!(pane.preview_edge, 192);
+        pane.preview_received(205, Duration::from_millis(200));
+        for _ in 0..45 {
+            pane.preview_received(205, Duration::from_millis(40));
         }
         assert_eq!(pane.preview_edge, 192);
         for _ in 0..10 {
