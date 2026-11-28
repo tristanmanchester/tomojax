@@ -2,17 +2,18 @@
 
 ## T3 Code
 
-The Rust connection layer in `studio/crates/studio-core/src/connection/` incorporates
+The Rust connection layer and pixel stream in `studio/crates/studio-core/src/` incorporate
 code from T3 Code commit `d2c440312e5f39d59827ed466838a623516454d6`.
 
 | T3 Code source | TomoJAX source |
 | --- | --- |
-| `packages/ssh/src/command.ts` | `command.rs` |
-| `packages/ssh/src/auth.ts` | `auth.rs` |
-| `packages/ssh/src/errors.ts` | `mod.rs` |
-| `packages/ssh/src/tunnel.ts` | `command.rs`, `process.rs` |
-| `packages/client-runtime/src/connection/supervisor.ts`, `packages/client-runtime/src/connection/presentation.ts` | `supervisor.rs` |
-| `packages/client-runtime/src/connection/registry.ts` | `registry.rs` |
+| `packages/ssh/src/command.ts` | `connection/command.rs` |
+| `packages/ssh/src/auth.ts` | `connection/auth.rs` |
+| `packages/ssh/src/errors.ts` | `connection/mod.rs` |
+| `packages/ssh/src/tunnel.ts` | `connection/command.rs`, `connection/process.rs` |
+| `packages/client-runtime/src/connection/supervisor.ts`, `packages/client-runtime/src/connection/presentation.ts` | `connection/supervisor.rs` |
+| `packages/client-runtime/src/connection/registry.ts` | `connection/registry.rs` |
+| `packages/client-runtime/src/preview/serverBrowserStream.ts`, `apps/server/src/preview/ServerBrowser.ts` | `pixels/stream.rs` |
 
 MIT License
 

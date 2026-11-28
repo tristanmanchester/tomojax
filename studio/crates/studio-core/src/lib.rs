@@ -9,6 +9,7 @@
 pub mod connection;
 pub mod engine;
 pub mod operations;
+pub mod pixels;
 pub mod previews;
 pub mod progress;
 pub mod project;

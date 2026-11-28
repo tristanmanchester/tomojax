@@ -406,6 +406,7 @@ pub struct Output {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResultValue {
+    Pixels(crate::pixels::Pixels),
     Output(Box<Output>),
     Description {
         parameters: Value,
@@ -507,6 +508,10 @@ pub struct WorkerError {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Response {
+    Block {
+        request: String,
+        bytes: usize,
+    },
     Ready(Ready),
     Executor(ExecutorState),
     Progress {
@@ -538,6 +543,7 @@ impl Response {
             | Self::Result { request, .. }
             | Self::Error { request, .. } => Some(request),
             Self::ProtocolError { request, .. } => request.as_deref(),
+            Self::Block { request, .. } => Some(request),
             Self::Ready(_) | Self::Executor(_) => None,
         }
     }

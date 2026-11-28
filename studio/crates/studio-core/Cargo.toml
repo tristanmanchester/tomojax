@@ -16,6 +16,8 @@ blake3 = "1"
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 libc = "0.2"
 fastrand = "2"
+zstd = { version = "0.13", default-features = false }
+zune-jpeg = "0.5"
 
 [dev-dependencies]
 proptest.workspace = true
