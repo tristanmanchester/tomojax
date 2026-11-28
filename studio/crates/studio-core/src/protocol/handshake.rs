@@ -16,7 +16,6 @@ pub struct Ready {
 #[serde(untagged)]
 pub enum Peer {
     Worker {
-        machine: String,
         host: String,
         home: String,
         directory: String,

@@ -100,7 +100,7 @@ esac"#
         script(
             &d.join("worker ' ;"),
             r#"#!/bin/sh
-printf '%s\n' '{"type":"ready","protocol":1,"machine":"fixture-id","host":"fixture","home":"/","directory":"/","capabilities":["status"],"jobs":"inline"}'
+printf '%s\n' '{"type":"ready","protocol":1,"host":"fixture","home":"/","directory":"/","capabilities":["status"],"jobs":"inline"}'
 printf '%s\n' '{"type":"executor","state":"starting","detail":"queued"}'
 printf '%s\n' '{"type":"executor","state":"ready","detail":{"protocol":1,"progress":2,"capabilities":[],"versions":{"tomojax":"test","jax":"test"},"devices":[]}}'
 cat >/dev/null

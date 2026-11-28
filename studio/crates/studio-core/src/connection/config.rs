@@ -21,7 +21,6 @@ pub struct Profile {
     jobs: Option<Jobs>,
     sbatch: Option<String>,
     pub results: Option<String>,
-    pub install: Option<String>,
 }
 
 impl Profile {

@@ -110,7 +110,7 @@ impl Handshake {
         };
         println!(
             "{}",
-            serde_json::json!({"machine":session["machine"],"host":session["host"],"jobs":session["jobs"],"tomojax":versions.tomojax,"devices":devices})
+            serde_json::json!({"host":session["host"],"jobs":session["jobs"],"tomojax":versions.tomojax,"devices":devices})
         );
         if let Some(mut stdin) = worker.0.stdin.take() {
             stdin.write_all(b"{\"id\":\"check\",\"command\":{\"type\":\"shutdown\"}}\n")?;

@@ -70,7 +70,7 @@ exec sh -c "$1"
             &root.path().join("worker ' ;"),
             r#"#!/bin/sh
 printf '%s\0' "$@" > "$ARGUMENTS"
-printf '%s\n' '{"type":"ready","protocol":1,"machine":"fixture","home":"/","directory":"/","host":"test","capabilities":[],"jobs":"inline"}'
+printf '%s\n' '{"type":"ready","protocol":1,"home":"/","directory":"/","host":"test","capabilities":[],"jobs":"inline"}'
 printf '\000\377abc\n'
 "#,
         );
@@ -260,7 +260,7 @@ done"#,
 }
 
 #[test]
-fn a_project_keeps_each_named_connection_and_its_login_independent() {
+fn the_registry_keeps_each_named_connection_and_its_login_independent() {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use studio_core::connection::{Registry, State};
@@ -274,7 +274,7 @@ fn a_project_keeps_each_named_connection_and_its_login_independent() {
 case "$3" in --login) touch "$2.login"; exit 0;; esac
 echo start >> "$2"
 case "$2" in */b) test -f "$2.login" || exit 3;; esac
-echo '{"type":"ready","protocol":1,"machine":"machine","home":"/","directory":"/","host":"fixture","jobs":"inline","capabilities":["status"]}'
+echo '{"type":"ready","protocol":1,"home":"/","directory":"/","host":"fixture","jobs":"inline","capabilities":["status"]}'
 echo '{"type":"executor","state":"gone","detail":"allocation unavailable"}'
 cat >/dev/null"#,
     );
@@ -342,4 +342,28 @@ IFS= read -r response </dev/tty && test "$response" = consent
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
+}
+
+#[test]
+fn a_worker_that_cannot_execute_reports_the_remote_cause() {
+    let f = Fixture::new();
+    fs::write(
+        f.config.join("connections.toml"),
+        "[remote]\nssh=['outer','inner']\n",
+    )
+    .unwrap();
+    let program = f.root.path().join("worker ' ;");
+    for cause in [
+        "cannot execute: wrong architecture",
+        "noexec",
+        "GLIBC_2.38 not found",
+    ] {
+        script(
+            &program,
+            &format!("#!/bin/sh\necho '{cause}' >&2\nexit 126\n"),
+        );
+        let out = f.run("remote");
+        assert_eq!(out.status.code(), Some(5));
+        assert!(String::from_utf8_lossy(&out.stderr).contains(cause));
+    }
 }

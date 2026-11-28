@@ -3,8 +3,7 @@ use super::Owner;
 use crate::engine::{EngineEvent, Wake};
 use std::{collections::BTreeMap, path::PathBuf, time::Instant};
 
-/// A project can reference several machines. Each name has exactly one owner
-/// and keeps its state across involuntary disconnects.
+/// The client scopes each owner by connection name and retains it across drops.
 pub struct Registry {
     worker: PathBuf,
     wake: Wake,
