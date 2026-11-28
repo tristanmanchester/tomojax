@@ -1248,7 +1248,7 @@ def test_worker_inventory_reports_the_migration_for_an_rc6_file(worker, tmp_path
     write_rc6_dataset(path)
     for command in ("peek", "stored", "inspect"):
         error = worker(command, path=str(path))["error"]
-        assert "python -m pip install tomojax==1.0.0rc7" in error["message"]
+        assert 'python -m pip install "tomojax[cpu]==1.0.0rc7"' in error["message"]
 
 
 def test_feature_open_preflight_checks_the_file_without_reading_the_mask(tmp_path, monkeypatch):

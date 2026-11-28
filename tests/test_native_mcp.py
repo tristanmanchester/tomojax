@@ -114,7 +114,7 @@ def test_worker_filesystem_namespace(tmp_path, monkeypatch, native):
         with h5py.File(path / "unknown.h5", "w") as f:
             f["signal"] = np.zeros((n, 5))
         sim = tj.simulate("sphere", size=n, n_views=12)
-        tj.save(path / "scan.npz", sim.scan)
+        tj.save(path / "scan.nxs", sim.scan)
     with native("fixture") as client:
         ready(client)
         assert (
@@ -131,11 +131,11 @@ def test_worker_filesystem_namespace(tmp_path, monkeypatch, native):
         assert checked(client, "python", code=code)["structuredContent"]["value"] == 11
         report = checked(client, "inspect", path=str(local / "unknown.h5"))["structuredContent"]
         assert report["datasets"]["/signal"]["shape"] == [8, 5]
-        npz = checked(client, "inspect", path=str(local / "scan.npz"), preview=True)
-        assert npz["structuredContent"]["projection"]["shape"] == [12, 8, 8]
+        scan = checked(client, "inspect", path=str(local / "scan.nxs"), preview=True)
+        assert scan["structuredContent"]["projection"]["shape"] == [12, 8, 8]
         with connection(remote) as reference:
-            expected = checked(reference, "inspect", path="scan.npz", preview=True)
-        np.testing.assert_array_equal(image(npz["content"][1]), image(expected["content"][1]))
+            expected = checked(reference, "inspect", path="scan.nxs", preview=True)
+        np.testing.assert_array_equal(image(scan["content"][1]), image(expected["content"][1]))
         pixels = image(expected["content"][1])
         Image.fromarray(pixels).save(remote / "slice.png")
         get = checked(client, "download", path=str(local / "slice.png"), to="display.png")
@@ -264,7 +264,7 @@ def test_submit_resolves_nested_and_top_level_paths(tmp_path, monkeypatch, nativ
     operation = {
         "type": "reconstruct",
         "method": "sirt",
-        "source": "scan.npz",
+        "source": "scan.nxs",
         "config": {"support": "mask.npy"},
     }
     with native("fixture") as client:
@@ -277,7 +277,7 @@ def test_submit_resolves_nested_and_top_level_paths(tmp_path, monkeypatch, nativ
         try:
             script = json.loads((root / "jobs" / job / "script.jsonl").read_text())
             expanded = script["command"]["operation"]
-            assert expanded["source"] == {"type": "path", "path": str(directory / "scan.npz")}
+            assert expanded["source"] == {"type": "path", "path": str(directory / "scan.nxs")}
             assert expanded["config"] == {
                 "type": "SIRTConfig",
                 "support": {"type": "npy", "path": str(directory / "mask.npy")},
@@ -415,10 +415,7 @@ def test_saved_paths_link_to_local_outputs_and_reopen(tmp_path, native):
             client, "save", source=volume["structuredContent"]["handle"], path=path.name
         )
         links = [part for part in saved["content"] if part["type"] == "resource_link"]
-        assert [item["uri"] for item in links] == [
-            path.as_uri(),
-            Path(str(path) + ".manifest.json").as_uri(),
-        ]
+        assert [item["uri"] for item in links] == [path.as_uri()]
         reopened = checked(client, "open", path=path.name, kind="reconstruction")
         assert reopened["structuredContent"]["shape"] == [8, 8, 8]
 

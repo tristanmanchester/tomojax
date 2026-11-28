@@ -76,7 +76,7 @@ When a reconstruction and its attached scan use different voxel grids,
 the reconstructed volume. The volume's NeXus axes use its own grid.
 
 Readers skip additional members and record fields of a supported format.
-An unrecognized format number reports the writing version. To re-save rc6 datasets, install the migration release with `python -m pip install tomojax==1.0.0rc7`. To migrate a reconstruction while
+An unrecognized format number reports the writing version. To re-save rc6 datasets, install the migration release with `python -m pip install "tomojax[cpu]==1.0.0rc7"`. To migrate a reconstruction while
 preserving its optional projections, load it once and pass
 `include_scan=result.scan is not None` to `tj.save`.
 

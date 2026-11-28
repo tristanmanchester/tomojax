@@ -7,7 +7,7 @@
   resolved settings and provenance. Read a saved record with `tomojax inspect FILE --json`.
   The separate manifest file, `--manifest` option and NPZ dataset container have been removed.
   To migrate rc6 files, install TomoJAX 1.0.0rc7 with
-  `python -m pip install tomojax==1.0.0rc7` and follow the
+  `python -m pip install "tomojax[cpu]==1.0.0rc7"` and follow the
   [saved-object instructions](docs/support-matrix.md#saved-objects).
 
 ## 1.0.0rc7 (2026-11-28)

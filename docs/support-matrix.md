@@ -50,7 +50,7 @@ with its labels, coordinates and the recipe used to select it. To see the
 contents and processing history, run `tomojax inspect result.nxs --json`.
 
 For a file saved by TomoJAX 1.0.0rc6, install TomoJAX 1.0.0rc7 with
-`python -m pip install tomojax==1.0.0rc7`. Open the old NeXus or NPZ file
+`python -m pip install "tomojax[cpu]==1.0.0rc7"`. Open the old NeXus or NPZ file
 in that release and write a new NeXus file.
 Choose the loader for the object in the old file. This example keeps a
 reconstruction's projections if they were saved with it.

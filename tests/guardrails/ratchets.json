@@ -28,14 +28,14 @@
     "tomojax.geometry.api": 12,
     "tomojax.corrections.api": 8,
     "tomojax.recon.api": 14,
-    "tomojax.io.api": 41,
+    "tomojax.io.api": 40,
     "tomojax.alignment.api": 5
   },
   "cli_flags": {
     "inspect": 7,
     "correct": 36,
-    "reconstruct": 22,
-    "align": 21,
+    "reconstruct": 21,
+    "align": 20,
     "export": 12,
     "simulate": 20,
     "serve": 1,
@@ -49,8 +49,6 @@
   },
   "long_functions": {
     "src/tomojax/alignment/_joint/_fit.py::fit_poses": 168,
-    "src/tomojax/cli/align.py::build_parser": 101,
-    "src/tomojax/cli/reconstruct.py::build_parser": 102,
     "src/tomojax/cli/simulate.py::_build_parser": 111,
     "src/tomojax/core/_cuda_axial.py::transpose_axial_vu_cuda": 110,
     "src/tomojax/corrections/_engine.py::correct_frames": 119,
@@ -59,20 +57,20 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5334,
+    "reportAny": 5316,
     "reportMissingImports": 66,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 888,
-    "reportUnknownMemberType": 1708,
-    "reportUnknownVariableType": 981,
-    "reportUnusedCallResult": 126
+    "reportUnknownArgumentType": 895,
+    "reportUnknownMemberType": 1710,
+    "reportUnknownVariableType": 994,
+    "reportUnusedCallResult": 119
   },
   "explicit_any": 408,
-  "type_casts": 82,
+  "type_casts": 75,
   "broad_except": 25,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1331,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1327,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 894
   },
@@ -81,7 +79,7 @@
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
     "studio/crates/tomojax-io/src/metadata.rs::projection_arrays": 138,
-    "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 162,
+    "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 122,
     "studio/crates/tomojax-studio/src/app/actions.rs::action": 507,
     "studio/crates/tomojax-studio/src/app/jobs.rs::copy_kept_preview": 129,
     "studio/crates/tomojax-studio/src/app/mod.rs::open_project": 101,
@@ -89,7 +87,7 @@
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 134,
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 121,
     "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 112,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 209,
+    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 205,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 161,
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
@@ -142,7 +140,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 65,
+    "tiny": 64,
     "forwarders": 9,
     "chained": 6
   },

@@ -120,7 +120,7 @@ def native_file(file: h5py.File) -> bool:
     ):
         raise ValueError(
             f"{file.filename} is an rc6 TomoJAX file. Open and re-save it with "
-            "TomoJAX 1.0.0rc7 (install with `python -m pip install tomojax==1.0.0rc7`)."
+            'TomoJAX 1.0.0rc7 (install with `python -m pip install "tomojax[cpu]==1.0.0rc7"`).'
         )
     return False
 

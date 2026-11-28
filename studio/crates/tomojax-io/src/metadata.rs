@@ -560,7 +560,7 @@ pub fn native_format(file: &hdf5::File) -> Result<bool, String> {
         .any(|name| name == "tomojax_format")
     {
         if is_rc6(file)? {
-            return Err("Re-save this rc6 file with TomoJAX 1.0.0rc7 (install with `python -m pip install tomojax==1.0.0rc7`): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
+            return Err("Re-save this rc6 file with TomoJAX 1.0.0rc7 (install with `python -m pip install \"tomojax[cpu]==1.0.0rc7\"`): tj.save(new, tj.load(old)) for a scan, or use tj.load_reconstruction, tj.load_alignment or tj.load_simulation for that result.".into());
         }
         return Ok(false);
     }
@@ -872,7 +872,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains("python -m pip install tomojax==1.0.0rc7"),
+            error.contains("python -m pip install \"tomojax[cpu]==1.0.0rc7\""),
             "{error}"
         );
         assert!(error.contains("tj.load_reconstruction"), "{error}");

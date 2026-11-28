@@ -25,7 +25,7 @@ def record_saved_scan(c, directory, names, record):
     assert not saved["isError"]
     links = [p["uri"] for p in saved["content"] if p["type"] == "resource_link"]
     path = directory / "trace #1.nxs"
-    assert links == [path.as_uri(), Path(str(path) + ".manifest.json").as_uri()]
+    assert links == [path.as_uri()]
     # Duration varies between runs. Check that the summary reports the measured
     # duration before normalizing the number, so a missing duration still fails.
     seconds = saved["structuredContent"]["wall_seconds"]

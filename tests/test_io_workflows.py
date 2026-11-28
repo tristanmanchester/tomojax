@@ -131,7 +131,7 @@ def test_rc6_native_files_name_the_migration_release_but_external_nexus_still_lo
     write_rc6_dataset(legacy)
     for read in (load_dataset, load_nxtomo, tj.load, tj.load_frames, tj.inspect):
         with pytest.raises(
-            ValueError, match=r"rc6.*re-save.*python -m pip install tomojax==1\.0\.0rc7"
+            ValueError, match=r'rc6.*re-save.*python -m pip install "tomojax\[cpu\]==1\.0\.0rc7"'
         ):
             read(legacy)
     external = tmp_path / "external.nxs"

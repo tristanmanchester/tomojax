@@ -76,8 +76,9 @@ pub async fn inspect(
         let arrays = stored["arrays"]
             .as_object()
             .context("Missing inspection arrays")?;
-        let image = if let Some(descriptor) =
-            arrays.get("projections").or_else(|| arrays.get("volume"))
+        let image = if let Some(descriptor) = ["projections", "volume", "mask"]
+            .iter()
+            .find_map(|name| arrays.get(*name))
         {
             super::images::inspection(session, &serde_json::from_value(descriptor.clone())?).await?
         } else {

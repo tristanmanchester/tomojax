@@ -253,6 +253,10 @@ def test_a_feature_saves_reopens_and_exports(session, tmp_path):
     assert record["provenance"]["lineage"]["operation"] == "save"
     assert record["arrays"]["mask"]["path"] == "/entry/masks/sample%2Fblock/data"
     assert mask.shape == (24, 24, 24) and mask.sum() == 480 and mask[8:14, 10:18, 12:22].all()
+    preview = c.call("inspect", path=str(path), preview=True)
+    assert not preview["isError"], preview
+    (plane,) = images(preview)
+    np.testing.assert_array_equal(plane[..., 0] > 0, mask[len(mask) // 2])
     reopened = c.call("open", path=str(path), kind="feature")["structuredContent"]
     assert reopened["kind"] == "feature" and reopened["voxels"] == 480
     assert reopened["name"] == "sample/block" and reopened["bounds"] == box["bounds"]
