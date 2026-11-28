@@ -17,3 +17,6 @@ pub mod protocol;
 pub mod sync;
 pub mod transfer;
 pub mod worker_path;
+
+/// Python package version paired with these native binaries.
+pub const TOMOJAX_VERSION: &str = env!("TOMOJAX_VERSION");

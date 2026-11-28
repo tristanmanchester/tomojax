@@ -158,7 +158,58 @@ jobs:
           lscpu | grep "Model name"
           uv run --no-sync pytest -q tests -m "not gpu and not slow" -n auto --maxschedchunk 1 --durations=15
 
+  build-studio:
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Install native build tools and Rust 1.99.1
+        run: |
+          dnf install -y cmake fontconfig-devel libxkbcommon-devel
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Build Studio and its static-HDF5 worker
+        run: |
+          cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --package tomojax-worker --features static-hdf5
+
+      - name: Package and verify tomojax-studio wheel
+        run: |
+          rm -rf dist-studio
+          /opt/python/cp312-cp312/bin/python tools/build_studio_wheel.py \
+            --binary studio/target/release/tomojax-studio \
+            --platform-tag manylinux_2_28_${{ matrix.arch }} \
+            --out-dir dist-studio \
+            --check-static
+          /opt/python/cp312-cp312/bin/python -m pip install --no-cache-dir twine
+          /opt/python/cp312-cp312/bin/twine check --strict dist-studio/*.whl
+          /opt/python/cp312-cp312/bin/python -m venv /tmp/studio-smoke
+          /tmp/studio-smoke/bin/pip install --no-deps --no-cache-dir dist-studio/*.whl
+          /tmp/studio-smoke/bin/tomojax-studio --help > /dev/null
+          /tmp/studio-smoke/bin/tomojax-worker --help > /dev/null
+          tar -tzf dist-studio/*.tar.gz | grep -Fx THIRD_PARTY_NOTICES.md
+          unzip -Z1 dist-studio/*.whl | grep -F '/licenses/THIRD_PARTY_NOTICES.md'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-studio-${{ matrix.arch }}
+          path: dist-studio/
+          if-no-files-found: error
+
   installed-package:
+    needs: build-studio
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
@@ -180,9 +231,14 @@ jobs:
       - name: Build release artifacts
         run: uv build
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dist-studio-x86_64
+          path: dist-studio/
+
       - name: Uncached wheel and sdist workflows
         run: |
-          uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu
+          uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu --studio-wheel dist-studio/*.whl
           uv run --no-project --python "${{ matrix.python }}" python tools/smoke_installed_wheel.py --extra cpu --artifact sdist
 
   studio:

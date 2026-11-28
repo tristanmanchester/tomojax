@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/ssh/src/command.ts and tunnel.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/ssh/src/command.ts and tunnel.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
 use std::collections::BTreeMap;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};

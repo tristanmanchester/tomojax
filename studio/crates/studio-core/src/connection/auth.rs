@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/ssh/src/auth.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/ssh/src/auth.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
 use std::{path::Path, process::Command};
 
 pub(super) fn askpass(command: &mut Command, helper: Option<&Path>) {

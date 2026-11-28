@@ -8,13 +8,15 @@ What the agent sees after `reconstruct` on the FIPS walnut (three orbits, FISTA)
 
 ## Install and connect
 
+The native MCP server ships after 1.0.0rc7. For the Python server in rc7, use the [rc7 installation instructions](https://github.com/tristanmanchester/tomojax/blob/v1.0.0rc7/docs/mcp.md#install-and-connect).
+
 Install TomoJAX and the matching `tomojax-studio` wheel in the environment your MCP client will start. The wheel includes the native worker. For local CUDA 12 and physical X-ray spectra, run:
 
 ```bash
-uv pip install "tomojax[cuda12,spectra]" tomojax-studio
+uv pip install --prerelease=allow "tomojax[cuda12,spectra]" tomojax-studio
 ```
 
-For a remote connection, install TomoJAX with the compute machine’s CPU or CUDA dependencies there. On the laptop, `tomojax mcp --connection NAME` starts the native server for that connection.
+For a remote connection, install TomoJAX with the compute machine’s CPU or CUDA dependencies there. On the laptop, `tomojax mcp --connection NAME` starts the native server for that connection. With the base package alone, `tomojax serve` runs the Python executor. If the launcher cannot find `tomojax-worker` in its environment or on `PATH`, `tomojax mcp` prints the install command for the matching Studio wheel. See [remote session setup](remote.md).
 
 ### Claude Code
 
@@ -71,7 +73,7 @@ command = "tomojax"
 args = ["mcp", "--connection", "beamline"]
 ```
 
-Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. If the executor is waiting for an allocation, scientific tools return the queue status. You can still list jobs, inspect directories and transfer files. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The `python` tool runs in the executor on the connected machine, so its files and devices are that machine's.
+Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. While the executor starts or waits for an allocation, scientific tools return `unavailable`. Poll `status` until the executor is ready, then retry the call. You can still list jobs, inspect directories and transfer files. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The `python` tool runs in the executor on the connected machine, so its files and devices are that machine's.
 
 To run a small simulation, pass these arguments to `submit`.
 

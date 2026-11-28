@@ -23,7 +23,12 @@ def main() -> int:
     installed = Path(sys.executable).with_name(name)
     worker = str(installed) if installed.is_file() else shutil.which(name)
     if worker is None:
-        raise ValueError("Install the matching tomojax-studio wheel or put tomojax-worker on PATH.")
+        from tomojax import __version__
+
+        raise ValueError(
+            f"Install the native server with pip install tomojax-studio=={__version__} "
+            "in this environment, or put tomojax-worker on PATH."
+        )
     os.execve(
         worker,
         [worker, "mcp", "--connection", args.connection],

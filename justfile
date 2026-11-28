@@ -8,7 +8,6 @@ export TMPDIR := if env("TMPDIR", "") == "" {
 }
 
 benchmark_scripts := "bench"
-studio_target_dir := `printf '%s' "${CARGO_TARGET_DIR:-$HOME/.cache/tomojax-studio-target}"`
 studio_toolchain := "1.99.1"
 
 # CPU tests run on one worker per two logical CPUs, each pinned to its share of the cores
@@ -57,27 +56,23 @@ package:
     uv run --no-sync twine check --strict dist/*
     uv run --no-sync python tools/smoke_installed_wheel.py
 
-# Built in this checkout: the shared target directory holds whichever worktree's binary was built last.
 studio-wheel:
     rm -rf dist-studio
     cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --package tomojax-worker --features static-hdf5 --target-dir studio/target
     uv run --no-sync python tools/build_studio_wheel.py --out-dir dist-studio --check-static
     uv run --no-sync twine check --strict dist-studio/*.whl
 
-[env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-check: studio-lint
     cargo build --locked --manifest-path studio/Cargo.toml -p tomojax-worker
     cargo test --locked --manifest-path studio/Cargo.toml --workspace
 
 # Build Studio and capture every workspace headless into .artifacts/studio-snap.
-[env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-verify:
     uv run --no-sync python tools/verify_studio.py --build
 
 [private]
-[env("CARGO_TARGET_DIR", studio_target_dir)]
 [env("RUSTUP_TOOLCHAIN", studio_toolchain)]
 studio-lint:
     cargo fmt --all --manifest-path studio/Cargo.toml --check

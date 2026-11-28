@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" role="img" aria-labelledby="title description">
+  <title id="title">A Studio project with its data on a cluster</title>
+  <desc id="description">Studio and the MCP server read the laptop’s connection settings. An SSH stream connects either client to the worker. The worker serves files and starts a Python executor. A submitted job has its own runner and executor on the cluster and writes the reconstruction in the project’s results folder.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#326578"/></marker>
+  </defs>
+  <rect width="900" height="360" rx="10" fill="#f6f9fb"/>
+  <g fill="white" stroke="#bcced4"><rect x="18" y="18" width="288" height="324" rx="9"/><rect x="457" y="18" width="425" height="324" rx="9"/></g>
+  <g font-family="system-ui,sans-serif" fill="#173e50">
+    <g font-size="22" font-weight="600"><text x="38" y="55">Laptop</text><text x="478" y="55">Cluster or workstation</text></g>
+    <g fill="#e6f2f2"><rect x="36" y="81" width="245" height="87" rx="6"/><rect x="477" y="81" width="385" height="87" rx="6"/></g>
+    <g font-size="18" font-weight="600"><text x="51" y="111">Studio or the MCP server</text><text x="492" y="111">TomoJAX worker</text></g>
+    <g font-size="15"><text x="51" y="143">Views and controls</text><text x="492" y="143">Reads pixels and files, submits jobs</text></g>
+    <path d="M286 127H471" fill="none" stroke="#326578" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <g text-anchor="middle"><text x="382" y="113" font-size="17" font-weight="600">SSH</text><text x="382" y="155" font-size="13">JSON Lines</text><text x="382" y="173" font-size="13">and byte blocks</text></g>
+    <g stroke="#326578" stroke-width="2" fill="none" marker-end="url(#arrow)"><path d="M87 218V174"/><path d="M566 168V199"/><path d="M763 168V199"/></g>
+    <g font-size="17" font-weight="600"><text x="38" y="246">Local project folder</text><text x="488" y="223">Interactive executor</text><text x="688" y="223">Durable job</text></g>
+    <g font-size="15"><text x="38" y="273">Manifest and job records</text><text x="38" y="309">SSH profiles (connections.toml)</text><text x="488" y="250">Python and JAX</text><text x="688" y="250">Runner and its own</text><text x="688" y="272">Python executor</text></g>
+    <path d="M763 280V296" stroke="#326578" stroke-width="2" marker-end="url(#arrow)"/>
+    <text x="688" y="322" font-size="16" font-weight="600">Results folder</text>
+  </g>
+</svg>

@@ -67,3 +67,52 @@ ln -T -- "$part" '{path}' || {{ test -x '{path}' && printf '%s  %s\n' '{hash}' '
     run(script, compressed.into(), Duration::from_secs(300))?;
     Ok(path)
 }
+
+/// Install on the login host, where uv can reach the package index. The
+/// interpreter path printed here must also be visible to the compute nodes.
+pub(super) fn install(route: Option<&Route<'_>>) -> Result<String, Failure> {
+    let script = format!(
+        r#"set -eu
+version='{version}'
+base="$HOME/.local/share/tomojax/envs"
+mkdir -p -- "$base"
+envdir=$(mktemp -d "$base/$version-XXXXXXXXXX")
+trap 'rm -rf -- "$envdir"' EXIT
+uv venv --python '>=3.12,<3.15' "$envdir" >&2
+uv pip install --python "$envdir/bin/python" "tomojax[cuda12]==$version" >&2
+actual=$("$envdir/bin/python" -m tomojax.cli.main --version)
+if [ "$actual" != "tomojax $version" ]; then
+    echo "Expected tomojax $version, got $actual" >&2
+    exit 1
+fi
+ln -s -- "$envdir" "$envdir/.publish"
+# A signal after rename must never remove the published environment.
+trap - EXIT
+mv -Tf -- "$envdir/.publish" "$base/$version"
+printf '%s\n' "$base/$version/bin/python"
+"#,
+        version = crate::TOMOJAX_VERSION
+    );
+    let mut command = if let Some(route) = route {
+        route.command(1, script, true)
+    } else {
+        let mut command = std::process::Command::new("sh");
+        command.args(["-c", &script]);
+        command
+    };
+    let result = run_probe(
+        &mut command,
+        Duration::from_secs(1800),
+        false,
+        Stdio::null(),
+    )?;
+    if result.success {
+        Ok(result.out)
+    } else if result.code == Some(255)
+        && let Some(route) = route
+    {
+        Err(route.classify(Failure::ssh(&result.err), 1))
+    } else {
+        Err(Failure::blocked(result.err))
+    }
+}

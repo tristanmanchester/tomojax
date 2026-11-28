@@ -117,6 +117,7 @@ SECTIONS: list[tuple[str, list[tuple[str, str, str | None, str]]]] = [
                 "Command line",
                 "The commands, their conventions and --config files.",
             ),
+            ("docs/remote.md", "remote", None, "Run a job on a cluster and view it on a laptop."),
             (
                 "docs/mcp.md",
                 "mcp",

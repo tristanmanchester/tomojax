@@ -397,3 +397,77 @@ fn a_worker_that_cannot_execute_reports_the_remote_cause() {
         assert!(String::from_utf8_lossy(&out.stderr).contains(cause));
     }
 }
+
+#[test]
+fn install_publishes_only_a_verified_environment_on_the_first_hop() {
+    let f = Fixture::new();
+    fs::write(
+        f.config.join("connections.toml"),
+        "[p]\nssh=['outer','inner']\n",
+    )
+    .unwrap();
+    let version = studio_core::TOMOJAX_VERSION;
+    let link = f
+        .root
+        .path()
+        .join(".local/share/tomojax/envs")
+        .join(version);
+    script(
+        &f.root.path().join("uv"),
+        r#"#!/bin/sh
+set -eu
+case "$1" in
+    venv) mkdir -p "$4/bin" ;;
+    pip)
+        test "$2" = install
+        test "$3" = --python
+        test "$5" = "tomojax[cuda12]==$VERSION"
+        test "$REPORT" != offline
+        printf '#!/bin/sh\ntest "$*" = "-m tomojax.cli.main --version" && echo "tomojax %s"\n' "$REPORT" > "$4"
+        chmod +x "$4"
+        ;;
+esac
+"#,
+    );
+    let installer = |reported: &str| {
+        let mut cmd = f.command("p");
+        cmd.env("TEST_ACTION", "install")
+            .env("HOME", f.root.path())
+            .env("VERSION", version)
+            .env("REPORT", reported);
+        cmd
+    };
+    assert_eq!(
+        installer("offline").output().unwrap().status.code(),
+        Some(5)
+    );
+    assert!(link.symlink_metadata().is_err());
+    let mut first = installer(version).spawn().unwrap();
+    let second = installer(version).output().unwrap();
+    assert!(first.wait().unwrap().success());
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(link.is_symlink());
+    let python = link.join("bin/python");
+    assert!(
+        String::from_utf8_lossy(&second.stdout)
+            .contains(&format!("python = \"{}\"", python.display()))
+    );
+    assert!(!installer("wrong").output().unwrap().status.success());
+    assert_eq!(
+        Command::new(python)
+            .args(["-m", "tomojax.cli.main", "--version"])
+            .output()
+            .unwrap()
+            .stdout,
+        format!("tomojax {version}\n").as_bytes()
+    );
+    assert!(
+        !fs::read_to_string(f.root.path().join("argv"))
+            .unwrap()
+            .contains("inner")
+    );
+}
