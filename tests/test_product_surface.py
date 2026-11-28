@@ -98,7 +98,7 @@ def test_every_command_takes_input_and_a_guarded_output(
             assert usage == "usage: tomojax serve [-h]"
             continue
         if command == "mcp":
-            assert usage == "usage: tomojax mcp [-h]"
+            assert usage == "usage: tomojax mcp [-h] [--connection NAME]"
             continue
         if command == "studio":
             assert "PROJECT_OR_INPUT" in usage

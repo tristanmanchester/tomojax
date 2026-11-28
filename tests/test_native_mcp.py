@@ -60,9 +60,8 @@ def ready(c):
     pytest.fail(f"Executor did not reach ready: {status}")
 
 
-@pytest.mark.parametrize("legacy", [True, False])
-def test_workflow_guidance_and_solver_schema_match_the_installed_server(tmp_path, native, legacy):
-    with native(legacy=legacy) as rust, connection(tmp_path, legacy=legacy) as python:
+def test_guidance_and_parameters_agree_across_protocol_eras(native):
+    with native(legacy=True) as legacy, native(legacy=False) as modern:
         for method, params in [
             ("prompts/list", {}),
             ("prompts/get", {"name": "find-the-center", "arguments": {"source": "scan.nxs"}}),
@@ -72,7 +71,12 @@ def test_workflow_guidance_and_solver_schema_match_the_installed_server(tmp_path
                 {"name": "describe", "arguments": {"operation": "reconstruct", "method": "fbp"}},
             ),
         ]:
-            assert rust.rpc(method, params) == python.rpc(method, params)
+            before, after = (c.rpc(method, params)["result"] for c in (legacy, modern))
+            assert after.pop("resultType") == "complete"
+            after.pop("_meta")
+            if "cacheScope" in after:
+                assert after.pop("cacheScope") == "private" and after.pop("ttlMs") == 0
+            assert before == after
 
 
 def image(block):
@@ -288,12 +292,32 @@ def test_difference_preserves_float64_storage_and_matches_reference(tmp_path, na
             file.create_dataset(
                 "entry/volume/data", data=np.full(shape, value, dtype="<f8")
             ).attrs.update(attrs)
-    with native() as rust, connection(tmp_path) as python:
+    with native() as client:
         args = {"source": "left.nxs", "other": "right.nxs", "mode": "difference", "axis": "z"}
-        a, b = (checked(client, "view", **args) for client in (rust, python))
-        assert a["structuredContent"]["intensity_limits"] == [delta, delta]
-        assert a["structuredContent"] == b["structuredContent"]
-        np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))
+        data = checked(client, "view", **args)["structuredContent"]
+        assert data["intensity_limits"] == [delta, delta]
+
+
+def assert_drawers_match(client, path, pixels, marks):
+    from tomojax.cli import _marks  # check-public-imports: allow-private
+    from tomojax.cli.images import Panel, limits
+
+    reply = checked(client, "view", source=path, marks=marks, ticks=False)
+    data = reply["structuredContent"]
+    (meta,) = data["panels"]
+    panel = Panel(meta["array"], pixels, tuple(meta["labels"]), meta["unit"])
+    frame = _marks.frame_of(("row", "col"), [(0, n, 1) for n in pixels.shape], None)
+    parsed = _marks.parse(marks)
+    overlay = _marks.Overlay(frame, parsed, (), False)
+    pictures, reports, _ = _marks.annotate([panel], [limits([panel])], [overlay], parsed)
+    for report in reports:
+        for found in report["panels"]:
+            if "image" in found:
+                found["image"] = data["images"][found["image"]]["image"]
+    assert data["marks"] == reports
+    with Image.open(BytesIO(pictures[0])) as expected:
+        np.testing.assert_array_equal(image(reply["content"][1]), np.asarray(expected))
+    return reports
 
 
 def test_point_drawers_report_the_same_sample_and_draw_the_same_pixels(tmp_path, native):
@@ -301,16 +325,15 @@ def test_point_drawers_report_the_same_sample_and_draw_the_same_pixels(tmp_path,
     array[4, 8] = 5
     np.save(tmp_path / "point.npy", array)
     args = {"source": "point.npy", "marks": [{"type": "point", "at": [4, 8]}], "ticks": False}
-    with native() as rust, connection(tmp_path) as python:
-        a, b = (checked(client, "view", **args) for client in (rust, python))
-        assert a["structuredContent"]["marks"][0]["panels"][0]["value"] == 5
-        assert a["structuredContent"] == b["structuredContent"]
-        np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))
+    with native() as client:
+        reports = assert_drawers_match(client, args["source"], array, args["marks"])
+        assert reports[0]["panels"][0]["value"] == 5
 
 
 def test_shape_footprints_and_outlines_match_on_a_nonuniform_plane(tmp_path, native):
     # A uniform rectangle cannot detect a different set of boundary samples in a mean.
-    np.save(tmp_path / "plane.npy", np.random.default_rng(100).random((25, 20)))
+    pixels = np.random.default_rng(100).random((25, 20))
+    np.save(tmp_path / "plane.npy", pixels)
     marks = [
         {"type": "point", "at": [8, 12], "label": "sample"},
         {"type": "box", "corners": [[2, 5], [9, 14]]},
@@ -320,21 +343,14 @@ def test_shape_footprints_and_outlines_match_on_a_nonuniform_plane(tmp_path, nat
         {"type": "polyline", "points": [[5, 1], [7, 8], [18, 4]]},
         {"type": "text", "at": [10, 3], "label": "Hi"},
     ]
-    with native() as rust, connection(tmp_path) as python:
+    with native() as client:
         for mark in marks:
-            a, b = (
-                checked(c, "view", source="plane.npy", marks=[mark], ticks=False)
-                for c in (rust, python)
-            )
-            assert a["structuredContent"] == b["structuredContent"], mark
-            np.testing.assert_array_equal(
-                image(a["content"][1]), image(b["content"][1]), err_msg=str(mark)
-            )
+            assert_drawers_match(client, "plane.npy", pixels, [mark])
+        assert_drawers_match(client, "plane.npy", pixels, marks)
 
 
-@pytest.mark.parametrize("server", ["rust", "python"])
-def test_cancel_task_on_running_reconstruction(tmp_path, native, server):
-    with native() if server == "rust" else connection(tmp_path) as client:
+def test_cancel_task_on_running_reconstruction(native):
+    with native() as client:
         scan = checked(client, "simulate", size=12, n_views=16)["structuredContent"]["members"][
             "scan"
         ]
@@ -400,15 +416,16 @@ def test_saved_paths_link_to_local_outputs_and_reopen(tmp_path, native):
 
 def test_show_resizes_gray_and_rgb_snapshots(tmp_path, native):
     from tests.test_mcp_python import full_result
+    from tomojax.cli.images import Panel, limits, raster, thumbnail
 
-    with native() as rust, connection(tmp_path) as python:
+    with native() as c:
         for shape in [(19, 1311), (181, 4187), (1321, 3), (75, 1153, 3)]:
             code = f"show(np.random.default_rng(92).integers(0, 240, {shape}, dtype=np.uint8))"
-            images = [
-                image(full_result(c, checked(c, "python", code=code))["content"][1])
-                for c in (rust, python)
-            ]
-            np.testing.assert_array_equal(*images)
+            reply = full_result(c, checked(c, "python", code=code))
+            pixels = np.random.default_rng(92).integers(0, 240, shape, dtype=np.uint8)
+            panel = Panel("Python", pixels, (), "unspecified")
+            with Image.open(BytesIO(thumbnail(raster(panel, *limits([panel]))))) as expected:
+                np.testing.assert_array_equal(image(reply["content"][1]), np.asarray(expected))
 
 
 def test_inspect_resizes_after_converting_the_full_plane(tmp_path, native):
@@ -416,6 +433,34 @@ def test_inspect_resizes_after_converting_the_full_plane(tmp_path, native):
     with h5py.File(tmp_path / "scan.nxs", "w") as dataset:
         dataset["entry/instrument/detector/data"] = values
         dataset["entry/sample/rotation_angle"] = [0, 60, 120]
-    with native() as rust, connection(tmp_path) as python:
-        results = [checked(c, "inspect", path="scan.nxs", preview=True) for c in (rust, python)]
-        np.testing.assert_array_equal(*(image(v["content"][1]) for v in results))
+    plane = values[1]
+    lo, hi = (float(v) for v in np.percentile(plane, [0.5, 99.5]))
+    expected = Image.fromarray(
+        np.round(np.clip((plane - lo) / (hi - lo), 0, 1) * 255).astype(np.uint8)
+    )
+    expected.thumbnail((1024, 1024))
+    with native() as client:
+        reply = checked(client, "inspect", path="scan.nxs", preview=True)
+        np.testing.assert_array_equal(image(reply["content"][1]), np.asarray(expected))
+
+
+def test_queued_executor_leaves_worker_tools_available(tmp_path, monkeypatch, native):
+    launcher = tmp_path / "queue"
+    launcher.write_text('#!/bin/sh\necho "waiting for resources" >&2\nexec sleep 90\n')
+    launcher.chmod(0o700)
+    profile(tmp_path, monkeypatch, f'session = "{launcher}"\nresults = "{tmp_path}"\n')
+    with native("fixture") as client:
+        limit = time.monotonic() + 10
+        while time.monotonic() < limit:
+            state = checked(client, "status")["structuredContent"]
+            if state.get("detail") == "waiting for resources":
+                break
+        else:
+            pytest.fail(f"Missing scheduler message: {state}")
+        refused = client.call("simulate", size=8)
+        assert refused["isError"]
+        assert "waiting in the queue. waiting for resources" in refused["content"][0]["text"]
+        assert checked(client, "jobs")["structuredContent"]["jobs"] == []
+        assert checked(client, "inspect", path=str(tmp_path))["structuredContent"][
+            "directory"
+        ] == str(tmp_path)

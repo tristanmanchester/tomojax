@@ -375,12 +375,15 @@ def test_correct_cli_and_mcp_worker_use_the_selected_frames(tmp_path):
 def test_inspection_and_saved_results_reject_scan_options(tmp_path):
     import msgspec
 
+    from tests.mcp_client import connection
     from tomojax.cli import operations
-    from tomojax.cli.mcp import tools
 
     options = set(inspect.signature(tj.load).parameters)
     assert options == {f.name for f in msgspec.structs.fields(operations.Open)} - {"kind"}
-    assert options == {f.name for f in msgspec.structs.fields(tools.Open)} - {
+    with connection(tmp_path) as client:
+        listing = client.rpc("tools/list", {})["result"]["tools"]
+        opened = next(t for t in listing if t["name"] == "open")
+    assert options == set(opened["inputSchema"]["properties"]) - {
         "kind",
         "dry_run",
         "detail",

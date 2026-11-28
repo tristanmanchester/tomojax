@@ -241,15 +241,18 @@ def test_every_method_carries_the_record() -> None:
 def test_the_command_line_and_the_mcp_summary_say_what_lies_beyond_the_detector(
     method, radius, beyond, tmp_path, capsys
 ) -> None:
+    from tests.mcp_client import connection
     from tomojax.cli.main import main
-    from tomojax.cli.mcp.tools import summary_text
 
     tj.save(tmp_path / "scan.nxs", _parallel(radius))
     arguments = ["reconstruct", str(tmp_path / "scan.nxs"), "-o", str(tmp_path / "out.nxs")]
     assert main([*arguments, "--method", method]) == 0
     line = capsys.readouterr().out.strip().splitlines()[-1]
     record = tj.load_reconstruction(tmp_path / "out.nxs").info["truncation"]
-    summary = summary_text({"kind": "volume", "truncation": record, "wall_seconds": 1.0})
+    with connection(tmp_path) as client:
+        reply = client.call("reconstruct", source="scan.nxs", method=method)
+        assert not reply["isError"], reply["content"][0]
+        summary = reply["content"][0]["text"]
 
     share = f"{record['outside_fraction']:.0%} of attenuation beyond the detector"
     assert (share in line) is beyond

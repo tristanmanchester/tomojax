@@ -46,7 +46,7 @@ def test_installed_package_smoke_isolated_and_uncached(tmp_path, monkeypatch, ex
     assert "--offline" in calls[0][0]
     install = calls[1][0]
     assert all(flag in install for flag in ("--no-cache", "--offline", "--no-index"))
-    assert install[-1] == f"{artifact}[{extra},mcp]"
+    assert install[-1] == f"{artifact}[{extra}]"
     for _, kwargs in calls:
         assert "PYTHONPATH" not in kwargs["env"] and "PYTHONHOME" not in kwargs["env"]
         assert kwargs["env"]["JAX_PLATFORMS"] == ("cuda" if extra == "cuda12" else "cpu")

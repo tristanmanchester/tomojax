@@ -146,9 +146,6 @@ def test_registered_format_reaches_export_inspect_cli_and_generated_surfaces(
     from tools.build_wire_options import description, format_table
     from tools.build_wire_schemas import documents
 
-    from tomojax.cli import operations as op
-    from tomojax.cli.mcp.tools.schemas import schema
-    from tomojax.cli.mcp.tools.workflows import form
     from tomojax.io import _export_formats as formats  # check-public-imports: allow-private
 
     from ._export_fixture import example_format, fixture_environment
@@ -171,31 +168,24 @@ def test_registered_format_reaches_export_inspect_cli_and_generated_surfaces(
     for document in (
         defs["Export"],
         documents()["operations.schema.json"]["$defs"]["Export"],
-        schema(form(op.Export), defs),
     ):
         entries = document["properties"]["path"]["x-formats"]
         assert fmt.describe() in entries
     assert ".example" in format_table()
 
-    # The independent MCP process and its JSON Lines worker both open this
-    # package, containing the added writer and its regenerated description.
+    # The server compiles the format catalogue. A newly extended executor needs
+    # the matching build before a client can submit work through it.
+    with connection(tmp_path) as client:
+        listing = client.rpc("tools/list", {})["result"]["tools"]
+        export = next(t for t in listing if t["name"] == "export")
+        assert export["inputSchema"]["properties"]["path"]["x-formats"] == [
+            f.describe() for f in formats.FORMATS if f is not fmt
+        ]
     env = fixture_environment(tmp_path / "package")
     monkeypatch.setenv("PYTHONPATH", env["PYTHONPATH"])
     with connection(tmp_path) as client:
-        handle = client.call("open", kind="reconstruction", path=str(native))["structuredContent"][
-            "handle"
-        ]
-        target = tmp_path / "agent.example"
-        request = dict(source=handle, path=str(target))
-        invalid = client.call("export", **request, dtype="uint8", dry_run=True)
-        assert invalid["isError"] and "dtype" in invalid["content"][0]["text"]
-        assert (
-            client.call("export", **request, dry_run=True)["structuredContent"]["format"]
-            == fmt.name
-        )
-        assert not target.exists()
-        assert not client.call("export", **request)["isError"]
-        assert fmt.read_record(target)["export"]["format"] == fmt.name
+        refused = client.call("open", kind="reconstruction", path=str(native))
+        assert refused["isError"] and "schema mismatch" in refused["content"][0]["text"]
 
 
 def test_cancel_during_slice_writes_retains_previous_stack(tmp_path):

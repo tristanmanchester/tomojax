@@ -39,7 +39,7 @@
     "export": 12,
     "simulate": 20,
     "serve": 1,
-    "mcp": 1,
+    "mcp": 2,
     "studio": 3,
     "skill": 3
   },
@@ -59,17 +59,17 @@
     "src/tomojax/recon/spdhg_tv.py::_prepare_spdhg_runtime": 110
   },
   "pyright_warnings": {
-    "reportAny": 5612,
+    "reportAny": 5334,
     "reportMissingImports": 66,
     "reportMissingTypeStubs": 28,
-    "reportUnknownArgumentType": 928,
-    "reportUnknownMemberType": 1747,
-    "reportUnknownVariableType": 1040,
-    "reportUnusedCallResult": 154
+    "reportUnknownArgumentType": 888,
+    "reportUnknownMemberType": 1708,
+    "reportUnknownVariableType": 981,
+    "reportUnusedCallResult": 126
   },
-  "explicit_any": 429,
-  "type_casts": 85,
-  "broad_except": 29,
+  "explicit_any": 408,
+  "type_casts": 82,
+  "broad_except": 25,
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/viewing.rs": 1336,
@@ -113,19 +113,17 @@
   },
   "cuda_kernels": 47,
   "cuda_switches": 37,
-  "environment_reads": 22,
+  "environment_reads": 21,
   "suppressions": {
-    "noqa": 5,
+    "noqa": 3,
     "type: ignore": 6,
-    "pyright: ignore": 12
+    "pyright: ignore": 11
   },
   "complex_functions": [
     "src/tomojax/alignment/_joint/_solver.py::C901::_descend",
     "src/tomojax/alignment/_joint/_solver.py::PLR0915::_descend",
     "src/tomojax/cli/_adapters.py::C901::execute",
     "src/tomojax/cli/_python.py::C901::registered",
-    "src/tomojax/cli/mcp/tools/seeing.py::C901::finish",
-    "src/tomojax/cli/mcp/tools/seeing.py::C901::view",
     "src/tomojax/core/_cuda_axial.py::C901::transpose_axial_vu_cuda",
     "src/tomojax/core/_logging.py::PLR0911::format_duration",
     "src/tomojax/core/devices.py::C901::sum_batches",

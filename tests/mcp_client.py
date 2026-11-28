@@ -12,6 +12,8 @@ import time
 
 import pytest
 
+from tests.worker_process import binary
+
 TASKS = "io.modelcontextprotocol/tasks"
 
 
@@ -96,27 +98,15 @@ class Client:
 
 
 @contextmanager
-def connection(
-    directory, *, legacy=False, overlay=False, exit_code=0, executable=None, profile=None
-):
+def connection(directory, *, legacy=False, exit_code=0, executable=None, profile=None):
     scratch = directory / "cache"
     scratch.mkdir(exist_ok=True)
     env = {**os.environ, "TMPDIR": str(scratch), "CLAUDE_PROJECT_DIR": str(directory)}
+    if executable is None:
+        env["PATH"] = os.pathsep.join((str(Path(binary()).parent), env["PATH"]))
     cmd = [str(executable or Path(sys.executable).with_name("tomojax")), "mcp"]
     if profile is not None:
         cmd.extend(["--connection", profile])
-    if overlay:
-        code = """
-import sys
-from tomojax.cli import mcp
-mcp.__path__.insert(0, sys.argv.pop())
-from tomojax.cli.mcp import tasks
-tasks.TTL = 2
-tasks.HEARTBEAT = .15
-tasks.PROGRESS_INTERVAL = .01
-sys.exit(mcp.main())
-"""
-        cmd = [sys.executable, "-c", code, str(directory)]
     with subprocess.Popen(cmd, env=env, cwd=directory, stdin=-1, stdout=-1, text=True) as proc:
         client = Client(proc, legacy=legacy)
         if legacy:
