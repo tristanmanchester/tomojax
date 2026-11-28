@@ -73,7 +73,7 @@ struct Pending {
 #[derive(Default)]
 struct Requests {
     next: u64,
-    fetches: u64,
+    reads: u64,
     pending: HashMap<String, Pending>,
     revisions: BTreeMap<String, u64>,
 }
@@ -366,7 +366,12 @@ impl Engine {
         }
         let execution = !matches!(
             tag,
-            "fetch"
+            "submit"
+                | "job"
+                | "jobs"
+                | "job_control"
+                | "stored"
+                | "fetch"
                 | "describe"
                 | "devices"
                 | "status"
@@ -383,15 +388,16 @@ impl Engine {
         {
             return Err("The execution queue is full; wait for a job to finish".into());
         }
-        if tag != "fetch" && !shutdown && self.requests.next >= 99000 {
+        let read = matches!(tag, "fetch" | "job" | "jobs");
+        if !read && !shutdown && self.requests.next >= 99000 {
             return Err(
                 "Restart the worker before submitting more work; its session ID limit is near"
                     .into(),
             );
         }
-        let id = if tag == "fetch" {
-            self.requests.fetches += 1;
-            format!("pixel-{}", self.requests.fetches)
+        let id = if read {
+            self.requests.reads += 1;
+            format!("read-{}", self.requests.reads)
         } else {
             self.requests.next += 1;
             format!("studio-{}", self.requests.next)

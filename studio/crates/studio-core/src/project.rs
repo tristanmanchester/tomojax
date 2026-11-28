@@ -18,6 +18,8 @@ use crate::protocol::{ArrayDescriptor, Provenance};
 use crate::sync::Locked;
 use crate::worker_path::WorkerPath;
 mod manifest;
+pub mod receipt;
+pub mod script;
 use manifest::migrate;
 
 /// The project's own name, from its manifest, without opening the project.
@@ -80,6 +82,8 @@ pub struct Asset {
     pub issue: Option<String>,
     #[serde(default)]
     pub open_parameters: Value,
+    #[serde(default)]
+    pub intent: u64,
     /// The source is a folder (a TIFF stack, frames beside a header), recorded
     /// when it was imported, so a moved one is reconnected by choosing a folder.
     #[serde(default)]
@@ -113,6 +117,7 @@ impl Asset {
             provenance: None,
             issue: None,
             open_parameters: Value::Null,
+            intent: 0,
             folder,
         }
     }
@@ -129,7 +134,13 @@ impl Asset {
         root: &Path,
     ) {
         if !self.is_result() {
-            self.kind = kind.into();
+            if self
+                .provenance
+                .as_ref()
+                .is_none_or(|p| p.operation != "open")
+            {
+                self.kind = kind.into();
+            }
             self.arrays.clear();
         }
         for (key, mut array) in arrays {
@@ -150,6 +161,7 @@ impl Asset {
                 root.join(path)
             }
         };
+        self.intent += 1;
         let old = resolve(self.path.lexical());
         let new = resolve(&path);
         // Files that sat beside the old file (a sweep's coordinates) moved with it.
@@ -293,9 +305,10 @@ pub struct KeptPreviewContext {
     pub revision: u64,
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum JobStatus {
+    #[default]
     Queued,
     Running,
     Paused,
@@ -303,10 +316,26 @@ pub enum JobStatus {
     Failed,
     Canceled,
     Interrupted,
+    Unknown,
 }
 impl JobStatus {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Queued => "Queued",
+            Self::Running => "Running",
+            Self::Paused => "Paused",
+            Self::Completed => "Complete",
+            Self::Failed => "Failed",
+            Self::Canceled => "Canceled",
+            Self::Interrupted => "Interrupted",
+            Self::Unknown => "Unknown",
+        }
+    }
     pub fn active(self) -> bool {
-        matches!(self, Self::Queued | Self::Running | Self::Paused)
+        matches!(
+            self,
+            Self::Queued | Self::Running | Self::Paused | Self::Unknown
+        )
     }
 }
 
@@ -333,6 +362,8 @@ pub struct Job {
     pub telemetry: crate::progress::JobProgress,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_preview: Option<KeptPreviewContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<script::Script>,
 }
 
 impl Job {
@@ -400,6 +431,7 @@ impl Job {
             progress: None,
             telemetry: crate::progress::JobProgress::default(),
             kept_preview: None,
+            script: None,
         }
     }
 }
@@ -492,11 +524,7 @@ impl Document {
     pub fn recover(&mut self) -> usize {
         let mut count = 0;
         for job in &mut self.jobs {
-            if job.status.active()
-                && (self.connection.is_none()
-                    || job.kept_preview.is_some()
-                    || matches!(job.operation.as_str(), "inspect" | "export_array"))
-            {
+            if job.status.active() && job.script.is_none() {
                 job.status = JobStatus::Interrupted;
                 job.stage = "Review before resuming".into();
                 job.error=Some("The previous session ended before this job was committed. Retry explicitly after reviewing its output destination.".into());
@@ -595,7 +623,7 @@ impl Project {
         migrate(&mut document)?;
         document.recover();
         if document.connection.is_none() {
-            for directory in ["derived", "inputs", "cache", "kept"] {
+            for directory in ["derived", "inputs", "cache", "kept", "jobs"] {
                 fs::create_dir_all(root.join(directory)).map_err(|e| e.to_string())?;
             }
         } else if document

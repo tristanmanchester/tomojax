@@ -63,6 +63,16 @@ pub(super) fn validate_document(document: &Document) -> Result<(), String> {
             return Err("Project contains empty or duplicate identifiers".into());
         }
     }
+    for job in &document.jobs {
+        if job.script.is_some()
+            && !job
+                .id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
+        {
+            return Err("Invalid worker job directory name".into());
+        }
+    }
     for asset in &document.assets {
         if asset.managed
             && (asset.path.lexical().is_absolute()

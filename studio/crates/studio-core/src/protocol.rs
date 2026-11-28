@@ -421,8 +421,17 @@ pub struct FileEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobEntry {
+    pub directory: crate::worker_path::WorkerPath,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResultValue {
+    Job(Box<crate::project::receipt::Reading>),
+    Jobs {
+        jobs: Vec<JobEntry>,
+    },
     ProjectResults {
         path: crate::worker_path::WorkerPath,
     },
