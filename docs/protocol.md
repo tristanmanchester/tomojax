@@ -81,6 +81,8 @@ The worker sends pending JSON replies first. For each block it selects the ready
 
 ## Durable jobs
 
+The `peek` result for a directory includes a boolean `record`. It reports whether the directory contains a checkpoint marker or a candidate export record. The executor can inspect those records.
+
 The native worker accepts job commands as soon as it sends `ready`. Its `jobs` field selects the launcher. With `process` or `slurm`, a queued or running job survives loss of the submitting session. An `inline` job borrows the session's executor. A script containing only `open`, `inspect` or `plan` also runs inline.
 
 | Command | Fields | Result |
