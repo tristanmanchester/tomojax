@@ -1,6 +1,7 @@
 """Native MCP conversations use files and durable tomography jobs on the worker."""
 
 import base64
+from hashlib import sha256
 from io import BytesIO
 import json
 import os
@@ -120,6 +121,25 @@ def test_worker_filesystem_namespace(tmp_path, monkeypatch, native):
         with connection(remote) as reference:
             expected = checked(reference, "inspect", path="scan.npz", preview=True)
         np.testing.assert_array_equal(image(npz["content"][1]), image(expected["content"][1]))
+        pixels = image(expected["content"][1])
+        Image.fromarray(pixels).save(remote / "slice.png")
+        get = checked(client, "download", path=str(local / "slice.png"), to="display.png")
+        assert (
+            get["structuredContent"]["sha256"]
+            == sha256((remote / "slice.png").read_bytes()).hexdigest()
+        )
+        with Image.open(tmp_path / "display.png") as downloaded:
+            np.testing.assert_array_equal(np.array(downloaded), pixels)
+        assert not (local / "slice.png").exists()
+        blob = np.arange(65537, dtype="<i4").tobytes()
+        (tmp_path / "sample.bin").write_bytes(blob)
+        transfer = {"from": "sample.bin", "path": str(local / "sample.bin")}
+        put = checked(client, "upload", **transfer)
+        assert put["structuredContent"]["bytes"] == len(blob)
+        assert (remote / "sample.bin").read_bytes() == blob
+        assert client.call("upload", **transfer)["isError"]
+        assert client.call("download", path=str(local / "sample.bin"), to="display.png")["isError"]
+        assert checked(client, "status")["structuredContent"]["connection"] == "fixture"
 
 
 def test_detached_job_survives_mcp_restart(tmp_path, monkeypatch, native):

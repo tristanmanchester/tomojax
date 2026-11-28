@@ -656,6 +656,10 @@ impl Session {
                     cmd["bytes"].as_u64().context("missing size")?,
                     cmd["sha256"].as_str().context("missing digest")?.into(),
                 )?;
+                if cmd["notify_ready"] == true && !upload.complete() {
+                    self.out
+                        .send(json!({"type":"progress","request":reply.id,"stage":"upload_ready"}));
+                }
                 self.uploads.insert(reply.id.clone(), upload);
                 self.block(&reply.id, &[])?;
             }

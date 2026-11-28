@@ -111,7 +111,21 @@ pub struct Reply {
     pub header: Value,
     pub bytes: Vec<u8>,
 }
+impl Reply {
+    pub fn result(&self) -> Result<&Value> {
+        ensure!(
+            self.header["type"] == "result",
+            "{}",
+            self.header["error"]["message"]
+                .as_str()
+                .or(self.header["message"].as_str())
+                .unwrap_or("Worker request failed")
+        );
+        Ok(&self.header["result"])
+    }
+}
 struct Pending {
+    upload_ready: Option<oneshot::Sender<()>>,
     done: oneshot::Sender<Result<Reply>>,
     bytes: Vec<u8>,
 }
@@ -178,6 +192,36 @@ impl Session {
     }
 
     pub async fn request(&self, command: Value) -> Result<Reply> {
+        let (_, recv) = self.begin(command, None).await?;
+        recv.await.context("Worker disconnected before replying")?
+    }
+
+    pub async fn upload(&self, command: Value, bytes: Vec<u8>) -> Result<Reply> {
+        let (ready, admitted) = oneshot::channel();
+        let (id, recv) = self.begin(command, Some(ready)).await?;
+        let outgoing = self.outgoing.clone();
+        // Finish an admitted upload even if the MCP request is canceled.
+        tokio::spawn(async move {
+            if admitted.await.is_err() {
+                return;
+            }
+            for chunk in bytes.chunks(crate::wire::BLOCK) {
+                let mut frame =
+                    crate::wire::line(&json!({"type":"block","request":id,"bytes":chunk.len()}));
+                frame.extend_from_slice(chunk);
+                if outgoing.send(frame).await.is_err() {
+                    break;
+                }
+            }
+        });
+        recv.await.context("Worker disconnected during upload")?
+    }
+
+    async fn begin(
+        &self,
+        command: Value,
+        upload_ready: Option<oneshot::Sender<()>>,
+    ) -> Result<(String, oneshot::Receiver<Result<Reply>>)> {
         let id = self.next.fetch_add(1, Ordering::Relaxed).to_string();
         let mut line = serde_json::to_vec(&json!({"id":id,"command":command}))?;
         line.push(b'\n');
@@ -194,14 +238,15 @@ impl Session {
             .as_mut()
             .context("Worker connection closed")?
             .insert(
-                id,
+                id.clone(),
                 Pending {
+                    upload_ready,
                     done,
                     bytes: Vec::new(),
                 },
             );
         permit.send(line);
-        recv.await.context("Worker disconnected before replying")?
+        Ok((id, recv))
     }
 }
 
@@ -265,6 +310,17 @@ async fn drive(
                     state.send_modify(|s| s.worker = row);
                 }
                 Some("executor") => state.send_modify(|s| s.executor = row),
+                Some("progress") if row["stage"] == "upload_ready" => {
+                    if let Some(ready) = pending
+                        .lock()
+                        .unwrap()
+                        .as_mut()
+                        .and_then(|calls| calls.get_mut(row["request"].as_str()?))
+                        .and_then(|call| call.upload_ready.take())
+                    {
+                        let _ = ready.send(());
+                    }
+                }
                 Some("progress") => {}
                 Some("block") => {
                     let size = row["bytes"]
@@ -302,8 +358,14 @@ async fn drive(
                         .unwrap()
                         .as_mut()
                         .context("Worker connection closed")?
-                        .remove(id)
-                        .context("Unknown worker request")?;
+                        .remove(id);
+                    let Some(call) = call else {
+                        // Already queued blocks can outlive a failed write (e.g. a full disk).
+                        if row["type"] == "protocol_error" && row["message"] == "unknown upload" {
+                            continue;
+                        }
+                        bail!("Unknown worker request");
+                    };
                     let _ = call.done.send(Ok(Reply {
                         header: row,
                         bytes: call.bytes,

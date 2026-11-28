@@ -7,6 +7,7 @@ mod inspect;
 mod jobs;
 mod parts;
 mod tools;
+mod transfers;
 
 use anyhow::{Result, bail};
 use rmcp::{
