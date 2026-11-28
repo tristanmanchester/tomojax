@@ -102,6 +102,19 @@ def correction_group(parts: Sequence[str | Step], batches: range, unit: str) -> 
         yield
 
 
+def _read_block_views(view_bytes: int, batch: int) -> int:
+    return max(1, _READ_BYTES // max(1, view_bytes * batch)) * batch
+
+
+def view_workspace_bytes(counts: CalibrationFrames, batch: int, steps: Sequence[Step]) -> int:
+    """Budget the current and prefetched raw blocks and two in-flight corrected batches."""
+    views, rows, cols = counts.shape
+    raw_bytes = rows * cols * np.dtype(counts.dtype).itemsize
+    raw_views = min(views, 2 * _read_block_views(raw_bytes, batch))
+    work = max((step.workspace_pixels(rows, cols) for step in steps), default=0)
+    return raw_views * raw_bytes + 4 * min(views, 2 * batch) * (rows * cols + work)
+
+
 def view_batches(
     counts: CalibrationFrames, views: int, batch: int, indices: np.ndarray | None = None
 ) -> Generator[tuple[int, int, np.ndarray]]:
@@ -112,7 +125,7 @@ def view_batches(
     With ``indices``, batch ``start:stop`` holds frames ``indices[start:stop]``.
     """
     view_bytes = math.prod(counts.shape[1:]) * np.dtype(counts.dtype).itemsize
-    block = max(1, _READ_BYTES // max(1, view_bytes * batch)) * batch
+    block = _read_block_views(view_bytes, batch)
     starts = list(range(0, views, block))
 
     def read(start: int) -> np.ndarray:

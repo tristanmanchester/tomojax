@@ -384,8 +384,7 @@ def _corrected_on_load(frames: Frames, file: Path) -> Scan:
              ", ".join(str(c) for c in scan.corrections))  # fmt: skip
     directory = scratch_directory(scan.projections)
     if directory is not None:
-        LOG.info("%s: the corrected stack (%.1f GiB) is held in a temporary file in %s, "
-                 "as more than half of host memory", file.name,
+        LOG.info("%s: the corrected stack (%.1f GiB) is held in a temporary file in %s", file.name,
                  scan.projections.nbytes / 2**30, directory)  # fmt: skip
     return scan
 

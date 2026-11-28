@@ -171,10 +171,10 @@ class HostOutputs:
         if isinstance(array, np.memmap) and id(array) in _DESCRIPTORS:
             self.files.append(weakref.ref(array))
 
-    def allocate(self, shape: tuple[int, ...]) -> np.ndarray:
+    def allocate(self, shape: tuple[int, ...], *, workspace: int | None = None) -> np.ndarray:
         """Allocate and register an output before filling it."""
         progress.check_canceled()
-        array = host_array(shape)
+        array = host_array(shape, workspace=workspace)
         self.own(array)
         return array
 
@@ -192,22 +192,27 @@ def discard_failed_outputs() -> Iterator[HostOutputs]:
 
 
 def host_array(
-    shape: tuple[int, ...], *, dtype: DTypeLike = np.float32, copies: float = 1
+    shape: tuple[int, ...],
+    *,
+    dtype: DTypeLike = np.float32,
+    copies: float = 1,
+    workspace: int | None = None,
 ) -> np.ndarray:
     """A zeroed C-ordered array: in memory, or a temporary file when it is large.
 
-    The array goes to an unlinked file in the standard temporary directory
-    (``TMPDIR``) when ``copies`` arrays of ``shape`` would take more than half of
-    the available host memory; otherwise it is an ordinary array. Every large host
-    array the library makes (a corrected stack, a solver's output and work
-    volumes, the alignment's stacks) follows this one rule.
+    The default reserves half the available host or job memory. A producer
+    with bounded batches can supply its estimated workspace in bytes instead.
+    At least one eighth stays free for runtime and subsequent work. If the
+    allocation would exceed that budget, it uses an unlinked file in the
+    standard temporary directory (``TMPDIR``).
     """
     available = host_available_memory_bytes()
     need = copies * math.prod(shape) * np.dtype(dtype).itemsize
     limit = resident_limit.get()
-    large = (available is not None and need > 0.5 * available) or (
-        limit is not None and need > limit
-    )
+    large = limit is not None and need > limit
+    if available is not None:
+        reserve = available // 2 if workspace is None else max(available // 8, workspace)
+        large |= need > available - reserve
     return host_volume(shape, Path(tempfile.gettempdir()) if large else None, dtype=dtype)
 
 
