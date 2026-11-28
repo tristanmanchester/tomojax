@@ -110,7 +110,7 @@ impl Mask {
                 }
             }
             cuts.sort_unstable_by(f32::total_cmp);
-            for span in cuts.chunks_exact(2) {
+            for span in cuts.as_chunks::<2>().0 {
                 self.span(y, span[0].round() as i64, down(f64::from(span[1])), ink)
             }
         }

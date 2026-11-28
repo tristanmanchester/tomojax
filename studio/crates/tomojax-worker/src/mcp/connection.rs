@@ -1,4 +1,5 @@
 //! One noninteractive worker connection. A dropped transport fails its pending requests.
+use super::namespace::{History, Namespace};
 use anyhow::{Context, Result, anyhow, bail, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -24,6 +25,7 @@ pub struct Inventory {
     pub worker: Value,
     pub executor: Value,
     failure: Option<String>,
+    space: Arc<Namespace>,
 }
 
 impl Inventory {
@@ -52,8 +54,8 @@ impl Inventory {
 
 pub struct Connections {
     pub name: String,
-    generation: AtomicU64,
-    current: tokio::sync::Mutex<Option<(Instant, Arc<Session>)>>,
+    pub history: Arc<History>,
+    current: tokio::sync::Mutex<Option<(Instant, Arc<Transport>)>>,
 }
 
 impl Connections {
@@ -61,12 +63,14 @@ impl Connections {
         Self {
             name,
             current: Default::default(),
-            generation: AtomicU64::new(1),
+            history: Default::default(),
         }
     }
 
-    pub async fn close(&self) {
+    pub async fn close(&self, reason: &str) {
         if let Some((_, session)) = self.current.lock().await.take() {
+            self.history
+                .retire(&session.inventory.borrow().space, reason);
             session.stop.send_replace(true);
             let mut state = session.inventory.clone();
             let _ = state.wait_for(|s| s.failure.is_some()).await;
@@ -83,10 +87,7 @@ impl Connections {
                 session.clone()
             }
             _ => {
-                let session = Arc::new(Session::start(
-                    &self.name,
-                    self.generation.fetch_add(1, Ordering::Relaxed),
-                )?);
+                let session = Arc::new(Transport::start(&self.name, self.history.clone())?);
                 *current = Some((Instant::now(), session.clone()));
                 session
             }
@@ -95,7 +96,14 @@ impl Connections {
         let inventory = session
             .inventory(needs_executor, self.name == "local")
             .await?;
-        Ok((session, inventory))
+        Ok((
+            Arc::new(Session {
+                space: inventory.space.clone(),
+                transport: session,
+                history: self.history.clone(),
+            }),
+            inventory,
+        ))
     }
 }
 
@@ -140,10 +148,11 @@ struct Pending {
 type PendingCalls = Arc<Mutex<Option<HashMap<String, Pending>>>>;
 
 pub struct Session {
-    pub renders: AtomicU64,
-    pub generation: u64,
-    pub placements: Mutex<super::view::Placements>,
-    pub ledger: Mutex<super::ledger::Ledger>,
+    pub space: Arc<Namespace>,
+    pub history: Arc<History>,
+    transport: Arc<Transport>,
+}
+struct Transport {
     inventory: watch::Receiver<Inventory>,
     outgoing: mpsc::Sender<Vec<u8>>,
     pending: PendingCalls,
@@ -151,8 +160,8 @@ pub struct Session {
     stop: watch::Sender<bool>,
 }
 
-impl Session {
-    fn start(name: &str, generation: u64) -> Result<Self> {
+impl Transport {
+    fn start(name: &str, history: Arc<History>) -> Result<Self> {
         let mut child = Command::new(std::env::current_exe()?)
             .args(["connect", name])
             .stdin(Stdio::piped())
@@ -166,7 +175,10 @@ impl Session {
             .stderr
             .take()
             .context("missing connection diagnostics")?;
-        let (state, inventory) = watch::channel(Inventory::default());
+        let (state, inventory) = watch::channel(Inventory {
+            space: history.namespace(),
+            ..Default::default()
+        });
         let (outgoing, receive) = mpsc::channel(64);
         let pending: PendingCalls = Arc::new(Mutex::new(Some(HashMap::new())));
         let (stop, mut stopping) = watch::channel(false);
@@ -185,20 +197,23 @@ impl Session {
                 last
             });
             let reason = tokio::select! {
-                r=drive(input,output,receive,&calls,&state,credit)=>r,
+                r=drive(input,output,receive,&calls,&state,credit,&history)=>r,
                 _=stopping.changed()=>Ok(()),
             };
             let message = disconnect(&mut child, &name, reason, diag).await;
+            let loss = if !state.borrow().worker.is_null() {
+                Some(history.retire(&state.borrow().space, &message))
+            } else {
+                None
+            };
             state.send_modify(|s| s.failure = Some(message.clone()));
             for (_, pending) in calls.lock().unwrap().take().unwrap_or_default() {
-                let _ = pending.done.send(Err(anyhow!(message.clone())));
+                let _ = pending.done.send(Err(loss
+                    .clone()
+                    .map_or_else(|| anyhow!(message.clone()), anyhow::Error::new)));
             }
         });
         Ok(Self {
-            renders: AtomicU64::new(1),
-            generation,
-            placements: Mutex::default(),
-            ledger: Default::default(),
             inventory,
             outgoing,
             pending,
@@ -226,26 +241,52 @@ impl Session {
         inventory.check(needs_executor)?;
         Ok(inventory)
     }
+}
+impl Session {
+    pub async fn inventory(&self, needs_executor: bool, local: bool) -> Result<Inventory> {
+        self.transport.inventory(needs_executor, local).await
+    }
     pub async fn request(&self, command: Value) -> Result<Reply> {
         let cancels = matches!(
             command["type"].as_str(),
             Some("run" | "python" | "open" | "read" | "plan" | "validate" | "statistics")
         );
-        let (id, mut recv) = self.begin(command, None).await?;
+        let local_state = !matches!(
+            command["type"].as_str(),
+            Some(
+                "peek"
+                    | "stored"
+                    | "list"
+                    | "job"
+                    | "jobs"
+                    | "submit"
+                    | "job_control"
+                    | "upload"
+                    | "copy"
+            )
+        ) && !(command["type"] == "download" && command["artifact"].is_null());
+        if local_state {
+            self.space.valid()?;
+        }
+        let (id, mut recv) = self.transport.begin(command, None).await?;
         if cancels && let Ok(token) = super::tasks::CANCEL.try_with(Clone::clone) {
             tokio::select! {
                 biased;
-                result = &mut recv => return result.context("Worker disconnected before replying")?,
-                _ = token.cancelled() => {let _=self.begin(json!({"type":"control","action":"cancel","target":id}),None).await?;}
+                result = &mut recv => {self.space.valid()?;return result.context("Worker disconnected before replying")?},
+                _ = token.cancelled() => {let _=self.transport.begin(json!({"type":"control","action":"cancel","target":id}),None).await?;}
             }
         }
-        recv.await.context("Worker disconnected before replying")?
+        let result = recv.await;
+        if local_state {
+            self.space.valid()?;
+        }
+        result.context("Worker disconnected before replying")?
     }
 
     pub async fn upload(&self, command: Value, bytes: Vec<u8>) -> Result<Reply> {
         let (ready, admitted) = oneshot::channel();
-        let (id, recv) = self.begin(command, Some(ready)).await?;
-        let outgoing = self.outgoing.clone();
+        let (id, recv) = self.transport.begin(command, Some(ready)).await?;
+        let outgoing = self.transport.outgoing.clone();
         // Finish an admitted upload even if the MCP request is canceled.
         tokio::spawn(async move {
             if admitted.await.is_err() {
@@ -262,7 +303,8 @@ impl Session {
         });
         recv.await.context("Worker disconnected during upload")?
     }
-
+}
+impl Transport {
     async fn begin(
         &self,
         command: Value,
@@ -345,6 +387,7 @@ async fn drive(
     pending: &PendingCalls,
     state: &watch::Sender<Inventory>,
     credit: mpsc::WeakSender<Vec<u8>>,
+    history: &History,
 ) -> Result<()> {
     let writer = async {
         while let Some(line) = receive.recv().await {
@@ -370,7 +413,16 @@ async fn drive(
                     );
                     state.send_modify(|s| s.worker = row);
                 }
-                Some("executor") => state.send_modify(|s| s.executor = row),
+                Some("executor") => state.send_modify(|s| {
+                    if row["state"] == "gone" && s.executor["state"] == "ready" {
+                        history.retire(
+                            &s.space,
+                            row["detail"].as_str().unwrap_or("Executor stopped"),
+                        );
+                        s.space = history.namespace();
+                    }
+                    s.executor = row;
+                }),
                 Some("progress") => progress(pending, &row)?,
                 Some("block") => {
                     let size = row["bytes"]

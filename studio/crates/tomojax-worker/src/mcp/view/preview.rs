@@ -140,6 +140,7 @@ pub(crate) async fn run(
     let (mut view, images) = draw::render(&panels?, &form, 0, None)?;
     let mut data = if region {
         let mut summary = session
+            .space
             .ledger
             .lock()
             .unwrap()

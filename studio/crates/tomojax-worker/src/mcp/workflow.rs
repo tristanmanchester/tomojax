@@ -81,7 +81,7 @@ fn prepare(
         schema,
         inventory,
         describe::definitions(),
-        Some(&session.ledger.lock().unwrap()),
+        Some(&session.space.ledger.lock().unwrap()),
     )?;
     Ok((cmd, full, dry))
 }
@@ -132,6 +132,7 @@ pub async fn run(
             data
         } else {
             session
+                .space
                 .ledger
                 .lock()
                 .unwrap()
@@ -183,6 +184,7 @@ pub async fn control(connections: &Connections, session: &Session, args: &Value)
     let action = args["action"].as_str().context("Missing control action")?;
     if action == "restart" {
         let lost: Vec<_> = session
+            .space
             .ledger
             .lock()
             .unwrap()
@@ -190,7 +192,7 @@ pub async fn control(connections: &Connections, session: &Session, args: &Value)
             .keys()
             .cloned()
             .collect();
-        connections.close().await;
+        connections.close("Worker restarted").await;
         connections.open(true).await?;
         return Ok(json!({"reason":"Worker restarted","lost":lost}));
     }
@@ -198,7 +200,7 @@ pub async fn control(connections: &Connections, session: &Session, args: &Value)
         .as_str()
         .context("target is required. Use status for handle and job IDs.")?;
     if action == "close" {
-        let record = session.ledger.lock().unwrap().record(id)?.clone();
+        let record = session.space.ledger.lock().unwrap().record(id)?.clone();
         let product = &record["product"];
         if let Some(worker) = product["handle"].as_str() {
             query(session, json!({"type":"close","handle":worker})).await?;
@@ -209,7 +211,13 @@ pub async fn control(connections: &Connections, session: &Session, args: &Value)
                 query(session, json!({"type":"release","artifact":token})).await?;
             }
         }
-        session.ledger.lock().unwrap().records.shift_remove(id);
+        session
+            .space
+            .ledger
+            .lock()
+            .unwrap()
+            .records
+            .shift_remove(id);
     } else {
         ensure!(
             matches!(action, "pause" | "resume" | "cancel"),
@@ -252,7 +260,7 @@ fn snapshot(bytes: &[u8]) -> Result<Value> {
 
 pub async fn python(session: &Session, mut args: Value) -> Result<(Value, Vec<Value>)> {
     let aliases = {
-        let live = session.ledger.lock().unwrap();
+        let live = session.space.ledger.lock().unwrap();
         live.records
             .iter()
             .map(|(id, v)| {
@@ -274,7 +282,7 @@ pub async fn python(session: &Session, mut args: Value) -> Result<(Value, Vec<Va
         .context("Missing images")?;
     let mut summaries = serde_json::Map::new();
     {
-        let mut ledger = session.ledger.lock().unwrap();
+        let mut ledger = session.space.ledger.lock().unwrap();
         for (id, product) in value["handles"]
             .as_object()
             .context("Missing Python handles")?
@@ -286,8 +294,8 @@ pub async fn python(session: &Session, mut args: Value) -> Result<(Value, Vec<Va
         }
     }
     value["handles"] = Value::Object(summaries);
-    if session.generation > 1 {
-        value["namespace_generation"] = json!(session.generation);
+    if session.space.generation > 1 {
+        value["namespace_generation"] = json!(session.space.generation);
         value["restart_notice"] = json!("Worker restart cleared the preceding namespace.");
     }
     let mut blocks = vec![];
