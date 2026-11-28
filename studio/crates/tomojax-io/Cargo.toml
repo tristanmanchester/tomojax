@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-static-hdf5 = ["hdf5/static", "hdf5/zlib"]
+static-hdf5 = ["hdf5/static", "hdf5/zlib", "dep:libz-sys"]
 
 [dependencies]
 anyhow = "1"
@@ -16,6 +16,7 @@ serde_json.workspace = true
 studio-core.workspace = true
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
 hdf5-sys = { package = "hdf5-metno-sys", version = "0.12" }
+libz-sys = { version = "1", default-features = false, features = ["static", "zlib-ng"], optional = true }
 jpeg-encoder = { version = "0.7", features = ["simd"] }
 pco = "1.1"
 zstd = "0.13"
