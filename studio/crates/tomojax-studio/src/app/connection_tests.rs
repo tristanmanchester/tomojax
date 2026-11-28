@@ -672,9 +672,11 @@ exec "$TOMOJAX_TEST_PYTHON" "$TOMOJAX_TEST_SLOWLINK" -- "$TOMOJAX_TEST_WORKER" "
     };
     let scene = std::env::var("TOMOJAX_BATCH_SCENE").unwrap_or_default();
     if matches!(scene.as_str(), "running" | "interrupted") {
+        // Long enough to still be running when its first solver preview arrives; the
+        // capture cancels it afterwards.
         state.set_operation(
             "reconstruct",
-            Some(&json!({"method":"sirt","iterations":360})),
+            Some(&json!({"method":"sirt","iterations":360000})),
         );
     }
     state.queue_operation("reconstruct").unwrap();
