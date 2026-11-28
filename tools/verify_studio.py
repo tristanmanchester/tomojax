@@ -60,6 +60,7 @@ CONNECTION_VIEWS = (
     "reconnected",
     "other-data",
 )
+ACTIVITY_STATES = ("queued", "running", "finished", "failed", "interrupted", "unknown", "cancelled")
 VIEWS = ("start", *(workspace.lower() for workspace in PROJECT_VIEWS))
 
 
@@ -340,7 +341,26 @@ def capture_live(
         check=True,
         timeout=360,
     )
-    for label in CONNECTION_VIEWS:
+    _ = subprocess.run(
+        [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tomojax-studio",
+            "--bin",
+            EXECUTABLE,
+            "batch_jobs_reconnect_with_the_session_executor_queued",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+        cwd=STUDIO,
+        env=env,
+        check=True,
+        timeout=240,
+    )
+    for label in (*CONNECTION_VIEWS, *(f"activity-{state}" for state in ACTIVITY_STATES)):
         path = stage / f"{label}.png"
         views[label] = {"file": path.name, **asdict(validate_png(path, expected))}
     return views
@@ -457,7 +477,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"verify_studio: {error}", file=sys.stderr)
         return 1
-    count = len(VIEWS) + (1 + len(CONNECTION_VIEWS)) * int(args.build)
+    count = len(VIEWS) + (1 + len(CONNECTION_VIEWS) + len(ACTIVITY_STATES)) * int(args.build)
     print(f"Verified {count} Studio screenshots. See {manifest}")
     return 0
 

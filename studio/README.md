@@ -1,6 +1,6 @@
 # TomoJAX Studio
 
-TomoJAX Studio is a native desktop workspace for tomography projects. Keep raw acquisitions, derived volumes, saved recipes, and job records in one project folder; run every correction, alignment, and reconstruction through TomoJAX's numerical engine (`tomojax serve`); and inspect linked slices, sinograms, and GPU volume renderings while jobs run.
+TomoJAX Studio is a native desktop workspace for tomography. A project on this computer records your scans, processing settings and results. Choose where the data lives and the jobs run when you create the project. You can inspect slices, sinograms and volumes while a job runs.
 
 ![TomoJAX Studio showing the aligned FISTA-TV reconstruction of a 29 mm mechanical watch movement as a 3D GPU volume render, with linked axial, coronal, sagittal, projection, and sinogram thumbnails below, the project tree and saved recipes on the left, and volume appearance and clipping controls on the right.](../docs/images/studio-explore-volume.png)
 
@@ -70,7 +70,7 @@ To try Studio without scan files on disk, choose **Try a demo project** on the s
 4. If you chose a first scan, Studio opens it after creating the results folder. To add another scan, choose **Add scans** in the project sidebar. Select a scan and choose **Import**. For multi-file acquisitions, choose the acquisition folder or its header. Select **Copy sources into the project** for a managed copy. The stored projections and volumes are available as soon as the file worker connects. Inspection and interactive previews need the executor.
 5. Select the connection in the status bar and choose **Browse files…** to copy an individual file of up to 100 MiB. **Copy to this computer…** downloads the selected file. **Copy from this computer…** uploads a file into the displayed folder. Choose a new filename for a download or a folder without a file of the same name for an upload. To browse an exported bundle, open its completed job in **Jobs**, expand **Details**, and choose **Show** beside the output name.
 
-While reconnecting, displayed images carry a **Not live** mark. Studio requests the current view again when the project marker matches. If the connection points to different data, choose another saved connection that reaches the project’s results. Processing jobs currently run in projects on this computer.
+While reconnecting, displayed images carry a **Not live** mark. Studio requests the current view again when the project marker matches. If the connection points to different data, choose another saved connection that reaches the project’s results. In **Reconstruct**, choose the method and settings, then **Queue reconstruction**. For a Slurm connection, enter resource requests in **Scheduler options**. Once Activity shows the worker’s queued or running state, you can quit Studio. Reopen the local project and reconnect to the same machine. In **Jobs**, choose **Explore result** to open the published volume.
 
 ## Prepare, preview, and reconstruct
 
@@ -90,11 +90,11 @@ Changing a control supersedes any in-flight preview request while keeping the la
 ### Validation, plans, recipes, and batch queuing
 
 - **Guided controls and advanced settings:** common correction options (zingers, rings, Paganin phase retrieval) have dedicated fields; ordered multi-step corrections, solver `*Config` options, and nested settings are available in the advanced fields and JSON editor using the worker schema's field names.
-- **Live validation and plans:** edits validate automatically against the worker and highlight exact parameter paths on error (**Review** focuses the failing field). Reconstruction and alignment forms also request the worker's execution plan—showing the resolved method, reasons, grid, device placement, and memory estimate—before you submit.
+- **Live validation and plans:** edits validate automatically against the worker and highlight exact parameter paths on error (**Review** focuses the failing field). Reconstruction and alignment forms also request the worker's execution plan—showing the resolved method, reasons and grid, plus device placement and memory estimates for inline jobs—before you submit.
 - **Recipes and batches:** save any configured operation as a named recipe in the sidebar to reuse across scans; applying a recipe populates the form for review before queuing. Select multiple scans in the project tree to queue the same operation across all of them, or choose **Combine scans** to merge selected cone-beam orbits in project order.
 - **Immutable job capture:** submitting a job snapshots its parameters and input paths. Continuing to edit forms, apply recipes, or relink assets leaves queued and running work unchanged.
 
-The worker executes one GPU job at a time. You can reorder waiting jobs, browse volumes, or prepare the next batch while a job runs. Interactive previews share the same worker, so when a durable job is running or paused the preview footer links directly to that job's controls.
+On this computer, Studio runs one job at a time in its worker. You can reorder waiting jobs, browse volumes, or prepare the next batch while a job runs. Interactive previews share the same worker, so when a durable job is running or paused the preview footer links directly to that job's controls.
 
 ## Explore, measure, and compare
 
@@ -135,24 +135,25 @@ Open **Compare** and pick a **Left** and **Right** result in the inspector (or s
 
 **Jobs** displays running, queued, and completed work with nested task progress, active-time ETAs, and live slice previews (orthogonal slices for iterative reconstruction and alignment, plus per-view pose tables for alignment). **Activity** in the top bar opens a compact drawer of active jobs from any workspace.
 
-Expand **Details** on any job to inspect its convergence plots (such as alignment objective and accepted pose step across pyramid levels), captured parameters, recorded warnings, and **Show worker trace** for internal worker stages. Pause, resume, and cancel controls act cooperatively at the worker's next work boundary (an iteration, slab, or alignment step).
+Expand **Details** on any job to inspect its convergence plots (such as alignment objective and accepted pose step across pyramid levels), captured parameters, recorded warnings, and **Show worker trace** for internal worker stages. You can pause an inline solve at its next iteration, slab or alignment step. For a batch job, Activity shows the scheduler state and the devices reported by the job. Cancel acts on the selected job even while the session executor waits in a queue.
 
 ![Jobs workspace with Details expanded on the watch-movement alignment job, showing multi-level Alignment objective and Accepted pose step convergence plots alongside the processing record.](../docs/images/studio-jobs.png)
 
 ## Project layout, recovery, and export
 
-Each Studio project is a self-contained directory:
+The manifest lives in the local project folder. Data paths below are relative to the project’s results folder on its connection.
 
 ```text
 project.tomojax.json   # assets, recipes, job records, provenance, and workspace state
 inputs/                # managed source copies (when copying is enabled)
-derived/               # saved NeXus reconstructions, alignments, and kept previews
+jobs/                  # immutable scripts, progress records, checkpoints and published results
+kept/                  # saved interactive previews
 cache/                 # local viewer cache
 ```
 
 - **Autosave and locking:** workspace state—active asset, slice indices, display window, 3D camera, clipping, comparison pair, measurements, and parameter drafts—saves atomically in the background. An OS file lock ensures only one Studio window writes to a project at a time. The manifest holds up to 32 MiB; if a write fails, the previous manifest stays intact and the status bar reports the error.
 - **Managing assets:** rename results inline in the project tree, or remove unused entries from the project (files on disk remain untouched). Assets referenced by a queued or running job stay protected until that job completes or is canceled.
-- **Session recovery:** derived results are committed to `derived/` through the worker before a job is marked complete. If a session closes while a job is running, reopening marks it **Interrupted** so you can inspect any partial destination and retry explicitly. Studio jobs do not write restartable checkpoints to disk; use `checkpoint=` in Python, `--checkpoint` on the CLI, or `checkpoint` through `tomojax serve` or `tomojax mcp` for long cluster runs.
+- **Session recovery:** process and Slurm jobs keep running after disconnection. Reopening the project retrieves their progress and results. Inline work, including jobs on this computer, ends with the worker session. A cancelled or interrupted solve with a usable checkpoint offers **Resume**. If the scheduler cannot locate a job, **Abandon** leaves a cancellation request against that job’s recorded identity.
 - **Export:** export derived results from **Explore** as TomoJAX NeXus (`.nxs`, preserving geometry and included scan), 32-bit float or scaled 16-bit TIFF slice stacks, or NPY bundles with `arrays.json` registration metadata for array-only previews.
 
 ## Shortcuts, preferences, and environment variables
@@ -172,7 +173,7 @@ Select a result and choose its output format in Explore. **TomoJAX result (.nxs)
 
 ## Verification
 
-From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio. It captures the Start screen, each workspace of a small simulated project, the remote file browser, transfer actions and connection states into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
+From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio. It captures the Start screen, each workspace of a small simulated project, the remote file browser, transfers, connection states, and seven Activity states from a worker using a test Slurm scheduler into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
 
 ```sh
 export RUSTUP_TOOLCHAIN=1.99.1

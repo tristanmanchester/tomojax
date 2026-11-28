@@ -28,13 +28,14 @@ cargo test --manifest-path studio/Cargo.toml -p studio-core
 | `project.rs` | Versioned manifest, captured inputs, job records, single writer and atomic autosave |
 | `operations.rs` | Operation names, groups and method titles shared by projects and forms |
 | `previews.rs` | Temporary per-control requests, warm sources and supersession |
+| `project/script.rs`, `project/receipt.rs` | Capture projection roles and requests, then apply progress and the final receipt to the project |
 | `progress.rs` | Durable task trees, metric histories, registry units and notes |
 
 | `tomojax-studio` module | Responsibility |
 | --- | --- |
 | `app/` | Workflow scheduling, dialogs, project actions, presentation model and view coordination |
 | `forms.rs`, `app/validation.rs` | Schema-derived drafts, exact field paths, debounced worker validation and plans |
-| `app/projection.rs` | Which selected inputs a forward or back projection reads (geometry, volume or projections), chosen once for preflight, the worker command and the result's parent |
+| `app/durable.rs` | Sends captured scripts after a manifest save, polls the job directory and handles controls and receipts |
 | `app/previewing.rs` | Edit intents to preview requests, and explicit Keep |
 | `live.rs` | Coherent registered solver previews, pose tables and artifact read leases |
 | `imaging/` | Registered display geometry, worker-backed plane and volume reads, bounded scalar cache |
@@ -47,10 +48,9 @@ holds `app`, `forms`, `preferences` and `ui`. `forms.rs` keeps its drafts in
 Rune `TextEdit`s inside `UiState`, shortcuts are Rune chords, and `live.rs` reads
 previews through `imaging`, so these stay out of `studio-core`.
 
-[STATECHART.md](STATECHART.md) charts the preview channel, job control,
-preview lease and save state machines. Under `cargo test`,
+[STATECHART.md](STATECHART.md) charts preview channels, job submission and recovery, preview generations and manifest saves. Under `cargo test`,
 `crates/studio-core/tests/protocol_model.rs` checks every interleaving of each
-one with the worker, within small bounds. Property tests run random action
+modeled workflow within small bounds. `crates/studio-core/tests/job_recovery.rs` also exercises capture, polling, relinking and restart against real project snapshots. Property tests run random action
 sequences through the real code and check invariants after every step:
 `crates/tomojax-studio/src/app/state_machine_tests.rs` drives `AppState` through
 selection, views, window edits, jobs, Activity, relinking and reopening, and
@@ -70,10 +70,7 @@ the interpreter selected by `tomojax studio` and forwards numerical requests to 
 write bounded messages without blocking Rune's event loop. Stderr is diagnostic
 output, never a protocol source.
 
-The scheduler captures a job before admission, resolves its input handles and
-submits a public operation. A result that owns a reusable handle is saved through
-`run.save`. Only the successful durable terminal makes the derived result complete
-in the project. Session handles are not persisted as reusable identifiers.
+Studio captures the job script, input paths and projection roles and waits for the project writer before submitting. The worker opens the captured inputs, executes the script, publishes the final product and releases its handles. Studio polls each job from its saved byte offset. Receipt adoption updates the asset, job and cursor in one manifest write. Inspection and frame calibration also check the source asset’s intent number.
 
 The bridge tracks observed channel admissions, not speculative revisions. A
 rejected replacement cannot invalidate a prior admitted request. Stale terminals
@@ -81,10 +78,7 @@ still resolve request bookkeeping. Control acknowledgment is distinct from the
 target request's terminal result. Shutdown drains worker output before process
 reaping, with a bounded forced-exit fallback and owned temporary directory cleanup.
 
-Pause/resume acknowledgment triggers an authoritative status check. This also
-covers a pause reached before a numerical task exists and therefore before the
-worker can emit a progress event. The application polls only while that control
-transition is unresolved, and a terminal result retires its control watch.
+Controls name a job directory. Studio reads scheduler state from the worker and pause progress from the running inline attempt. A new connection verifies the project, lists its jobs and reads the recorded directories.
 
 ### Interactive requests
 
@@ -125,16 +119,7 @@ Explore reads the export format list from `Export.path.x-formats` and each optio
 
 ### Solver previews and progress
 
-Reconstruction and alignment request live preview artifacts when enabled.
-The live reader loads each preview's registered z/y/x planes and full-precision
-pose table together. The previous coherent frame remains visible while its
-replacement loads. Reference-counted read leases prevent supersession, clearing
-or cancellation from releasing a file during a worker read. Releases
-are deduplicated; disconnect clears the old session's token ledger before reuse.
-Successful result handles also own their request's preview artifacts. Studio
-defers closing these handles until worker reads finish, queues preview releases
-before the close, and retains the decoded frame for display. Cleanup admission
-uses the same ordered retry queue as temporary previews.
+Reconstruction and alignment scripts optionally request solver previews. Each job poll names one published generation. The reader loads its planes and full-precision pose table together. A superseded or expired generation leaves the previous complete frame on screen.
 
 Progress tasks are keyed by request and task ID, with parent IDs interpreted
 within their request. Open, run and save phases cannot overwrite one another's
@@ -170,10 +155,7 @@ bounded chunks, observe cancellation, and publish only after validation. Region
 preview handles remain alive until all of their arrays and coordinate vectors
 have been copied. Shared artifact tokens are released once.
 
-Restarting does not silently execute stale queued work. Active records become
-interrupted, and a retry uses a new job identity. Existing output destinations
-require review because an interrupted transport does not prove the numerical
-worker failed to commit.
+Reopening restores each scripted job’s last observation and reads its directory on the project connection. If the worker never received the submission, Activity records that outcome. A detached job can continue through a disconnect. Studio polls again after an interruption because the scheduler may report the runner’s exit before the shared filesystem exposes its receipt. A checkpoint resume uses a new job identity and the line and path from the current worker reply.
 
 ## Registered scientific viewing
 
