@@ -78,6 +78,21 @@ Send `{"window":131072}` to change the maximum outstanding bytes across all requ
 
 The worker sends pending JSON replies first. For each block it selects the ready frame with the fewest bytes remaining. Decode a frame when its successful terminal reports its shape, encoding and total byte count. A newer request on the same channel drops unsent blocks of the earlier fetch. Discard any partial frame on a `superseded` error and return credit even for bytes you discard. Up to eight off-channel fetches may be active. A fetch ID becomes available again after its terminal and does not count toward the session ID limit.
 
+## Durable jobs
+
+The native worker accepts job commands as soon as it sends `ready`. Its `jobs` field selects the launcher. With `process` or `slurm`, a queued or running job survives loss of the submitting session. An `inline` job borrows the session's executor. A script containing only `open`, `inspect` or `plan` also runs inline.
+
+| Command | Fields | Result |
+| --- | --- | --- |
+| `submit` | `directory`, `script`, optional `options` | The job state. Use a directory under `ROOT/jobs/`. The script is a JSON array of ordinary `open`, `inspect`, `plan` or `run` requests. Each request ID starts with the directory's basename and a dot. A later line can use a member of an earlier line. Slurm resource options are a shell-quoted argument string. |
+| `jobs` | `root` | A `jobs` result whose `jobs` array lists states under `ROOT/jobs/`. |
+| `job` | `directory`, optional byte `offset` (default 0) and `limit` (default 65,536) | The job state, complete reply `records`, next `offset` and current `preview`. A record larger than the limit is returned whole. An incomplete final line leaves the offset at its start. |
+| `job_control` | `directory`, `action` | The job state. `cancel` leaves a standing request. Inline jobs also accept `pause` and `resume`. Use `abandon` for an `unknown` job to leave a cancel in force if it is found later. |
+
+Submit once for each user action. Submitting the identical script to the same directory returns its current state. On reconnect, call `jobs`, then read each `job` from its saved offset. An `attempt` record starts a new task tree. State includes `directory`, `launcher`, `state`, `detail`, `cancel_requested`, `checkpoint` and `receipt`. A queued or running job can still have a cancel pending. Polling carries the request to a matching allocation when the scheduler becomes reachable.
+
+A completed job has a receipt for its final line. A `dataset` receipt gives the NeXus `path` and registered `arrays`. An `arrays` receipt gives file-backed descriptors, a `report` carries the inspection or plan, a `source` carries its original frame-open parameters, and `files` lists output `paths`. Fetch all arrays of a live preview from the same `generation`. If one has expired, discard the partial frame and read the next preview. For an interrupted or canceled job with `checkpoint.usable` set, submit a new directory with the operation's `checkpoint` set to the reported `checkpoint.path`.
+
 ## Progress and array registration
 
 Feature bands reuse mask indices directly. The source and feature must have equal shapes, ordered axis names, frames, axis units and fixed-plane coordinates. Origins, signed pitches and all sample centers (including explicit coordinate vectors) must agree within an absolute `1e-6` in each axis's declared unit. A mismatch returns the differing field and a remedy, even for disjoint grids. Choose a feature on the target grid or resample it explicitly before submission. The same rule applies to registered support masks on the resolved reconstruction grid and registered inputs to projection and backprojection. A saved volume path supplies logical `(z, y, x)` order for projection. An explicit volume dataset keeps its stored axes. Bare numerical inputs to those operators take their registration from the operation.
