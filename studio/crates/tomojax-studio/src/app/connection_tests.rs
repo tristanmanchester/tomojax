@@ -381,7 +381,7 @@ exec "$TOMOJAX_TEST_PYTHON" "$TOMOJAX_TEST_SLOWLINK" -- "$TOMOJAX_TEST_WORKER" "
         s.model
             .error
             .as_ref()
-            .is_some_and(|e| e.contains("other data"))
+            .is_some_and(|e| e.contains("no results folder for this project"))
     });
     assert!(reopened.engine.as_ref().is_none());
     assert!(reopened.imaging.plane(4).is_none());

@@ -535,7 +535,11 @@ impl AppState {
                             LocalEvent::FilePanel(FileReply::Transferred(
                                 files.download(&source, size, &dest).map(|()| {
                                     (
-                                        format!("Copied {} to {}", source.name(), dest.display()),
+                                        format!(
+                                            "Copied {} to this computer: {}",
+                                            source.name(),
+                                            dest.display()
+                                        ),
                                         None,
                                     )
                                 }),
@@ -574,7 +578,7 @@ impl AppState {
                                     let dest = folder.join(name);
                                     files.upload(&source, &dest).map(|()| {
                                         (
-                                            format!("Uploaded {name} to {folder}"),
+                                            format!("Copied {name} from this computer to {folder}"),
                                             Some(folder.clone()),
                                         )
                                     })
