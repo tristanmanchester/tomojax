@@ -28,7 +28,13 @@ from tomojax.core.array_ops import check_binning, mean_detector_pixels
 from tomojax.core.host_volume import discard_failed_outputs, release_planes
 from tomojax.core.registration import correction_images
 
-from ._batches import HostCopies, copy_projections, correction_group, view_batches
+from ._batches import (
+    HostCopies,
+    copy_projections,
+    correction_group,
+    view_batches,
+    view_workspace_bytes,
+)
 from ._fields import CalibrationFrames, Fields, bracketing_sets, flat_fields
 from ._flat_weights import view_weights
 from ._records import Correction, Json
@@ -39,6 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
     from tomojax._data import FrameStack
+    from tomojax.core.host_volume import HostOutputs
 
 LOG = logging.getLogger(__name__)
 
@@ -194,7 +201,7 @@ def correct_frames(
                 interpolation,
                 tuple(line),
                 slab=slab,
-                allocate=outputs.allocate,
+                outputs=outputs,
                 transmission_steps=transmission_steps,
                 epsilon=float(epsilon),
                 factor=binning,
@@ -202,11 +209,12 @@ def correct_frames(
             )
             kept, tail_records, head = np.arange(views), (), line
         else:
-            factor = 1 if tail or transmission_tail else binning  # Tails need full frames.
-            out = outputs.allocate((views, rows // factor, cols // factor))
-            batch = views_per_batch or frame_batch_size(
-                views, rows, cols, (*counts_steps, *transmission_steps, *head)
-            )
+            staged = bool(tail or transmission_tail)  # Tails need full frames.
+            factor = 1 if staged else binning
+            steps_in_batch = (*counts_steps, *transmission_steps, *head)
+            batch = views_per_batch or frame_batch_size(views, rows, cols, steps_in_batch)
+            workspace = None if staged else view_workspace_bytes(counts, batch, steps_in_batch)
+            out = outputs.allocate((views, rows // factor, cols // factor), workspace=workspace)
             tally = correct_view_batches(
                 counts, out, fields, interpolation, batch, counts_steps=counts_steps,
                 transmission_steps=tuple(transmission_head),
@@ -215,11 +223,10 @@ def correct_frames(
             )  # fmt: skip
             if transmission_tail:
                 out, _, _ = apply_steps(out, transmission_tail, views_per_batch)
-                above = tally[2]
-                out, tally = log_batches(out, tuple(head), epsilon, views_per_batch)
-                tally = np.append(tally, above)
+                out, log_tally = log_batches(out, tuple(head), epsilon, views_per_batch)
+                tally = np.append(log_tally, tally[2])
             out, kept, tail_records = apply_steps(out, tail, views_per_batch)
-            if (tail or transmission_tail) and binning > 1:
+            if staged and binning > 1:
                 out = _binned(out, binning, views_per_batch, outputs.allocate)
         if linear_limit is not None:
             report_linear_limit(
@@ -746,7 +753,7 @@ def _correct_row_slabs(
     steps: tuple[Step, ...],
     *,
     slab: int,
-    allocate: Callable[[tuple[int, ...]], np.ndarray],
+    outputs: HostOutputs,
     transmission_steps: tuple[Step, ...],
     epsilon: float,
     factor: int,
@@ -754,7 +761,8 @@ def _correct_row_slabs(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Correct and optionally bin slabs of whole rows: the corrected stack and the tally."""
     views, rows, cols = counts.shape
-    out = allocate((views, rows // factor, cols // factor))
+    workspace = 2 * views * slab * cols * (np.dtype(counts.dtype).itemsize + 4)
+    out = outputs.allocate((views, rows // factor, cols // factor), workspace=workspace)
     dark, usable = jax.device_put(fields.dark), jax.device_put(fields.usable)
     flats, between = fields.flats, fields.weights
     lo, hi, t, exposure_scale = (jax.device_put(q) for q in interpolation)

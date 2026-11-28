@@ -56,6 +56,26 @@ def test_a_corrected_stack_too_large_for_memory_is_held_in_a_temporary_file(
     assert f"held in a temporary file in {scratch}" in caplog.text
 
 
+def test_corrected_output_shares_job_memory_with_its_batches(tmp_path, monkeypatch):
+    views, rows, cols = 64, 6, 9
+    counts = np.random.default_rng(27).integers(30, 180, (views, rows, cols), np.uint8)
+    geometry = tj.ParallelGeometry(
+        tj.Grid(cols, cols, rows, 1, 1, 1), tj.Detector(cols, rows, 1, 1), np.arange(views)
+    )
+    frames = tj.Frames(counts, geometry, white_level=200)
+    frame_bytes = rows * cols * 4
+    monkeypatch.setattr(host_volume, "host_available_memory_bytes", lambda: 96 * frame_bytes)
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+
+    # The FP32 output takes 64 frames' worth of memory and the uint8 read block
+    # takes another 16. The remaining 16 fit two batches of 2 and cannot fit two of 12.
+    resident = frames.corrected(views_per_batch=2)
+    spilled = frames.corrected(views_per_batch=12)
+    assert host_volume.scratch_directory(resident.projections) is None
+    assert host_volume.scratch_directory(spilled.projections) == tmp_path
+    np.testing.assert_array_equal(resident.projections, spilled.projections)
+
+
 def test_a_temporary_file_is_refused_with_a_plain_error_when_its_directory_has_no_room(
     tmp_path, monkeypatch
 ):
