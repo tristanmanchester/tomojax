@@ -3,6 +3,7 @@ mod controls;
 pub mod corrections;
 mod export;
 mod files;
+mod format;
 #[cfg(test)]
 mod format_tests;
 mod inspector;
@@ -17,7 +18,7 @@ mod viewer;
 
 use crate::AppState;
 use controls::*;
-pub(crate) use controls::{compact_number, coordinate, unit_name};
+pub(crate) use format::{compact_number, coordinate, unit_name};
 use model::*;
 use rune::{Cx, El, ScrollSpec, col, el, row};
 use tokens::*;

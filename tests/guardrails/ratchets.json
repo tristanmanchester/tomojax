@@ -73,9 +73,8 @@
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/viewing.rs": 1316,
-    "studio/crates/tomojax-studio/src/ui/controls.rs": 802,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
-    "studio/crates/tomojax-studio/src/ui/viewer.rs": 884
+    "studio/crates/tomojax-studio/src/ui/viewer.rs": 885
   },
   "studio_long_functions": {
     "studio/crates/studio-core/src/previews.rs::poll": 130,
