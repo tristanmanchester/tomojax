@@ -22,24 +22,26 @@ fn shell_command(args: &[String]) -> String {
         .join(" ")
 }
 
-struct Output {
-    success: bool,
-    out: String,
-    err: String,
+pub(super) struct Output {
+    pub success: bool,
+    pub code: Option<i32>,
+    pub out: String,
+    pub err: String,
 }
 fn probe(command: &mut Command, timeout: Duration) -> Result<Output, Failure> {
-    run_probe(command, timeout, false)
+    run_probe(command, timeout, false, Stdio::null())
 }
 
-fn run_probe(
+pub(super) fn run_probe(
     command: &mut Command,
     timeout: Duration,
     interactive: bool,
+    input: Stdio,
 ) -> Result<Output, Failure> {
     let mut out = tempfile::tempfile()?;
     let mut err = tempfile::tempfile()?;
     command
-        .stdin(Stdio::null())
+        .stdin(input)
         .stdout(out.try_clone()?)
         .stderr(err.try_clone()?);
     let terminal;
@@ -60,6 +62,7 @@ fn run_probe(
     };
     Ok(Output {
         success: status.success(),
+        code: status.code(),
         out: read(&mut out)?,
         err: read(&mut err)?,
     })
@@ -137,7 +140,7 @@ impl<'a> Route<'a> {
         .into()
     }
 
-    fn command(&self, depth: usize, mut remote: String, batch: bool) -> Command {
+    pub(super) fn command(&self, depth: usize, mut remote: String, batch: bool) -> Command {
         for hop in self.hops[1..depth].iter().rev() {
             let mut args = vec!["ssh".into()];
             args.extend(Self::args(true));
@@ -208,6 +211,7 @@ impl<'a> Route<'a> {
                     LOGIN,
                     helper.is_none()
                         && std::env::var("SSH_ASKPASS_REQUIRE").as_deref() != Ok("force"),
+                    Stdio::null(),
                 )
             } else {
                 probe(&mut self.command(depth, "true".into(), true), STARTUP)

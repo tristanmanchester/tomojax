@@ -3565,10 +3565,12 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "fastrand",
+ "flate2",
  "libc",
  "proptest",
  "serde",
  "serde_json",
+ "sha2",
  "stateright",
  "tempfile",
  "toml",

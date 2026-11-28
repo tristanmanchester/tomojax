@@ -205,6 +205,20 @@ fn serve(opts: Options) -> Result<()> {
 fn main() -> std::process::ExitCode {
     let mut args = std::env::args().skip(1);
     let result = match args.next().as_deref() {
+        Some("connect") => {
+            let result = studio_core::connection::connect(
+                &args.collect::<Vec<_>>(),
+                |profile| studio_core::connection::worker_path(profile, &std::env::current_exe()?),
+                None,
+            );
+            return match result {
+                Ok(code) => std::process::ExitCode::from(code as u8),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::ExitCode::from(e.status as u8)
+                }
+            };
+        }
         Some("serve") => Options::parse(args).and_then(serve),
         Some("--help" | "-h") => {
             println!(

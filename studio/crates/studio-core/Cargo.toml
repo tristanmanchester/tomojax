@@ -12,6 +12,8 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+sha2 = "0.10"
+flate2 = "1"
 blake3 = "1"
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 libc = "0.2"
