@@ -6,11 +6,13 @@ from io import BytesIO
 import json
 from pathlib import Path
 import re
+import sys
 
 from PIL import Image
 import pytest
 
 from tests.mcp_client import connection
+from tests.worker_process import binary
 import tomojax as tj
 
 pytestmark = pytest.mark.surface
@@ -88,8 +90,12 @@ def conversation(directory, *, legacy, executable=None):
 
 
 @pytest.mark.parametrize("legacy", [True, False], ids=["2025-11-25", "2026-07-28"])
-def test_recorded_conversation(tmp_path, legacy):
-    replies = conversation(tmp_path, legacy=legacy)
+@pytest.mark.parametrize("server", ["python", "rust"])
+def test_recorded_conversation(tmp_path, monkeypatch, legacy, server):
+    monkeypatch.setenv("TOMOJAX_STUDIO_PYTHON", sys.executable)
+    replies = conversation(
+        tmp_path, legacy=legacy, executable=binary() if server == "rust" else None
+    )
     fingerprints = [
         sha256(json.dumps(r, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
         for r in replies

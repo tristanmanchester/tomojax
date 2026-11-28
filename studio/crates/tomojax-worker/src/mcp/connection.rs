@@ -107,12 +107,27 @@ impl Connections {
     }
 }
 
+#[derive(Debug)]
+pub struct WorkerError(pub Value);
+impl std::fmt::Display for WorkerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            self.0["message"]
+                .as_str()
+                .unwrap_or("Worker request failed"),
+        )
+    }
+}
+impl std::error::Error for WorkerError {}
 pub struct Reply {
     pub header: Value,
     pub bytes: Vec<u8>,
 }
 impl Reply {
     pub fn result(&self) -> Result<&Value> {
+        if self.header["type"] == "error" {
+            return Err(WorkerError(self.header["error"].clone()).into());
+        }
         ensure!(
             self.header["type"] == "result",
             "{}",
@@ -132,6 +147,7 @@ struct Pending {
 type PendingCalls = Arc<Mutex<Option<HashMap<String, Pending>>>>;
 
 pub struct Session {
+    pub ledger: Mutex<super::ledger::Ledger>,
     inventory: watch::Receiver<Inventory>,
     outgoing: mpsc::Sender<Vec<u8>>,
     pending: PendingCalls,
@@ -183,6 +199,7 @@ impl Session {
             }
         });
         Ok(Self {
+            ledger: Default::default(),
             inventory,
             outgoing,
             pending,
@@ -192,7 +209,18 @@ impl Session {
     }
 
     pub async fn request(&self, command: Value) -> Result<Reply> {
-        let (_, recv) = self.begin(command, None).await?;
+        let cancels = matches!(
+            command["type"].as_str(),
+            Some("run" | "python" | "open" | "read" | "plan" | "validate" | "statistics")
+        );
+        let (id, mut recv) = self.begin(command, None).await?;
+        if cancels && let Ok(token) = super::tasks::CANCEL.try_with(Clone::clone) {
+            tokio::select! {
+                biased;
+                result = &mut recv => return result.context("Worker disconnected before replying")?,
+                _ = token.cancelled() => {let _=self.begin(json!({"type":"control","action":"cancel","target":id}),None).await?;}
+            }
+        }
         recv.await.context("Worker disconnected before replying")?
     }
 

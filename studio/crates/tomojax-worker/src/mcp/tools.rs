@@ -13,8 +13,8 @@ struct Describe {
     method: Option<String>,
 }
 
-pub fn list() -> Vec<Value> {
-    [
+pub fn list(local: bool) -> Vec<Value> {
+    let mut tools: Vec<_> = [
         ("inspect","Inspect an acquisition or list the datasets and checkpoints in a directory on the connected machine.",
             json!({"path":{"type":"string"},"preview":{"type":"boolean","default":false},"detail":{"enum":["summary","full"]}}),vec!["path"]),
         ("describe", "Look up parameters, defaults, units and choices before configuring an operation. Supply method to see its solver settings.",
@@ -25,16 +25,24 @@ pub fn list() -> Vec<Value> {
          json!({"operation":{"type":"object","properties":{"type":{"enum":super::jobs::OPERATIONS}},"required":["type"]},"results":{"type":"string"}}),vec!["operation"]),
         ("jobs","List durable jobs, or read a job by ID and byte offset. Use the returned offset to request new records.",
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
+        ("control","Pause, resume or cancel a request, close a handle, or restart the session.",json!({"action":{"enum":["pause","resume","cancel","close","restart"]},"target":{"type":"string"}}),vec!["action"]),
+        ("python","Run Python in the local TomoJAX executor. Use tj, np, handles, register, view and show with the session’s data.",json!({"code":{"type":"string"},"reset":{"type":"boolean"},"traceback":{"type":"boolean"}}),vec![]),
         ("download","Copy one worker file to a new file on the laptop. A relative destination uses the project directory.",
          json!({"path":{"type":"string"},"to":{"type":"string"}}),vec!["path","to"]),
         ("upload","Copy one laptop file to a new file on the connected machine. A relative source uses the project directory.",
          json!({"from":{"type":"string"},"path":{"type":"string"}}),vec!["from","path"]),
         ("cancel_job","Request cancellation of a durable job by ID.",json!({"job":{"type":"string"},"results":{"type":"string"}}),vec!["job"]),
-    ].into_iter().map(|(name,description,properties,required)| {
+     ].into_iter().filter(|(name,_,_,_)| local || *name != "python").map(|(name,description,properties,required)| {
         let schema=if name=="submit" {super::jobs::submission_schema()} else {json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})};
         json!({"name":name,"description":description,"inputSchema":schema,
-            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"|"upload"|"download"),"openWorldHint":false}})
-    }).collect()
+            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"|"upload"|"download"|"python"|"control"),"openWorldHint":false}})
+    }).collect();
+    tools.extend(
+        super::workflow::OPERATIONS
+            .iter()
+            .map(|name| super::workflow::tool(name)),
+    );
+    tools
 }
 
 pub async fn query(session: &Session, request: Value) -> Result<Value> {
@@ -50,6 +58,16 @@ pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<
     let (mut data, session, mut content) = if name == "inspect" {
         let (session, inventory) = connections.open(false).await?;
         let (data, images) = super::inspect::inspect(&session, &inventory, args).await?;
+        (data, session, images)
+    } else if name == "python" && connections.name == "local"
+        || super::workflow::OPERATIONS.contains(&name)
+    {
+        let (session, state) = connections.open(true).await?;
+        let (data, images) = if name == "python" {
+            super::workflow::python(&session, args).await?
+        } else {
+            super::workflow::run(&session, &state, name, args).await?
+        };
         (data, session, images)
     } else {
         let (data, session) = run(connections, name, args).await?;
@@ -89,6 +107,7 @@ pub async fn run(
         ))
         .await?;
     let value = match name {
+        "control" => super::workflow::control(connections, &session, &args).await,
         "download" => super::transfers::download(&session, &state, args).await,
         "upload" => super::transfers::upload(&session, &state, args).await,
         "jobs" | "submit" | "cancel_job" => {
@@ -108,6 +127,22 @@ pub async fn run(
             let executor = &state.executor["detail"];
             if state.executor["state"] == "ready" {
                 let status = query(&session, json!({"type":"status"})).await?;
+                let full = args["detail"] == "full";
+                for (id, entry) in &session.ledger.lock().unwrap().records {
+                    let mut summary = entry["summary"].clone();
+                    if full {
+                        summary["manifest"] = entry["manifest"].clone();
+                    } else {
+                        summary
+                            .as_object_mut()
+                            .unwrap()
+                            .retain(|k, _| matches!(k.as_str(), "kind" | "shape" | "unit"));
+                    }
+                    if let Some(worker) = entry["product"]["handle"].as_str() {
+                        summary["bytes"] = status["handles"][worker].clone();
+                    }
+                    report["handles"][id] = summary;
+                }
                 report["versions"] = executor["versions"].clone();
                 report["devices"] = executor["devices"].clone();
                 report["jobs"] = status["requests"].clone();

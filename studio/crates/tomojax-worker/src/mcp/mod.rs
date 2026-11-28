@@ -5,9 +5,12 @@ mod guidance;
 mod images;
 mod inspect;
 mod jobs;
+mod ledger;
 mod parts;
+mod tasks;
 mod tools;
 mod transfers;
+mod workflow;
 
 use anyhow::{Result, bail};
 use rmcp::{
@@ -40,9 +43,43 @@ fn identity() -> Implementation {
     Implementation::new("tomojax", version)
 }
 
+#[derive(Clone)]
 struct Server {
-    parts: std::sync::Mutex<parts::Parts>,
+    tasks: tasks::Tasks,
+    parts: std::sync::Arc<std::sync::Mutex<parts::Parts>>,
     connections: std::sync::Arc<connection::Connections>,
+}
+
+impl Server {
+    async fn execute(&self, name: &str, arguments: Value) -> Value {
+        let reply = match tools::call(&self.connections, name, arguments).await {
+            Ok(reply) => reply,
+            Err(error) => {
+                let message = error.to_string();
+                let wire = error
+                    .downcast_ref::<connection::WorkerError>()
+                    .map(|e| &e.0);
+                let kind = wire
+                    .and_then(|e| e["kind"].as_str())
+                    .unwrap_or("invalid_parameter");
+                let next = match kind {
+                    "out_of_memory" => {
+                        "Try dry_run, slab reconstruction, binning or different devices.".into()
+                    }
+                    "canceled" => "Resubmit when ready.".into(),
+                    "input" if name == "python" => {
+                        "Read the error, correct the Python code and retry.".into()
+                    }
+                    "input" => "Inspect the input path and metadata.".into(),
+                    "internal" => "Check status for worker and device information.".into(),
+                    _ => format!("Check the {name} tool parameters and retry."),
+                };
+                json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],
+                    "structuredContent":{"kind":kind,"path":wire.and_then(|e|e.get("path")),"message":message,"next":next},"isError":true})
+            }
+        };
+        self.parts.lock().unwrap().bounded(reply)
+    }
 }
 
 impl ServerHandler for Server {
@@ -50,6 +87,7 @@ impl ServerHandler for Server {
         let capabilities = ServerCapabilities::builder()
             .enable_resources()
             .enable_prompts()
+            .enable_tasks()
             .enable_tools()
             .build();
         ServerConfig::new(capabilities).with_server_info(identity())
@@ -59,7 +97,10 @@ impl ServerHandler for Server {
         _: Option<PaginatedRequestParams>,
         ctx: Context,
     ) -> Result<ListToolsResult, McpError> {
-        response(json!({"tools":tools::list()}), &ctx)
+        response(
+            json!({"tools":tools::list(self.connections.name=="local")}),
+            &ctx,
+        )
     }
     async fn call_tool(
         &self,
@@ -68,17 +109,29 @@ impl ServerHandler for Server {
     ) -> Result<CallToolResponse, McpError> {
         let name = request.name.as_ref();
         let arguments = Value::Object(request.arguments.unwrap_or_default());
-        let reply = match tools::call(&self.connections, name, arguments).await {
-            Ok(reply) => reply,
-            Err(error) => {
-                let message = error.to_string();
-                let next = format!("Check the {name} tool parameters and retry.");
-                json!({"content":[{"type":"text","text":format!("invalid_parameter: {message}. {next}")}],
-                    "structuredContent":{"kind":"invalid_parameter","path":null,"message":message,"next":next},"isError":true})
-            }
-        };
-        let result: CallToolResult = response(self.parts.lock().unwrap().bounded(reply), &ctx)?;
+        if tasks::negotiated(&ctx)
+            && (name == "python" && self.connections.name == "local"
+                || workflow::OPERATIONS.contains(&name))
+            && arguments["dry_run"] != true
+        {
+            return self.tasks.start(self.clone(), name.into(), arguments);
+        }
+        let reply = tasks::CANCEL
+            .scope(ctx.ct.clone(), self.execute(name, arguments))
+            .await;
+        let result: CallToolResult = response(reply, &ctx)?;
         Ok(result.into())
+    }
+    async fn get_task(&self, req: GetTaskParams, ctx: Context) -> Result<GetTaskResult, McpError> {
+        response(self.tasks.lookup(&req.task_id, false)?, &ctx)
+    }
+    async fn cancel_task(&self, req: CancelTaskParams, _ctx: Context) -> Result<(), McpError> {
+        self.tasks.lookup(&req.task_id, true)?;
+        Ok(())
+    }
+    async fn update_task(&self, req: UpdateTaskParams, _ctx: Context) -> Result<(), McpError> {
+        self.tasks.lookup(&req.task_id, false)?;
+        Ok(())
     }
     async fn list_prompts(
         &self,
@@ -166,10 +219,11 @@ pub async fn run(mut args: impl Iterator<Item = String>) -> Result<()> {
         _ => bail!("Usage: tomojax-worker mcp [--connection NAME]"),
     };
     let connections = std::sync::Arc::new(connection::Connections::new(name));
-    let serving = Server {
+    let serving = tasks::Service(Server {
+        tasks: Default::default(),
         parts: Default::default(),
         connections: connections.clone(),
-    }
+    })
     .serve(rmcp::transport::stdio())
     .await?
     .waiting()
