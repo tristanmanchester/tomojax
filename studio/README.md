@@ -62,6 +62,16 @@ Choose **Create a project**, name its folder, and add acquisitions in **Prepare*
 
 To try Studio without scan files on disk, choose **Try a demo project** on the start screen or launch with `tomojax studio --demo`. Studio creates a new project under its data folder (`~/.local/share/tomojax/Demo projects` on Linux) and simulates a phantom scan with its ground truth; reconstruct it in **Reconstruct**. In any project, **Simulation** in **Prepare** does the same, and **Per-view shift (SD)** adds random per-view motion to try **Alignment** on.
 
+## Create a project on another machine
+
+1. Choose **Create a project**. Select a saved connection or choose **Add connection…**. Enter a name and one or two SSH destinations, in the order you reach them. Set the Python interpreter if the remote machine needs a particular TomoJAX environment. Save the connection and choose **Use connection**.
+2. Name the project folder on this computer. Studio keeps its manifest, selections, and drafts here. The status bar shows the SSH connection and the TomoJAX executor separately. If the connection needs authentication, open it in the status bar and choose **Log in…**.
+3. Choose a results folder on the other machine. **Choose first scan…** lets Studio suggest its folder when it is writable and can hold the requested copy. Otherwise Studio suggests the last results location used on this connection, its configured default, or the worker’s home directory. **Use this folder** creates a subfolder named after the project. Studio checks its project marker each time it connects.
+4. If you chose a first scan, Studio opens it after creating the results folder. To add another scan, choose **Add scans** in the project sidebar. Select a scan and choose **Import**. For multi-file acquisitions, choose the acquisition folder or its header. Select **Copy sources into the project** for a managed copy. The stored projections and volumes are available as soon as the file worker connects. Inspection and interactive previews need the executor.
+5. Select the connection in the status bar and choose **Browse files…** to copy an individual file of up to 100 MiB. **Copy to this computer…** downloads the selected file. **Copy from this computer…** uploads a file into the displayed folder. Choose a new filename for a download or a folder without a file of the same name for an upload. To browse an exported bundle, open its completed job in **Jobs**, expand **Details**, and choose **Show** beside the output name.
+
+While reconnecting, displayed images carry a **Not live** mark. Studio requests the current view again when the project marker matches. If the connection points to different data, choose another saved connection that reaches the project’s results. Processing jobs currently run in projects on this computer.
+
 ## Prepare, preview, and reconstruct
 
 **Prepare** and **Reconstruct** expose the full public TomoJAX operation set: calibration (`Open & calibrate`), flat/dark and artifact corrections, alignment (direct parallel center measurement and joint volume-and-pose alignment), simulation, view selection, detector cropping and binning, pose tables, multi-orbit scan combination, analytical and iterative reconstruction, slab reconstruction, forward projection, and backprojection.
@@ -162,7 +172,7 @@ Select a result and choose its output format in Explore. **TomoJAX result (.nxs)
 
 ## Verification
 
-From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio and captures the Start screen and each workspace of a small simulated project into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
+From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio. It captures the Start screen, each workspace of a small simulated project, the remote file browser, transfer actions and connection states into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
 
 ```sh
 export RUSTUP_TOOLCHAIN=1.99.1

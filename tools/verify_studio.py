@@ -41,6 +41,25 @@ PROJECT_VIEWS = {
     "Compare": ("ramp", "Axial", "reconstruct"),
     "Jobs": ("ramp", "Axial", "reconstruct"),
 }
+CONNECTION_VIEWS = (
+    "connections",
+    "editor",
+    "connecting",
+    "closed",
+    "login-needed",
+    "logging-in",
+    "blocked",
+    "results",
+    "browser",
+    "copy-to",
+    "copy-from",
+    "starting",
+    "connected",
+    "executor-stopped",
+    "not-live",
+    "reconnected",
+    "other-data",
+)
 VIEWS = ("start", *(workspace.lower() for workspace in PROJECT_VIEWS))
 
 
@@ -256,6 +275,77 @@ class Viewport:
             )
 
 
+def capture_live(
+    stage: Path, env: dict[str, str], viewport: Viewport
+) -> dict[str, dict[str, object]]:
+    """Exercise the export form and connection states with the native application tests."""
+    views: dict[str, dict[str, object]] = {}
+    expected = viewport.pixels
+    # The export test runs the debug Studio and starts its sibling worker.
+    _ = subprocess.run(
+        ["cargo", "build", "--locked", "-p", "tomojax-worker"],
+        cwd=STUDIO,
+        env=env,
+        check=True,
+    )
+    path = stage / "export.png"
+    env.pop("TOMOJAX_STUDIO_INPUT", None)
+    fixture = subprocess.run(
+        [sys.executable, str(ROOT / "tests/_export_fixture.py"), str(stage / "package")],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    env["PYTHONPATH"] = fixture.stdout.strip()
+    env["TOMOJAX_TEST_PYTHON"] = sys.executable
+    env["TOMOJAX_EXPORT_UI_EVIDENCE"] = json.dumps([str(path), viewport.size, str(viewport.scale)])
+    _ = subprocess.run(
+        [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tomojax-studio",
+            "--bin",
+            EXECUTABLE,
+            "queued_exports_match_the_cli",
+            "--",
+            "--ignored",
+        ],
+        cwd=STUDIO,
+        env=env,
+        check=True,
+        timeout=240,
+    )
+    views["export"] = {"file": path.name, **asdict(validate_png(path, expected))}
+    env["TOMOJAX_CONNECTION_CAPTURES"] = json.dumps(
+        [str(stage), viewport.size, str(viewport.scale)]
+    )
+    _ = subprocess.run(
+        [
+            "cargo",
+            "test",
+            "--locked",
+            "-p",
+            "tomojax-studio",
+            "--bin",
+            EXECUTABLE,
+            "named_project_reads_and_reconnects",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ],
+        cwd=STUDIO,
+        env=env,
+        check=True,
+        timeout=360,
+    )
+    for label in CONNECTION_VIEWS:
+        path = stage / f"{label}.png"
+        views[label] = {"file": path.name, **asdict(validate_png(path, expected))}
+    return views
+
+
 def capture(binary: Path, out_dir: Path, viewport: Viewport, *, live_export: bool = False) -> Path:
     """Capture saved workspaces and, with a source build, the live export form."""
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -311,45 +401,7 @@ def capture(binary: Path, out_dir: Path, viewport: Viewport, *, live_export: boo
                 raise ValueError(f"Studio capture failed for {label}: {error}") from error
 
         if live_export:
-            # The export test runs the debug Studio and starts its sibling worker.
-            _ = subprocess.run(
-                ["cargo", "build", "--locked", "-p", "tomojax-worker"],
-                cwd=STUDIO,
-                env=env,
-                check=True,
-            )
-            path = stage / "export.png"
-            env.pop("TOMOJAX_STUDIO_INPUT", None)
-            fixture = subprocess.run(
-                [sys.executable, str(ROOT / "tests/_export_fixture.py"), str(stage / "package")],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            env["PYTHONPATH"] = fixture.stdout.strip()
-            env["TOMOJAX_TEST_PYTHON"] = sys.executable
-            env["TOMOJAX_EXPORT_UI_EVIDENCE"] = json.dumps(
-                [str(path), viewport.size, str(viewport.scale)]
-            )
-            _ = subprocess.run(
-                [
-                    "cargo",
-                    "test",
-                    "--locked",
-                    "-p",
-                    "tomojax-studio",
-                    "--bin",
-                    EXECUTABLE,
-                    "queued_exports_match_the_cli",
-                    "--",
-                    "--ignored",
-                ],
-                cwd=STUDIO,
-                env=env,
-                check=True,
-                timeout=240,
-            )
-            views["export"] = {"file": path.name, **asdict(validate_png(path, expected))}
+            views.update(capture_live(stage, env, viewport))
         summary: dict[str, object] = {
             "size": viewport.size,
             "scale": viewport.scale,
@@ -405,7 +457,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         print(f"verify_studio: {error}", file=sys.stderr)
         return 1
-    print(f"Verified {len(VIEWS) + int(args.build)} Studio screenshots. See {manifest}")
+    count = len(VIEWS) + (1 + len(CONNECTION_VIEWS)) * int(args.build)
+    print(f"Verified {count} Studio screenshots. See {manifest}")
     return 0
 
 
