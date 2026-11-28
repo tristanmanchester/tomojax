@@ -191,7 +191,10 @@ impl Script {
                 }
                 operation
             }
-            "inspect" => json!({"type":"inspect","path":first()?.path}),
+            "inspect" => {
+                operation["path"] = json!(first()?.path);
+                operation
+            }
             _ => {
                 for (i, input) in job
                     .inputs

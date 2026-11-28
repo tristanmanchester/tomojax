@@ -112,35 +112,10 @@ fn open_target(root: &Path, connected: bool) -> AppState {
     let source = root.join("Detector resolution target.nxs");
     resolution_target(&source);
     let mut state = AppState::init();
-    let mut tx = Tx::default();
     let project = root.join("Detector detail");
     if connected {
         let python = std::env::var("TOMOJAX_TEST_PYTHON").unwrap();
-        Profile::save(
-            "Lab",
-            None,
-            &serde_json::from_value(json!({"python":python,"results":root})).unwrap(),
-        )
-        .unwrap();
-        state.files.new_connection = Some("Lab".into());
-        state.open_project(&project, true).unwrap();
-        let relay = root.join("relay");
-        executable(
-            &relay,
-            "#!/bin/sh\nexec \"$TOMOJAX_TEST_PYTHON\" \"$TOMOJAX_TEST_SLOWLINK\" -- \"$TOMOJAX_TEST_WORKER\" \"$@\"\n",
-        );
-        state.engine = session::Session::Named {
-            owner: Box::new(Owner::new(
-                relay,
-                "Lab".into(),
-                &["fetch", "project_results"],
-                state.wake.clone(),
-            )),
-            verified: false,
-        };
-        wait(&mut state, "choose results", |s| s.files.listing.is_some());
-        state.files.first_scan = Some((source.as_path().into(), false));
-        state.file_action(Action::Accept, &mut tx).unwrap();
+        import_named(&mut state, root, &project, &source, &python);
     } else {
         state.open_project(&project, true).unwrap();
         state.import_paths(vec![source]);
@@ -148,6 +123,9 @@ fn open_target(root: &Path, connected: bool) -> AppState {
     wait(&mut state, "lossless overview", |s| {
         s.imaging.plane(4).is_some_and(|p| p.lossless)
     });
-    state.dispatch(UiAction::SetMainView(PlaneKind::Projection), &mut tx);
+    state.dispatch(
+        UiAction::SetMainView(PlaneKind::Projection),
+        &mut Tx::default(),
+    );
     state
 }

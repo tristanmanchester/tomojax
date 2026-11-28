@@ -4860,7 +4860,7 @@
     },
     "Inspect": {
       "title": "Inspect",
-      "description": "Read a file's inspection report.",
+      "description": "Read a file's inspection report, optionally publishing its first detector sample.",
       "type": "object",
       "properties": {
         "type": {
@@ -4871,6 +4871,10 @@
         "path": {
           "type": "string",
           "minLength": 1
+        },
+        "previews": {
+          "type": "boolean",
+          "default": false
         }
       },
       "required": [

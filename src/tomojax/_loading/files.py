@@ -101,8 +101,8 @@ def inspect(path: str | PathLike[str]) -> Inspection:
         elif Path(path).is_dir() and (saved := describe(path)) is not None:
             report = {**_no_dataset(path), "checkpoint": saved}
         else:
-            issues = validate_dataset(Path(path))["issues"]
             dataset = inspect_dataset(Path(path))
+            issues = validate_dataset(Path(path))["issues"]
             loading, grid = _loading(Path(path)) if dataset["projection"]["found"] else (None, None)
             if grid is not None:
                 dataset["memory_estimates"] = memory_estimates(

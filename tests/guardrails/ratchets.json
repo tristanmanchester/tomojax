@@ -70,7 +70,7 @@
   "broad_except": 25,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1309,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1272,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 871
   },

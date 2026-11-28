@@ -12,6 +12,7 @@ import h5py
 import numpy as np
 from numpy.typing import NDArray
 
+from tomojax import progress
 from tomojax._data import (
     ROTATION_ANGLE_PATHS,
     FrameStack,
@@ -31,6 +32,7 @@ from tomojax._typed_arrays import (
     sum_float64,
     unique_int_count_map,
 )
+from tomojax.core.registration import projection_values
 from tomojax.io._acquisition import read_acquisition
 from tomojax.io._datasets import ProjectionDataset
 from tomojax.io._inspection_types import (
@@ -511,6 +513,40 @@ def _native_report(path: PathLike, payload: LoadedNXTomo) -> InspectionReport:
     return report
 
 
+def _first_projection(
+    stack: _ProjectionStack, record: ProjectionDataset | None, values: tuple[str, str]
+) -> dict[str, progress.Sample]:
+    """Publish the reader's first logical sample with its original detector registration."""
+    from tomojax.core.registration import recorded_length_unit, scan_axes
+    from tomojax.wire.arrays import Axis, Fixed, Uniform
+
+    if not stack.shape[0]:
+        return {}
+    detector = record.detector if record is not None else None
+    view = Axis("view", "acquisition", "index", Uniform(0, 1))
+    if record is not None and detector is not None:
+        axes = scan_axes(
+            detector, view, recorded_length_unit(record.geometry_metadata) or "scan_length"
+        )[1:]
+    else:
+        axes = tuple(Axis(name, "detector", "pixel", Uniform(0, 1)) for name in ("v", "u"))
+    angle = (
+        None
+        if record is None or not record.angles.size
+        else float(numpy_float64_array(record.angles[:1]).item(0))
+    )
+    fixed = (
+        Fixed("view", "acquisition", "degree", 0, angle)
+        if angle is not None and math.isfinite(angle)
+        else Fixed("view", "acquisition", "index", 0, 0)
+    )
+    return {
+        "first_projection": progress.Sample(
+            np.atleast_2d(np.asarray(stack[0])), axes, *values, (fixed,)
+        )
+    }
+
+
 def inspect_dataset(path: PathLike) -> InspectionReport:
     """Inspect a measured projection dataset before reconstruction.
 
@@ -535,13 +571,37 @@ def inspect_dataset(path: PathLike) -> InspectionReport:
     """
     if Path(path).suffix.lower() == ".mat":  # PSI cSAXS phase line integrals
         record, samples = saved_projection_layout(Path(path))
+        if samples is not None:
+            progress.preview(
+                lambda: _first_projection(samples, record, projection_values(counts=False)),
+                final=True,
+            )
         return _record_report(path, record, samples)
     payload = native_payload(Path(path), layout_only=True, lazy_projections=True)
     if payload is not None:
         return _native_report(path, payload)
     raw = read_acquisition(path)
     if raw is None:
-        return inspect_nxtomo(Path(path))
+        source = Path(path)
+        if progress.previewing() and (
+            source.is_dir() or source.suffix.lower() in {".tif", ".tiff"}
+        ):
+            from ._tiff import TiffFrames, tiff_files
+
+            if files := tiff_files(source):
+                progress.preview(
+                    lambda: _first_projection(
+                        TiffFrames.from_files(files[:1]),
+                        None,
+                        ("unspecified", "stored_measurements"),
+                    ),
+                    final=True,
+                )
+        return inspect_nxtomo(source)
+    progress.preview(
+        lambda: _first_projection(raw.counts, raw.record, projection_values(counts=True)),
+        final=True,
+    )
     flats = len(raw.flats) if raw.flats is not None else int(raw.white_level is not None)
     darks = (
         len(raw.darks)

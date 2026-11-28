@@ -72,9 +72,10 @@ class Open(Record, tag="open"):
 
 
 class Inspect(Record, tag="inspect"):
-    """Read a file's inspection report."""
+    """Read a file's inspection report, optionally publishing its first detector sample."""
 
     path: Id
+    previews: bool = False
 
 
 class Correct(Record, tag="correct"):

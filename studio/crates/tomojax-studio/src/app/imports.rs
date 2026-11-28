@@ -100,6 +100,26 @@ impl AppState {
     }
 
     pub(super) fn submit_imports(&mut self) {
+        let catalog = self.engine.as_ref().and_then(|e| e.catalog());
+        if catalog.is_none()
+            && self
+                .model
+                .backend
+                .capabilities
+                .iter()
+                .any(|c| c == "describe")
+        {
+            return;
+        }
+        let settings = if catalog
+            .and_then(|catalog| catalog.definition("Inspect"))
+            .and_then(|s| s.pointer("/properties/previews"))
+            .is_some()
+        {
+            json!({"previews":true})
+        } else {
+            json!({})
+        };
         while let Some((id, intent)) = self.imports.pop_front() {
             if self
                 .engine
@@ -115,8 +135,11 @@ impl AppState {
                     .asset(&id)
                     .is_some_and(|a| a.intent == intent)
                 && let Ok(input) = project.capture(&id)
-                && let Err(error) =
-                    self.capture_jobs(vec![project::Job::new("inspect", json!({}), vec![input])])
+                && let Err(error) = self.capture_jobs(vec![project::Job::new(
+                    "inspect",
+                    settings.clone(),
+                    vec![input],
+                )])
             {
                 self.model.error = Some(error);
             }

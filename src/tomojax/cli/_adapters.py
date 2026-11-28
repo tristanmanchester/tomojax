@@ -101,7 +101,7 @@ def execute(command: op.ExecutionInput, context: ex.ExecutionContext) -> ex.Succ
         progress.watch(
             partial(report_event, context),
             control=cast("progress.Control", context.control),
-            previews=isinstance(command, op.Run) and command.previews,
+            previews=isinstance(command, op.Run | op.Inspect) and command.previews,
         ),
     ):
         if isinstance(operation, op.Python):

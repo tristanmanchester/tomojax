@@ -938,3 +938,42 @@ fn capture_batch_state(mut state: AppState, batch: &Path, scan: &Path, scene: &s
 }
 
 mod zoom;
+
+fn import_named(
+    state: &mut AppState,
+    root: &Path,
+    project: &Path,
+    source: &Path,
+    python: &str,
+) -> Instant {
+    let mut tx = Tx::default();
+    Profile::save(
+        "Lab",
+        None,
+        &serde_json::from_value(json!({"python":python,"results":root})).unwrap(),
+    )
+    .unwrap();
+    state.files.new_connection = Some("Lab".into());
+    state.open_project(project, true).unwrap();
+    let relay = root.join("relay");
+    executable(
+        &relay,
+        "#!/bin/sh\nexec \"$TOMOJAX_TEST_PYTHON\" \"$TOMOJAX_TEST_SLOWLINK\" -- \"$TOMOJAX_TEST_WORKER\" \"$@\"\n",
+    );
+    state.engine = session::Session::Named {
+        owner: Box::new(Owner::new(
+            relay,
+            "Lab".into(),
+            &["fetch", "project_results"],
+            state.wake.clone(),
+        )),
+        verified: false,
+    };
+    wait(state, "choose results", |s| s.files.listing.is_some());
+    state.files.first_scan = Some((source.into(), source.is_dir()));
+    let chosen = Instant::now();
+    state.file_action(Action::Accept, &mut tx).unwrap();
+    chosen
+}
+
+mod inspection;
