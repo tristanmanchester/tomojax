@@ -8,5 +8,5 @@
 )]
 pub mod imaging;
 pub mod live;
-pub mod metadata;
+pub use tomojax_io::metadata;
 pub mod volume;

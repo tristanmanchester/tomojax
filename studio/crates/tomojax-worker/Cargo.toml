@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-static-hdf5 = ["hdf5/static", "hdf5/zlib"]
+static-hdf5 = ["tomojax-io/static-hdf5"]
 
 [dependencies]
 tomojax-jobs = { path = "../tomojax-jobs" }
@@ -20,11 +20,6 @@ rustix = { version = "1", features = ["event", "fs", "process", "system"] }
 sha2 = "0.10"
 shlex = "2"
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
-zstd = "0.13"
 npyz = "0.9"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
-ndarray = "0.17"
-half = "2"
-memmap2 = "0.9"
-bytemuck = "1"
+tomojax-io.workspace = true

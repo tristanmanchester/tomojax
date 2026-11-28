@@ -1,0 +1,27 @@
+[package]
+name = "tomojax-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+static-hdf5 = ["hdf5/static", "hdf5/zlib"]
+
+[dependencies]
+anyhow = "1"
+serde.workspace = true
+serde_json.workspace = true
+studio-core.workspace = true
+hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+zstd = "0.13"
+npyz = "0.9"
+ndarray = "0.17"
+half = "2"
+memmap2 = "0.9"
+bytemuck = "1"
+
+[dev-dependencies]
+tempfile.workspace = true

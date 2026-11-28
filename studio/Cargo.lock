@@ -3726,6 +3726,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009dbb7700f11c55ef83aebbe4c0e9cf1f1ac0844bd8d6f00dc38f302026e13a"
 
 [[package]]
+name = "tomojax-io"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "half",
+ "hdf5-metno",
+ "image",
+ "memmap2",
+ "ndarray",
+ "npyz",
+ "serde",
+ "serde_json",
+ "studio-core",
+ "tempfile",
+ "zstd",
+]
+
+[[package]]
 name = "tomojax-jobs"
 version = "0.1.0"
 dependencies = [
@@ -3755,6 +3774,7 @@ dependencies = [
  "serde_json",
  "studio-core",
  "tempfile",
+ "tomojax-io",
  "wgpu",
 ]
 
@@ -3763,12 +3783,7 @@ name = "tomojax-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytemuck",
- "half",
  "hdf5-metno",
- "image",
- "memmap2",
- "ndarray",
  "npyz",
  "rustix 1.1.6",
  "serde",
@@ -3777,9 +3792,9 @@ dependencies = [
  "shlex",
  "studio-core",
  "tempfile",
+ "tomojax-io",
  "tomojax-jobs",
  "zip",
- "zstd",
 ]
 
 [[package]]

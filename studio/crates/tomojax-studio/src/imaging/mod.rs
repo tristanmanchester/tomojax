@@ -1,6 +1,6 @@
 //! Asynchronous scalar data access and bounded caching, independent of numerical jobs.
 mod data;
-mod npy;
+use tomojax_io::npy;
 mod reader;
 mod service;
 

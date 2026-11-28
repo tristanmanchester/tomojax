@@ -14,6 +14,7 @@ static-hdf5 = ["hdf5/static", "hdf5/zlib"]
 
 [dependencies]
 studio-core.workspace = true
+tomojax-io.workspace = true
 rune = { git = "https://github.com/anomalyco/rune", rev = "feac7b155c5f5873ad611e8aa420ad217db5ef16", default-features = false, features = ["embedded-fonts", "tooling", "metal-backend"] }
 serde.workspace = true
 serde_json.workspace = true

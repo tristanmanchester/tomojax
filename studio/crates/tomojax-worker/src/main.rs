@@ -3,11 +3,7 @@ mod executor;
 mod files;
 pub mod inline;
 mod jobs;
-#[path = "../../tomojax-studio/src/metadata.rs"]
-mod metadata;
-#[path = "../../tomojax-studio/src/imaging/npy.rs"]
-mod npy;
-mod pixels;
+use tomojax_io::{metadata, pixels};
 mod session;
 mod transfer;
 mod wire;

@@ -5,7 +5,7 @@ use std::io::{Cursor, Seek};
 use memmap2::{Mmap, MmapOptions};
 use npyz::{DType, Endianness, NpyHeader, TypeChar};
 
-pub(super) struct Npy {
+pub struct Npy {
     map: Mmap,
     offset: usize,
     shape: Vec<usize>,
