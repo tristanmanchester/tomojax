@@ -11,6 +11,7 @@ from PIL import Image
 import pytest
 
 from tests.mcp_client import connection
+import tomojax as tj
 
 pytestmark = pytest.mark.surface
 
@@ -23,6 +24,13 @@ def conversation(directory, *, legacy, executable=None):
     def record(value):
         def visit(item):
             if isinstance(item, dict):
+                if "io.modelcontextprotocol/serverInfo" in item:
+                    identity = item["io.modelcontextprotocol/serverInfo"]
+                    assert identity == {"name": "tomojax", "version": tj.__version__}
+                    item = {
+                        **item,
+                        "io.modelcontextprotocol/serverInfo": {**identity, "version": "VERSION"},
+                    }
                 if item.get("type") == "image":
                     with Image.open(BytesIO(base64.b64decode(item["data"]))) as image:
                         # Compare every decoded pixel, independently of the PNG compressor.
