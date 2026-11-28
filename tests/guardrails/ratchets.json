@@ -73,13 +73,12 @@
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
-    "studio/crates/tomojax-studio/src/app/mod.rs": 975,
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1479,
+    "studio/crates/tomojax-studio/src/app/mod.rs": 967,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1424,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 1053,
-    "studio/crates/tomojax-studio/src/ui/viewer.rs": 999
+    "studio/crates/tomojax-studio/src/ui/viewer.rs": 938
   },
   "studio_long_functions": {
-    "studio/crates/studio-core/src/engine.rs::spawn": 137,
     "studio/crates/studio-core/src/previews.rs::poll": 130,
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
@@ -92,7 +91,6 @@
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 144,
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 126,
     "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 114,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_images": 121,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 275,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 163,
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
@@ -117,9 +115,9 @@
     "studio/crates/tomojax-studio/src/ui/progress.rs::live": 255,
     "studio/crates/tomojax-studio/src/ui/progress.rs::telemetry": 198,
     "studio/crates/tomojax-studio/src/ui/viewer.rs::compare": 151,
-    "studio/crates/tomojax-studio/src/ui/viewer.rs::image": 255,
+    "studio/crates/tomojax-studio/src/ui/viewer.rs::image": 193,
     "studio/crates/tomojax-studio/src/ui/viewer.rs::workspace": 112,
-    "studio/crates/tomojax-studio/src/volume/compositor.rs::render": 118,
+    "studio/crates/tomojax-studio/src/volume/compositor.rs::render": 110,
     "studio/crates/tomojax-studio/src/volume/ray.rs::prepare": 130
   },
   "cuda_kernels": 47,
@@ -164,5 +162,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 140
+  "test_private_imports": 141
 }
