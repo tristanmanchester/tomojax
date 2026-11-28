@@ -43,6 +43,9 @@ struct Key {
     stride: [usize; 3],
 }
 
+const BAND_BYTES: usize = 128 << 20;
+const CACHE_BYTES: usize = 2 * BAND_BYTES;
+
 type Entry<T> = (Key, Arc<Array3<T>>);
 
 pub(super) struct Neighbors<T>(Mutex<VecDeque<Entry<T>>>);
@@ -58,26 +61,23 @@ impl<T: hdf5::H5Type + Send + Copy + From<u8> + From<u16> + From<f32>> Neighbors
         let Some(key) = Key::for_selection::<T>(data, selection) else {
             return selection.read(data);
         };
-        let axis = key.axis;
-        let index = selection.start[axis] - key.start[axis];
+
         let hit = self.0.locked().iter().rev().find_map(|(stored, block)| {
-            if stored.file != key.file || stored.dataset != key.dataset || stored.axis != axis {
+            if stored.file != key.file || stored.dataset != key.dataset || stored.axis != key.axis {
                 return None;
             }
             stored.subgrid(selection).map(|grid| (block.clone(), grid))
         });
-        if let Some((block, grid)) = hit {
-            let mut view = block.view();
-            for (dimension, slice) in grid.into_iter().enumerate() {
-                view.slice_axis_inplace(Axis(dimension), slice);
-            }
-            return Ok(view.iter().copied().collect());
-        }
-        let block = {
+        let (block, grid) = if let Some(hit) = hit {
+            hit
+        } else {
+            let grid = key
+                .subgrid(selection)
+                .expect("new strip covers its own selection");
             let mut region = selection.clone();
             region.start = key.start.to_vec();
             region.count = key.count.to_vec();
-            region.stride[axis] = 1;
+            region.stride = key.stride.to_vec();
             #[cfg(feature = "static-hdf5")]
             let block = super::chunks::read(data, &region);
             #[cfg(not(feature = "static-hdf5"))]
@@ -88,18 +88,22 @@ impl<T: hdf5::H5Type + Send + Copy + From<u8> + From<u16> + From<f32>> Neighbors
                     .read_slice::<T, _, ndarray::Ix3>(region.slab(&region.stride, &region.count))?,
             });
             let mut entries = self.0.locked();
-            // Three orthogonal panes, at most 16 MiB each, for each scalar precision.
-            if entries.len() == 3 {
+            // Keep three orthogonal strips if they fit. Each scalar precision
+            // owns this budget, including densely sampled chunk bands.
+            while entries.len() >= 3
+                || entries.iter().map(|(_, data)| data.len()).sum::<usize>() + values.len()
+                    > CACHE_BYTES / size_of::<T>()
+            {
                 entries.pop_front();
             }
             entries.push_back((key, values.clone()));
-            values
+            (values, grid)
         };
-        Ok(block
-            .index_axis(Axis(axis), index)
-            .iter()
-            .copied()
-            .collect())
+        let mut view = block.view();
+        for (dimension, slice) in grid.into_iter().enumerate() {
+            view.slice_axis_inplace(Axis(dimension), slice);
+        }
+        Ok(view.iter().copied().collect())
     }
 }
 
@@ -133,7 +137,8 @@ impl Key {
     fn for_selection<T>(data: &hdf5::Dataset, selection: &Selection) -> Option<Self> {
         let mut count: [usize; 3] = selection.count.as_slice().try_into().ok()?;
         let axis = count.iter().position(|n| *n == 1)?;
-        let chunk = data.chunk()?[axis];
+        let chunks = data.chunk()?;
+        let chunk = chunks[axis];
         let width = chunk.min((16 << 20) / (count.iter().product::<usize>() * size_of::<T>()));
         if width < 2 || data.filters().is_empty() {
             return None;
@@ -141,10 +146,32 @@ impl Key {
         let mut start: [usize; 3] = selection.start.as_slice().try_into().ok()?;
         let mut stride: [usize; 3] = selection.stride.as_slice().try_into().ok()?;
         let chunk_start = start[axis] / chunk * chunk;
-        let chunk_end = (chunk_start + chunk).min(selection.shape[axis]);
-        start[axis] = chunk_start + (start[axis] - chunk_start) / width * width;
-        count[axis] = width.min(chunk_end - start[axis]);
+        let chunk_end = chunk_start.saturating_add(chunk).min(selection.shape[axis]);
         stride[axis] = 1;
+        // If the preview already touches every intersecting chunk, decompression
+        // has paid for the skipped samples too. Retain the chunk boundaries so
+        // another stride, a zoom or an exact plane can reuse the same values.
+        let bounds: [_; 3] = std::array::from_fn(|a| {
+            let last = start[a] + (count[a] - 1) * stride[a];
+            let extent = chunks[a];
+            let end = (last / extent * extent).saturating_add(extent);
+            (start[a] / extent * extent)..end.min(selection.shape[a])
+        });
+        let dense = bounds.each_ref().map(|r| r.len());
+        if stride.iter().any(|&s| s > 1)
+            && stride.iter().zip(&chunks).all(|(s, chunk)| s <= chunk)
+            && dense
+                .into_iter()
+                .try_fold(size_of::<T>(), usize::checked_mul)
+                .is_some_and(|bytes| bytes <= BAND_BYTES)
+        {
+            start = bounds.map(|r| r.start);
+            count = dense;
+            stride = [1; 3];
+        } else {
+            start[axis] = chunk_start + (start[axis] - chunk_start) / width * width;
+            count[axis] = width.min(chunk_end - start[axis]);
+        }
         Some(Self {
             file: Version::of(data)?,
             dataset: data.name(),
@@ -197,6 +224,18 @@ mod tests {
             cache.read(&a, &crop).unwrap(),
             crop.read::<f32>(&a).unwrap()
         );
+        // An unsampled corner and neighboring x plane use the already inflated
+        // edge chunks, even though neither lay on the preview's sampling grid.
+        let exact = Selection {
+            shape: vec![7, 11, 13],
+            start: vec![0, 0, 12],
+            stride: vec![1; 3],
+            count: vec![7, 10, 1],
+        };
+        assert_eq!(
+            cache.read(&a, &exact).unwrap(),
+            exact.read::<f32>(&a).unwrap()
+        );
         assert_eq!(cache.0.locked().len(), 1);
         let replacement = tmp.path().join("replacement.h5");
         write(&replacement, 50000.);
@@ -207,6 +246,34 @@ mod tests {
         // An in-flight selection of the old inode still addresses its own samples.
         assert_ne!(cache.read(&a, &s).unwrap(), cache.read(&b, &s).unwrap());
     }
+    #[test]
+    fn skipped_chunks_and_wide_bands_keep_the_sampled_grid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = hdf5::File::create(tmp.path().join("wide.h5")).unwrap();
+        // Unwritten chunks occupy no file storage.
+        let data = file
+            .new_dataset::<u16>()
+            .shape([2560; 3])
+            .chunk([8, 128, 128])
+            .deflate(1)
+            .create("v")
+            .unwrap();
+        let mut s = Selection {
+            shape: vec![2560; 3],
+            start: vec![0, 17, 0],
+            stride: vec![4, 1, 4],
+            count: vec![640, 1, 640],
+        };
+        let large = Key::for_selection::<f32>(&data, &s).unwrap();
+        assert_eq!(large.stride, [4, 1, 4]);
+        assert!(large.count.iter().product::<usize>() * size_of::<f32>() <= 16 << 20);
+        s.stride[0] = 16;
+        s.count = vec![3, 1, 5];
+        let sparse = Key::for_selection::<f32>(&data, &s).unwrap();
+        assert_eq!(sparse.stride, [16, 1, 4]);
+        assert_eq!(sparse.count, [3, 128, 5]);
+    }
+
     #[test]
     fn external_links_keep_the_versions_of_their_open_target_files() {
         let tmp = tempfile::tempdir().unwrap();
