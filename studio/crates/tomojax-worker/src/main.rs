@@ -3,6 +3,7 @@ mod executor;
 mod files;
 pub mod inline;
 mod jobs;
+mod mcp;
 use tomojax_io::{metadata, pixels};
 mod results;
 mod session;
@@ -238,6 +239,7 @@ fn main() -> std::process::ExitCode {
                 }
             };
         }
+        Some("mcp") => mcp::run(args),
         Some("job") => match jobs::run(args) {
             Ok(code) => return std::process::ExitCode::from(code),
             Err(error) => Err(error),
@@ -245,7 +247,7 @@ fn main() -> std::process::ExitCode {
         Some("serve") => Options::parse(args).and_then(serve),
         Some("--help" | "-h") => {
             println!(
-                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--sbatch OPTIONS] [--idle-exit SECONDS]\n       tomojax-worker job DIR"
+                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--sbatch OPTIONS] [--idle-exit SECONDS]\n       tomojax-worker job DIR\n       tomojax-worker mcp [--connection NAME]"
             );
             Ok(())
         }

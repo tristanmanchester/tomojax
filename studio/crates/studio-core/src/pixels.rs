@@ -30,6 +30,15 @@ pub struct Pixels {
 }
 
 impl Pixels {
+    /// Attach the binary blocks covered by this terminal before decoding its samples.
+    pub fn attach(&mut self, payload: Vec<u8>) -> Result<(), String> {
+        if payload.len() != self.bytes {
+            return Err("Incomplete worker pixel payload".into());
+        }
+        self.payload = payload;
+        Ok(())
+    }
+
     fn shuffled<const N: usize>(
         &self,
         shape: &[usize],

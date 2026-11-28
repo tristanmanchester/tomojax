@@ -174,13 +174,11 @@ impl<R: BufRead> WireReader<R> {
                     result: ResultValue::Pixels(pixels),
                     ..
                 } => {
-                    pixels.payload = self
+                    let payload = self
                         .partial
                         .remove(request)
                         .ok_or("Pixel terminal without any blocks")?;
-                    if pixels.payload.len() != pixels.bytes {
-                        return Err("Incomplete worker pixel payload".into());
-                    }
+                    pixels.attach(payload)?;
                 }
                 response if response.terminal() => {
                     if let Some(id) = response.request() {
