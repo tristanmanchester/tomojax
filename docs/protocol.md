@@ -59,13 +59,13 @@ working images and phantoms have axes `(z, y, x)`.
 
 ## Fetching a plane
 
-Give `fetch` the storage and shape from the array descriptor. It reads on the I/O threads while the executor works or waits. This request selects every second sample of a volume plane.
+Give `fetch` the storage and shape from the array descriptor. It reads on the I/O threads while the executor works or waits. This request reads every second row and column of a stored plane.
 
 ```json
-{"id":"p1","channel":"axial","command":{"type":"fetch","storage":{"type":"hdf5","path":"volume.nxs","dataset":"/entry/volume/data"},"shape":[100,1024,1024],"roi":[[7,8],[0,1024],[0,1024]],"stride":[1,2,2],"encoding":"jpeg","window":[-2,2]}}
+{"id":"p1","channel":"axial","command":{"type":"fetch","storage":{"type":"npy","path":"slice.npy"},"shape":[1024,1024],"stride":[2,2],"encoding":"jpeg","window":[-2,2]}}
 ```
 
-Supply half-open bounds and positive strides in descriptor order. A stored line detector with shape `(view,u)` can use its registered shape `(view,1,u)`. The result keeps the singleton axes. Use the descriptor for coordinates and units. The decoded plane can occupy up to 16 MiB.
+For a volume with shape `[100,1024,1024]`, set `roi` to `[[7,8],[0,1024],[0,1024]]` and `stride` to `[1,2,2]` to sample plane 7. Bounds are half-open and follow descriptor order. A stored line detector with shape `(view,u)` can use its registered shape `(view,1,u)`. The result keeps the singleton axes. Use the descriptor for coordinates and units. The decoded plane can occupy up to 16 MiB.
 
 For `jpeg`, the worker maps the two window limits to grey levels 0 and 255, clips outside values and encodes an 8-bit grayscale JPEG at quality 60. A null or omitted window selects the finite minimum and maximum. A zero-width window or a non-finite sample maps to level 0. The terminal reports the window in `range`. For `float32`, decompress the frame with zstd. The four consecutive byte planes hold byte 0 of every little-endian float, then byte 1, byte 2 and byte 3, in C sample order.
 
