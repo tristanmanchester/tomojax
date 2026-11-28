@@ -292,19 +292,25 @@ pub fn peek(path: &Path) -> Result<Value> {
         );
     }
     if signature(path)? {
+        // Open members by name: an external link resolves into its own file, whose
+        // object tokens mean nothing in this one. Names are paths in this file.
         let file = hdf5::File::open(path)?;
-        let mut groups = vec![file.group("/")?];
+        let mut groups = vec![(String::new(), file.group("/")?)];
         let mut visited = Vec::new();
-        while let Some(group) = groups.pop() {
-            let token = group.loc_info()?.token;
-            if visited.contains(&token) {
+        while let Some((prefix, group)) = groups.pop() {
+            let info = group.loc_info()?;
+            if visited.contains(&(info.fileno, info.token)) {
                 continue;
             }
-            visited.push(token);
-            for data in group.datasets()? {
-                datasets.insert(data.name(), json!({"shape":data.shape(),"dtype":data.dtype()?.to_descriptor()?.to_string()}));
+            visited.push((info.fileno, info.token));
+            for name in group.member_names()? {
+                let member = format!("{prefix}/{name}");
+                if let Ok(child) = group.group(&name) {
+                    groups.push((member, child));
+                } else if let Ok(data) = group.dataset(&name) {
+                    datasets.insert(member, json!({"shape":data.shape(),"dtype":data.dtype()?.to_descriptor()?.to_string()}));
+                }
             }
-            groups.extend(group.groups()?);
         }
     } else if path.extension().is_some_and(|s| s == "npz") {
         let mut archive = zip::ZipArchive::new(File::open(path)?)?;
@@ -333,6 +339,52 @@ pub fn peek(path: &Path) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peek_follows_external_links_and_names_datasets_by_their_path_in_the_master() {
+        // A NeXus master as GDA writes it: its detector group lives in another file.
+        let tmp = tempfile::tempdir().unwrap();
+        let other = hdf5::File::create(tmp.path().join("imaging.h5")).unwrap();
+        // Objects ahead of the linked group give it a token the master does not hold.
+        for i in 0..8 {
+            other
+                .new_dataset::<u8>()
+                .shape([i + 1])
+                .create(format!("pad{i}").as_str())
+                .unwrap();
+        }
+        let detector = other
+            .create_group("entry")
+            .unwrap()
+            .create_group("detector")
+            .unwrap();
+        detector
+            .new_dataset::<u16>()
+            .shape([5, 3, 4])
+            .create("data")
+            .unwrap();
+        drop((detector, other));
+        let master = hdf5::File::create(tmp.path().join("scan.nxs")).unwrap();
+        let entry = master.create_group("entry").unwrap();
+        entry
+            .new_dataset::<f64>()
+            .shape([5])
+            .create("rotation_angle")
+            .unwrap();
+        entry
+            .link_external("imaging.h5", "/entry/detector", "imaging")
+            .unwrap();
+        drop((entry, master));
+
+        let peeked = peek(&tmp.path().join("scan.nxs")).unwrap();
+        assert_eq!(
+            peeked["datasets"],
+            json!({
+                "/entry/imaging/data": {"shape": [5, 3, 4], "dtype": "uint16"},
+                "/entry/rotation_angle": {"shape": [5], "dtype": "float64"},
+            })
+        );
+    }
 
     #[test]
     fn publish_on_gpfs_keeps_the_first_copy_and_refuses_an_existing_empty_directory() {
