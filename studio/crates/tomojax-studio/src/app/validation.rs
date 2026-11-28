@@ -692,7 +692,7 @@ impl AppState {
                         } else {
                             self.validation.next = Next::Complete;
                             self.validation
-                                .status(Phase::Valid, "Settings validated by TomoJAX.");
+                                .status(Phase::Valid, "Settings checked by TomoJAX.");
                         }
                     }
                     (plan, Work::Plan) if plan.is_plan() => {
@@ -700,7 +700,7 @@ impl AppState {
                         self.validation.view.plan_inputs = self.validation.input_context.clone();
                         self.validation.next = Next::Complete;
                         self.validation
-                            .status(Phase::Valid, "Settings and plan are current.");
+                            .status(Phase::Valid, "Settings and plan checked by TomoJAX.");
                     }
                     _ => {
                         self.validation.next = Next::Complete;

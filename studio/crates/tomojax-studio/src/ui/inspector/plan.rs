@@ -83,12 +83,20 @@ fn plan_placement(placement: &Placement) -> El {
         .child(property(
             "Placement",
             match placement.strategy.as_str() {
-                "resident" => "Resident",
-                "slabbed" => "Slabbed",
+                "resident" => "Whole volume in memory",
+                "slabbed" => "In slabs",
                 other => other,
             },
         ))
-        .child(property("Devices", placement.devices.join(", ")))
+        .child(property(
+            "Devices",
+            placement
+                .devices
+                .iter()
+                .map(|d| device_name(d))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ))
         .child(property(
             "Estimated host memory",
             memory_bytes(placement.host_bytes),
@@ -101,7 +109,11 @@ fn plan_placement(placement: &Placement) -> El {
         if let Some(available) = snapshot.available {
             content = content.child(
                 property(
-                    &format!("Available · {} / {}", snapshot.device, snapshot.scope),
+                    &if snapshot.scope == "host" {
+                        "Available host memory".to_owned()
+                    } else {
+                        format!("Available on {}", device_name(&snapshot.device))
+                    },
                     memory_bytes(available),
                 )
                 .help(format!("Worker snapshot time: {} seconds", snapshot.time)),
@@ -109,6 +121,15 @@ fn plan_placement(placement: &Placement) -> El {
         }
     }
     content
+}
+
+/// A JAX device as people name it: `gpu:0` reads GPU 0, the CPU reads CPU.
+fn device_name(device: &str) -> String {
+    match device.split_once(':') {
+        Some(("cpu", _)) => "CPU".into(),
+        Some((kind, index)) => format!("{} {index}", kind.to_uppercase()),
+        None => device.into(),
+    }
 }
 
 fn memory_bytes(bytes: u64) -> String {
