@@ -131,6 +131,7 @@ pub struct AppState {
     imports: VecDeque<String>,
     running: Option<Running>,
     wake: rune::Waker,
+    window_wake: std::sync::Arc<std::sync::OnceLock<rune::Waker>>,
     local_send: mpsc::Sender<LocalMessage>,
     local_receive: mpsc::Receiver<LocalMessage>,
     local_tasks: HashMap<String, LocalTask>,
@@ -171,6 +172,8 @@ impl AppState {
         let (local_send, local_receive) = mpsc::channel();
         let preference_result = Preferences::load();
         let preference_error = preference_result.as_ref().err().cloned();
+        let window_wake = std::sync::Arc::new(std::sync::OnceLock::<rune::Waker>::new());
+        let event_wake = window_wake.clone();
         let mut state = Self {
             ui: UiState::default(),
             model: UiModel::default(),
@@ -189,7 +192,12 @@ impl AppState {
             control_watch: None,
             imports: VecDeque::new(),
             running: None,
-            wake: std::sync::Arc::new(|| {}),
+            wake: std::sync::Arc::new(move || {
+                if let Some(wake) = event_wake.get() {
+                    wake();
+                }
+            }),
+            window_wake,
             local_send,
             local_receive,
             local_tasks: HashMap::new(),
@@ -248,7 +256,7 @@ impl AppState {
     }
 
     pub fn setup(&mut self, wake: rune::Waker) {
-        self.wake = wake.clone();
+        let _ = self.window_wake.set(wake.clone());
         self.imaging.set_waker(wake.clone());
         self.live.set_waker(wake.clone());
         if std::env::var_os("TOMOJAX_STUDIO_OFFLINE").is_some() || rune::tooling::is_headless() {

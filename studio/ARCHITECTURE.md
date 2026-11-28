@@ -2,15 +2,17 @@
 
 ## Ownership
 
-The Python worker owns tomography operations, numerical arrays, progress,
+The Python executor owns tomography operations, numerical arrays, progress,
 validation, cancellation at work boundaries and committed scientific exports. The Rust
 application owns projects, durable asset identities, parameter drafts, the local
 job queue and display preferences. The renderer owns GPU resources derived from
 registered scalar data. A display operation never mutates a numerical input.
 
-Studio is a Cargo workspace of two crates. `studio-core` holds the state that
-needs no window, GPU or HDF5 library. `tomojax-studio` depends on it and adds
-native array reading, rendering, the Rune views and the `tomojax-studio` binary.
+The workspace separates the desktop application from the worker on the data host.
+`tomojax-studio` handles rendering and Rune views. `studio-core` holds the
+project, connection and worker client. `tomojax-worker` owns the session pipes,
+request admission, executor and file transfers. It uses `tomojax-io` for NPY
+and HDF5 selections, headers and pixel encoding, and `tomojax-jobs` for jobs.
 `tests/test_architecture.py` reads `Cargo.lock` and fails if `studio-core` comes
 to depend on Rune, wgpu, winit or HDF5, so its tests build and run without them:
 
@@ -35,13 +37,12 @@ cargo test --manifest-path studio/Cargo.toml -p studio-core
 | `app/projection.rs` | Which selected inputs a forward or back projection reads (geometry, volume or projections), chosen once for preflight, the worker command and the result's parent |
 | `app/previewing.rs` | Edit intents to preview requests, and explicit Keep |
 | `live.rs` | Coherent registered solver previews, pose tables and artifact read leases |
-| `metadata.rs` | Native stored-array registration and official inspection/product interpretation |
-| `imaging/` | Numeric NPY/HDF5 readers, bounded scalar cache, coalescing requests and prefetch |
+| `imaging/` | Registered display geometry, worker-backed plane and volume reads, bounded scalar cache |
 | `volume/` | Scalar image shaders, transfer textures and volume ray casting within Rune |
 | `preferences.rs` | Recent projects and keyboard shortcuts |
 | `ui/` | Native layout, controls, scientific overlays and presentation-only drafts |
 
-The library target holds `imaging`, `live`, `metadata` and `volume`; the binary
+The library target holds `imaging`, `live` and `volume`; the binary
 holds `app`, `forms`, `preferences` and `ui`. `forms.rs` keeps its drafts in
 Rune `TextEdit`s inside `UiState`, shortcuts are Rune chords, and `live.rs` reads
 previews through `imaging`, so these stay out of `studio-core`.
@@ -64,8 +65,8 @@ the project; routine model refreshes do not copy every metric sample.
 
 ## Requests and jobs
 
-The native bridge launches the same interpreter selected by `tomojax studio` and
-runs `tomojax serve`. Requests have unique string IDs. Transport threads read and
+The native bridge launches its sibling `tomojax-worker serve`. The worker starts
+the interpreter selected by `tomojax studio` and forwards numerical requests to it. Requests have unique string IDs. Transport threads read and
 write bounded messages without blocking Rune's event loop. Stderr is diagnostic
 output, never a protocol source.
 
@@ -128,10 +129,10 @@ Reconstruction and alignment request live preview artifacts when enabled.
 The live reader loads each preview's registered z/y/x planes and full-precision
 pose table together. The previous coherent frame remains visible while its
 replacement loads. Reference-counted read leases prevent supersession, clearing
-or prefetch cancellation from releasing a file beneath a native reader. Releases
+or cancellation from releasing a file during a worker read. Releases
 are deduplicated; disconnect clears the old session's token ledger before reuse.
 Successful result handles also own their request's preview artifacts. Studio
-defers closing these handles until native reads finish, queues preview releases
+defers closing these handles until worker reads finish, queues preview releases
 before the close, and retains the decoded frame for display. Cleanup admission
 uses the same ordered retry queue as temporary previews.
 
@@ -177,13 +178,12 @@ worker failed to commit.
 ## Registered scientific viewing
 
 Array descriptors carry storage, shape, dtype, named axes, coordinate frames,
-units and fixed coordinates. Native I/O reads bounded hyperslabs or memory-mapped
-numeric NPY arrays. Stored axis permutations, signed spacing and irregular view
+units and fixed coordinates. The worker reads bounded hyperslabs from HDF5 and numeric NPY arrays. Stored axis permutations, signed spacing and irregular view
 coordinates remain explicit. The application maps physical z/y/x controls onto
 the stored axis names.
 
 The project manifest's optional `connection` selects the plane source for all its
-assets. Local projects use native readers. On a worker connection, `Imaging`
+assets. Local projects connect to a sibling worker over pipes. `Imaging`
 requests a windowed JPEG up to 512 pixels across while moving. Each pane keeps
 its newest wanted index while a JPEG is in flight. Once the index settles, the
 pane requests float32 samples at its displayed size. Moving again supersedes
@@ -196,13 +196,14 @@ One decoder serves the connection and can replace a waiting JPEG with a newer
 one for the same slot. The slot checks its generation and source before
 installing a frame. An interim JPEG carries its own coordinates. The probe,
 profiles, measurements and histogram use only settled samples. A disconnect
-clears the old planes. The development relay shares the local filesystem for
-native volume reads, metadata, coordinate vectors and pose tables.
+clears the old planes. Volume reads, metadata, coordinate vectors and pose tables use the same worker.
+Local volume views fetch float32 for the original finite-value statistics and
+texture. Remote volume views use uint16 over their reported scalar range.
 
 The scalar cache has a 512 MiB default budget. Active decoded views and a bounded
 number of in-flight loads also consume memory; this is a cache budget, not a hard
 process RSS limit. New slice requests supersede old requests for the same slot.
-Coarse data can arrive before refinement, and adjacent planes are prefetched.
+A moving frame can arrive before its lossless replacement.
 Project replacement, relinking and authoritative metadata refresh call
 `Imaging::invalidate()` before requesting new views. Its generation rejects late
 reads from the old source. Ordinary navigation does not stat source files.
@@ -239,6 +240,5 @@ the numerical worker's execution queue.
 
 ## Build
 
-The native binary depends on HDF5 and the platform graphics libraries and is
-built from the source checkout. The Python launcher, `tomojax studio`, is part of
+The worker links HDF5 and Studio links the platform graphics libraries. The source build and Studio wheel place both executables together. The Python launcher, `tomojax studio`, is part of
 TomoJAX.

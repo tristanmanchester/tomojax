@@ -204,7 +204,13 @@ impl AppState {
 
     pub(super) fn request_native_volume(&mut self, volume: crate::protocol::ArrayDescriptor) {
         if self.native_data_available() {
-            if let Err(error) = self.imaging.request_volume(8, volume, 192) {
+            use studio_core::pixels::Encoding;
+            let encoding = if self.relay.is_none() && self.remote_project().is_none() {
+                Encoding::Float32
+            } else {
+                Encoding::Uint16
+            };
+            if let Err(error) = self.imaging.request_volume(8, volume, 192, encoding) {
                 self.model.error = Some(error);
             }
         } else {

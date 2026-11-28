@@ -10,7 +10,7 @@ mod stream;
 pub use stream::{FrameQueue, PaneStream};
 pub(crate) mod wire;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
     Float32,
@@ -59,6 +59,13 @@ impl Pixels {
             .map(f64::from_le_bytes)
             .collect())
     }
+    pub fn floats(&self, shape: &[usize]) -> Result<Vec<f32>, String> {
+        Ok(self
+            .shuffled(shape, Encoding::Float32)?
+            .into_iter()
+            .map(f32::from_le_bytes)
+            .collect())
+    }
     pub fn volume(&self, shape: &[usize]) -> Result<Vec<f32>, String> {
         let [lo, hi] = self.range.ok_or("Volume has no scalar range")?;
         Ok(self
@@ -76,11 +83,7 @@ impl Pixels {
             return Err("Worker returned a different pixel selection or encoding".into());
         }
         match encoding {
-            Encoding::Float32 => Ok(self
-                .shuffled(&selection.count, encoding)?
-                .into_iter()
-                .map(f32::from_le_bytes)
-                .collect()),
+            Encoding::Float32 => self.floats(&selection.count),
             Encoding::Float64 | Encoding::Uint16 => Err("Expected a plane encoding".into()),
             Encoding::Jpeg => {
                 let [low, high] = self

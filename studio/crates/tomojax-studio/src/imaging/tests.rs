@@ -168,7 +168,14 @@ fn signed_spacings_orient_volumes_without_changing_quantitative_slice_order() {
     let plane = reader::plane(&worker.files(), &desc, 0, 0, 64).unwrap();
     assert_eq!(plane.sample(0, 0), Some(0.));
     assert_eq!(plane.axes[1].coordinate(4.), -4.);
-    let volume = reader::volume(&worker.files(), &desc, 64, &|| false).unwrap();
+    let volume = reader::volume(
+        &worker.files(),
+        &desc,
+        64,
+        studio_core::pixels::Encoding::Float32,
+        &|| false,
+    )
+    .unwrap();
     assert_eq!(volume.extent, [2.5, 8., 9.]);
     assert_eq!(volume.origin, [-4., 4., 11.]);
     let first = half::f16::from_bits(volume.texels[0]).to_f32() * 234.;

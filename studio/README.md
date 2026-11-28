@@ -56,7 +56,7 @@ Choose **Create a project**, name its folder, and add acquisitions in **Prepare*
 
 - **Referenced vs managed copies:** by default, Studio references files in place. Enable **Copy sources into the project** before importing to stage managed copies under `inputs/` while leaving originals untouched. For header-driven formats such as Nikon `.xtekct` or SkyScan `.log`, copying brings along the whole acquisition folder. Reference HDF5 files that use external links, virtual datasets, or external raw storage in place.
 - **Supported formats:** NXtomo/HDF5, Data Exchange, ESRF Bliss/EDF/PyHST, Nikon `.xtekct`, Zeiss `.txrm`, SkyScan logs, PSI cSAXS `.mat`, TIFF stacks, and numeric `.npy` arrays. Convert `.npz` archives to NXtomo with `tomojax correct scan.npz -o scan.nxs` before importing.
-- **Native preview and full inspection:** standard NXtomo/HDF5 metadata and initial views load directly in Studio's native I/O threads without waiting for the worker. Click **Inspect dataset** to run TomoJAX's full inspection report, including projection statistics across the stack.
+- **Native preview and full inspection:** standard NXtomo/HDF5 metadata and initial views load through the Rust worker while the numerical executor starts. Click **Inspect dataset** to run TomoJAX's full inspection report, including projection statistics across the stack.
 - **Saved datasets:** Studio reads the registration and default plot of format-2 TomoJAX files directly. Opening an rc6 file gives the Python commands to re-save it before importing.
 - **Calibration:** use **Open & calibrate** when an acquisition needs explicit loader settings (raw-frame kind, flats, darks, angles, pixel pitch, or declared geometry). The form is generated from the worker's parameter schema and reports any missing fields before queuing.
 
@@ -183,7 +183,7 @@ TOMOJAX_STUDIO_SLOWLINK='["'"$PWD"'/tools/slowlink.py","--rate","1200000","--del
 just studio-verify
 ```
 
-Studio is two crates: `studio-core` (projects, the worker protocol, jobs and previews) and `tomojax-studio` (native I/O, rendering, views and the binary). `studio-core` builds without Rune, wgpu or HDF5, so `cargo test --manifest-path studio/Cargo.toml -p studio-core` checks the protocol, manifest and state-machine logic in seconds.
+Studio and its worker share a Cargo workspace. `studio-core` handles projects, the worker client and previews. `tomojax-studio` renders the desktop. `tomojax-worker` serves files and manages the Python executor, using `tomojax-io` for storage and `tomojax-jobs` for job execution. `studio-core` builds without Rune, wgpu or HDF5, so `cargo test --manifest-path studio/Cargo.toml -p studio-core` checks the protocol, manifest and state-machine logic in seconds.
 
 The `--ignored` suite exercises the live Python worker (preview supersession, validation, plans, pause/cancel boundaries, and durable saves), checks the native NXtomo reader against what `tj.load` and `tj.inspect` read from files TomoJAX writes, and checks GPU rendering pixels and opacity against analytic expectations.
 

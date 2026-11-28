@@ -189,6 +189,7 @@ pub(super) fn volume(
     files: &FileReads,
     descriptor: &ArrayDescriptor,
     max_edge: usize,
+    encoding: Encoding,
     canceled: &dyn Fn() -> bool,
 ) -> Result<VolumeData, String> {
     validate(descriptor)?;
@@ -209,7 +210,7 @@ pub(super) fn volume(
         .iter()
         .map(|n| n.div_ceil(stride))
         .collect();
-    let values = volume_samples(files, descriptor, &count, stride, canceled)?;
+    let values = volume_samples(files, descriptor, &count, stride, encoding, canceled)?;
     let statistics = statistics(&values)?;
     let range = [statistics.min, statistics.max];
     let span = (range[1] - range[0]).max(f32::EPSILON);
@@ -281,11 +282,13 @@ fn volume_samples(
     descriptor: &ArrayDescriptor,
     count: &[usize],
     stride: usize,
+    encoding: Encoding,
     canceled: &dyn Fn() -> bool,
 ) -> Result<Vec<f32>, String> {
     let mut values = Vec::with_capacity(count.iter().product());
     // A 256-cubed volume exceeds the per-selection limit. Split it across z.
-    let slab_depth = ((16 << 20) / (2 * count[1] * count[2])).max(1);
+    let sample_bytes = if encoding == Encoding::Float32 { 4 } else { 2 };
+    let slab_depth = ((16 << 20) / (sample_bytes * count[1] * count[2])).max(1);
     for first in (0..count[0]).step_by(slab_depth) {
         if canceled() {
             return Err("Volume loading was superseded.".into());
@@ -297,8 +300,14 @@ fn volume_samples(
             [0, descriptor.shape[2]],
         ];
         let command = json!({"type":"fetch","storage":descriptor.storage,"shape":descriptor.shape,
-            "roi":roi,"stride":[stride,stride,stride],"encoding":"uint16"});
-        values.extend(pixels(files, command)?.volume(&[end - first, count[1], count[2]])?);
+            "roi":roi,"stride":[stride,stride,stride],"encoding":encoding});
+        let frame = pixels(files, command)?;
+        let shape = [end - first, count[1], count[2]];
+        values.extend(if encoding == Encoding::Float32 {
+            frame.floats(&shape)?
+        } else {
+            frame.volume(&shape)?
+        });
     }
     Ok(values)
 }

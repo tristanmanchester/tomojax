@@ -101,7 +101,9 @@ fn fetched_planes_match_native_npy_and_hdf5_bit_for_bit() {
     let mut engine = worker(&[]);
     let mut images = Imaging::default();
     images.bind(&engine);
-    images.request_volume(8, hdf.clone(), 32).unwrap();
+    images
+        .request_volume(8, hdf.clone(), 32, studio_core::pixels::Encoding::Uint16)
+        .unwrap();
     images.request_plane(1, npy.clone(), 0, 0, 32).unwrap();
     // Scroll before polling either completion. Both slots must retain their registration.
     for desc in [&npy, &hdf] {

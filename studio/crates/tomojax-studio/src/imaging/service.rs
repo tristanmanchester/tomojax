@@ -1,4 +1,4 @@
-//! Registered view slots shared by the native readers and the worker pixel source.
+//! Registered worker-backed plane and volume views.
 mod remote;
 use remote::Remote;
 use std::collections::{BTreeSet, HashMap, VecDeque};
@@ -7,6 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 use studio_core::{
     engine::{Engine, FileReads},
+    pixels::Encoding,
     protocol::Response,
 };
 
@@ -41,6 +42,7 @@ struct Key {
     source: Arc<str>,
     plane: Option<(usize, usize)>,
     edge: usize,
+    encoding: Encoding,
 }
 
 #[derive(Clone)]
@@ -256,7 +258,13 @@ impl Imaging {
             .map(|(_, &length)| length)
             .max()
             .unwrap_or(max_edge);
-        self.request(slot, descriptor, Some((axis, index)), max_edge.min(longest))
+        self.request(
+            slot,
+            descriptor,
+            Some((axis, index)),
+            max_edge.min(longest),
+            Encoding::Float32,
+        )
     }
 
     pub fn request_volume(
@@ -264,6 +272,7 @@ impl Imaging {
         slot: u32,
         descriptor: ArrayDescriptor,
         max_edge: usize,
+        encoding: Encoding,
     ) -> Result<(), String> {
         reader::validate(&descriptor)?;
         if descriptor.shape.len() != 3 {
@@ -274,7 +283,7 @@ impl Imaging {
                 "Volume preview quality must be between 32 and 256 voxels per edge.".into(),
             );
         }
-        self.request(slot, descriptor, None, max_edge)
+        self.request(slot, descriptor, None, max_edge, encoding)
     }
 
     fn request(
@@ -283,6 +292,7 @@ impl Imaging {
         descriptor: ArrayDescriptor,
         plane: Option<(usize, usize)>,
         edge: usize,
+        encoding: Encoding,
     ) -> Result<(), String> {
         if self.events.is_none() {
             return Err("The image reader has been shut down.".into());
@@ -294,6 +304,7 @@ impl Imaging {
                 .into(),
             plane,
             edge,
+            encoding,
         };
         if self
             .slots
@@ -546,6 +557,7 @@ fn load(shared: &Shared, request: &Request, key: &Key) -> Result<(Asset, bool), 
         &files,
         &request.descriptor,
         key.edge,
+        key.encoding,
         &|| !current(shared, request),
     )?));
     shared.cache.locked().insert(key.clone(), asset.clone());

@@ -311,6 +311,13 @@ def capture(binary: Path, out_dir: Path, viewport: Viewport, *, live_export: boo
                 raise ValueError(f"Studio capture failed for {label}: {error}") from error
 
         if live_export:
+            # The export test runs the debug Studio and starts its sibling worker.
+            _ = subprocess.run(
+                ["cargo", "build", "--locked", "-p", "tomojax-worker"],
+                cwd=STUDIO,
+                env=env,
+                check=True,
+            )
             path = stage / "export.png"
             env.pop("TOMOJAX_STUDIO_INPUT", None)
             fixture = subprocess.run(
