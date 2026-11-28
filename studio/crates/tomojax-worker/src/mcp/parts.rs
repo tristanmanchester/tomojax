@@ -148,16 +148,27 @@ fn fitting_prefix(reply: &mut Value, key: &str, value: &Value) -> Option<Value> 
     let prefix = |n| match value {
         Value::Array(v) => Value::Array(v[..n].to_vec()),
         Value::String(v) => Value::String(v.chars().take(n).collect()),
-        Value::Object(v) => Value::Object(v.iter().take(n).map(|(k,v)|(k.clone(),v.clone())).collect()),
+        Value::Object(v) => Value::Object(
+            v.iter()
+                .take(n)
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        ),
         _ => unreachable!(),
     };
     let (mut lo, mut hi) = (0, len);
     while lo < hi {
         let mid = lo + (hi - lo).div_ceil(2);
         reply["structuredContent"][key] = prefix(mid);
-        if cost(reply) <= REPLY_BUDGET { lo = mid; } else { hi = mid - 1; }
+        if cost(reply) <= REPLY_BUDGET {
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
     }
-    reply["structuredContent"].as_object_mut()?.shift_remove(key);
+    reply["structuredContent"]
+        .as_object_mut()?
+        .shift_remove(key);
     (lo > 0).then(|| prefix(lo))
 }
 
@@ -171,7 +182,9 @@ fn cost(value: &Value) -> usize {
         for item in items {
             item["_meta"] = Value::Null;
             item["annotations"] = Value::Null;
-            if item["type"] != "image" {continue;}
+            if item["type"] != "image" {
+                continue;
+            }
             let Some(Value::String(data)) = item.as_object_mut().and_then(|o| o.remove("data"))
             else {
                 return usize::MAX;

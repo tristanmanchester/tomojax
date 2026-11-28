@@ -25,11 +25,15 @@ pub fn list() -> Vec<Value> {
          json!({"operation":{"type":"object","properties":{"type":{"enum":super::jobs::OPERATIONS}},"required":["type"]},"results":{"type":"string"}}),vec!["operation"]),
         ("jobs","List durable jobs, or read a job by ID and byte offset. Use the returned offset to request new records.",
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
+        ("download","Copy one worker file to a new file on the laptop. A relative destination uses the project directory.",
+         json!({"path":{"type":"string"},"to":{"type":"string"}}),vec!["path","to"]),
+        ("upload","Copy one laptop file to a new file on the connected machine. A relative source uses the project directory.",
+         json!({"from":{"type":"string"},"path":{"type":"string"}}),vec!["from","path"]),
         ("cancel_job","Request cancellation of a durable job by ID.",json!({"job":{"type":"string"},"results":{"type":"string"}}),vec!["job"]),
     ].into_iter().map(|(name,description,properties,required)| {
         let schema=if name=="submit" {super::jobs::submission_schema()} else {json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})};
         json!({"name":name,"description":description,"inputSchema":schema,
-            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"),"openWorldHint":false}})
+            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"|"upload"|"download"),"openWorldHint":false}})
     }).collect()
 }
 
@@ -38,16 +42,7 @@ pub async fn query(session: &Session, request: Value) -> Result<Value> {
     if !reply.bytes.is_empty() {
         bail!("Unexpected binary worker response");
     }
-    match reply.header["type"].as_str() {
-        Some("result") => Ok(reply.header["result"].clone()),
-        _ => bail!(
-            "{}",
-            reply.header["error"]["message"]
-                .as_str()
-                .or(reply.header["message"].as_str())
-                .unwrap_or("Worker request failed")
-        ),
-    }
+    Ok(reply.result()?.clone())
 }
 
 pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<Value> {
@@ -88,9 +83,14 @@ pub async fn run(
     args: Value,
 ) -> Result<(Value, std::sync::Arc<Session>)> {
     let (session, state) = connections
-        .open(!matches!(name, "status" | "jobs" | "submit" | "cancel_job"))
+        .open(!matches!(
+            name,
+            "status" | "jobs" | "submit" | "cancel_job" | "download" | "upload"
+        ))
         .await?;
     let value = match name {
+        "download" => super::transfers::download(&session, &state, args).await,
+        "upload" => super::transfers::upload(&session, &state, args).await,
         "jobs" | "submit" | "cancel_job" => {
             let profile = studio_core::connection::Profile::load(&connections.name)?;
             super::jobs::run(&session, &state, profile.results.as_deref(), name, args).await

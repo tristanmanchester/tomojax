@@ -69,7 +69,7 @@ command = "tomojax-worker"
 args = ["mcp", "--connection", "beamline"]
 ```
 
-Use `status` to see the connected host, working directory and job launcher. Paths passed to this server belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. The native server currently provides `status`, `inspect`, `describe`, `submit`, `jobs` and `cancel_job`.
+Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. The native server currently provides `status`, `inspect`, `describe`, `submit`, `jobs`, `cancel_job`, `upload` and `download`.
 
 To run a small simulation, pass these arguments to `submit`.
 
@@ -80,6 +80,8 @@ To run a small simulation, pass these arguments to `submit`.
 Keep the returned `job` ID. With the process or Slurm launcher, you can close the client and reconnect later. Call `jobs` with no arguments to list jobs, or with `{"job":"ID"}` to read one job's progress, receipt and result slices. Pass the returned byte `offset` on your next poll to read subsequent records. To request cancellation, pass the job ID to `cancel_job`.
 
 `submit` also accepts `correct`, `reconstruct`, `reconstruct_slabs` and `align`. Give a detached operation the paths of its saved inputs. The connection's `results` directory holds the jobs, with `~/tomojax` as the default. To work with a different results directory, pass the same `results` argument to `submit`, `jobs` and `cancel_job`.
+
+To bring a slice image to the laptop, call `download` with `{"path":"slices/centre.png","to":"centre.png"}`. To send a file to the worker, call `upload` with `{"from":"mask.npy","path":"inputs/mask.npy"}`. The laptop paths (`to` and `from`) resolve against `CLAUDE_PROJECT_DIR` or the server's working directory. Both tools copy one file up to 100 MiB, verify its SHA-256 digest and require a new destination in an existing directory.
 
 ### Install the Agent Skill
 
