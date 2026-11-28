@@ -190,7 +190,7 @@ fn validation_summary(state: &AppState) -> El {
         .gap(6.)
         .child(label(&validation.message, 11., tone).wrap());
     if !validation.scope.is_empty() {
-        content = content.child(label(&validation.scope, 11., muted()).wrap());
+        content = content.child(property("Applies to", &validation.scope));
     }
     for issue in &validation.issues {
         if let Some(control) = &issue.control {
