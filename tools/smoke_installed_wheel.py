@@ -12,11 +12,34 @@ import tempfile
 
 from _smoke_workflow import verify_workflow_outputs, workflow_steps
 
-MCP_SMOKE = r"""
+BASE_SMOKE = r"""
+from importlib.metadata import distribution
 import json
+import os
 import subprocess
 import sys
 
+package = distribution("tomojax")
+assert any(f.name == "THIRD_PARTY_NOTICES.md" for f in package.files)
+executor = subprocess.run([sys.argv[1], "serve"], input="", capture_output=True,
+                          text=True, check=True, timeout=90)
+ready = json.loads(executor.stdout.splitlines()[0])
+assert ready["type"] == "ready" and ready["versions"]["tomojax"] == package.version, ready
+assert "devices" in ready["capabilities"], ready
+# Keep an unrelated user's PATH binary out of the base-only check.
+server = subprocess.run([sys.argv[1], "mcp"], capture_output=True, text=True,
+                        env={**os.environ, "PATH": os.path.dirname(sys.argv[1])}, timeout=10)
+assert server.returncode == 1 and f"tomojax-studio=={package.version}" in server.stderr, server
+"""
+
+MCP_SMOKE = r"""
+import json
+from pathlib import Path
+import subprocess
+import sys
+
+worker = Path(sys.argv[1]).with_name("tomojax-worker")
+assert worker.is_file(), worker
 with subprocess.Popen([sys.argv[1], "mcp"], stdin=-1, stdout=-1, text=True) as server:
     request = {
         "jsonrpc": "2.0", "id": 1, "method": "prompts/get",
@@ -73,11 +96,21 @@ def _built_artifact(dist: Path, kind: str) -> Path:
     return artifacts[0].resolve()
 
 
+class _Options(argparse.Namespace):
+    python: str
+    extra: str
+    artifact: str
+    studio_wheel: Path | None
+    dist: Path
+    find_links: Path | None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Install without cached packages, require the chosen device, and check CLI outputs."""
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--python", default=sys.executable, help="Interpreter path or version")
     _ = parser.add_argument("--extra", choices=("cpu", "cuda12"), default="cpu")
+    _ = parser.add_argument("--studio-wheel", type=Path, help="Also install and exercise Studio")
     _ = parser.add_argument("--artifact", choices=("wheel", "sdist"), default="wheel")
     _ = parser.add_argument(
         "--dist", type=Path, default=Path(__file__).resolve().parents[1] / "dist"
@@ -85,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     _ = parser.add_argument(
         "--find-links", type=Path, help="Offline dependency wheelhouse; disables package indexes"
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(argv, namespace=_Options())
     artifact = _built_artifact(args.dist, args.artifact)
     with tempfile.TemporaryDirectory(prefix="tomojax-wheel-smoke-") as tmp:
         root = Path(tmp)
@@ -113,15 +146,11 @@ def main(argv: list[str] | None = None) -> int:
             env=env,
         )
         _run([str(tomojax), "--help"], cwd=work, env=env)
-        studio = Path(__file__).resolve().parents[1] / "studio"
-        target = Path(os.environ.get("CARGO_TARGET_DIR", studio / "target")).resolve()
-        _run(
-            ["cargo", "build", "--locked", "-p", "tomojax-worker", "--target-dir", str(target)],
-            cwd=studio,
-            env=env,
-        )
-        env["PATH"] = os.pathsep.join((str(target / "debug"), env["PATH"]))
-        _run([str(python), "-c", MCP_SMOKE, str(tomojax)], cwd=work, env=env)
+        _run([str(python), "-c", BASE_SMOKE, str(tomojax)], cwd=work, env=env)
+        if args.studio_wheel:
+            _run([*install, str(args.studio_wheel.resolve())], cwd=root, env=env)
+            _run([str(venv / "bin/tomojax-studio"), "--help"], cwd=work, env=env)
+            _run([str(python), "-c", MCP_SMOKE, str(tomojax)], cwd=work, env=env)
         _run(
             [
                 str(python),

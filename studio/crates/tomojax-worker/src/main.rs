@@ -247,7 +247,7 @@ fn main() -> std::process::ExitCode {
         Some("serve") => Options::parse(args).and_then(serve),
         Some("--help" | "-h") => {
             println!(
-                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--sbatch OPTIONS] [--idle-exit SECONDS]\n       tomojax-worker job DIR\n       tomojax-worker mcp [--connection NAME]"
+                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--sbatch OPTIONS] [--idle-exit SECONDS]\n       tomojax-worker connect NAME [--login | --check | --install]\n       tomojax-worker job DIR\n       tomojax-worker mcp [--connection NAME]"
             );
             Ok(())
         }

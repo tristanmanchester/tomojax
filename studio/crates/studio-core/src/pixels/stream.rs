@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/client-runtime/src/preview/serverBrowserStream.ts and apps/server/src/preview/ServerBrowser.ts at d2c44031; see THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/client-runtime/src/preview/serverBrowserStream.ts and apps/server/src/preview/ServerBrowser.ts at d2c44031; see THIRD_PARTY_NOTICES.md.
 use std::collections::VecDeque;
 use std::sync::{Condvar, Mutex, PoisonError};
 

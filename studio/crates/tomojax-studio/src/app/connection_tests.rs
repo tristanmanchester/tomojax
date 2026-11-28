@@ -572,6 +572,7 @@ fn batch_child(scene: &str) {
             "--ignored",
             "--nocapture",
         ])
+        .env("JAX_PLATFORMS", "cpu")
         .env("TOMOJAX_BATCH_SCENE", scene)
         .env("TOMOJAX_BATCH_FIXTURE", root.path())
         .env("FAKE_SLURM", root.path().join("slurm"))

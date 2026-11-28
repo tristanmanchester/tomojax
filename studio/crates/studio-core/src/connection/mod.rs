@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/ssh/src/errors.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/ssh/src/errors.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
 //! Local and nested-SSH transports for a TomoJAX session worker.
 mod auth;
 mod command;
@@ -86,13 +86,13 @@ pub fn connect(
 ) -> Result<i32, Failure> {
     let (name, option) = match args {
         [name] => (name, ""),
-        [name, option] if matches!(option.as_str(), "--check" | "--login") => {
+        [name, option] if matches!(option.as_str(), "--check" | "--login" | "--install") => {
             (name, option.as_str())
         }
         _ => {
             return Err(Failure::new(
                 Status::Usage,
-                "Usage: tomojax-worker connect NAME [--login | --check]",
+                "Usage: tomojax-worker connect NAME [--login | --check | --install]",
             ));
         }
     };
@@ -103,6 +103,11 @@ pub fn connect(
         if let Some(route) = route {
             route.login(askpass)?;
         }
+        return Ok(0);
+    }
+    if option == "--install" {
+        let python = deploy::install(route.as_ref())?;
+        println!("python = {}", toml::Value::String(python));
         return Ok(0);
     }
     let program = executable(&profile)?;

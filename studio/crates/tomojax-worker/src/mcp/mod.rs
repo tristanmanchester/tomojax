@@ -39,14 +39,7 @@ fn response<T: DeserializeOwned>(mut value: Value, ctx: &Context) -> Result<T, M
 }
 
 fn identity() -> Implementation {
-    let version = include_str!("../../../../../pyproject.toml")
-        .lines()
-        .find_map(|line| {
-            line.strip_prefix("version = \"")
-                .and_then(|v| v.strip_suffix('"'))
-        })
-        .expect("TomoJAX package version");
-    Implementation::new("tomojax", version)
+    Implementation::new("tomojax", studio_core::TOMOJAX_VERSION)
 }
 
 #[derive(Clone)]

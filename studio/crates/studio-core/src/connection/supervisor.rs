@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/client-runtime/src/connection/{supervisor,presentation}.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/client-runtime/src/connection/{supervisor,presentation}.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
 use super::auth::Login;
 use crate::engine::{Engine, EngineEvent, Wake, WorkerCommand};
 use serde_json::{Value, json};

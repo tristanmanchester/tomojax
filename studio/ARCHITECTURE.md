@@ -65,7 +65,7 @@ the project; routine model refreshes do not copy every metric sample.
 
 ## Requests and jobs
 
-The native bridge launches its sibling `tomojax-worker serve`. The worker starts
+For a local project the bridge starts its sibling `tomojax-worker serve` over pipes. A named SSH connection deploys the same worker by content hash on the last host. The connection owner handles authentication state, transport failures and retries. The laptop’s MCP server (`tomojax-worker mcp`) uses the same connection code. The worker starts
 the interpreter selected by `tomojax studio` and forwards numerical requests to it. Requests have unique string IDs. Transport threads read and
 write bounded messages without blocking Rune's event loop. Stderr is diagnostic
 output, never a protocol source.
@@ -131,7 +131,7 @@ across a null sample. Pose rows are virtualized.
 
 ## Storage and recovery
 
-The version 2 manifest stores a result's editable name on its asset record.
+A version 3 manifest binds the local project folder to its connection and remote results directory. On opening the project, the worker verifies the project marker before Studio uses the saved paths or adopts a job receipt. Older projects open on this computer. The version 2 manifest stores a result's editable name on its asset record.
 Opening a version 1 project translates generated result names using the submitted
 operation and input. Job inputs and worker provenance retain their original values.
 Studio restores the active asset and view on reopen. Without a valid active asset
@@ -155,7 +155,7 @@ bounded chunks, observe cancellation, and publish only after validation. Region
 preview handles remain alive until all of their arrays and coordinate vectors
 have been copied. Shared artifact tokens are released once.
 
-Reopening restores each scripted job’s last observation and reads its directory on the project connection. If the worker never received the submission, Activity records that outcome. A detached job can continue through a disconnect. Studio polls again after an interruption because the scheduler may report the runner’s exit before the shared filesystem exposes its receipt. A checkpoint resume uses a new job identity and the line and path from the current worker reply.
+Reopening restores each scripted job’s last observation and reads its directory on the project connection. If the worker never received the submission, Activity records that outcome. A detached job can continue through a disconnect. The worker reports a successful run as running until its published receipt becomes visible on the worker’s host. A checkpoint resume uses a new job identity and the line and path from the current worker reply.
 
 ## Registered scientific viewing
 

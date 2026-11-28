@@ -1,4 +1,4 @@
-// Ported from T3 Code (MIT), packages/client-runtime/src/connection/registry.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
+// Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), packages/client-runtime/src/connection/registry.ts at d2c44031. See THIRD_PARTY_NOTICES.md.
 use super::Owner;
 use crate::engine::{EngineEvent, Wake};
 use std::{collections::BTreeMap, path::PathBuf, time::Instant};

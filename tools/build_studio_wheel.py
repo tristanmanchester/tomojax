@@ -100,6 +100,7 @@ def _metadata(version: str) -> str:
         "Classifier: Operating System :: POSIX :: Linux",
         "Classifier: Topic :: Scientific/Engineering :: Physics",
         "Requires-Python: >=3.12",
+        f"Requires-Dist: tomojax=={version}",
         "Description-Content-Type: text/markdown",
         "",
         readme,

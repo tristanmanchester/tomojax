@@ -52,53 +52,6 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  build-studio:
-    needs: ci
-    strategy:
-      matrix:
-        include:
-          - arch: x86_64
-            runner: ubuntu-latest
-          - arch: aarch64
-            runner: ubuntu-24.04-arm
-    runs-on: ${{ matrix.runner }}
-    container:
-      image: quay.io/pypa/manylinux_2_28_${{ matrix.arch }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          persist-credentials: false
-
-      - name: Install native build tools and Rust 1.99.1
-        run: |
-          dnf install -y cmake fontconfig-devel libxkbcommon-devel
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.99.1
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Build static-HDF5 Studio binary
-        run: |
-          cargo build --locked --release --manifest-path studio/Cargo.toml --package tomojax-studio --package tomojax-worker --features static-hdf5
-
-      - name: Package and verify tomojax-studio wheel
-        run: |
-          rm -rf dist-studio
-          /opt/python/cp312-cp312/bin/python tools/build_studio_wheel.py \
-            --binary studio/target/release/tomojax-studio \
-            --platform-tag manylinux_2_28_${{ matrix.arch }} \
-            --out-dir dist-studio \
-            --check-static
-          /opt/python/cp312-cp312/bin/python -m pip install --no-cache-dir twine
-          /opt/python/cp312-cp312/bin/twine check --strict dist-studio/*.whl
-          /opt/python/cp312-cp312/bin/python -m venv /tmp/studio-smoke
-          /tmp/studio-smoke/bin/pip install --no-cache-dir dist-studio/*.whl
-          /tmp/studio-smoke/bin/tomojax-studio --help > /dev/null
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: dist-studio-${{ matrix.arch }}
-          path: dist-studio/
-          if-no-files-found: error
-
   testpypi:
     if: github.event_name == 'workflow_dispatch'
     needs: build
@@ -121,7 +74,7 @@ jobs:
 
   testpypi-studio:
     if: github.event_name == 'workflow_dispatch'
-    needs: build-studio
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: testpypi
@@ -148,7 +101,7 @@ jobs:
 
   pypi:
     if: github.event_name == 'push'
-    needs: [build, build-studio]
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -165,7 +118,7 @@ jobs:
 
   pypi-studio:
     if: github.event_name == 'push'
-    needs: [build, build-studio]
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: pypi

@@ -55,7 +55,6 @@ def test_dry_run(setup_home, monkeypatch, platform, nvidia_status, flags, extra,
     assert ["uv", "sync", "--locked", "--extra", extra, "--dev"] in actions
     assert ["export", f"TMPDIR={tmp_cache}"] in actions
     assert ["mkdir", "-p", "--", str(tmp_cache)] in actions
-    assert ("tomojax-studio-target" in result.stdout) == (platform == "Linux")
     assert (setup_home / "gpu-probed").exists() == probes_gpu
     assert not (setup_home / ".cache").exists()
     assert not (setup_home / "uv-called").exists()
@@ -68,7 +67,6 @@ def test_setup_creates_caches_and_runs_sync(setup_home, monkeypatch, override_tm
     effective_tmpdir = tmp_cache
     if override_tmpdir:
         effective_tmpdir = setup_home / "custom tmp"
-        effective_tmpdir.mkdir()
         monkeypatch.setenv("TMPDIR", str(effective_tmpdir))
 
     result = subprocess.run(
@@ -79,8 +77,7 @@ def test_setup_creates_caches_and_runs_sync(setup_home, monkeypatch, override_tm
         str(ROOT),
         "sync --locked --extra cpu --dev",
     ]
-    assert tmp_cache.is_dir()
-    assert (setup_home / ".cache" / "tomojax-studio-target").is_dir()
+    assert effective_tmpdir.is_dir()
 
 
 @pytest.mark.parametrize(

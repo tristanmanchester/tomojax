@@ -26,11 +26,7 @@ done
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 tmp_cache="$HOME/.cache/tomojax-tmp"
 export TMPDIR="${TMPDIR:-$tmp_cache}"
-cache_dirs=("$tmp_cache")
 platform=$(uname -s)
-if [[ "$platform" == Linux ]]; then
-    cache_dirs+=("$HOME/.cache/tomojax-studio-target")
-fi
 
 if [[ "$extra" == auto ]]; then
     extra=cpu
@@ -42,10 +38,10 @@ sync_command=(uv sync --locked --extra "$extra" --dev)
 
 if [[ "$dry_run" == true ]]; then
     printf 'Worktree: %s\n' "$PWD"
-    printf 'mkdir -p -- %q\n' "${cache_dirs[@]}"
+    printf 'mkdir -p -- %q\n' "$TMPDIR"
     printf 'export TMPDIR=%q\n' "$TMPDIR"
     printf '%s\n' "${sync_command[*]}"
 else
-    mkdir -p -- "${cache_dirs[@]}"
+    mkdir -p -- "$TMPDIR"
     exec "${sync_command[@]}"
 fi

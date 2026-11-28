@@ -9,8 +9,15 @@
   To migrate rc6 files, install TomoJAX 1.0.0rc7 with
   `python -m pip install "tomojax[cpu]==1.0.0rc7"` and follow the
   [saved-object instructions](docs/support-matrix.md#saved-objects).
+- `tomojax mcp` starts the Rust MCP server on a local or named connection. Install the matching `tomojax-studio` wheel on the client. The Python `mcp` extra has been removed. An agent can run Python on the connected machine, submit a remote job, reconnect to read the result and download a file.
+- `tomojax-worker connect NAME --install` installs the matching CUDA-enabled Python executor through the first SSH host and prints the interpreter path for the connection.
+- On a shared filesystem, a finished Slurm job stays **Running** until its result is visible on the submit host. While a connection’s executor starts, MCP reports `unavailable` for scientific tools and continues to serve files and jobs.
+- When you zoom into a slice, Studio fetches finer samples for the visible region. The pixel probe uses those samples once they arrive.
 
 ## 1.0.0rc7 (2026-11-28)
+
+- Studio projects can use scans and results on an SSH workstation or Slurm cluster. A project on the laptop remembers its remote results folder and recovers queued and running jobs when reopened. The browser can copy individual files up to 100 MiB.
+- Studio ships a Rust worker for local and remote sessions. It serves image planes, manages file transfers and submits durable jobs. Python runs the numerical operations.
 
 - On an offset axial parallel full turn, iterative reconstruction continues only the far detector edge. The coarse fit uses physical line integrals along each measured horizontal chord, including on a rolled panel. FBP, Fourier inversion and the truncation record use the same edge selection.
 

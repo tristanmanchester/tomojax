@@ -14,7 +14,7 @@ The script installs the locked development dependencies with `cuda12` when `nvid
 
 In T3 Code, add a project script with `./tools/worktree_setup.sh` as its command and enable `runOnWorktreeCreate` to run it when T3 creates a worktree.
 
-The script uses `$HOME/.cache/tomojax-tmp` as `TMPDIR` for the sync unless you supply a non-empty `TMPDIR`. On Linux it also creates `$HOME/.cache/tomojax-studio-target`, the Cargo target directory that `just studio-check` and `just studio-verify` share across worktrees; set `CARGO_TARGET_DIR` to use another. The justfile sets the same `TMPDIR` default for its recipes.
+The script uses `$HOME/.cache/tomojax-tmp` as `TMPDIR` for the sync unless you supply a non-empty `TMPDIR`. Cargo builds into this checkout’s `studio/target/` by default. The justfile sets the same `TMPDIR` default for its recipes.
 
 To install optional groups, run `uv sync --locked --extra cpu --dev --group examples` for figures or use `--group benchmark` for comparison libraries. Use `--extra cuda12` for a CUDA environment. See [bench/README.md](bench/README.md).
 
@@ -51,7 +51,7 @@ The [just](https://github.com/casey/just) recipes below run with `uv run --no-sy
 1. Update the version in `pyproject.toml` and add a `## <version> (<date>)` heading to `CHANGELOG.md`.
 2. Run `just ci` and `just test-cuda` on that commit, then push to `main`.
 3. Optionally run `gh workflow run Release` to publish `main` to TestPyPI after the same checks.
-4. Tag and push: `git tag v<version> && git push origin v<version>`. The release workflow runs the CPU gate and installed-package matrix, builds the `tomojax` wheel/sdist and the `manylinux_2_28_x86_64` `tomojax-studio` wheel/tarball (with HDF5 statically linked), publishes to PyPI through the `pypi` environment (which only `v*` tags may deploy to), and creates the GitHub release with both sets of artifacts from the changelog section. Versions containing `a`, `b`, `rc`, or `dev` are marked as pre-releases.
+4. Tag and push: `git tag v<version> && git push origin v<version>`. The release workflow runs the CPU gate and installed-package matrix, builds the `tomojax` wheel and sdist and the x86-64 and Arm64 Studio wheels and tarballs (manylinux 2.28 with HDF5 statically linked), publishes to PyPI through the `pypi` environment (which only `v*` tags may deploy to), and creates the GitHub release with both sets of artifacts from the changelog section. Versions containing `a`, `b`, `rc`, or `dev` are marked as pre-releases.
 
 PyPI accepts each version once; fix a failed release with a new version number.
 
