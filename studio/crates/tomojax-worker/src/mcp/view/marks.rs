@@ -67,6 +67,7 @@ impl Shape {
         }
     }
 }
+mod raster;
 mod shapes;
 mod snapping;
 use snapping::Snap;
@@ -375,7 +376,7 @@ impl Overlay<'_> {
             }
         }
         if let Some(label) = label {
-            draw::label(canvas, cx + 7, cy - 17, label, tint);
+            draw::mark_label(canvas, [x, y], label, tint, false);
         }
         let raw = p.pixels[r.round_ties_even() as usize * p.width + col.round_ties_even() as usize];
         let ordered = self.measure(&mut reply, [r, col], raw, false);

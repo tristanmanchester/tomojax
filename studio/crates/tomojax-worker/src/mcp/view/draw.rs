@@ -34,6 +34,66 @@ pub(super) fn label(canvas: &mut RgbImage, mut x: i32, y: i32, line: &str, color
         x += i32::from(FONT.get_pixel(gx, gy + 15).0[0]);
     }
 }
+static STROKE: LazyLock<GrayImage> = LazyLock::new(|| {
+    image::load_from_memory(include_bytes!("aileron-stroke-10.png"))
+        .unwrap()
+        .into_luma8()
+});
+pub(super) fn mark_label(
+    img: &mut RgbImage,
+    xy: [f64; 2],
+    text: &str,
+    tint: Rgb<u8>,
+    center: bool,
+) {
+    let glyphs = text
+        .chars()
+        .map(|c| u8::try_from(c as u32).unwrap_or(0) as u32)
+        .collect::<Vec<_>>();
+    let (x, y) = if center {
+        (xy[0] - f64::from((advance(text) + 1) / 2), xy[1] - 6.)
+    } else {
+        let bottom = glyphs
+            .iter()
+            .map(|i| {
+                let (gx, gy) = (i % 16 * 16, i / 16 * 16);
+                (0..15)
+                    .rev()
+                    .find(|row| (0..16).any(|dx| FONT.get_pixel(gx + dx, gy + row).0[0] > 0))
+                    .map_or(10, |y| y + 1)
+            })
+            .max()
+            .unwrap_or(10);
+        (xy[0] + 7., xy[1] - 7. - f64::from(bottom))
+    };
+    let x = (x + 0.5).floor() as i32;
+    let y = (y - 0.5).ceil() as i32;
+    let width = advance(text).max(0) as usize + 8;
+    let mut stroke = vec![0u8; width * 20];
+    let mut left = 0;
+    for i in glyphs {
+        let (gx, gy) = (i % 16 * 20, i / 16 * 20);
+        for dy in 0..20 {
+            for dx in 0..20.min(width - left) {
+                let alpha = STROKE.get_pixel(gx + dx as u32, gy + dy as u32).0[0];
+                let mask = &mut stroke[dy * width + left + dx];
+                *mask += ((u16::from(255 - *mask) * u16::from(alpha) + 127) / 255) as u8;
+            }
+        }
+        left += usize::from(FONT.get_pixel(i % 16 * 16, i / 16 * 16 + 15).0[0]);
+    }
+    for (i, alpha) in stroke.into_iter().enumerate().filter(|(_, a)| *a != 0) {
+        if let Some(dst) = img.get_pixel_mut_checked(
+            (x - 3 + (i % width) as i32) as u32,
+            (y - 2 + (i / width) as i32) as u32,
+        ) {
+            for v in &mut dst.0 {
+                *v = ((u32::from(*v) * (255 - u32::from(alpha)) + 127) / 255) as u8;
+            }
+        }
+    }
+    label(img, x, y, text, tint);
+}
 pub(super) fn number(value: f64) -> String {
     if value.abs() < 1e-12 {
         return "0".into();

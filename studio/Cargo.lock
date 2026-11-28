@@ -4057,7 +4057,6 @@ dependencies = [
  "shlex",
  "studio-core",
  "tempfile",
- "tiny-skia",
  "tokio",
  "tokio-util",
  "tomojax-io",
