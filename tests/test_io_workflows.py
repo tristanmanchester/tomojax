@@ -542,3 +542,20 @@ def test_dataset_readers_keep_their_inputs_protected(tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="different destination"):
             save_dataset(path, loaded)
     assert source.read_bytes() == originals
+
+
+def test_plain_tiff_preview_keeps_first_frame_in_natural_order_before_geometry_check(tmp_path):
+    from tomojax import progress
+
+    frame = np.arange(48, dtype=np.uint16).reshape(6, 8)
+    iio.imwrite(tmp_path / "frame10.tif", frame + 10)
+    iio.imwrite(tmp_path / "frame2.tif", frame)
+    events = []
+    # A folder without acquisition metadata has no scientific inspection report.
+    with progress.watch(events.append, previews=True), pytest.raises(OSError):
+        tj.inspect(tmp_path)
+    (sample,) = [e.arrays["first_projection"] for e in events if isinstance(e, progress.Preview)]
+    np.testing.assert_array_equal(sample.data, frame)
+    assert sample.data.dtype == frame.dtype
+    assert [(a.name, a.unit) for a in sample.axes] == [("v", "pixel"), ("u", "pixel")]
+    assert sample.unit == "unspecified" and sample.fixed[0].index == 0

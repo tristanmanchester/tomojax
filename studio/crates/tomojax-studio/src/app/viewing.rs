@@ -14,7 +14,7 @@ impl AppState {
             .find(|plane| self.spatial_preview(*plane).is_some())
             .unwrap_or(PlaneKind::Projection)
     }
-    fn spatial_preview(&self, plane: PlaneKind) -> Option<&ArrayDescriptor> {
+    pub(super) fn spatial_preview(&self, plane: PlaneKind) -> Option<&ArrayDescriptor> {
         let arrays = if self.preview_context.active.is_some() {
             self.preview_context.shown.arrays()?
         } else {
@@ -343,44 +343,6 @@ impl AppState {
             }
         }
         self.refresh_plane_model();
-    }
-
-    fn refresh_projection_views(&mut self) {
-        if let Some(projections) = self.active_projections().cloned() {
-            let projections = self.resolved(&projections);
-            self.initialize_projection_view(&projections);
-            self.ui.display.projection_index = self
-                .ui
-                .display
-                .projection_index
-                .min(projections.shape[0].saturating_sub(1));
-            self.ui.display.sinogram_row = self
-                .ui
-                .display
-                .sinogram_row
-                .min(projections.shape[1].saturating_sub(1));
-            if let Err(error) = self.view_plane(
-                4,
-                projections.clone(),
-                0,
-                self.ui.display.projection_index,
-                self.pane_edges[4],
-            ) {
-                self.model.error = Some(error);
-            }
-            if let Err(error) = self.view_plane(
-                5,
-                projections,
-                1,
-                self.ui.display.sinogram_row,
-                self.pane_edges[5],
-            ) {
-                self.model.error = Some(error);
-            }
-        } else {
-            self.imaging.clear(4);
-            self.imaging.clear(5);
-        }
     }
 
     pub(super) fn refresh_plane_model(&mut self) {
@@ -1301,6 +1263,7 @@ fn registered_plane_kind(array: &ArrayDescriptor) -> Option<PlaneKind> {
         .fixed
         .iter()
         .find_map(|fixed| match fixed.name.as_str() {
+            "view" => Some(PlaneKind::Projection),
             "z" => Some(PlaneKind::Axial),
             "y" => Some(PlaneKind::Coronal),
             "x" => Some(PlaneKind::Sagittal),

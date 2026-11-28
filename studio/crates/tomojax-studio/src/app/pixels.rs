@@ -277,6 +277,52 @@ impl AppState {
         }
     }
 
+    pub(super) fn refresh_projection_views(&mut self) {
+        if let Some(projections) = self.active_projections().cloned() {
+            let projections = self.resolved(&projections);
+            self.initialize_projection_view(&projections);
+            self.ui.display.projection_index = self
+                .ui
+                .display
+                .projection_index
+                .min(projections.shape[0].saturating_sub(1));
+            self.ui.display.sinogram_row = self
+                .ui
+                .display
+                .sinogram_row
+                .min(projections.shape[1].saturating_sub(1));
+            if let Err(error) = self.view_plane(
+                4,
+                projections.clone(),
+                0,
+                self.ui.display.projection_index,
+                self.pane_edges[4],
+            ) {
+                self.model.error = Some(error);
+            }
+            if let Err(error) = self.view_plane(
+                5,
+                projections,
+                1,
+                self.ui.display.sinogram_row,
+                self.pane_edges[5],
+            ) {
+                self.model.error = Some(error);
+            }
+        } else {
+            if let Some(sample) = self.spatial_preview(PlaneKind::Projection) {
+                if let Err(error) =
+                    self.view_plane(4, self.resolved(sample), 0, 0, self.pane_edges[4])
+                {
+                    self.model.error = Some(error);
+                }
+            } else {
+                self.imaging.clear(4);
+            }
+            self.imaging.clear(5);
+        }
+    }
+
     pub(crate) fn shows_stored_frames(&self) -> bool {
         self.active_projections()
             .and_then(|array| array.axes.first())

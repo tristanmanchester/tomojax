@@ -59,6 +59,7 @@ pub enum Published {
 #[derive(Default)]
 pub struct Adoption {
     pub asset: Option<String>,
+    pub sampled: Option<String>,
     pub changed: bool,
 }
 
@@ -119,9 +120,28 @@ impl Project {
         } else {
             None
         };
-        let changed = row.observe(job, status, stage)?;
+        let sampled = if job.operation == "inspect"
+            && let Some(asset) = current_source(job, &mut doc.assets)?
+            && asset.projections().is_none()
+            && let Some(preview) = &row.preview
+            && let Some(value) = preview.pointer("/record/arrays/first_projection")
+        {
+            let mut plane: ArrayDescriptor =
+                serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+            plane.relative_to(&root);
+            if asset.arrays.get("first_projection") == Some(&plane) {
+                None
+            } else {
+                asset.arrays.insert("first_projection".into(), plane);
+                Some(asset.id.clone())
+            }
+        } else {
+            None
+        };
+        let changed = row.observe(job, status, stage)? || sampled.is_some();
         Ok(Adoption {
             asset: added,
+            sampled,
             changed,
         })
     }

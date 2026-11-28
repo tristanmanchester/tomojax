@@ -5668,7 +5668,7 @@
     },
     "Inspect": {
       "title": "Inspect",
-      "description": "Read a file's inspection report.",
+      "description": "Read a file's inspection report, optionally publishing its first detector sample.",
       "type": "object",
       "properties": {
         "type": {
@@ -5680,6 +5680,10 @@
           "type": "string",
           "minLength": 1,
           "description": "HDF5/NXtomo dataset, saved reconstruction, recognized raw acquisition, or checkpoint directory."
+        },
+        "previews": {
+          "type": "boolean",
+          "default": false
         }
       },
       "required": [

@@ -250,12 +250,8 @@ impl AppState {
     ) {
         let selected = self.selected_inputs();
         let Some(p) = &mut self.project else { return };
-        let activate = p
-            .document
-            .jobs
-            .iter()
-            .find(|j| j.id == id)
-            .is_some_and(|j| j.inputs.iter().map(|i| &i.asset).eq(selected.iter()))
+        let job = p.document.jobs.iter().find(|j| j.id == id);
+        let activate = job.is_some_and(|j| j.inputs.iter().map(|i| &i.asset).eq(selected.iter()))
             && self.preview_context.active.is_none();
         let focus = self.ui.selected_job.as_ref().or_else(|| {
             p.document
@@ -267,11 +263,8 @@ impl AppState {
                 .map(|j| &j.id)
         });
         let focused = focus == Some(&id);
-        let registration = p
-            .document
-            .jobs
-            .iter()
-            .find(|j| j.id == id && j.status != JobStatus::Completed)
+        let registration = job
+            .filter(|j| j.status != JobStatus::Completed)
             .and_then(|j| {
                 if !matches!(
                     row.receipt.as_ref()?.output,
@@ -297,7 +290,11 @@ impl AppState {
                 .insert(id.clone(), Instant::now() + interval);
         }
         if focused
-            && let Some(job) = p.document.jobs.iter().find(|j| j.id == id)
+            && let Some(job) = p
+                .document
+                .jobs
+                .iter()
+                .find(|j| j.id == id && j.operation != "inspect")
             && let Some(preview) = &row.preview
         {
             self.live.accept_published(job, preview);
@@ -318,6 +315,9 @@ impl AppState {
         }
         if let Some((asset, previous, first)) = registration {
             self.refresh_registration(&asset, &previous, first);
+        }
+        if adoption.sampled.is_some() && adoption.sampled == self.model.active_asset {
+            self.refresh_images();
         }
         if let Some(asset) = adoption.asset {
             if activate {
