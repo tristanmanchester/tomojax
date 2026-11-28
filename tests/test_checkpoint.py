@@ -10,8 +10,8 @@ import signal
 import subprocess
 import sys
 import textwrap
-import time
 from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -394,44 +394,60 @@ def test_saves_wait_the_interval_and_twenty_save_durations(
     session.close()
 
 
-_CHILD = textwrap.dedent(
-    """
-    import sys
-    import numpy as np
-    import tomojax as tj
-    from tomojax.core import checkpoint
+def _killable_sirt(path: Path, output: Path, stop: str) -> None:
+    """Run five sweeps and crash at a particular update or checkpoint publication."""
+    checkpoint.INTERVAL = checkpoint.SAVE_SHARE = 0.0
+    done = 0
+    replace = Path.replace
 
-    checkpoint.INTERVAL = 0.0
+    def publish(source: Path, target: Path) -> Path:
+        installed = replace(source, target)
+        if stop == "first-checkpoint" and done == 1 and target == path / "checkpoint.json":
+            signal.raise_signal(signal.SIGKILL)
+        if stop == "mid-save" and done == 3 and target.suffix == ".npy" and path in target.parents:
+            # The new array is on disk, but the manifest still names the preceding checkpoint.
+            signal.raise_signal(signal.SIGKILL)
+        return installed
+
+    def report(event: progress.Event) -> None:
+        nonlocal done
+        if isinstance(event, progress.Advanced):
+            done = event.done
+            print(done, flush=True)
+            if stop == "last-update" and done == 5:
+                signal.raise_signal(signal.SIGKILL)
+
     scan = tj.simulate("shepp", size=24, n_views=32, geometry="parallel").scan
-    volume = tj.reconstruct(scan, "sirt", iterations=600, checkpoint=sys.argv[1]).volume
-    np.save(sys.argv[2], np.asarray(volume))
-    """
-)
-
-
-def _child(*args: str) -> subprocess.Popen[bytes]:
-    env = {**os.environ, "JAX_PLATFORMS": "cpu"}
-    return subprocess.Popen([sys.executable, "-c", _CHILD, *args], env=env)
+    with patch.object(Path, "replace", publish), progress.watch(report):
+        result = tj.reconstruct(scan, "sirt", iterations=5, checkpoint=path)
+    np.save(output, np.asarray(result.volume))
 
 
 @pytest.mark.slow
 def test_kills_at_any_moment_resume_to_the_uninterrupted_volume(tmp_path: Path) -> None:
     whole, part = tmp_path / "whole.npy", tmp_path / "resumed.npy"
-    start = time.monotonic()
-    assert _child(str(tmp_path / "once"), str(whole)).wait() == 0
-    seconds = time.monotonic() - start
-    rng = np.random.default_rng(7)
-    kills = 0
-    while not part.exists() and kills < 30:
-        child = _child(str(tmp_path / "run"), str(part))
-        try:
-            child.wait(timeout=float(rng.uniform(0.3, 0.9) * seconds))
-        except subprocess.TimeoutExpired:
-            child.kill()  # SIGKILL: no handler, mid-save as often as not
-            child.wait()
-            kills += 1
-    assert 0 < kills < 30
+    path = tmp_path / "run"
+
+    def run(checkpoint_path: Path, output: Path, stop: str = "finish") -> list[int]:
+        child = subprocess.run(
+            [sys.executable, __file__, str(checkpoint_path), str(output), stop],
+            env={**os.environ, "JAX_PLATFORMS": "cpu"},
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert child.returncode == (0 if stop == "finish" else -signal.SIGKILL), child.stderr
+        return [int(line) for line in child.stdout.splitlines()]
+
+    run(tmp_path / "once", whole)
+    # Each restart reports its saved sweep and takes two single sweeps before adapting the chunk
+    # size. These kills leave sweeps 1, 2 and 4 committed, respectively.
+    assert run(path, part, "first-checkpoint") == [1]
+    assert run(path, part, "mid-save") == [1, 2, 3]
+    assert run(path, part, "last-update") == [2, 3, 4, 5]
+    assert run(path, part) == [4, 5]
     np.testing.assert_array_equal(np.load(part), np.load(whole))
+    assert not path.exists()
 
 
 def test_sigterm_outside_a_checkpointed_loop_ends_the_process(tmp_path: Path) -> None:
@@ -670,3 +686,7 @@ def test_the_command_line_stops_and_resumes(tmp_path: Path, stop: signal.Signals
     whole = tj.load_reconstruction(tmp_path / "whole.nxs").volume
     np.testing.assert_array_equal(tj.load_reconstruction(tmp_path / "part.nxs").volume, whole)
     assert not (tmp_path / "run").exists()
+
+
+if __name__ == "__main__":
+    _killable_sirt(Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3])
