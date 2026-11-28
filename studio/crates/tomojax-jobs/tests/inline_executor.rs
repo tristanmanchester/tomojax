@@ -179,6 +179,15 @@ fn shared_executor_pause_success_failure_and_cancel_release_every_resource() {
     bad[1]["command"]["operation"]["method"] = json!("no such solver");
     api.submit(&dir.join("failed"), &bad, &[]).unwrap();
     wait_for(&dir.join("failed"), "failed");
+    let failed = service::control(&dir.join("failed"), "cancel").unwrap();
+    assert_eq!(failed["state"], "failed");
+    assert!(
+        failed["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no such solver"),
+        "{failed}"
+    );
     assert_eq!(resource_counts(&session, "after-failure"), baseline);
     *session.hold.0.lock().unwrap() = true;
     *session.opening.0.lock().unwrap() = false;

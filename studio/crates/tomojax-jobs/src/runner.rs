@@ -149,10 +149,15 @@ impl Attempt<'_> {
                     if let Some(error) = self.record_error.take() {
                         return Err(error);
                     }
-                    if cancel_sent || row["error"]["kind"] == "canceled" {
+                    if row["error"]["kind"] == "canceled" {
                         return Err(stopped());
                     }
-                    return Err(io::Error::other(row.to_string()));
+                    let message = row["error"]["message"].as_str().or(row["message"].as_str());
+                    return Err(io::Error::other(
+                        message
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| row.to_string()),
+                    ));
                 }
                 Some("result") => {
                     let result = &row["result"];
@@ -305,7 +310,10 @@ pub fn run(
     let result = work.and(cleanup);
     let (status, outcome) = match &result {
         Ok(()) => (0, Outcome::Completed),
-        Err(e) if e.kind() == ErrorKind::Interrupted || stop.load(Ordering::Acquire) => {
+        Err(e)
+            if e.kind() == ErrorKind::Interrupted
+                || (e.kind() == ErrorKind::BrokenPipe && stop.load(Ordering::Acquire)) =>
+        {
             (130, Outcome::Stopped)
         }
         Err(_) => (1, Outcome::Failed),

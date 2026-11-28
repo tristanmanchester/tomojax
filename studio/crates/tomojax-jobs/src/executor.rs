@@ -80,10 +80,10 @@ impl Executor for ChildExecutor {
         match self.replies.recv_timeout(timeout) {
             Ok(line) => line.map(Some),
             Err(RecvTimeoutError::Timeout) => Ok(None),
-            Err(RecvTimeoutError::Disconnected) => Err(io::Error::other(format!(
-                "executor stopped: {:?}",
-                self.child.try_wait()?
-            ))),
+            Err(RecvTimeoutError::Disconnected) => Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                format!("executor stopped: {:?}", self.child.try_wait()?),
+            )),
         }
     }
 }

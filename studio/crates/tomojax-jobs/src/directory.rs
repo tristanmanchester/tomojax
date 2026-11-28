@@ -37,6 +37,11 @@ pub fn optional<T>(result: io::Result<T>) -> io::Result<Option<T>> {
 }
 
 pub fn read_files(dir: &Path) -> io::Result<Files> {
+    Ok(observation(dir)?.0)
+}
+
+/// The message belongs to the same end record as the observed outcome.
+pub(crate) fn observation(dir: &Path) -> io::Result<(Files, Option<String>)> {
     let launch = match optional(fs::read(dir.join("submission.json")))? {
         Some(bytes) => match serde_json::from_slice(&bytes)? {
             Submission::Accepted(id) => Launch::Accepted(id),
@@ -46,20 +51,23 @@ pub fn read_files(dir: &Path) -> io::Result<Files> {
         None if dir.join("launch").try_exists()? => Launch::Claimed,
         None => Launch::Unclaimed,
     };
-    let (attempt, end) = last_attempt(dir)?;
-    Ok(Files {
-        launch,
-        receipt: dir.join("result/receipt.json").try_exists()?,
-        cancel: dir.join("cancel").try_exists()?,
-        abandoned: dir.join("abandoned").try_exists()?,
-        withdrawn: dir.join("withdrawn").try_exists()?,
-        runner: dir.join("runner.json").try_exists()?,
-        attempt,
-        end,
-    })
+    let (attempt, end, message) = last_attempt(dir)?;
+    Ok((
+        Files {
+            launch,
+            receipt: dir.join("result/receipt.json").try_exists()?,
+            cancel: dir.join("cancel").try_exists()?,
+            abandoned: dir.join("abandoned").try_exists()?,
+            withdrawn: dir.join("withdrawn").try_exists()?,
+            runner: dir.join("runner.json").try_exists()?,
+            attempt,
+            end,
+        },
+        message,
+    ))
 }
 
-fn last_attempt(dir: &Path) -> io::Result<(u64, Option<Outcome>)> {
+fn last_attempt(dir: &Path) -> io::Result<(u64, Option<Outcome>, Option<String>)> {
     #[derive(Deserialize)]
     #[serde(tag = "type", rename_all = "lowercase")]
     enum Record {
@@ -68,18 +76,19 @@ fn last_attempt(dir: &Path) -> io::Result<(u64, Option<Outcome>)> {
         },
         End {
             outcome: Outcome,
+            message: Option<String>,
         },
         #[serde(other)]
         Other,
     }
-    let mut attempt = (0, None);
+    let mut attempt = (0, None, None);
     if let Some(file) = optional(File::open(dir.join("replies.jsonl")))? {
         let mut reader = BufReader::new(file);
         let mut line = Vec::new();
         while reader.read_until(b'\n', &mut line)? > 0 && line.ends_with(b"\n") {
             match serde_json::from_slice(&line)? {
-                Record::Attempt { number } => attempt = (number, None),
-                Record::End { outcome } => attempt.1 = Some(outcome),
+                Record::Attempt { number } => attempt = (number, None, None),
+                Record::End { outcome, message } => attempt = (attempt.0, Some(outcome), message),
                 Record::Other => {}
             }
             line.clear();

@@ -1,6 +1,6 @@
 //! The four worker job commands. Each poll can complete a standing cancel.
 use crate::{
-    directory::{Submission, create_record, optional, read_files},
+    directory::{Submission, create_record, observation, optional, read_files},
     locks::held,
     log, publication,
     runner::{self, InlineSession},
@@ -241,7 +241,7 @@ pub fn status(dir: &Path) -> io::Result<Value> {
                 detail: String::new(),
             },
         };
-        let after = read_files(dir)?;
+        let (after, message) = observation(dir)?;
         let Some(state) = observed(before, report.account, after) else {
             continue;
         };
@@ -277,6 +277,10 @@ pub fn status(dir: &Path) -> io::Result<Value> {
                 .as_str()
                 .unwrap_or("launch rejected")
                 .to_string()
+        } else if state == State::Failed
+            && let Some(message) = message
+        {
+            message
         } else if state == State::Unknown
             && let Some(err) = optional(fs::read(dir.join("submission-error.json")))?
         {

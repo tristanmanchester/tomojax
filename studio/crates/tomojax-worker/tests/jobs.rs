@@ -125,7 +125,7 @@ impl Worker {
                 "unexpected job state {job}\n{}",
                 fs::read_to_string(dir.join("replies.jsonl")).unwrap_or_default()
             );
-            job["state"] == wanted && !dir.join("work").exists()
+            job["state"] == wanted && (wanted != "completed" || !dir.join("work").exists())
         });
         job
     }
@@ -219,6 +219,11 @@ fn detached_scripts_survive_the_submitter_and_checkpoint_on_signals() {
     }
     let mut worker = Worker::start(root.path(), "slurm", &python());
     let mut op = json!({"type":"run","operation":{"type":"reconstruct","source":{"type":"path","path":scan},"method":"sirt","iterations":300}});
+    let mut inline = Worker::start(root.path(), "inline", &python());
+    let running = inline.submit("inline-killed", vec![op.clone()]);
+    advanced(&running);
+    inline.kill();
+    worker.finished(&running, "interrupted");
     fake_slurm_requeues(&mut worker, &op);
     for i in 0..3 {
         let dir = worker.submit(&format!("cancel-{i}"), vec![op.clone()]);
