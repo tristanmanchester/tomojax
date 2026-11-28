@@ -2,6 +2,7 @@
 
 import base64
 from io import BytesIO
+import json
 import os
 from pathlib import Path
 import shutil
@@ -9,6 +10,7 @@ import sys
 import time
 
 import h5py
+from jsonschema import Draft202012Validator
 import numpy as np
 from PIL import Image
 import pytest
@@ -213,3 +215,38 @@ def test_incompatible_executor_refuses_worker_tools(tmp_path, monkeypatch, nativ
             assert "fixture-version" in r["content"][0]["text"]
             assert tj.__version__ in r["content"][0]["text"]
     assert requests.read_text() == ""
+
+
+def test_submit_resolves_nested_and_top_level_paths(tmp_path, monkeypatch, native):
+    scheduler = Path(__file__).resolve().parents[1] / "studio/crates/tomojax-jobs/tests/slurm"
+    control = tmp_path / "controller"
+    control.mkdir()
+    (control / "hold").touch()
+    monkeypatch.setenv("FAKE_SLURM", str(control))
+    monkeypatch.setenv("PATH", str(scheduler) + os.pathsep + os.environ["PATH"])
+    root = tmp_path / "results"
+    profile(tmp_path, monkeypatch, f'jobs = "slurm"\nresults = "{root}"\n')
+    operation = {
+        "type": "reconstruct",
+        "method": "sirt",
+        "source": "scan.npz",
+        "config": {"support": "mask.npy"},
+    }
+    with native("fixture") as client:
+        listing = client.rpc("tools/list", {})["result"]["tools"]
+        schema = next(t["inputSchema"] for t in listing if t["name"] == "submit")
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate({"operation": operation})
+        directory = Path(checked(client, "status")["structuredContent"]["directory"])
+        job = checked(client, "submit", operation=operation)["structuredContent"]["job"]
+        try:
+            script = json.loads((root / "jobs" / job / "script.jsonl").read_text())
+            expanded = script["command"]["operation"]
+            assert expanded["source"] == {"type": "path", "path": str(directory / "scan.npz")}
+            assert expanded["config"] == {
+                "type": "SIRTConfig",
+                "support": {"type": "npy", "path": str(directory / "mask.npy")},
+            }
+        finally:
+            checked(client, "cancel_job", job=job)
+            (control / "hold").unlink()

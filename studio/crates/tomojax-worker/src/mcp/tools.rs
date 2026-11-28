@@ -26,10 +26,11 @@ pub fn list() -> Vec<Value> {
         ("jobs","List durable jobs, or read a job by ID and byte offset. Use the returned offset to request new records.",
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
         ("cancel_job","Request cancellation of a durable job by ID.",json!({"job":{"type":"string"},"results":{"type":"string"}}),vec!["job"]),
-    ].into_iter().map(|(name,description,properties,required)| json!({
-        "name":name,"description":description,"inputSchema":{"type":"object","properties":properties,"required":required,"additionalProperties":false},
-        "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"),"openWorldHint":false}
-    })).collect()
+    ].into_iter().map(|(name,description,properties,required)| {
+        let schema=if name=="submit" {super::jobs::submission_schema()} else {json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})};
+        json!({"name":name,"description":description,"inputSchema":schema,
+            "outputSchema":{"type":"object"},"annotations":{"readOnlyHint":!matches!(name,"submit"|"cancel_job"),"openWorldHint":false}})
+    }).collect()
 }
 
 pub async fn query(session: &Session, request: Value) -> Result<Value> {

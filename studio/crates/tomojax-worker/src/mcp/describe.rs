@@ -14,26 +14,31 @@ pub fn definitions() -> &'static Map<String, Value> {
         .expect("compiled parameter definitions")
 }
 
-pub fn operation(operation: &str, method: Option<&str>) -> Result<Value> {
-    let defs = DOCUMENT["$defs"]
-        .as_object()
-        .context("missing parameter definitions")?;
-    let operations: BTreeMap<_, _> = defs
+pub fn workflows() -> BTreeMap<&'static str, (&'static str, &'static Value)> {
+    definitions()
         .iter()
         .filter(|(name, _)| !name.ends_with("Settings"))
-        .filter_map(|(_, definition)| {
+        .filter_map(|(name, def)| {
             Some((
-                definition.pointer("/properties/type/enum/0")?.as_str()?,
-                definition,
+                def.pointer("/properties/type/enum/0")?.as_str()?,
+                (name.as_str(), def),
             ))
         })
-        .collect();
-    let mut entry = *operations.get(operation).with_context(|| {
-        format!(
-            "Unknown operation. Choose from {}",
-            operations.keys().copied().collect::<Vec<_>>().join(", ")
-        )
-    })?;
+        .collect()
+}
+
+pub fn operation(operation: &str, method: Option<&str>) -> Result<Value> {
+    let defs = definitions();
+    let operations = workflows();
+    let mut entry = operations
+        .get(operation)
+        .with_context(|| {
+            format!(
+                "Unknown operation. Choose from {}",
+                operations.keys().copied().collect::<Vec<_>>().join(", ")
+            )
+        })?
+        .1;
     if let Some(method) = method {
         let choices = entry
             .pointer("/properties/method/x-choices")

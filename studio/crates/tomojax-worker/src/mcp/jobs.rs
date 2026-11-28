@@ -124,7 +124,7 @@ fn prepare(
             .get("config")
             .filter(|v| v.is_object() && v.get("type").is_none())
         {
-            let name = if map["type"] == "align" {
+            let name = if map.get("type").and_then(Value::as_str) == Some("align") {
                 "AlignConfig".into()
             } else {
                 format!(
@@ -182,10 +182,13 @@ pub async fn run(
         );
         durable_inputs(&operation)?;
         let defs = super::describe::definitions();
-        let planned = defs
-            .values()
-            .find(|v| v.pointer("/properties/type/enum/0") == operation.get("type"))
-            .context("Unknown tomography operation")?;
+        let tag = operation["type"]
+            .as_str()
+            .context("Operation needs a type")?;
+        let planned = super::describe::workflows()
+            .get(tag)
+            .context("Unknown tomography operation")?
+            .1;
         prepare(&mut operation, planned, inventory, defs)?;
         let id = uuid::Uuid::new_v4().simple().to_string();
         let directory = root(results.as_deref())?.join("jobs").join(&id);
@@ -230,5 +233,71 @@ pub async fn run(
             .await
         }
         _ => bail!("Unknown job action"),
+    }
+}
+
+/// Include just the reachable parameter records. A detached input can also be
+/// supplied as a file name at any field that accepts stored arrays or objects.
+pub fn submission_schema() -> Value {
+    use std::collections::{BTreeSet, VecDeque};
+    let catalog = super::describe::workflows();
+    let names = OPERATIONS.map(|tag| catalog[tag].0);
+    let mut queue = VecDeque::from(names.map(str::to_owned));
+    let mut defs = serde_json::Map::new();
+    while let Some(name) = queue.pop_front() {
+        if defs.contains_key(&name) {
+            continue;
+        }
+        let mut node = super::describe::definitions()[&name].clone();
+        if name == "Npy" {
+            node["properties"]
+                .as_object_mut()
+                .unwrap()
+                .remove("artifact");
+        }
+        if name.ends_with("Config")
+            && let Some(required) = node["required"].as_array_mut()
+        {
+            required.retain(|k| k != "type");
+        }
+        let mut needed = BTreeSet::new();
+        path_fields(&mut node, &mut needed);
+        queue.extend(needed);
+        defs.insert(name, node);
+    }
+    let choices = names.map(|name| json!({"$ref":format!("#/$defs/{name}")}));
+    json!({"type":"object","properties":{"operation":{"oneOf":choices},"results":{"type":"string"}},
+        "required":["operation"],"additionalProperties":false,"$defs":defs})
+}
+fn path_fields(node: &mut Value, needed: &mut std::collections::BTreeSet<String>) {
+    match node {
+        Value::Object(map) => {
+            if let Some(name) = map
+                .get("$ref")
+                .and_then(Value::as_str)
+                .and_then(|r| r.strip_prefix("#/$defs/"))
+            {
+                if name == "Member" {
+                    *node = Value::Bool(false);
+                    return;
+                }
+                needed.insert(name.into());
+                if matches!(name, "PathInput" | "Npy" | "Hdf5") {
+                    *node = json!({"anyOf":[{"type":"string"},node.clone()]});
+                }
+            } else {
+                // Paths can be passed as strings, without a wire type discriminator.
+                map.remove("discriminator");
+                for child in map.values_mut() {
+                    path_fields(child, needed);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                path_fields(item, needed);
+            }
+        }
+        _ => {}
     }
 }

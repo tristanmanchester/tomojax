@@ -68,8 +68,10 @@ impl Parts {
             return reply;
         }
         let mut raw = String::new();
-        for c in reply.to_string().chars() {
-            if c.is_ascii() {
+        let mut stored = reply.clone();
+        stored["resultType"] = json!("complete");
+        for c in stored.to_string().chars() {
+            if c.is_ascii() && c != '\x7f' {
                 raw.push(c);
             } else {
                 use std::fmt::Write;
@@ -113,7 +115,12 @@ impl Parts {
                         clipped["structuredContent"]
                             .as_object_mut()
                             .unwrap()
-                            .remove(key);
+                            .shift_remove(key);
+                        if priority.contains(&key)
+                            && let Some(prefix) = fitting_prefix(&mut clipped, key, v)
+                        {
+                            clipped["structuredContent"][key] = prefix;
+                        }
                     }
                 }
             }
@@ -131,12 +138,40 @@ impl Parts {
         clipped
     }
 }
+fn fitting_prefix(reply: &mut Value, key: &str, value: &Value) -> Option<Value> {
+    let len = match value {
+        Value::Array(v) => v.len(),
+        Value::String(v) => v.chars().count(),
+        Value::Object(v) => v.len(),
+        _ => return None,
+    };
+    let prefix = |n| match value {
+        Value::Array(v) => Value::Array(v[..n].to_vec()),
+        Value::String(v) => Value::String(v.chars().take(n).collect()),
+        Value::Object(v) => Value::Object(v.iter().take(n).map(|(k,v)|(k.clone(),v.clone())).collect()),
+        _ => unreachable!(),
+    };
+    let (mut lo, mut hi) = (0, len);
+    while lo < hi {
+        let mid = lo + (hi - lo).div_ceil(2);
+        reply["structuredContent"][key] = prefix(mid);
+        if cost(reply) <= REPLY_BUDGET { lo = mid; } else { hi = mid - 1; }
+    }
+    reply["structuredContent"].as_object_mut()?.shift_remove(key);
+    (lo > 0).then(|| prefix(lo))
+}
+
 fn cost(value: &Value) -> usize {
     let mut counted = value.clone();
+    counted["_meta"] = Value::Null;
+    counted["resultType"] = json!("complete");
     let mut image_bytes = 0;
     let mut pixels = 0;
     if let Some(items) = counted["content"].as_array_mut() {
-        for item in items.iter_mut().filter(|v| v["type"] == "image") {
+        for item in items {
+            item["_meta"] = Value::Null;
+            item["annotations"] = Value::Null;
+            if item["type"] != "image" {continue;}
             let Some(Value::String(data)) = item.as_object_mut().and_then(|o| o.remove("data"))
             else {
                 return usize::MAX;
