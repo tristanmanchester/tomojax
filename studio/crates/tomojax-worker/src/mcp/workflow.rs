@@ -54,6 +54,10 @@ pub async fn run(
     let catalog = describe::workflows();
     let (_, schema) = catalog.get(tag.as_str()).context("Unknown workflow")?;
     if name == "open" {
+        cmd.as_object_mut()
+            .unwrap()
+            .entry("kind")
+            .or_insert(json!("scan"));
         let path = cmd["path"].as_str().context("open needs a file path")?;
         ensure!(
             !path.starts_with('@'),
@@ -278,6 +282,12 @@ pub fn tool(name: &str) -> Value {
     } else {
         json!({"type":"object","properties":{"operation":{"oneOf":roots.iter().map(|r|json!({"$ref":format!("#/$defs/{r}")})).collect::<Vec<_>>()}},"required":["operation"],"additionalProperties":false,"description":"Select views, crop or bin the detector, replace poses, or combine scans."})
     };
+    if name == "open" {
+        schema["properties"]["kind"]["default"] = json!("scan");
+        if let Some(required) = schema["required"].as_array_mut() {
+            required.retain(|k| k != "kind");
+        }
+    }
     schema["properties"]["dry_run"] = json!({"type":"boolean","default":false});
     schema["properties"]["detail"] = json!({"enum":["summary","full"],"default":"summary"});
     if !defs.is_empty() {

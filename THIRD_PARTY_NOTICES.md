@@ -38,3 +38,7 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+The MCP panel labels use a 10-pixel bitmap of Sora Sagano's Aileron Regular.
+The embedded font in Pillow credits the typeface as “No Rights Reserved.”
+[Original typeface](https://dotcolon.net/fonts/aileron/)

@@ -147,6 +147,7 @@ struct Pending {
 type PendingCalls = Arc<Mutex<Option<HashMap<String, Pending>>>>;
 
 pub struct Session {
+    pub renders: AtomicU64,
     pub ledger: Mutex<super::ledger::Ledger>,
     inventory: watch::Receiver<Inventory>,
     outgoing: mpsc::Sender<Vec<u8>>,
@@ -199,6 +200,7 @@ impl Session {
             }
         });
         Ok(Self {
+            renders: AtomicU64::new(1),
             ledger: Default::default(),
             inventory,
             outgoing,
