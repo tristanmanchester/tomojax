@@ -96,11 +96,15 @@ class Client:
 
 
 @contextmanager
-def connection(directory, *, legacy=False, overlay=False, exit_code=0, executable=None):
+def connection(
+    directory, *, legacy=False, overlay=False, exit_code=0, executable=None, profile=None
+):
     scratch = directory / "cache"
     scratch.mkdir(exist_ok=True)
     env = {**os.environ, "TMPDIR": str(scratch), "CLAUDE_PROJECT_DIR": str(directory)}
     cmd = [str(executable or Path(sys.executable).with_name("tomojax")), "mcp"]
+    if profile is not None:
+        cmd.extend(["--connection", profile])
     if overlay:
         code = """
 import sys
