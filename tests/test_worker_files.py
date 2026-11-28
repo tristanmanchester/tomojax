@@ -170,6 +170,28 @@ def test_transfer_limits_digest_and_interrupted_upload(tmp_path):
     assert not path.exists() and not list(tmp_path.glob(".tomojax-part-*"))
 
 
+def test_open_uploads_do_not_use_the_eight_fetch_slots(tmp_path):
+    path = tmp_path / "values.npy"
+    np.save(path, np.arange(4))
+    with worker(tmp_path) as client:
+        for i in range(8):
+            client.send(
+                str(i),
+                "upload",
+                path=str(tmp_path / f"file-{i}"),
+                bytes=1,
+                sha256=hashlib.sha256(b"x").hexdigest(),
+            )
+        client.send(
+            "plane",
+            "fetch",
+            encoding="float32",
+            shape=[4],
+            storage={"type": "npy", "path": str(path)},
+        )
+        assert client.terminal("plane")["result"]["shape"] == [4]
+
+
 def test_download_rejects_growth_after_its_first_block(tmp_path):
     path = tmp_path / "sample"
     path.write_bytes(bytes(3 * 65536))

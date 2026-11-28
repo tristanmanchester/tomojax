@@ -53,6 +53,7 @@ enum Side {
 
 struct Active {
     reply: Reply,
+    fetch: bool,
     side: Side,
     sequence: u64,
     cancel: Arc<AtomicBool>,
@@ -483,10 +484,10 @@ impl Session {
             ensure!(
                 self.active
                     .values()
-                    .filter(|a| a.side == Side::Native && a.reply.channel.is_null())
+                    .filter(|a| a.fetch && a.reply.channel.is_null())
                     .count()
                     < 8,
-                "eight unchanneled requests pending"
+                "eight unchanneled fetches pending"
             );
         }
         ensure!(self.active.len() < 1024, "too many pending requests");
@@ -519,6 +520,7 @@ impl Session {
         self.active.insert(
             r.id.clone(),
             Active {
+                fetch: kind == "fetch",
                 side,
                 sequence,
                 cancel: cancel.clone(),
