@@ -71,7 +71,7 @@ class Open(Record, tag="open"):
     apply_poses: bool | msgspec.UnsetType = msgspec.UNSET
 
 
-class Inspect(Record, tag="inspect"):
+class Inspect(Record, tag="inspect", omit_defaults=True):
     """Read a file's inspection report, optionally publishing its first detector sample."""
 
     path: Id
