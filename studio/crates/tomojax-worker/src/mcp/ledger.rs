@@ -21,6 +21,18 @@ pub fn primary(kind: &str) -> &str {
     }
 }
 
+fn alias<'a>(product: &Value, kind: &'a str) -> &'a str {
+    if product["handle"].is_null() {
+        return "array";
+    }
+    match kind {
+        "reconstruction" => "recon",
+        "alignment" => "align",
+        "simulation" => "sim",
+        other => other,
+    }
+}
+
 pub fn tokens(value: &Value, result: &mut BTreeSet<String>) {
     if value["type"] == "npy"
         && let Some(token) = value["artifact"].as_str()
@@ -61,7 +73,11 @@ impl Ledger {
                 !as_object && member.is_none(),
                 "{id} names an array, not an object with members"
             );
-            return Ok(product["array"]["storage"].clone());
+            let a = product
+                .get("array")
+                .or(product.get(primary(product["type"].as_str().unwrap_or(""))))
+                .context("Missing array product")?;
+            return Ok(a["storage"].clone());
         }
         let kind = product["type"].as_str().context("Missing object kind")?;
         Ok(
@@ -76,12 +92,7 @@ impl Ledger {
         reserved: Option<&str>,
     ) -> Result<Value> {
         let kind = product["type"].as_str().context("Missing product kind")?;
-        let alias = match kind {
-            "reconstruction" => "recon",
-            "alignment" => "align",
-            "simulation" => "sim",
-            other => other,
-        };
+        let alias = alias(product, kind);
         let id = reserved
             .map(str::to_owned)
             .unwrap_or_else(|| format!("@{alias}-{}", &Uuid::new_v4().simple().to_string()[..8]));
@@ -122,6 +133,17 @@ impl Ledger {
                 }
             }
         }
+        if let Some(disturbance) = summary
+            .get_mut("disturbed_views")
+            .and_then(Value::as_object_mut)
+        {
+            for (key, value) in disturbance {
+                if let Some(array) = output["info"]["arrays"].get(format!("/disturbed_views/{key}"))
+                {
+                    *value = array.clone();
+                }
+            }
+        }
         self.records.insert(
             id.clone(),
             json!({"summary":summary,"product":product,"manifest":output["manifest"]}),
@@ -136,13 +158,19 @@ impl Ledger {
             .unwrap()
             .iter()
             .filter(|(_, v)| {
-                kind != "array"
+                alias != "array"
                     && v.is_object()
                     && (v.get("storage").is_some() || v["type"] == "member")
             })
             .map(|(k, _)| (k.clone(), json!(format!("{id}.{k}"))))
             .collect();
         result["members"] = Value::Object(members);
+        if output["info"]["arrays"]
+            .as_object()
+            .is_some_and(|a| a.keys().any(|k| k.starts_with("/corrections/")))
+        {
+            result["info"] = output["info"].clone();
+        }
         if kind == "alignment" {
             result["poses"] = json!({"shape":product["poses"]["shape"],"columns":product["poses"]["columns"],"rms":info["pose_rms"]});
         }

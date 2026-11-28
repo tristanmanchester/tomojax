@@ -318,3 +318,22 @@ def test_cancel_task_on_running_reconstruction(tmp_path, native, server):
         client.task("cancel", tid)
         assert client.terminal(tid)["status"] == "cancelled"
         assert not checked(client, "status")["structuredContent"]["jobs"]
+
+
+def test_saved_paths_link_to_local_outputs_and_reopen(tmp_path, native):
+    with native() as client:
+        simulation = checked(client, "simulate", size=8, n_views=8)["structuredContent"]
+        scan = simulation["members"]["scan"]
+        volume = checked(client, "reconstruct", source=scan, method="fbp")
+        assert [part["type"] for part in volume["content"]] == ["text", "image"]
+        path = tmp_path / "result #1.nxs"
+        saved = checked(
+            client, "save", source=volume["structuredContent"]["handle"], path=path.name
+        )
+        links = [part for part in saved["content"] if part["type"] == "resource_link"]
+        assert [item["uri"] for item in links] == [
+            path.as_uri(),
+            Path(str(path) + ".manifest.json").as_uri(),
+        ]
+        reopened = checked(client, "open", path=path.name, kind="reconstruction")
+        assert reopened["structuredContent"]["shape"] == [8, 8, 8]

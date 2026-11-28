@@ -4047,6 +4047,7 @@ dependencies = [
  "image",
  "jiff",
  "npyz",
+ "percent-encoding",
  "proptest",
  "rmcp",
  "rustix 1.1.6",

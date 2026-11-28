@@ -15,6 +15,8 @@ tokio::task_local! { pub static CANCEL: CancellationToken; }
 const TTL: Duration = Duration::from_secs(86_400);
 
 struct Entry {
+    activity: super::activity::Activity,
+    started: std::time::Instant,
     state: Value,
     cancel: CancellationToken,
 }
@@ -45,9 +47,12 @@ impl Tasks {
         let task: CreateTaskResult = serde_json::from_value(created)
             .map_err(|e| McpError::internal_error(e.to_string(), None))?;
         let cancel = CancellationToken::new();
+        let activity = super::activity::Activity::default();
         self.0.lock().unwrap().insert(
             id.clone(),
             Entry {
+                activity: activity.clone(),
+                started: std::time::Instant::now(),
                 state,
                 cancel: cancel.clone(),
             },
@@ -63,7 +68,12 @@ impl Tasks {
             }
         });
         tokio::spawn(async move {
-            let mut reply = CANCEL.scope(cancel, server.execute(&name, args)).await;
+            let mut reply = CANCEL
+                .scope(
+                    cancel,
+                    super::activity::CURRENT.scope(activity, server.execute(&name, args)),
+                )
+                .await;
             reply["resultType"] = json!("complete");
             if let Some(task) = server.tasks.0.lock().unwrap().get_mut(&id) {
                 let state = &mut task.state;
@@ -88,7 +98,11 @@ impl Tasks {
         if cancel {
             entry.cancel.cancel();
         }
-        Ok(entry.state.clone())
+        let mut state = entry.state.clone();
+        if state["status"] == "working" {
+            entry.activity.update(&mut state, entry.started);
+        }
+        Ok(state)
     }
 }
 

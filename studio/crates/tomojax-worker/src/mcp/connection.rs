@@ -140,6 +140,7 @@ impl Reply {
     }
 }
 struct Pending {
+    activity: Option<super::activity::Activity>,
     upload_ready: Option<oneshot::Sender<()>>,
     done: oneshot::Sender<Result<Reply>>,
     bytes: Vec<u8>,
@@ -270,6 +271,7 @@ impl Session {
             .insert(
                 id.clone(),
                 Pending {
+                    activity: super::activity::CURRENT.try_with(Clone::clone).ok(),
                     upload_ready,
                     done,
                     bytes: Vec::new(),
@@ -307,6 +309,20 @@ async fn disconnect(
         .map_or_else(|| format!("{name} disconnected"), |e| e.to_string())
 }
 
+fn progress(pending: &PendingCalls, row: &Value) -> Result<()> {
+    let owner = row["request"].as_str().context("Missing progress owner")?;
+    let mut pending = pending.lock().unwrap();
+    if let Some(call) = pending.as_mut().and_then(|calls| calls.get_mut(owner)) {
+        if row["stage"] == "upload_ready" {
+            if let Some(ready) = call.upload_ready.take() {
+                let _ = ready.send(());
+            }
+        } else if let Some(activity) = &call.activity {
+            activity.record(&row["record"]);
+        }
+    }
+    Ok(())
+}
 async fn drive(
     mut input: ChildStdin,
     output: ChildStdout,
@@ -340,18 +356,7 @@ async fn drive(
                     state.send_modify(|s| s.worker = row);
                 }
                 Some("executor") => state.send_modify(|s| s.executor = row),
-                Some("progress") if row["stage"] == "upload_ready" => {
-                    if let Some(ready) = pending
-                        .lock()
-                        .unwrap()
-                        .as_mut()
-                        .and_then(|calls| calls.get_mut(row["request"].as_str()?))
-                        .and_then(|call| call.upload_ready.take())
-                    {
-                        let _ = ready.send(());
-                    }
-                }
-                Some("progress") => {}
+                Some("progress") => progress(pending, &row)?,
                 Some("block") => {
                     let size = row["bytes"]
                         .as_u64()

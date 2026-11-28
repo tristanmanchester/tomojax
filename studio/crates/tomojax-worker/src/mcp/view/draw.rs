@@ -190,9 +190,141 @@ fn ticks(p: &Panel, c: Cell, img: &mut RgbImage) {
         color,
     );
 }
+fn raster(
+    canvas: &mut RgbImage,
+    p: &Panel,
+    [lo, hi]: [f64; 2],
+    (cell_w, cell_h): (usize, usize),
+    j: usize,
+    decorated: bool,
+) -> Cell {
+    let (ml, mt, mr, mb) = if decorated {
+        (40, 16, 14, 14)
+    } else {
+        (6, 0, 6, 0)
+    };
+    let (room_w, room_h) = (cell_w - ml - mr, cell_h - mt - mb);
+    let scale = (room_w as f64 / p.width as f64).min(room_h as f64 / (p.height as f64 * p.aspect));
+    let w = (p.width as f64 * scale).round_ties_even().max(1.) as usize;
+    let h = (p.height as f64 * p.aspect * scale)
+        .round_ties_even()
+        .max(1.) as usize;
+    let left = j * cell_w + ml + (room_w - w) / 2;
+    let top = mt + (room_h - h) / 2;
+    // Pillow's nearest-neighbour transform advances a floating sample centre.
+    let step_x = p.width as f64 / w as f64;
+    let step_y = p.height as f64 / h as f64;
+    let mut sy = 0.5 * step_y;
+    for y in 0..h {
+        let mut sx = 0.5 * step_x;
+        for x in 0..w {
+            let v = p.pixels
+                [(sy as usize).min(p.height - 1) * p.width + (sx as usize).min(p.width - 1)];
+            let level = if hi > lo {
+                ((v - lo) / (hi - lo)).clamp(0., 1.) * 255.
+            } else {
+                0.
+            };
+            canvas.put_pixel((left + x) as u32, (top + y) as u32, Rgb([level as u8; 3]));
+            sx += step_x;
+        }
+        sy += step_y;
+    }
+    Cell {
+        left,
+        top,
+        width: w,
+        height: h,
+        sx: w as f64 / p.width as f64,
+        sy: h as f64 / p.height as f64,
+    }
+}
+pub(super) fn encode(mut canvas: RgbImage, decorated: bool, grid: bool) -> Result<Value> {
+    let (width, height) = canvas.dimensions();
+    if grid {
+        let color = Rgb([90, 170, 255]);
+        for x in (100..width).step_by(100) {
+            for y in (0..height).step_by(4) {
+                canvas.put_pixel(x, y, color);
+            }
+            label(&mut canvas, x as i32 + 2, 2, &x.to_string(), color);
+        }
+        for y in (100..height).step_by(100) {
+            for x in (0..width).step_by(4) {
+                canvas.put_pixel(x, y, color);
+            }
+            label(&mut canvas, 2, y as i32 + 2, &y.to_string(), color);
+        }
+    }
+    let mut png = vec![];
+    if decorated {
+        PngEncoder::new(&mut png).write_image(
+            canvas.as_raw(),
+            width,
+            height,
+            ExtendedColorType::Rgb8,
+        )?;
+    } else {
+        let gray = canvas.pixels().map(|v| v.0[0]).collect::<Vec<_>>();
+        PngEncoder::new(&mut png).write_image(&gray, width, height, ExtendedColorType::L8)?;
+    }
+    Ok(json!({"type":"image","data":STANDARD.encode(png),"mimeType":"image/png"}))
+}
+const COLORS: [(&str, [u8; 3]); 5] = [
+    ("cyan", [0, 229, 255]),
+    ("magenta", [255, 64, 245]),
+    ("green", [110, 255, 60]),
+    ("orange", [255, 140, 0]),
+    ("red", [255, 48, 48]),
+];
+fn outlines(canvas: &mut RgbImage, cell: Cell, p: &Panel) {
+    for (mask, (_, color)) in p.outlines.iter().zip(COLORS) {
+        let (w, h) = (cell.width, cell.height);
+        let mut selected = vec![false; w * h];
+        let mut sy = 0.5 / cell.sy;
+        for row in selected.chunks_mut(w) {
+            let mut sx = 0.5 / cell.sx;
+            for v in row {
+                *v = mask
+                    [(sy as usize).min(p.height - 1) * p.width + (sx as usize).min(p.width - 1)]
+                    != 0.;
+                sx += 1. / cell.sx;
+            }
+            sy += 1. / cell.sy;
+        }
+        for r in 0..h {
+            for c in 0..w {
+                let i = r * w + c;
+                if selected[i]
+                    && (r == 0
+                        || c == 0
+                        || r + 1 == h
+                        || c + 1 == w
+                        || !selected[i - w]
+                        || !selected[i + w]
+                        || !selected[i - 1]
+                        || !selected[i + 1])
+                {
+                    for y in r..=(r + 1).min(h - 1) {
+                        for x in c..=(c + 1).min(w - 1) {
+                            canvas.put_pixel(
+                                (cell.left + x) as u32,
+                                (cell.top + y) as u32,
+                                Rgb(color),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value, Vec<Value>)> {
     let explicit = form.limits;
-    let decorated = !form.marks.is_empty() || form.ticks == Some(true) || form.grid;
+    let decorated = !form.features.is_empty()
+        || !form.marks.is_empty()
+        || form.ticks == Some(true)
+        || form.grid;
     let mut reports = marks::reports(&form.marks);
     if let Some([lo, hi]) = explicit {
         ensure!(lo < hi, "limits must be (low, high) with low < high");
@@ -224,52 +356,13 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
         } else {
             (328usize, 240usize)
         };
-        let (ml, mt, mr, mb) = if decorated {
-            (40, 16, 14, 14)
-        } else {
-            (6, 0, 6, 0)
-        };
         let height = (cell_h + 10 + 18 * labels.iter().map(Vec::len).max().unwrap()) as u32;
         let width = (cell_w * group.len()) as u32;
         let mut canvas = RgbImage::from_pixel(width, height, Rgb([28; 3]));
         for (j, p) in group.iter().enumerate() {
             let [lo, hi] = ranges[batch * 3 + j];
-            let (room_w, room_h) = (cell_w - ml - mr, cell_h - mt - mb);
-            let scale =
-                (room_w as f64 / p.width as f64).min(room_h as f64 / (p.height as f64 * p.aspect));
-            let w = (p.width as f64 * scale).round_ties_even().max(1.) as usize;
-            let h = (p.height as f64 * p.aspect * scale)
-                .round_ties_even()
-                .max(1.) as usize;
-            let left = j * cell_w + ml + (room_w - w) / 2;
-            let top = mt + (room_h - h) / 2;
-            // Pillow's nearest-neighbour transform advances a floating sample centre.
-            let step_x = p.width as f64 / w as f64;
-            let step_y = p.height as f64 / h as f64;
-            let mut sy = 0.5 * step_y;
-            for y in 0..h {
-                let mut sx = 0.5 * step_x;
-                for x in 0..w {
-                    let v = p.pixels[(sy as usize).min(p.height - 1) * p.width
-                        + (sx as usize).min(p.width - 1)];
-                    let level = if hi > lo {
-                        ((v - lo) / (hi - lo)).clamp(0., 1.) * 255.
-                    } else {
-                        0.
-                    };
-                    canvas.put_pixel((left + x) as u32, (top + y) as u32, Rgb([level as u8; 3]));
-                    sx += step_x;
-                }
-                sy += step_y;
-            }
-            let cell = Cell {
-                left,
-                top,
-                width: w,
-                height: h,
-                sx: w as f64 / p.width as f64,
-                sy: h as f64 / p.height as f64,
-            };
+            let cell = raster(&mut canvas, p, [lo, hi], (cell_w, cell_h), j, decorated);
+            outlines(&mut canvas, cell, p);
             if decorated && form.ticks.unwrap_or(true) {
                 ticks(p, cell, &mut canvas);
             }
@@ -296,34 +389,7 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
                 );
             }
         }
-        if form.grid {
-            let color = Rgb([90, 170, 255]);
-            for x in (100..width).step_by(100) {
-                for y in (0..height).step_by(4) {
-                    canvas.put_pixel(x, y, color);
-                }
-                label(&mut canvas, x as i32 + 2, 2, &x.to_string(), color);
-            }
-            for y in (100..height).step_by(100) {
-                for x in (0..width).step_by(4) {
-                    canvas.put_pixel(x, y, color);
-                }
-                label(&mut canvas, 2, y as i32 + 2, &y.to_string(), color);
-            }
-        }
-        let mut png = vec![];
-        if decorated {
-            PngEncoder::new(&mut png).write_image(
-                canvas.as_raw(),
-                width,
-                height,
-                ExtendedColorType::Rgb8,
-            )?;
-        } else {
-            let gray = canvas.pixels().map(|v| v.0[0]).collect::<Vec<_>>();
-            PngEncoder::new(&mut png).write_image(&gray, width, height, ExtendedColorType::L8)?;
-        }
-        blocks.push(json!({"type":"image","data":STANDARD.encode(png),"mimeType":"image/png"}));
+        blocks.push(encode(canvas, decorated, form.grid)?);
         images.push(json!({"image":id,"width":width,"height":height}));
     }
     let mut output =
@@ -335,6 +401,15 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
     }
     if !reports.is_empty() {
         output["marks"] = json!(reports);
+    }
+    if !form.features.is_empty() {
+        output["features"] = json!(
+            form.features
+                .iter()
+                .zip(COLORS)
+                .map(|(name, (color, _))| json!({"handle":name,"color":color}))
+                .collect::<Vec<_>>()
+        );
     }
     Ok((output, blocks))
 }
