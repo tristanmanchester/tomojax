@@ -1,8 +1,5 @@
 //! Bounded NPY/HDF5 selections and their physical registration. Called on the I/O thread.
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{AxisScale, PlaneData, Statistics, VolumeData};
 use serde_json::{Value, json};
