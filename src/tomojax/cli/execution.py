@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields, is_dataclass
+import secrets
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
@@ -25,6 +26,11 @@ if TYPE_CHECKING:
 
     from tomojax._typed_arrays import Device
     from tomojax.io.api import ExportPlan
+
+
+def new_reference(kind: str) -> str:
+    """A reference no earlier session shares, such as ``@scan-3fa94c1e``."""
+    return f"@{kind}-{secrets.token_hex(4)}"
 
 
 class Control(Protocol):

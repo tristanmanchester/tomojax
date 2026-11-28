@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import secrets
 from typing import Any
 
-
-def new_reference(kind: str) -> str:
-    """A reference no earlier session shares, such as ``@scan-3fa94c1e``."""
-    return f"@{kind}-{secrets.token_hex(4)}"
+from tomojax.cli.execution import new_reference
 
 
 class Ledger:

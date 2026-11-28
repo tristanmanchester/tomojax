@@ -25,7 +25,6 @@ from tomojax.cli._marks import Overlay, annotate, check, frame_of, parse
 from tomojax.cli._planes import plane_windows
 from tomojax.cli.envelope import INLINE_LIMIT
 from tomojax.cli.images import Panel, limits as display_limits, raster
-from tomojax.cli.mcp.ledger import new_reference
 from tomojax.core.array_grid import published, require_same_grid
 from tomojax.core.input_files import expose_to_python, python_workspace
 from tomojax.wire.arrays import Member, Npy
@@ -97,7 +96,7 @@ class Registrations:
 
     def register(self, item: Root | jax.Array | np.ndarray) -> str:
         if isinstance(item, np.ndarray | jax.Array):
-            name = new_reference("array")
+            name = ex.new_reference("array")
             a = np.asarray(item)
             self.products[name] = p.ArrayResult(indexed(stage_array(self.context, a), a))
             self.made[name] = a
@@ -105,7 +104,7 @@ class Registrations:
         kind = next((kind for cls, kind in _KINDS.items() if isinstance(item, cls)), None)
         if not kind:
             raise ValueError("register expects a TomoJAX object or array")
-        name = new_reference(kind)
+        name = ex.new_reference(kind)
         self.roots.append((name, handle(item)))
         self.made[name] = item
         return name
@@ -171,7 +170,7 @@ class Registrations:
         inside, box = tight(whole, tuple(slice(0, n) for n in whole.shape))
         grid = owned(registration, coordinate, self.context)
         feature = ex.Feature(name, inside, box, grid, {"type": "python"})
-        named = new_reference("feature")
+        named = ex.new_reference("feature")
         self.roots.append((named, feature_handle(feature, values)))
         self.made[named] = feature
         # The copy in grid is private until this call publishes. Read the original in this call.
