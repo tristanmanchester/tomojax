@@ -394,6 +394,8 @@ fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
         values: values.to_vec().into(),
         shape: [1, 4],
         source_shape: [1, 4],
+        region: [[0, 1], [0, 4]],
+        detail: None,
         axes: ["y", "x"].map(|name| super::AxisScale {
             name: name.into(),
             frame: "world".into(),

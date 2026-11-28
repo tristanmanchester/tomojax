@@ -134,6 +134,9 @@ impl Pixels {
     }
 }
 
+/// Half-open source row and column bounds, in stored index order.
+pub type PlaneRegion = [[usize; 2]; 2];
+
 /// The same strided hyperslab feeds the native reader and a worker fetch.
 #[derive(Debug, Clone)]
 pub struct PlaneSelection {
@@ -141,11 +144,22 @@ pub struct PlaneSelection {
     pub step: Vec<usize>,
     pub count: Vec<usize>,
     pub remaining: [usize; 2],
+    pub region: PlaneRegion,
     pub stride: usize,
 }
 
 impl PlaneSelection {
     pub fn new(shape: &[usize], axis: usize, index: usize, edge: usize) -> Result<Self, String> {
+        Self::for_region(shape, axis, index, edge, None)
+    }
+
+    pub fn for_region(
+        shape: &[usize],
+        axis: usize,
+        index: usize,
+        edge: usize,
+        region: Option<PlaneRegion>,
+    ) -> Result<Self, String> {
         if !(2..=3).contains(&shape.len())
             || shape.contains(&0)
             || edge == 0
@@ -159,10 +173,27 @@ impl PlaneSelection {
         } else {
             [[1, 2], [0, 2], [0, 1]][axis]
         };
-        let stride = shape[remaining[0]].max(shape[remaining[1]]).div_ceil(edge);
+        let region = region.unwrap_or_else(|| remaining.map(|a| [0, shape[a]]));
+        if region
+            .iter()
+            .zip(remaining)
+            .any(|(&[lo, hi], a)| lo >= hi || hi > shape[a])
+        {
+            return Err("The requested region lies outside the plane.".into());
+        }
+        let stride = region
+            .iter()
+            .map(|[lo, hi]| hi - lo)
+            .max()
+            .unwrap()
+            .div_ceil(edge);
         let mut start = vec![0; shape.len()];
         let mut step = vec![stride; shape.len()];
-        let mut count: Vec<_> = shape.iter().map(|n| n.div_ceil(stride)).collect();
+        let mut count = vec![1; shape.len()];
+        for (a, [lo, hi]) in remaining.into_iter().zip(region) {
+            start[a] = lo;
+            count[a] = (hi - lo).div_ceil(stride);
+        }
         if shape.len() == 3 {
             start[axis] = index;
             step[axis] = 1;
@@ -174,6 +205,7 @@ impl PlaneSelection {
             count,
             remaining,
             stride,
+            region,
         })
     }
 

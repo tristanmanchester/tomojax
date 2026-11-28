@@ -53,9 +53,19 @@ fn doubles(files: &FileReads, storage: &Storage, shape: &[usize]) -> Result<Vec<
     )?
     .doubles(shape)
 }
-fn scale(files: &FileReads, axis: &Axis, count: usize, stride: usize) -> Result<AxisScale, String> {
+fn scale(
+    files: &FileReads,
+    axis: &Axis,
+    count: usize,
+    [start, end]: [usize; 2],
+    stride: usize,
+) -> Result<AxisScale, String> {
     let (origin, spacing, positions) = match &axis.coordinates {
-        Coordinates::Uniform { origin, spacing } => (*origin, *spacing * stride as f64, None),
+        Coordinates::Uniform { origin, spacing } => (
+            *origin + *spacing * start as f64,
+            *spacing * stride as f64,
+            None,
+        ),
         Coordinates::Coordinates { values } => {
             if count > 1_000_000 {
                 return Err("The coordinate vector exceeds the registration budget.".into());
@@ -64,7 +74,11 @@ fn scale(files: &FileReads, axis: &Axis, count: usize, stride: usize) -> Result<
             if coordinates.iter().any(|v| !v.is_finite()) {
                 return Err("The coordinate vector contains nonfinite positions.".into());
             }
-            let positions: Vec<_> = coordinates.into_iter().step_by(stride).collect();
+            let positions: Vec<_> = coordinates[start..end]
+                .iter()
+                .step_by(stride)
+                .copied()
+                .collect();
             let origin = positions[0];
             let spacing = if positions.len() > 1 {
                 positions[1] - origin
@@ -114,7 +128,13 @@ pub(super) fn registered_plane(
     let source_shape = remaining.map(|a| descriptor.shape[a]);
     let mut fixed = descriptor.fixed.clone();
     if dimensions == 3 {
-        let fixed_axis = scale(files, &descriptor.axes[axis], descriptor.shape[axis], 1)?;
+        let fixed_axis = scale(
+            files,
+            &descriptor.axes[axis],
+            descriptor.shape[axis],
+            [0, descriptor.shape[axis]],
+            1,
+        )?;
         fixed.push(Fixed {
             name: fixed_axis.name.clone(),
             frame: fixed_axis.frame.clone(),
@@ -130,17 +150,21 @@ pub(super) fn registered_plane(
         values: values.into(),
         shape: [count[remaining[0]], count[remaining[1]]],
         source_shape,
+        region: slab.region,
+        detail: None,
         axes: [
             scale(
                 files,
                 &descriptor.axes[remaining[0]],
                 source_shape[0],
+                slab.region[0],
                 stride,
             )?,
             scale(
                 files,
                 &descriptor.axes[remaining[1]],
                 source_shape[1],
+                slab.region[1],
                 stride,
             )?,
         ],
@@ -177,8 +201,20 @@ pub(crate) fn table(
         values: values.into(),
         shape: [descriptor.shape[0], descriptor.shape[1]],
         axes: [
-            scale(files, &descriptor.axes[0], descriptor.shape[0], 1)?,
-            scale(files, &descriptor.axes[1], descriptor.shape[1], 1)?,
+            scale(
+                files,
+                &descriptor.axes[0],
+                descriptor.shape[0],
+                [0, descriptor.shape[0]],
+                1,
+            )?,
+            scale(
+                files,
+                &descriptor.axes[1],
+                descriptor.shape[1],
+                [0, descriptor.shape[1]],
+                1,
+            )?,
         ],
         columns: descriptor.columns.clone(),
         domain: descriptor.domain.clone(),
@@ -218,7 +254,15 @@ pub(super) fn volume(
     let source_shape = axis_order.map(|a| descriptor.shape[a]);
     let scales: Vec<_> = axis_order
         .iter()
-        .map(|&a| scale(files, &descriptor.axes[a], descriptor.shape[a], 1))
+        .map(|&a| {
+            scale(
+                files,
+                &descriptor.axes[a],
+                descriptor.shape[a],
+                [0, descriptor.shape[a]],
+                1,
+            )
+        })
         .collect::<Result<_, _>>()?;
     if scales
         .iter()

@@ -110,21 +110,27 @@ impl Remote {
             } else {
                 request.key.edge
             };
-            let flight = PlaneSelection::new(&request.descriptor.shape, axis, index, edge)
-                .and_then(|selection| {
-                    let window = windows.get(id as usize).copied().flatten();
-                    let command = selection.fetch(&request.descriptor, encoding, window);
-                    let rid = engine.request(command, Some(&format!("view.{id}")))?;
-                    Ok((
-                        rid,
-                        Arc::new(Flight {
-                            files: engine.files(),
-                            request: request.clone(),
-                            selection,
-                            encoding,
-                        }),
-                    ))
-                });
+            let flight = PlaneSelection::for_region(
+                &request.descriptor.shape,
+                axis,
+                index,
+                edge,
+                request.region,
+            )
+            .and_then(|selection| {
+                let window = windows.get(id as usize).copied().flatten();
+                let command = selection.fetch(&request.descriptor, encoding, window);
+                let rid = engine.request(command, Some(&format!("view.{id}")))?;
+                Ok((
+                    rid,
+                    Arc::new(Flight {
+                        files: engine.files(),
+                        request: request.clone(),
+                        selection,
+                        encoding,
+                    }),
+                ))
+            });
             match flight {
                 Ok((rid, flight)) => {
                     *pane = PaneStream::Waiting(request.generation, encoding);

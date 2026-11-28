@@ -101,6 +101,10 @@ pub struct PlaneData {
     /// Stored row, column dimensions of the displayed samples.
     pub shape: [usize; 2],
     pub source_shape: [usize; 2],
+    /// Half-open source row and column bounds covered by this texture.
+    pub region: studio_core::pixels::PlaneRegion,
+    /// A finer selection of this same plane, registered in source pixels.
+    pub detail: Option<Arc<PlaneData>>,
     pub axes: [AxisScale; 2],
     pub fixed: Vec<studio_core::protocol::Fixed>,
     pub index: usize,
@@ -117,6 +121,8 @@ impl PlaneData {
     /// Whether two planes sample the same grid, so they can be combined pixel by pixel.
     pub fn same_grid(&self, other: &Self) -> bool {
         self.shape == other.shape
+            && self.region == other.region
+            && self.stride == other.stride
             && self.source_shape == other.source_shape
             && self.fixed == other.fixed
             && self.value_unit == other.value_unit
@@ -125,7 +131,7 @@ impl PlaneData {
 
     /// Left minus right, on a shared grid.
     pub fn difference(&self, right: &Self) -> Option<Self> {
-        self.composite(right, |_, a, b| a - b)
+        self.combine_layers(right, |l, r| l.composite(r, |_, a, b| a - b))
     }
 
     /// Left samples up to `fraction` of the width, right samples after it, on a shared grid.
@@ -133,17 +139,52 @@ impl PlaneData {
     /// The composite is drawn with the left window, so right samples are mapped from
     /// `windows[1]` onto `windows[0]` to keep the right side's own contrast.
     pub fn split(&self, right: &Self, fraction: f32, windows: [[f32; 2]; 2]) -> Option<Self> {
-        let edge = (fraction.clamp(0., 1.) * self.shape[1] as f32).round() as usize;
-        let columns = self.shape[1];
         let [[left_low, left_high], [right_low, right_high]] = windows;
         let scale = (left_high - left_low) / (right_high - right_low);
-        self.composite(right, move |i, a, b| {
-            if i % columns < edge {
-                a
-            } else {
-                left_low + (b - right_low) * scale
-            }
+        self.combine_layers(right, |l, r| {
+            let edge = l.split_column(fraction);
+            l.composite(r, |i, a, b| {
+                if i % l.shape[1] < edge {
+                    a
+                } else {
+                    left_low + (b - right_low) * scale
+                }
+            })
         })
+    }
+
+    pub fn split_column(&self, fraction: f32) -> usize {
+        let [start, end] = self.region[1];
+        let cut = fraction.clamp(0., 1.) * self.source_shape[1] as f32;
+        ((cut - start as f32) * self.shape[1] as f32 / (end - start) as f32).round() as usize
+    }
+
+    fn combine_layers(
+        &self,
+        right: &Self,
+        combine: impl Fn(&Self, &Self) -> Option<Self>,
+    ) -> Option<Self> {
+        let mut plane = combine(self, right)?;
+        plane.detail = self
+            .detail
+            .as_ref()
+            .zip(right.detail.as_ref())
+            .and_then(|(l, r)| combine(l, r))
+            .map(Arc::new);
+        Some(plane)
+    }
+
+    pub(crate) fn layers(&self, display: &DisplaySettings) -> impl Iterator<Item = (bool, &Self)> {
+        std::iter::once((false, self)).chain(
+            self.detail
+                .as_deref()
+                .filter(|_| display.zoom > 1.)
+                .map(|d| (true, d)),
+        )
+    }
+
+    pub fn content_id(&self) -> [u64; 2] {
+        [self.id, self.detail.as_ref().map_or(0, |d| d.id)]
     }
 
     fn composite(&self, right: &Self, f: impl Fn(usize, f32, f32) -> f32) -> Option<Self> {
@@ -184,19 +225,65 @@ impl PlaneData {
         value.is_finite().then_some(value)
     }
 
-    /// Source row and column of the displayed sample nearest this normalized texture position.
-    pub fn displayed_index(&self, uv: [f32; 2]) -> [usize; 2] {
-        let [u, v] = uv;
-        std::array::from_fn(|i| {
-            let texel = ([v, u][i] * self.shape[i] as f32) as usize;
-            texel.min(self.shape[i] - 1) * self.stride
+    /// Choose the texture painted at this position in the whole plane.
+    pub fn layer_at(&self, [u, v]: [f32; 2]) -> &Self {
+        self.detail
+            .as_deref()
+            .filter(|d| {
+                [v, u].into_iter().enumerate().all(|(axis, x)| {
+                    let [lo, hi] = d.region[axis];
+                    x >= lo as f32 / self.source_shape[axis] as f32
+                        && (x < hi as f32 / self.source_shape[axis] as f32
+                            || (x == 1. && hi == self.source_shape[axis]))
+                })
+            })
+            .unwrap_or(self)
+    }
+
+    pub fn texel(&self, [u, v]: [f32; 2]) -> [usize; 2] {
+        std::array::from_fn(|axis| {
+            let [lo, hi] = self.region[axis];
+            let position =
+                ([v, u][axis] * self.source_shape[axis] as f32 - lo as f32) / (hi - lo) as f32;
+            ((position * self.shape[axis] as f32) as usize).min(self.shape[axis] - 1)
         })
     }
 
+    pub fn displayed_index(&self, uv: [f32; 2]) -> [usize; 2] {
+        let layer = self.layer_at(uv);
+        let texel = layer.texel(uv);
+        std::array::from_fn(|i| layer.region[i][0] + texel[i] * layer.stride)
+    }
+
     pub fn probe(&self, uv: [f32; 2]) -> Option<([usize; 2], f32)> {
-        let index = self.displayed_index(uv);
-        self.sample(index[0] / self.stride, index[1] / self.stride)
-            .map(|value| (index, value))
+        let layer = self.layer_at(uv);
+        let [row, col] = layer.texel(uv);
+        layer
+            .sample(row, col)
+            .map(|value| (self.displayed_index(uv), value))
+    }
+
+    /// Source pixels visible inside the fitted pane after pan and zoom.
+    pub fn visible_region(
+        &self,
+        display: &DisplaySettings,
+        edge: usize,
+    ) -> Option<studio_core::pixels::PlaneRegion> {
+        if display.zoom <= 1. || self.stride == 1 {
+            return None;
+        }
+        let region: [[usize; 2]; 2] = std::array::from_fn(|a| {
+            let n = self.source_shape[a] as f32;
+            let start = (0.5 + (-0.5 - display.pan[1 - a]) / display.zoom) * n;
+            let end = (0.5 + (0.5 - display.pan[1 - a]) / display.zoom) * n;
+            [
+                start.floor().clamp(0., n) as usize,
+                end.ceil().clamp(0., n) as usize,
+            ]
+        });
+        let lengths = region.map(|[lo, hi]| hi - lo);
+        (!lengths.contains(&0) && lengths.into_iter().max()?.div_ceil(edge) < self.stride)
+            .then_some(region)
     }
 
     /// Distance between sample-center coordinates; rejects unlike coordinate frames/units.

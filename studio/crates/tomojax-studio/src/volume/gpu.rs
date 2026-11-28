@@ -295,15 +295,22 @@ impl ImageTexture {
         pipes: &Pipelines,
         pass: &mut wgpu::RenderPass<'_>,
         site: &EffectSite<'_>,
-        plane: Option<(&PlaneData, &DisplaySettings)>,
+        plane: Option<(&PlaneData, &DisplaySettings, &PlaneData)>,
     ) {
-        let (rect, window, kind) = if let Some((data, display)) = plane {
+        let (rect, window, kind) = if let Some((data, display, layer)) = plane {
             let w = display
                 .window
                 .filter(|w| w[0].is_finite() && w[1].is_finite() && w[1] > w[0])
                 .unwrap_or(data.statistics.window);
+            let mut rect = image_rect(site.instance.rect, data.aspect(), display);
+            for (i, a) in [1, 0].into_iter().enumerate() {
+                let [lo, hi] = layer.region[a];
+                let unit = rect[2 + i] / data.source_shape[a] as f32;
+                rect[i] += lo as f32 * unit;
+                rect[2 + i] = (hi - lo) as f32 * unit;
+            }
             (
-                image_rect(site.instance.rect, data.aspect(), display),
+                rect,
                 [
                     w[0],
                     w[1],

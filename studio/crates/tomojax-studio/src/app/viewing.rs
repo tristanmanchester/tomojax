@@ -518,7 +518,7 @@ impl AppState {
             && self.ui.compare_mode == CompareMode::Difference
             && let (Some(left), Some(right)) = (self.imaging.plane(6), self.imaging.plane(7))
         {
-            let ids = [left.id, right.id];
+            let ids = [left.content_id(), right.content_id()];
             if self.difference.as_ref().is_none_or(|(old, _)| *old != ids) {
                 self.difference = left
                     .difference(right)
@@ -535,7 +535,7 @@ impl AppState {
         {
             let windows = [left_window, right_window];
             let key = (
-                [left.id, right.id],
+                [left.content_id(), right.content_id()],
                 self.ui.compare_split.to_bits(),
                 windows.as_flattened().iter().map(|v| v.to_bits()).collect(),
             );
@@ -585,7 +585,7 @@ impl AppState {
             }
         })
     }
-    fn display_settings(&self) -> DisplaySettings {
+    pub(super) fn display_settings(&self) -> DisplaySettings {
         DisplaySettings {
             window: self.window.applied(),
             colormap: match self.ui.display.colormap.as_str() {

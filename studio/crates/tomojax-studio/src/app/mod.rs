@@ -72,7 +72,8 @@ enum LocalEvent {
 }
 
 /// Plane ids of the two compared images, the split fraction and both windows, as bits.
-type SplitKey = ([u64; 2], u32, Vec<u32>);
+type PlanePair = [[u64; 2]; 2];
+type SplitKey = (PlanePair, u32, Vec<u32>);
 
 /// The demo's progress: a demo project is created, then a scan simulated in it, never in
 /// a project the user opened.
@@ -117,7 +118,7 @@ pub struct AppState {
     /// A scan passed at launch, waiting for the user's own project.
     startup_input: Option<PathBuf>,
     last_context: Value,
-    difference: Option<([u64; 2], std::sync::Arc<crate::imaging::PlaneData>)>,
+    difference: Option<(PlanePair, std::sync::Arc<crate::imaging::PlaneData>)>,
     /// The Split composite and the (left, right, curtain) it was built from.
     split: Option<(SplitKey, std::sync::Arc<crate::imaging::PlaneData>)>,
     /// Project names read once from each recent project's manifest.
