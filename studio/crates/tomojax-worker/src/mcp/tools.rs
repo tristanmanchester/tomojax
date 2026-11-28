@@ -117,7 +117,7 @@ pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<
         .as_deref()
         .filter(|_| name == "inspect")
         .and_then(|path| super::inspect::summary(path, &data))
-        .or_else(|| super::workflow::summary(&data))
+        .or_else(|| super::summary::summary(&data))
         .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap());
     content.insert(0, json!({"type":"text","text":text}));
     Ok(json!({"content":content,"structuredContent":data,"isError":false}))
