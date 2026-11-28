@@ -70,6 +70,9 @@ pub struct Session {
     uploads: HashMap<String, transfer::Upload>,
     events: SyncSender<Event>,
     pool: crate::Pool,
+    scripts: crate::inline::Queue,
+    pub scripts_client: crate::inline::Scripts,
+    cpu_only: bool,
 }
 
 impl Session {
@@ -96,6 +99,9 @@ impl Session {
             leases: HashMap::new(),
             deferred: VecDeque::new(),
             uploads: HashMap::new(),
+            scripts_client: crate::inline::Scripts::new(events.clone()),
+            scripts: Default::default(),
+            cpu_only: false,
             events,
             pool: crate::Pool::new(),
         })
@@ -111,7 +117,7 @@ impl Session {
         if self.closing.is_none() && self.executor.is_none() && Instant::now() >= self.retry {
             self.generation += 1;
             self.state("starting", Value::Null);
-            match Executor::start(&self.opts, self.generation, &self.events) {
+            match Executor::start(&self.opts, self.generation, &self.events, self.cpu_only) {
                 Ok(child) => self.executor = Some(child),
                 Err(e) => self.gone(self.generation, format!("{e:#}")),
             }
@@ -148,10 +154,49 @@ impl Session {
         for id in failed {
             self.cancel(&id, "input", &reason);
         }
+        self.scripts = Default::default();
         self.artifacts.clear();
         self.deferred.clear();
     }
 
+    /// Restart after changing GPU ownership. Existing generation leases end before the new start.
+    pub fn restart(&mut self, cpu_only: bool, reason: &str) {
+        self.gone(self.generation, reason.into());
+        self.cpu_only = cpu_only;
+        self.retry = Instant::now();
+    }
+
+    pub fn script(&mut self, action: crate::inline::Action) {
+        use crate::inline::Action;
+        if self.closing.is_some() {
+            return;
+        }
+        match action {
+            Action::Acquire(ticket, tx) => self.scripts.wait(ticket, tx),
+            Action::Release(ticket) => self.scripts.release(ticket),
+            Action::Send(ticket, row) => {
+                let Some(id) = row["id"].as_str() else {
+                    return;
+                };
+                if let Some(tx) = self.scripts.submit(ticket, id) {
+                    let result =
+                        if self.permanent.insert(id.into()) && !self.active.contains_key(id) {
+                            self.executor
+                                .as_ref()
+                                .context("executor gone")
+                                .and_then(|e| e.send(crate::wire::line(&row)))
+                        } else {
+                            Err(anyhow::anyhow!("duplicate script ID"))
+                        };
+                    if let Err(e) = result {
+                        let error = json!({"type":"protocol_error","request":id,"kind":"invalid_request","message":e.to_string()});
+                        self.scripts.reply(id, &error, true);
+                    }
+                    drop(tx);
+                }
+            }
+        }
+    }
     pub fn expired(&mut self) {
         self.gone(self.generation, "executor did not shut down".into());
     }
@@ -192,6 +237,13 @@ impl Session {
         let id = value["request"]
             .as_str()
             .context("executor reply lacks request")?;
+        let terminal = matches!(
+            value["type"].as_str(),
+            Some("result" | "error" | "protocol_error")
+        );
+        if self.scripts.reply(id, &value, terminal) {
+            return Ok(());
+        }
         if matches!(value["type"].as_str(), Some("result" | "progress")) {
             self.record_tokens(id, &value);
         }
@@ -458,6 +510,13 @@ impl Session {
             "executor is {}",
             self.detail["state"].as_str().unwrap_or("starting")
         );
+        if cmd["type"] == "status" || cmd["type"] == "control" {
+            return self
+                .executor
+                .as_ref()
+                .context("executor is gone")?
+                .send(bytes);
+        }
         let mut wait = Vec::new();
         if cmd["type"] == "close" || cmd["type"] == "release" {
             for (token, artifact) in &mut self.artifacts {
@@ -472,6 +531,21 @@ impl Session {
     }
 
     fn flush_deferred(&mut self) -> Result<()> {
+        if !self.scripts.idle() {
+            if self.root.is_some()
+                && self
+                    .active
+                    .values()
+                    .filter(|a| a.side == Side::Executor)
+                    .count()
+                    == self.deferred.len()
+            {
+                self.scripts.grant(&self.detail["detail"]);
+            }
+            if !self.scripts.idle() {
+                return Ok(());
+            }
+        }
         while let Some((_, wait)) = self.deferred.front() {
             if self
                 .leases
@@ -599,6 +673,7 @@ impl Session {
             return;
         }
         self.closing = Some(Instant::now());
+        self.scripts = Default::default();
         let local = self
             .active
             .values()

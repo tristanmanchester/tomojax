@@ -612,3 +612,82 @@ def test_resize_with_unacknowledged_blocks(client, tmp_path):
     control(window=3 * block)
     outstanding(7 * block)
     client.shutdown()
+
+
+def test_fetch_admission_spans_files_and_executor(client, tmp_path):
+    import imagecodecs
+
+    path = tmp_path / "values.npy"
+    np.save(path, np.arange(4).reshape(2, 2))
+    fields = {"storage": {"type": "npy", "path": str(path)}, "shape": [2, 2], "encoding": "float32"}
+    client.send("running", "inspect", channel="execution", path="wait")
+    client.mark(b"G")
+    assert client.read()["record"]["event"] == "started"
+    client.send("running", "fetch", **fields)
+    assert client.read()["type"] == "protocol_error"
+    client.send("other", "fetch", channel="execution", **fields)
+    assert client.read()["type"] == "protocol_error"
+    client.send("f", "fetch", channel="pixels", **fields)
+    assert client.end("f")["type"] == "result"
+    client.send("reverse", "inspect", channel="pixels", path="notify")
+    assert client.read()["type"] == "protocol_error"
+    client.proceed()
+    assert client.end("running")["type"] == "result"
+    client.send("open", "open", path="volume", kind="reconstruction")
+    handle = client.end("open")["result"]["value"]["handle"]
+    client.send(
+        "plane",
+        "plane",
+        source={"type": "member", "handle": handle, "member": "volume"},
+        axis="x",
+        index=1,
+    )
+    ref = client.end("plane")["result"]["value"]["plane"]["storage"]
+    fields = {"storage": ref, "shape": [2, 3], "encoding": "float32"}
+    client.send("wrong", "fetch", **{**fields, "storage": {**ref, "artifact": "wrong"}})
+    assert client.read()["type"] == "protocol_error"
+    # Occupy all four file readers before admitting the leased read.
+    pipes = [tmp_path / f"gate-{i}" for i in range(4)]
+    for i, gate in enumerate(pipes):
+        os.mkfifo(gate)
+        client.send(
+            f"gate-{i}",
+            "fetch",
+            storage={"type": "npy", "path": str(gate)},
+            shape=[1],
+            encoding="float32",
+        )
+    client.send("leased", "fetch", **fields)
+    client.send("release", "release", artifact=ref["artifact"])
+    client.send("close", "close", handle=handle)
+    client.send("heartbeat", "status")
+    client.end("heartbeat")
+    assert Path(ref["path"]).exists() and "release" not in client.terminal
+    client.send("retired", "fetch", **fields)
+    assert client.read()["type"] == "protocol_error"
+    for gate in pipes:
+        with gate.open("wb"):
+            pass
+    assert client.end("leased")["type"] == "result"
+    data = imagecodecs.zstd_decode(client.blocks["leased"])
+    np.testing.assert_array_equal(
+        np.frombuffer(data, dtype="u1").reshape(4, -1).T.copy().view("<f4").ravel(),
+        [1, 5, 9, 13, 17, 21],
+    )
+    client.end("release")
+    client.end("close")
+    assert not Path(ref["path"]).exists()
+    client.shutdown()
+
+
+def test_executor_generation_ends_waiters_once(client):
+    client.send("bad", "inspect", path="executor-exit")
+    client.send("waiting", "inspect", path="wait")
+    assert client.end("bad")["error"]["kind"] == "input"
+    assert client.end("waiting")["error"]["kind"] == "input"
+    while (row := client.read()).get("state") != "ready":
+        pass
+    assert row["generation"] == 2
+    client.send("again", "status")
+    assert client.end("again")["result"]["handles"] == {}
+    client.shutdown()

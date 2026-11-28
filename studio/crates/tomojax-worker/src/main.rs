@@ -1,6 +1,7 @@
 //! Worker process serving the files and TomoJAX executor on this machine.
 mod executor;
 mod files;
+pub mod inline;
 #[path = "../../tomojax-studio/src/metadata.rs"]
 mod metadata;
 #[path = "../../tomojax-studio/src/imaging/npy.rs"]
@@ -69,6 +70,7 @@ impl Options {
 }
 
 enum Event {
+    Inline(inline::Action),
     Input(wire::Input),
     Eof,
     Executor(u64, Vec<u8>),
@@ -190,6 +192,7 @@ fn serve(opts: Options) -> Result<()> {
                     session.input(input);
                 }
             }
+            Ok(Event::Inline(action)) => session.script(action),
             Ok(Event::Eof) => session.stop(),
             Ok(Event::Executor(g, bytes)) => {
                 if let Err(e) = session.answer(g, bytes) {

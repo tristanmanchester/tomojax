@@ -266,9 +266,14 @@ pub fn peek(path: &Path) -> Result<Value> {
             groups.extend(group.groups()?);
         }
     } else if path.extension().is_some_and(|s| s == "npz") {
-        let mut archive = npyz::npz::NpzArchive::open(path)?;
-        for name in archive.array_names().map(str::to_owned).collect::<Vec<_>>() {
-            let array = archive.by_name(&name)?.context("missing NPZ member")?;
+        let mut archive = zip::ZipArchive::new(File::open(path)?)?;
+        for index in 0..archive.len() {
+            let member = archive.by_index(index)?;
+            let Some(name) = npyz::npz::array_name_from_file_name(member.name()).map(str::to_owned)
+            else {
+                continue;
+            };
+            let array = npyz::NpyHeader::from_reader(member)?;
             datasets.insert(
                 name,
                 json!({"shape":array.shape(),"dtype":array.dtype().descr()}),

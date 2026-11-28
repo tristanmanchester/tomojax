@@ -20,7 +20,12 @@ pub struct Executor {
 }
 
 impl Executor {
-    pub fn start(options: &Options, generation: u64, events: &SyncSender<Event>) -> Result<Self> {
+    pub fn start(
+        options: &Options,
+        generation: u64,
+        events: &SyncSender<Event>,
+        cpu_only: bool,
+    ) -> Result<Self> {
         let base = options.results.join(".tomojax/sessions");
         fs::create_dir_all(&base)?;
         let directory = tempfile::Builder::new()
@@ -45,6 +50,11 @@ impl Executor {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        if cpu_only {
+            command
+                .env("JAX_PLATFORMS", "cpu")
+                .env("CUDA_VISIBLE_DEVICES", "");
+        }
         let mut child = studio_core::connection::process::own_group(&mut command)
             .spawn()
             .with_context(|| format!("start {}", args[0]))?;

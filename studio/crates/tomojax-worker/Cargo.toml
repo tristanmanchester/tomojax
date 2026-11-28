@@ -21,7 +21,8 @@ shlex = "2"
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
 image = { version = "0.25", default-features = false, features = ["jpeg"] }
 zstd = "0.13"
-npyz = { version = "0.9", features = ["npz"] }
+npyz = "0.9"
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
 ndarray = "0.17"
 half = "2"
 memmap2 = "0.9"

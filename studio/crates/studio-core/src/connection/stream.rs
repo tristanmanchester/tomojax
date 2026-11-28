@@ -233,6 +233,10 @@ pub(super) fn session(
 
 fn startup_failure(status: std::process::ExitStatus, stderr: &[u8]) -> Failure {
     let diagnostics = String::from_utf8_lossy(stderr);
+    // binfmt emulators can return SSH's own exit code for an incompatible ELF.
+    if diagnostics.contains("Invalid ELF image") || diagnostics.contains("Exec format error") {
+        return Failure::blocked(diagnostics.trim());
+    }
     if status.code() == Some(255) || super::auth::refused(&diagnostics) {
         return Failure::ssh(diagnostics.trim());
     }
