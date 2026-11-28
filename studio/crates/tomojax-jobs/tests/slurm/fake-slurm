@@ -68,6 +68,7 @@ case "$cmd" in
         state "$job" PENDING
         unlock
         setsid scheduler "$id" </dev/null >/dev/null 2>&1 &
+        while [[ -e "$root/delay-reply" ]]; do sleep 0.02; done
         [[ ! -e "$root/lose-reply" ]] || exit 1
         echo "$id;fixture"
         ;;

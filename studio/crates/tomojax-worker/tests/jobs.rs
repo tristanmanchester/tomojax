@@ -82,7 +82,7 @@ impl Worker {
             .recv_timeout(Duration::from_secs(120))
             .expect("worker stopped answering")
     }
-    fn request(&mut self, cmd: Value) -> Value {
+    fn send(&mut self, cmd: Value) -> String {
         self.next += 1;
         let id = format!("client-{}", self.next);
         writeln!(
@@ -91,6 +91,10 @@ impl Worker {
             json!({"id":id,"command":cmd})
         )
         .unwrap();
+        id
+    }
+    fn request(&mut self, cmd: Value) -> Value {
+        let id = self.send(cmd);
         loop {
             let reply = self.read();
             if reply["request"] == id && reply["type"] != "progress" {
@@ -141,10 +145,10 @@ impl Drop for Worker {
     }
 }
 
-fn signal(dir: &Path) {
+fn signal(dir: &Path, signal: rustix::process::Signal) {
     let row: Value = serde_json::from_slice(&fs::read(dir.join("runner.json")).unwrap()).unwrap();
     let pid = rustix::process::Pid::from_raw(row["pid"].as_i64().unwrap() as i32).unwrap();
-    rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
+    rustix::process::kill_process(pid, signal).unwrap();
 }
 
 fn advanced(dir: &Path) {
@@ -179,7 +183,7 @@ fn fake_slurm_requeues(worker: &mut Worker, op: &Value) {
     let whole = worker.finished(&dir, "completed");
     let dir = worker.submit("limited", vec![op.clone()]);
     advanced(&dir);
-    signal(&dir);
+    signal(&dir, rustix::process::Signal::TERM);
     let resumed = worker.finished(&dir, "completed");
     let compare=Command::new(python()).args(["-c","import sys, numpy as np, tomojax as tj; a,b=(tj.load_reconstruction(p).volume for p in sys.argv[1:]); np.testing.assert_array_equal(a,b)"])
         .arg(whole["receipt"]["path"].as_str().unwrap()).arg(resumed["receipt"]["path"].as_str().unwrap()).env("JAX_PLATFORMS","cpu").status().unwrap();
@@ -194,7 +198,7 @@ fn fake_slurm_requeues(worker: &mut Worker, op: &Value) {
     fs::write(worker.root.join("slurm/fail-requeue"), "").unwrap();
     let dir = worker.submit("requeue-failed", vec![op.clone()]);
     advanced(&dir);
-    signal(&dir);
+    signal(&dir, rustix::process::Signal::TERM);
     let failed = worker.finished(&dir, "interrupted");
     assert_eq!(failed["checkpoint"]["usable"], true);
 }
@@ -231,6 +235,18 @@ fn detached_scripts_survive_the_submitter_and_checkpoint_on_signals() {
         worker.request(json!({"type":"job_control","directory":dir,"action":"cancel"}));
         let canceled = worker.finished(&dir, "canceled");
         assert_eq!(canceled["checkpoint"]["usable"], true);
+        let runner: Value =
+            serde_json::from_slice(&fs::read(dir.join("runner.json")).unwrap()).unwrap();
+        let scheduler_job = worker
+            .root
+            .join("slurm")
+            .join(runner["slurm_job_id"].as_str().unwrap());
+        assert_eq!(
+            fs::read_to_string(scheduler_job.join("exits"))
+                .unwrap()
+                .trim(),
+            "130"
+        );
         let path = &canceled["checkpoint"]["path"];
         if i > 0 {
             assert_eq!(path, &op["operation"]["checkpoint"]);
@@ -258,7 +274,7 @@ fn termination_while_waiting_for_the_gpu_or_executor_closes_a_stopped_attempt() 
     let op = json!({"type":"run","operation":{"type":"correct","source":{"type":"path","path":"unused"}}});
     let blocked = worker.submit("blocked", vec![op.clone()]);
     until(|| blocked.join("work/session/waiting").exists());
-    signal(&blocked);
+    signal(&blocked, rustix::process::Signal::TERM);
     let done = worker.finished(&blocked, "interrupted");
     assert!(done["checkpoint"].is_null());
     drop(worker);
@@ -268,8 +284,81 @@ fn termination_while_waiting_for_the_gpu_or_executor_closes_a_stopped_attempt() 
     let queued = worker.submit("locked", vec![op]);
     until(|| queued.join("runner.json").exists());
     assert_eq!(worker.job(&queued)["state"], "queued");
-    signal(&queued);
+    signal(&queued, rustix::process::Signal::TERM);
     worker.finished(&queued, "interrupted");
     let log = fs::read_to_string(queued.join("replies.jsonl")).unwrap();
     assert!(log.contains("\"outcome\":\"stopped\""));
+}
+
+#[test]
+#[ignore = "starts two session workers and the fake batch controller"]
+fn reconnect_recovers_a_job_after_the_submitter_dies_before_the_sbatch_reply() {
+    let root = tempfile::tempdir().unwrap();
+    let scheduler = root.path().join("slurm");
+    let mut submitter = Worker::start(root.path(), "slurm", &python());
+    fs::write(scheduler.join("hold"), "").unwrap();
+    fs::write(scheduler.join("delay-reply"), "").unwrap();
+    let dir = root.path().join("jobs/held");
+    let script = [json!({"id":"held.run","command":simulate()})];
+    submitter.send(json!({"type":"submit","directory":dir,"script":script}));
+    until(|| scheduler.join("100/state").exists());
+    submitter.kill();
+    fs::remove_file(scheduler.join("delay-reply")).unwrap();
+    assert!(!dir.join("submission.json").exists());
+    let mut observer = Worker::start(root.path(), "inline", &python());
+    let discovered = observer.request(json!({"type":"jobs","root":root.path()}));
+    assert_eq!(discovered["jobs"][0]["state"], "queued", "{discovered}");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&fs::read(dir.join("submission.json")).unwrap()).unwrap(),
+        json!({"accepted":100})
+    );
+    observer.request(json!({"type":"job_control","directory":dir,"action":"cancel"}));
+    observer.finished(&dir, "canceled");
+    assert!(!dir.join("runner.json").exists());
+}
+
+#[test]
+#[ignore = "kills a live runner and checks its child with a pidfd"]
+fn a_killed_runner_takes_its_executor_with_it() {
+    use rustix::{
+        event::{PollFd, PollFlags, Timespec, poll},
+        process::{Pid, PidfdFlags, Signal, pidfd_open},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let wrapper = root.path().join("python");
+    let script = format!(
+        r#"#!/bin/sh
+case "$TMPDIR" in
+  */owned/work/session)
+    trap '' TERM
+    echo "$$" > "$TMPDIR/pid.tmp"
+    mv "$TMPDIR/pid.tmp" "$TMPDIR/pid"
+    exec sleep 120
+    ;;
+esac
+exec '{}' "$@"
+"#,
+        python().display()
+    );
+    fs::write(&wrapper, script).unwrap();
+    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o700)).unwrap();
+    let mut worker = Worker::start(root.path(), "slurm", &wrapper);
+    let dir = worker.submit("owned", vec![simulate()]);
+    let pid = dir.join("work/session/pid");
+    until(|| pid.exists());
+    let pid = Pid::from_raw(fs::read_to_string(pid).unwrap().trim().parse().unwrap()).unwrap();
+    let child = pidfd_open(pid, PidfdFlags::empty()).unwrap();
+    signal(&dir, Signal::KILL);
+    assert_eq!(
+        poll(
+            &mut [PollFd::new(&child, PollFlags::IN)],
+            Some(&Timespec {
+                tv_sec: 5,
+                tv_nsec: 0
+            })
+        )
+        .unwrap(),
+        1
+    );
+    worker.finished(&dir, "interrupted");
 }
