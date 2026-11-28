@@ -15,8 +15,12 @@ pub(super) enum Mark {
         at: Vec<f64>,
         label: Option<String>,
         color: Option<Color>,
+        snap: Option<Snap>,
+        within: Option<f64>,
     },
 }
+mod snapping;
+use snapping::Snap;
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub(super) enum Color {
@@ -83,9 +87,8 @@ fn reflected(i: isize, n: usize) -> usize {
     let k = i.rem_euclid(2 * n as isize) as usize;
     if k < n { k } else { 2 * n - 1 - k }
 }
-fn smooth(p: &Panel, median: f64) -> Vec<f64> {
-    let mut data: Vec<_> = p
-        .pixels
+fn smooth(pixels: &[f64], width: usize, height: usize, median: f64) -> Vec<f64> {
+    let mut data: Vec<_> = pixels
         .iter()
         .map(|x| if x.is_finite() { *x } else { median })
         .collect();
@@ -96,7 +99,7 @@ fn smooth(p: &Panel, median: f64) -> Vec<f64> {
     for vertical in [true, false] {
         let mut next = Vec::with_capacity(data.len());
         for (i, _) in data.iter().enumerate() {
-            let (r, c) = (i / p.width, i % p.width);
+            let (r, c) = (i / width, i % width);
             next.push(
                 weights
                     .iter()
@@ -104,9 +107,9 @@ fn smooth(p: &Panel, median: f64) -> Vec<f64> {
                     .map(|(j, w)| {
                         let offset = j as isize - 4;
                         let ix = if vertical {
-                            reflected(r as isize + offset, p.height) * p.width + c
+                            reflected(r as isize + offset, height) * width + c
                         } else {
-                            r * p.width + reflected(c as isize + offset, p.width)
+                            r * width + reflected(c as isize + offset, width)
                         };
                         data[ix] * w / sum
                     })
@@ -118,7 +121,7 @@ fn smooth(p: &Panel, median: f64) -> Vec<f64> {
     data
 }
 fn nearby(report: &mut Value, p: &Panel, at: [f64; 2], ordered: &[f64]) {
-    let smooth = smooth(p, quantile(ordered, 0.5));
+    let smooth = smooth(&p.pixels, p.width, p.height, quantile(ordered, 0.5));
     let sorted = order(smooth.iter().copied());
     let jumps = order(
         p.pixels
@@ -207,12 +210,19 @@ fn percentile(ordered: &[f64], value: f64) -> f64 {
 
 impl Overlay<'_> {
     pub fn draw(&self, canvas: &mut RgbImage, mark: &Mark) -> Result<Value> {
-        let Mark::Point { at, color, label } = mark;
+        let Mark::Point {
+            at,
+            color,
+            label,
+            snap,
+            within,
+        } = mark;
         let p = self.panel;
         let c = self.cell;
         ensure!(
             at.len() == p.window.len(),
-            "give one coordinate per source axis"
+            "give one per source axis ({}) as array indices",
+            p.source_axes.join(", ")
         );
         let mut reply = json!({"panel":self.index});
         if let Some(d) = p.normal {
@@ -229,6 +239,10 @@ impl Overlay<'_> {
         if r < -0.5 || col < -0.5 || r >= p.height as f64 - 0.5 || col >= p.width as f64 - 0.5 {
             return Ok(json!({"panel":self.index,"drawn":false,"reason":"outside_roi"}));
         }
+        let [r, col] = match snap {
+            Some(kind) => snapping::apply(&mut reply, p, [r, col], *kind, within.unwrap_or(5.))?,
+            None => [r, col],
+        };
         let [x, y] = c.pixel(r, col);
         let tint = color.unwrap_or(Color::Yellow).pixel();
         let (cx, cy) = (x as i32, y as i32);

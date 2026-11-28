@@ -319,7 +319,17 @@ fn outlines(canvas: &mut RgbImage, cell: Cell, p: &Panel) {
         }
     }
 }
-pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value, Vec<Value>)> {
+fn panel_labels(p:&Panel,[lo,hi]:[f64;2],decorated:bool)->Vec<String>{
+    let scale=format!("limits [{}, {}] {}", number(lo), number(hi), p.unit);
+    std::iter::once(&p.title).chain(&p.labels).chain(std::iter::once(&scale)).flat_map(|s|lines(s,if decorated{70}else{49})).collect()
+}
+
+pub(super) fn render(
+    panels: &[Panel],
+    form: &View,
+    first: u64,
+    placements: Option<&std::sync::Mutex<super::Placements>>,
+) -> Result<(Value, Vec<Value>)> {
     let explicit = form.limits;
     let decorated = !form.features.is_empty()
         || !form.marks.is_empty()
@@ -341,14 +351,7 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
         let mut labels = vec![];
         for (j, p) in group.iter().enumerate() {
             let [lo, hi] = ranges[batch * 3 + j];
-            let scale = format!("limits [{}, {}] {}", number(lo), number(hi), p.unit);
-            labels.push(
-                std::iter::once(&p.title)
-                    .chain(&p.labels)
-                    .chain(std::iter::once(&scale))
-                    .flat_map(|s| lines(s, if decorated { 70 } else { 49 }))
-                    .collect::<Vec<_>>(),
-            );
+            labels.push(panel_labels(p,[lo,hi],decorated));
             summaries.push(json!({"array":p.title,"labels":p.labels,"unit":p.unit,"intensity_limits":[lo,hi],"image":id}));
         }
         let (cell_w, cell_h) = if decorated {
@@ -359,9 +362,13 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
         let height = (cell_h + 10 + 18 * labels.iter().map(Vec::len).max().unwrap()) as u32;
         let width = (cell_w * group.len()) as u32;
         let mut canvas = RgbImage::from_pixel(width, height, Rgb([28; 3]));
+        let mut placed = Vec::new();
         for (j, p) in group.iter().enumerate() {
             let [lo, hi] = ranges[batch * 3 + j];
             let cell = raster(&mut canvas, p, [lo, hi], (cell_w, cell_h), j, decorated);
+            if placements.is_some() {
+                placed.push(super::placement::Placement::new(p, cell));
+            }
             outlines(&mut canvas, cell, p);
             if decorated && form.ticks.unwrap_or(true) {
                 ticks(p, cell, &mut canvas);
@@ -390,6 +397,9 @@ pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value
             }
         }
         blocks.push(encode(canvas, decorated, form.grid)?);
+        if let Some(cache) = placements {
+            cache.lock().unwrap().insert(id.clone(), placed);
+        }
         images.push(json!({"image":id,"width":width,"height":height}));
     }
     let mut output =

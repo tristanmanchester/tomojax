@@ -1,6 +1,8 @@
 //! Read worker-owned hyperslabs and compare the scientific samples before converting to gray.
 mod draw;
 mod marks;
+mod placement;
+pub(super) use placement::Placements;
 mod poses;
 pub(super) mod preview;
 use super::{
@@ -59,6 +61,7 @@ struct Panel {
     aspect: f64,
     labels: Vec<String>,
     axes: [String; 2],
+    source_axes: Vec<String>,
     pixels: Vec<f64>,
     outlines: Vec<Vec<f64>>,
     window: Vec<[usize; 3]>,
@@ -247,6 +250,10 @@ impl Reader<'_> {
             height: dims[r],
             aspect,
             labels,
+            source_axes: axes
+                .iter()
+                .map(|a| a["name"].as_str().unwrap_or("").to_owned())
+                .collect(),
             axes: [r, c].map(|i| axes[i]["name"].as_str().unwrap_or("").into()),
             pixels: data,
             outlines: vec![],
@@ -382,7 +389,7 @@ impl Reader<'_> {
         {
             ensure!(
                 matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
-                "marks, ticks and grid need a plane view"
+                "marks, ticks and grid need a rendered plane"
             );
         }
         if mode == "statistics" {
@@ -467,76 +474,20 @@ impl Reader<'_> {
             .session
             .renders
             .fetch_add(panels.len().div_ceil(3) as u64, Ordering::Relaxed);
-        draw::render(&panels, form, first)
+        draw::render(&panels, form, first, Some(&self.session.placements))
     }
 }
 
-fn compare_grid(left: &Value, right: &Value, volume: bool) -> Result<Vec<usize>> {
-    let axes = left["axes"].as_array().context("missing axes")?;
-    let other = right["axes"]
-        .as_array()
-        .context("missing comparison axes")?;
-    ensure!(
-        axes.len() == other.len() && left["fixed"] == right["fixed"],
-        "grid mismatch: axes or fixed planes differ"
-    );
-    if volume {
-        ensure!(
-            left["unit"] == right["unit"]
-                && axes.len() == 3
-                && ["z", "y", "x"].iter().all(|name| axes
-                    .iter()
-                    .any(|v| v["name"] == *name && v["frame"] == "volume")),
-            "difference requires matching value units and volume axes x, y, z."
-        );
-    }
-    let mut order = vec![];
-    for (j, b) in other.iter().enumerate() {
-        let i = axes
-            .iter()
-            .position(|a| a["name"] == b["name"])
-            .context("grid mismatch: axis names differ")?;
-        let a = &axes[i];
-        ensure!(
-            (volume || i == j)
-                && a["frame"] == b["frame"]
-                && a["unit"] == b["unit"]
-                && left["shape"][i] == right["shape"][j],
-            "grid mismatch: axis order, frame, units or dimensions differ"
-        );
-        let n = left["shape"][i].as_u64().context("missing axis length")? as usize;
-        let (ac, bc) = (&a["coordinates"], &b["coordinates"]);
-        let at = |c: &Value, k: usize| -> Result<f64> {
-            if let Some(origin) = c["origin"].as_f64() {
-                Ok(origin + c["spacing"].as_f64().context("missing pitch")? * k as f64)
-            } else {
-                c["values"][k].as_f64().context("missing coordinate")
-            }
-        };
-        if ac["type"] == "uniform" && bc["type"] == "uniform" {
-            for k in [0, 1, n.saturating_sub(1)] {
-                ensure!(
-                    (at(ac, k)? - at(bc, k)?).abs() <= 1e-6,
-                    "grid mismatch: axis coordinates differ"
-                );
-            }
-        } else {
-            for k in 0..n {
-                ensure!(
-                    (at(ac, k)? - at(bc, k)?).abs() <= 1e-6,
-                    "grid mismatch: axis coordinate {k} differs"
-                );
-            }
-        }
-        order.push(i);
-    }
-    Ok(order)
-}
+use grid::compare_grid;
+mod grid;
 pub async fn run(
     session: &Session,
     inventory: &Inventory,
-    args: Value,
+    mut args: Value,
 ) -> Result<(Value, Vec<Value>)> {
+    if let Some(marks) = args.get_mut("marks").and_then(Value::as_array_mut) {
+        session.placements.lock().unwrap().locate(marks)?;
+    }
     let mut form: View = serde_json::from_value(args)?;
     if matches!(form.mode.as_deref(), Some("pose_table" | "pose_plot"))
         && let Sources::One(name) = &mut form.source
