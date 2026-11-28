@@ -85,39 +85,41 @@ fn named_project_reads_and_reconnects() {
         vec![""]
     };
     for scene in scenes {
-        let root = tempfile::tempdir().unwrap();
-        let project_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .canonicalize()
-            .unwrap();
-        let status = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "app::connection_tests::named_project_reads_and_reconnects",
-                "--ignored",
-                "--nocapture",
-            ])
-            .env("TOMOJAX_CONNECTION_FIXTURE", root.path())
-            .env("TOMOJAX_CONNECTION_SCENE", scene)
-            .env("XDG_CONFIG_HOME", root.path().join("config"))
-            .env("TOMOJAX_STUDIO_SETTINGS", root.path().join("studio.json"))
-            .env("TOMOJAX_TEST_WORKER", WorkerCommand::binary().unwrap())
-            .env(
-                "TOMOJAX_TEST_SLOWLINK",
-                project_dir.join("tools/slowlink.py"),
-            )
-            .env(
-                "TOMOJAX_TEST_PYTHON",
-                std::env::var_os("TOMOJAX_TEST_PYTHON")
-                    .map(PathBuf::from)
-                    .unwrap_or_else(|| project_dir.join(".venv/bin/python")),
-            )
-            .env_remove("TOMOJAX_STUDIO_INPUT")
-            .env("JAX_PLATFORMS", "cpu")
-            .status()
-            .unwrap();
-        assert!(status.success(), "scene {scene}");
+        isolated_scene(
+            "app::connection_tests::named_project_reads_and_reconnects",
+            scene,
+        );
     }
+}
+
+fn isolated_scene(test: &str, scene: &str) {
+    let root = tempfile::tempdir().unwrap();
+    let project_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../..")
+        .canonicalize()
+        .unwrap();
+    let status = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--ignored", "--nocapture"])
+        .env("TOMOJAX_CONNECTION_FIXTURE", root.path())
+        .env("TOMOJAX_CONNECTION_SCENE", scene)
+        .env("XDG_CONFIG_HOME", root.path().join("config"))
+        .env("TOMOJAX_STUDIO_SETTINGS", root.path().join("studio.json"))
+        .env("TOMOJAX_TEST_WORKER", WorkerCommand::binary().unwrap())
+        .env(
+            "TOMOJAX_TEST_SLOWLINK",
+            project_dir.join("tools/slowlink.py"),
+        )
+        .env(
+            "TOMOJAX_TEST_PYTHON",
+            std::env::var_os("TOMOJAX_TEST_PYTHON")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| project_dir.join(".venv/bin/python")),
+        )
+        .env_remove("TOMOJAX_STUDIO_INPUT")
+        .env("JAX_PLATFORMS", "cpu")
+        .status()
+        .unwrap();
+    assert!(status.success(), "scene {scene}");
 }
 
 fn exercise(root: &Path, scene: &str) {
@@ -921,3 +923,5 @@ fn capture_batch_state(mut state: AppState, batch: &Path, scan: &Path, scene: &s
         "{scene}: drawer, options or action missing"
     );
 }
+
+mod zoom;

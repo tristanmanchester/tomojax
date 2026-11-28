@@ -228,7 +228,7 @@ fn irregular_view_coordinates_keep_acquisition_order_and_do_not_become_distances
 
 #[test]
 fn finite_statistics_and_histogram_bins_match_the_reported_scalar_range() {
-    let stats = reader::statistics(&[0., 0.25, 0.5, 0.75, 1., f32::NAN]).unwrap();
+    let stats = reader::statistics(&[0., 0.25, 0.5, 0.75, 1., f32::NAN]);
     assert_eq!(stats.finite_count, 5);
     assert_eq!(stats.missing_count, 1);
     assert!((stats.mean - 0.5).abs() < 1e-12);
@@ -410,7 +410,7 @@ fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
         value_unit: unit.into(),
         domain: "attenuation".into(),
         stride: 1,
-        statistics: reader::statistics(&values).unwrap(),
+        statistics: reader::statistics(&values),
     };
     let left = plane([1., 2., 3., 4.], "mm^-1");
     let right = plane([10., 20., 30., 40.], "mm^-1");
@@ -439,6 +439,31 @@ fn split_and_difference_combine_pixels_only_on_a_shared_grid() {
         &*left.difference(&right).unwrap().values,
         &[-9., -18., -27., -36.]
     );
+    // Both crops lie to the right of the curtain. Register it in the full source.
+    let cropped = |p: &super::PlaneData, start| {
+        Arc::new(super::PlaneData {
+            id: reader::identity(),
+            region: [[0, 1], [start, start + 2]],
+            shape: [1, 2],
+            values: p.values[2..4].into(),
+            detail: None,
+            ..p.clone()
+        })
+    };
+    let mut left = left;
+    let mut right = right;
+    left.detail = Some(cropped(&left, 2));
+    right.detail = Some(cropped(&right, 2));
+    assert_eq!(
+        left.split(&right, 0.5, same).unwrap().probe([0.625, 0.5]),
+        Some(([0, 2], 30.))
+    );
+    assert_eq!(
+        left.difference(&right).unwrap().probe([0.875, 0.5]),
+        Some(([0, 3], -36.))
+    );
+    right.detail = Some(cropped(&right, 1));
+    assert!(left.difference(&right).unwrap().detail.is_none());
     let other_unit = plane([10., 20., 30., 40.], "1/scan_length");
     assert!(left.split(&other_unit, 0.5, same).is_none());
     assert!(left.difference(&other_unit).is_none());

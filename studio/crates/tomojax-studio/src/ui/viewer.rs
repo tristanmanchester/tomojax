@@ -463,7 +463,7 @@ pub fn image(state: &AppState, kind: PlaneKind, mark: u32, interactive: bool) ->
         surface = surface.w_full().h_full();
     } else if let Some(p) = info {
         let ratio = if p.pixel_shape[0] > 0 && p.pixel_shape[1] > 0 {
-            let pixel_aspect = if kind == PlaneKind::Sinogram || p.spacing[0] <= 0. {
+            let pixel_aspect = if p.spacing[0] <= 0. {
                 1.
             } else {
                 p.spacing[1] / p.spacing[0]

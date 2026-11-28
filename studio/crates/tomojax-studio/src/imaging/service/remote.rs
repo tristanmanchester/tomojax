@@ -105,17 +105,16 @@ impl Remote {
             let Some(encoding) = pane.next(request.generation) else {
                 continue;
             };
-            let edge = if encoding == Encoding::Jpeg {
-                request.key.edge.min(512)
-            } else {
-                request.key.edge
-            };
+            let mut edge = request.crop.map_or(request.key.edge, |crop| crop.edge);
+            if encoding == Encoding::Jpeg {
+                edge = edge.min(512);
+            }
             let flight = PlaneSelection::for_region(
                 &request.descriptor.shape,
                 axis,
                 index,
                 edge,
-                request.region,
+                request.crop.map(|crop| crop.bounds),
             )
             .and_then(|selection| {
                 let window = windows.get(id as usize).copied().flatten();
@@ -139,7 +138,9 @@ impl Remote {
                 }
                 Err(error) => {
                     slot.status = ImagingStatus::Error(error);
-                    slot.asset = None;
+                    if request.crop.is_none() {
+                        slot.asset = None;
+                    }
                     changed = true;
                 }
             }

@@ -159,7 +159,10 @@ impl AppState {
         if active != mark {
             return None;
         }
-        let uv = self.data_uv(position);
+        let uv = self.display_settings().source_uv(position);
+        if !uv.iter().all(|x| (0. ..=1.).contains(x)) {
+            return None;
+        }
         let data = match mark {
             9 => self.imaging.plane(kind.mark())?,
             10 => &self.difference.as_ref()?.1,
@@ -303,13 +306,14 @@ impl AppState {
 }
 
 pub(super) fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
-    let statistics = &plane.statistics;
+    let visible = plane.detail.as_deref().unwrap_or(plane);
+    let statistics = &visible.statistics;
     let bins = statistics.histogram.len().max(1);
     let same_units =
         plane.axes[0].unit == plane.axes[1].unit && plane.axes[0].frame == plane.axes[1].frame;
     let mut view = PlaneView {
         available: true,
-        pixel_shape: plane.shape,
+        pixel_shape: plane.source_shape,
         spacing: if same_units {
             [plane.axes[0].spacing.abs(), plane.axes[1].spacing.abs()]
         } else {
@@ -333,10 +337,10 @@ pub(super) fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
             })
             .chain([
                 plane.domain.replace('_', " "),
-                if plane.stride == 1 {
+                if visible.stride == 1 {
                     "full resolution".into()
                 } else {
-                    format!("preview at 1:{} sampling", plane.stride)
+                    format!("preview at 1:{} sampling", visible.stride)
                 },
             ])
             .collect::<Vec<_>>()
@@ -357,11 +361,13 @@ pub(super) fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
             sampled_pixels: statistics.finite_count,
         }),
     };
-    if !plane.lossless {
+    if statistics.finite_count == 0 || !visible.lossless {
         view.histogram.clear();
         view.histogram_edges.clear();
         view.statistics = None;
-        view.quality.push_str(" · moving preview");
+        if !visible.lossless {
+            view.quality.push_str(" · moving preview");
+        }
     }
     view
 }

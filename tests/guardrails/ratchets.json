@@ -72,7 +72,7 @@
   "broad_except": 29,
   "studio_allows": 1,
   "studio_long_files": {
-    "studio/crates/tomojax-studio/src/app/viewing.rs": 1336,
+    "studio/crates/tomojax-studio/src/app/viewing.rs": 1331,
     "studio/crates/tomojax-studio/src/ui/inspector.rs": 884,
     "studio/crates/tomojax-studio/src/ui/viewer.rs": 894
   },
@@ -88,9 +88,9 @@
     "studio/crates/tomojax-studio/src/app/previewing.rs::poll_interactive": 223,
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_event": 134,
     "studio/crates/tomojax-studio/src/app/validation.rs::validation_operation": 121,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 114,
+    "studio/crates/tomojax-studio/src/app/viewing.rs::measure": 112,
     "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_model": 209,
-    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 163,
+    "studio/crates/tomojax-studio/src/app/viewing.rs::refresh_plane_model": 161,
     "studio/crates/tomojax-studio/src/app/viewing.rs::render_items": 101,
     "studio/crates/tomojax-studio/src/forms.rs::initialize": 169,
     "studio/crates/tomojax-studio/src/ui/controls.rs::icon": 146,
@@ -108,7 +108,7 @@
     "studio/crates/tomojax-studio/src/ui/viewer.rs::compare": 151,
     "studio/crates/tomojax-studio/src/ui/viewer.rs::image": 185,
     "studio/crates/tomojax-studio/src/ui/viewer.rs::workspace": 112,
-    "studio/crates/tomojax-studio/src/volume/compositor.rs::render": 110,
+    "studio/crates/tomojax-studio/src/volume/compositor.rs::render": 109,
     "studio/crates/tomojax-studio/src/volume/ray.rs::prepare": 130
   },
   "cuda_kernels": 47,

@@ -169,7 +169,11 @@ assets. Local projects connect to a sibling worker over pipes. `Imaging`
 requests a windowed JPEG up to 512 pixels across while moving. Each pane keeps
 its newest wanted index while a JPEG is in flight. Once the index settles, the
 pane requests float32 samples at its displayed size. Moving again supersedes
-that lossless request immediately.
+that lossless request immediately. When zoom makes a finer sampling stride
+visible, the pane requests the visible row and column bounds on the same
+channel. Its whole-plane texture stays available for the background and
+thumbnails. The detail texture and the probe share those source bounds.
+Compare combines detail only when both sides have the same sample grid.
 
 The engine's stdout reader consumes and acknowledges pixel blocks before
 handing a complete frame to the decoder. The reader sizes the credit window

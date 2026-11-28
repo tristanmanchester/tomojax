@@ -13,6 +13,7 @@ struct ImageUniform {
     target: [f32; 4],
     window: [f32; 4],
     info: [f32; 4],
+    uv: [f32; 4],
     clip: [f32; 4],
     fade: [u32; 4],
 }
@@ -333,6 +334,7 @@ impl ImageTexture {
             ],
             window,
             info: [u8::from(site.srgb_blend) as f32, kind, 0., 0.],
+            uv: plane.map_or([1., 1., 0., 0.], |(_, _, layer)| layer.texture_transform()),
             clip: site.instance.clip,
             fade: site.instance.fade,
         };

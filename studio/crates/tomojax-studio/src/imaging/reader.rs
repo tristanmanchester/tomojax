@@ -10,7 +10,7 @@ use studio_core::engine::FileReads;
 use studio_core::pixels::PlaneSelection;
 use studio_core::pixels::{Encoding, Pixels};
 use studio_core::protocol::ResultValue;
-use studio_core::protocol::{ArrayDescriptor, Axis, Coordinates, Fixed, Storage};
+use studio_core::protocol::{ArrayDescriptor, Coordinates, Fixed, Storage};
 
 pub(super) fn identity() -> u64 {
     static ID: AtomicU64 = AtomicU64::new(1);
@@ -55,11 +55,14 @@ fn doubles(files: &FileReads, storage: &Storage, shape: &[usize]) -> Result<Vec<
 }
 fn scale(
     files: &FileReads,
-    axis: &Axis,
-    count: usize,
-    [start, end]: [usize; 2],
+    descriptor: &ArrayDescriptor,
+    dimension: usize,
+    region: Option<[usize; 2]>,
     stride: usize,
 ) -> Result<AxisScale, String> {
+    let axis = &descriptor.axes[dimension];
+    let count = descriptor.shape[dimension];
+    let [start, end] = region.unwrap_or([0, count]);
     let (origin, spacing, positions) = match &axis.coordinates {
         Coordinates::Uniform { origin, spacing } => (
             *origin + *spacing * start as f64,
@@ -70,15 +73,15 @@ fn scale(
             if count > 1_000_000 {
                 return Err("The coordinate vector exceeds the registration budget.".into());
             }
-            let coordinates = doubles(files, values, &[count])?;
-            if coordinates.iter().any(|v| !v.is_finite()) {
+            let positions = pixels(
+                files,
+                json!({"type":"fetch", "storage":values, "shape":[count],
+                "roi":[[start,end]], "stride":[stride], "encoding":"float64"}),
+            )?
+            .doubles(&[(end - start).div_ceil(stride)])?;
+            if positions.iter().any(|v| !v.is_finite()) {
                 return Err("The coordinate vector contains nonfinite positions.".into());
             }
-            let positions: Vec<_> = coordinates[start..end]
-                .iter()
-                .step_by(stride)
-                .copied()
-                .collect();
             let origin = positions[0];
             let spacing = if positions.len() > 1 {
                 positions[1] - origin
@@ -128,22 +131,16 @@ pub(super) fn registered_plane(
     let source_shape = remaining.map(|a| descriptor.shape[a]);
     let mut fixed = descriptor.fixed.clone();
     if dimensions == 3 {
-        let fixed_axis = scale(
-            files,
-            &descriptor.axes[axis],
-            descriptor.shape[axis],
-            [0, descriptor.shape[axis]],
-            1,
-        )?;
+        let fixed_axis = scale(files, descriptor, axis, Some([index, index + 1]), 1)?;
         fixed.push(Fixed {
             name: fixed_axis.name.clone(),
             frame: fixed_axis.frame.clone(),
             unit: fixed_axis.unit.clone(),
             index,
-            coordinate: fixed_axis.coordinate(index as f64),
+            coordinate: fixed_axis.origin,
         });
     }
-    let statistics = statistics(&values)?;
+    let statistics = statistics(&values);
     Ok(PlaneData {
         lossless,
         id: identity(),
@@ -155,16 +152,16 @@ pub(super) fn registered_plane(
         axes: [
             scale(
                 files,
-                &descriptor.axes[remaining[0]],
-                source_shape[0],
-                slab.region[0],
+                descriptor,
+                remaining[0],
+                Some(slab.region[0]),
                 stride,
             )?,
             scale(
                 files,
-                &descriptor.axes[remaining[1]],
-                source_shape[1],
-                slab.region[1],
+                descriptor,
+                remaining[1],
+                Some(slab.region[1]),
                 stride,
             )?,
         ],
@@ -201,20 +198,8 @@ pub(crate) fn table(
         values: values.into(),
         shape: [descriptor.shape[0], descriptor.shape[1]],
         axes: [
-            scale(
-                files,
-                &descriptor.axes[0],
-                descriptor.shape[0],
-                [0, descriptor.shape[0]],
-                1,
-            )?,
-            scale(
-                files,
-                &descriptor.axes[1],
-                descriptor.shape[1],
-                [0, descriptor.shape[1]],
-                1,
-            )?,
+            scale(files, descriptor, 0, None, 1)?,
+            scale(files, descriptor, 1, None, 1)?,
         ],
         columns: descriptor.columns.clone(),
         domain: descriptor.domain.clone(),
@@ -247,22 +232,17 @@ pub(super) fn volume(
         .map(|n| n.div_ceil(stride))
         .collect();
     let values = volume_samples(files, descriptor, &count, stride, encoding, canceled)?;
-    let statistics = statistics(&values)?;
+    let statistics = statistics(&values);
+    if statistics.finite_count == 0 {
+        return Err("The selected volume contains no finite scalar samples.".into());
+    }
     let range = [statistics.min, statistics.max];
     let span = (range[1] - range[0]).max(f32::EPSILON);
     let shape = axis_order.map(|a| count[a]);
     let source_shape = axis_order.map(|a| descriptor.shape[a]);
     let scales: Vec<_> = axis_order
         .iter()
-        .map(|&a| {
-            scale(
-                files,
-                &descriptor.axes[a],
-                descriptor.shape[a],
-                [0, descriptor.shape[a]],
-                1,
-            )
-        })
+        .map(|&a| scale(files, descriptor, a, None, 1))
         .collect::<Result<_, _>>()?;
     if scales
         .iter()
@@ -356,7 +336,7 @@ fn volume_samples(
     Ok(values)
 }
 
-pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
+pub(super) fn statistics(values: &[f32]) -> Statistics {
     let mut min = f32::INFINITY;
     let mut max = f32::NEG_INFINITY;
     let mut mean = 0.;
@@ -371,7 +351,16 @@ pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
         m2 += delta * (f64::from(value) - mean);
     }
     if count == 0 {
-        return Err("The selected image contains no finite scalar samples.".into());
+        return Statistics {
+            min: f32::NAN,
+            max: f32::NAN,
+            mean: f64::NAN,
+            std: f64::NAN,
+            finite_count: 0,
+            missing_count: values.len(),
+            histogram: Vec::new(),
+            window: [0., 1.],
+        };
     }
     let mut histogram = vec![0u64; 256];
     let span = (max - min).max(f32::EPSILON);
@@ -401,7 +390,7 @@ pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
             low + low.abs().max(1.) * 0.01
         },
     ];
-    Ok(Statistics {
+    Statistics {
         min,
         max,
         mean,
@@ -410,5 +399,5 @@ pub(super) fn statistics(values: &[f32]) -> Result<Statistics, String> {
         missing_count: values.len() - count,
         histogram,
         window,
-    })
+    }
 }

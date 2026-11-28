@@ -7,7 +7,7 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 use studio_core::{
     engine::{Engine, FileReads},
-    pixels::{Encoding, PlaneRegion},
+    pixels::Encoding,
     protocol::Response,
 };
 
@@ -104,7 +104,7 @@ struct Request {
     generation: u64,
     descriptor: Arc<ArrayDescriptor>,
     key: Key,
-    region: Option<PlaneRegion>,
+    crop: Option<super::data::PlaneCrop>,
     submitted: Instant,
     lineage: u64,
 }
@@ -237,7 +237,7 @@ impl Imaging {
                 self.next_generation += 1;
                 slot.request.generation = self.next_generation;
                 slot.request.lineage = self.next_generation;
-                slot.request.region = None;
+                slot.request.crop = None;
                 slot.asset = None;
                 slot.status = ImagingStatus::Loading;
             }
@@ -282,8 +282,7 @@ impl Imaging {
         )
     }
 
-    /// Refine the settled overview on its own channel. Changing the crop leaves its
-    /// registered pixels usable while the next JPEG and lossless crop travel.
+    /// Keep the settled overview on screen while the pane refines its new crop.
     pub fn view_region(&mut self, id: u32, display: Option<&super::DisplaySettings>) -> bool {
         let Some(slot) = self.slots.get_mut(&id) else {
             return false;
@@ -291,21 +290,21 @@ impl Imaging {
         let Some(Asset::Plane(overview)) = &mut slot.asset else {
             return false;
         };
-        if slot.request.region.is_none() && slot.status != ImagingStatus::Ready {
+        if slot.request.crop.is_none() && slot.status != ImagingStatus::Ready {
             return false;
         }
-        let region = display.and_then(|d| overview.visible_region(d, slot.request.key.edge));
-        if region == slot.request.region {
+        let crop = display.and_then(|d| overview.visible_region(d, slot.request.key.edge));
+        if crop == slot.request.crop {
             return false;
         }
         self.next_generation += 1;
         slot.request.generation = self.next_generation;
-        slot.request.region = region;
+        slot.request.crop = crop;
         slot.request.submitted = Instant::now();
-        slot.status = if region.is_some() {
+        Arc::make_mut(overview).detail = None;
+        slot.status = if crop.is_some() {
             ImagingStatus::Refining
         } else {
-            Arc::make_mut(overview).detail = None;
             slot.displayed = (self.next_generation, true);
             ImagingStatus::Ready
         };
@@ -380,7 +379,7 @@ impl Imaging {
             generation: self.next_generation,
             descriptor: Arc::new(descriptor),
             key: key.clone(),
-            region: None,
+            crop: None,
             submitted: Instant::now(),
             lineage,
         };
@@ -443,8 +442,8 @@ impl Imaging {
         };
         let current = slot.request.generation == event.request.generation;
         let arrival = (event.request.generation, event.finished);
-        let interim = event.request.region.is_none()
-            && slot.request.region.is_none()
+        let interim = event.request.crop.is_none()
+            && slot.request.crop.is_none()
             && !event.finished
             && matches!(&event.asset, Ok(Asset::Plane(p)) if !p.lossless)
             && event.request.lineage == slot.request.lineage;
@@ -453,7 +452,7 @@ impl Imaging {
         }
         match event.asset {
             Ok(asset) => {
-                if event.request.region.is_some() {
+                if event.request.crop.is_some() {
                     let (Some(Asset::Plane(overview)), Asset::Plane(detail)) =
                         (&mut slot.asset, &asset)
                     else {
@@ -473,7 +472,7 @@ impl Imaging {
                 };
                 if event.finished
                     && event.request.key.plane.is_some()
-                    && event.request.region.is_none()
+                    && event.request.crop.is_none()
                 {
                     self.shared
                         .cache
@@ -484,7 +483,7 @@ impl Imaging {
             }
             // The previous pixels are no longer the requested plane.
             Err(error) => {
-                if event.request.region.is_none() {
+                if event.request.crop.is_none() {
                     slot.asset = None;
                 }
                 slot.status = ImagingStatus::Error(error);
