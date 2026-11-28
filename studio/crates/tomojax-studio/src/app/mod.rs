@@ -584,9 +584,9 @@ impl AppState {
                     "TomoJAX stopped ({})",
                     detail.as_str().unwrap_or("restarting")
                 );
-                self.imaging.invalidate();
+                // The worker still reads stored planes, so the panes keep their pictures and
+                // navigation goes on. Only what the executor made (previews, live frames) goes.
                 self.live.disconnected();
-                self.image_key.clear();
                 self.disconnect_interactive();
             }
             Response::Ready(_) | Response::Block { .. } => {}

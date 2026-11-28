@@ -254,6 +254,34 @@ fn worker_disconnect_unbinds_temporary_preview_files() {
 }
 
 #[test]
+fn a_stopped_executor_leaves_the_stored_planes_on_screen_and_readable() {
+    let (_directory, mut state) = registered_projection_fixture();
+    let shown = state.imaging.plane(4).unwrap().index;
+    state.worker_response(
+        Response::Executor(crate::protocol::ExecutorState::Gone(json!(
+            "executor output ended"
+        ))),
+        false,
+    );
+    assert!(state.model.backend.status.starts_with("TomoJAX stopped"));
+    let plane = state
+        .imaging
+        .plane(4)
+        .expect("the projection stays on screen");
+    assert_eq!(plane.index, shown);
+    assert!(state.model.planes[&PlaneKind::Projection].count > 0);
+    // The worker reads stored planes without the executor, so navigation continues.
+    state.ui.display.projection_index = shown + 1;
+    state.refresh_images();
+    drive(&mut state, |state| {
+        state
+            .imaging
+            .plane(4)
+            .is_some_and(|plane| plane.index == shown + 1 && plane.lossless)
+    });
+}
+
+#[test]
 fn window_fields_show_the_rendered_range_without_overwriting_unfinished_edits() {
     let (_directory, mut state) = registered_projection_fixture();
     let current = state.imaging.plane(4).unwrap().statistics.window;
