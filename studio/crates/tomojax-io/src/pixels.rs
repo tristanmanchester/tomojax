@@ -83,6 +83,7 @@ impl Selection {
                     && actual == [self.shape[0], self.shape[2]],
                 "stored shape differs from the descriptor"
             );
+            self.shape.remove(1);
             self.start.remove(1);
             self.count.remove(1);
             self.stride.remove(1);
@@ -90,12 +91,12 @@ impl Selection {
         Ok(())
     }
 
-    fn slab(&self) -> Hyperslab {
+    fn slab(&self, strides: &[usize], counts: &[usize]) -> Hyperslab {
         Hyperslab::from(
             self.start
                 .iter()
-                .zip(&self.stride)
-                .zip(&self.count)
+                .zip(strides)
+                .zip(counts)
                 .map(|((&start, &step), &count)| SliceOrIndex::SliceCount {
                     start,
                     step,
@@ -104,6 +105,75 @@ impl Selection {
                 })
                 .collect::<Vec<_>>(),
         )
+    }
+    /// A detector plane, or a contiguous stack of them, can be read in storage
+    /// order and decimated without asking HDF5 to gather individual pixels.
+    fn dense_counts<T>(&self, data: &hdf5::Dataset) -> Option<Vec<usize>> {
+        let first = self.count.iter().position(|&n| n > 1)?;
+        if self.count[first..].contains(&1) || self.stride[first..].iter().all(|&s| s == 1) {
+            return None;
+        }
+        let chunks = data.chunk();
+        let mut counts = self.count.clone();
+        for (axis, n) in counts.iter_mut().enumerate().skip(first) {
+            let step = self.stride[axis];
+            if chunks.as_ref().is_some_and(|c| step > c[axis]) {
+                return None; // A dense read would decompress chunks the ROI skips.
+            }
+            let span = (*n - 1) * step + 1;
+            let available = self.shape[axis] - self.start[axis];
+            // Include a short row tail so adjacent full rows form one run.
+            *n = if available - span < step {
+                available
+            } else {
+                span
+            };
+        }
+        let expanded = counts
+            .iter()
+            .try_fold(1usize, |size, n| size.checked_mul(*n))?;
+        let selected = self.count.iter().product::<usize>();
+        (expanded <= (64 << 20) / size_of::<T>() && expanded <= selected * 32).then_some(counts)
+    }
+
+    fn read<T>(&self, data: &hdf5::Dataset) -> Result<Vec<T>>
+    where
+        T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>,
+    {
+        let Some(counts) = self.dense_counts::<T>(data) else {
+            return Ok(data
+                .read_slice::<T, _, ndarray::IxDyn>(self.slab(&self.stride, &self.count))?
+                .into_raw_vec_and_offset()
+                .0);
+        };
+        let slab = self.slab(&vec![1; counts.len()], &counts);
+        let dtype = data.dtype()?;
+        if dtype.is::<u8>() {
+            self.decimate::<u8, T>(data, slab)
+        } else if dtype.is::<u16>() {
+            self.decimate::<u16, T>(data, slab)
+        } else if dtype.is::<f32>() {
+            self.decimate::<f32, T>(data, slab)
+        } else {
+            self.decimate::<T, T>(data, slab)
+        }
+    }
+
+    fn decimate<S: hdf5::H5Type + Copy, T: From<S>>(
+        &self,
+        data: &hdf5::Dataset,
+        slab: Hyperslab,
+    ) -> Result<Vec<T>> {
+        let mut block = data.read_slice::<S, _, ndarray::IxDyn>(slab)?;
+        for (axis, &step) in self.stride.iter().enumerate() {
+            if self.count[axis] > 1 && step > 1 {
+                block.slice_axis_inplace(
+                    ndarray::Axis(axis),
+                    ndarray::Slice::new(0, None, step as isize),
+                );
+            }
+        }
+        Ok(block.iter().copied().map(T::from).collect())
     }
 }
 
@@ -157,19 +227,9 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
             let data = file.dataset(dataset)?;
             selection.stored(&data.shape())?;
             if f32_only {
-                (
-                    data.read_slice::<f32, _, ndarray::IxDyn>(selection.slab())?
-                        .into_raw_vec_and_offset()
-                        .0,
-                    vec![],
-                )
+                (selection.read::<f32>(&data)?, vec![])
             } else {
-                (
-                    vec![],
-                    data.read_slice::<f64, _, ndarray::IxDyn>(selection.slab())?
-                        .into_raw_vec_and_offset()
-                        .0,
-                )
+                (vec![], selection.read::<f64>(&data)?)
             }
         }
         Storage::Member { .. } => bail!("fetch needs stored data"),
@@ -243,6 +303,32 @@ fn jpeg(shape: &[usize], values: Vec<f64>, span: [f64; 2]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dense_detector_roi_returns_only_the_requested_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = hdf5::File::create(dir.path().join("detector.h5")).unwrap();
+        let data = file
+            .new_dataset::<u16>()
+            .shape([3, 19, 31])
+            .chunk([1, 8, 16])
+            .create("detector")
+            .unwrap();
+        data.write_raw(&(0..3 * 19 * 31u16).collect::<Vec<_>>())
+            .unwrap();
+        let command: Fetch = serde_json::from_value(json!({
+            "storage":{"type":"hdf5","path":"detector.h5","dataset":"detector"},
+            "shape":[3,19,31], "roi":[[1,2],[3,18],[2,31]],"stride":[1,4,6],
+            "encoding":"float32"
+        }))
+        .unwrap();
+        let selection = Selection::new(&command).unwrap();
+        let expected: Vec<_> = [3, 7, 11, 15]
+            .into_iter()
+            .flat_map(|y| [2, 8, 14, 20, 26].map(|x| ((19 + y) * 31 + x) as f32))
+            .collect();
+        assert_eq!(selection.read::<f32>(&data).unwrap(), expected);
+    }
 
     #[test]
     fn levels_before_lossy_encoding() {
