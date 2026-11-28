@@ -48,7 +48,7 @@ pub fn jobs_workspace(state: &AppState) -> El {
     if state.live.frame().is_some() || state.live.loading() || state.live.error().is_some() {
         content = content.child(super::progress::live(state, false));
     }
-    let mut list = col().gap(12.).w_full();
+    let mut list = col().gap(0.).w_full();
     for (title, category) in [("In progress", 0), ("Queued", 1), ("Processing record", 2)] {
         let jobs: Vec<_> = state
             .model
@@ -76,7 +76,7 @@ pub fn jobs_workspace(state: &AppState) -> El {
                 .child(number(jobs.len().to_string(), 11., muted())),
         );
         for job in jobs {
-            list = list.child(job_row(state, job, false));
+            list = list.child(separator()).child(job_row(state, job, false));
         }
     }
     content = content.child(
@@ -231,9 +231,9 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
         .key(format!("job-{}", job.id))
         .w_full()
         .min_w(0.)
-        .padding(if compact { 13. } else { 17. })
-        .gap(12.)
-        .child(separator())
+        .py(if compact { 12. } else { 14. })
+        .px(if compact { 2. } else { 4. })
+        .gap(10.)
         .child(
             row()
                 .gap(14.)
@@ -295,12 +295,23 @@ fn job_body(state: &AppState, job: &JobView, mut body: El, compact: bool, expand
     if let Some(error) = &job.error {
         body = body.child(label(error, 11.5, tokens::error()).wrap());
     }
+    if let Some(note) = match job.status {
+        JobStatus::Unknown => Some(
+            "Studio cannot find this job on the machine or in its scheduler. Abandon stops waiting for it; if it turns up later, Studio cancels it.",
+        ),
+        JobStatus::Interrupted | JobStatus::Failed | JobStatus::Canceled if job.can_resume => Some(
+            "Resume continues from the saved checkpoint. Retry job starts again from the beginning.",
+        ),
+        _ => None,
+    } {
+        body = body.child(help(note));
+    }
     if compact || expanded {
         if !job.scheduler_options.is_empty() {
             body = body.child(property("Scheduler options", &job.scheduler_options));
         }
         if !job.devices.is_empty() {
-            body = body.child(property("Job devices", &job.devices));
+            body = body.child(property("Devices", &job.devices));
         }
     }
     body = body.child(super::progress::telemetry(state, job, compact, expanded));
@@ -384,7 +395,10 @@ pub fn jobs_drawer(state: &AppState) -> El {
     if jobs.is_empty() {
         rows = rows.child(help("No active jobs"));
     }
-    for job in jobs {
+    for (i, job) in jobs.into_iter().enumerate() {
+        if i > 0 {
+            rows = rows.child(separator());
+        }
         rows = rows.child(job_row(state, job, true));
     }
     // A panel under its top-bar trigger, sized to its content. It opens by itself when work is

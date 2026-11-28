@@ -90,8 +90,11 @@ impl AppState {
                 .collect()
         };
         let queued = self.capture_jobs(jobs)?;
+        self.model.status = match queued.len() {
+            1 => "Job queued. Editing the settings now does not change it.".into(),
+            n => format!("{n} jobs queued. Editing the settings now does not change them."),
+        };
         self.ui.activity.follow(queued);
-        self.model.status = "Submitted settings are captured with each job".into();
         self.refresh_model();
         Ok(())
     }
@@ -342,7 +345,7 @@ impl AppState {
                 JobStatus::Failed
             };
             job.error = Some(error.into());
-            job.stage = if canceled { "Canceled" } else { "Failed" }.into();
+            job.stage = if canceled { "Cancelled" } else { "Failed" }.into();
             job.finished = Some(now_ms());
             self.model.status = format!(
                 "{} {}",

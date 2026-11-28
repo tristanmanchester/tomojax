@@ -581,8 +581,8 @@ impl AppState {
             Response::Executor(crate::protocol::ExecutorState::Gone(detail)) => {
                 self.model.backend.ready = false;
                 self.model.backend.status = format!(
-                    "TomoJAX stopped · {}",
-                    detail.as_str().unwrap_or("Restarting executor")
+                    "TomoJAX stopped ({})",
+                    detail.as_str().unwrap_or("restarting")
                 );
                 self.imaging.invalidate();
                 self.live.disconnected();

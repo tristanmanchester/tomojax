@@ -15,7 +15,7 @@ mod viewer;
 
 use crate::AppState;
 use controls::*;
-pub(crate) use controls::{compact_number, unit_name};
+pub(crate) use controls::{compact_number, coordinate, unit_name};
 use model::*;
 use rune::{Cx, El, ScrollSpec, col, el, row};
 use tokens::*;
@@ -362,7 +362,7 @@ fn project_tree(state: &AppState, project: &ProjectView) -> El {
                 .gap(8.)
                 .fill(sage())
                 .child(strong(
-                    format!("{} assets selected", state.model.selection_count()),
+                    format!("{} items selected", state.model.selection_count()),
                     12.,
                     forest(),
                 ))
@@ -755,9 +755,6 @@ fn statusbar(state: &AppState) -> El {
         bar = bar.child(
             label(text, 11., tone).help(project.save_error.as_deref().unwrap_or(&project.path)),
         );
-    }
-    if !state.model.render_quality.is_empty() {
-        bar = bar.child(label(&state.model.render_quality, 11., muted()));
     }
     let connection = state.connection_status();
     bar = bar.child(
