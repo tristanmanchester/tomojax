@@ -317,6 +317,13 @@ exec "$TOMOJAX_TEST_PYTHON" "$TOMOJAX_TEST_SLOWLINK" -- "$TOMOJAX_TEST_WORKER" "
     );
     state.files.close_browser();
     if scene == "executor-stopped" {
+        let shown = |s: &AppState| {
+            s.model
+                .planes
+                .get(&PlaneKind::Projection)
+                .is_some_and(|p| p.available && p.count > 0)
+        };
+        wait(&mut state, "projection on screen", shown);
         let pid = fs::read_to_string(root.join("allocation.pid")).unwrap();
         assert!(
             Command::new("kill")
@@ -328,6 +335,10 @@ exec "$TOMOJAX_TEST_PYTHON" "$TOMOJAX_TEST_SLOWLINK" -- "$TOMOJAX_TEST_WORKER" "
         wait(&mut state, "executor stopped", |s| {
             s.model.backend.status.starts_with("TomoJAX stopped")
         });
+        assert!(
+            shown(&state),
+            "the projection stays on screen when TomoJAX stops"
+        );
         return snap(state, scene);
     }
     fs::write(root.join("allocated"), []).unwrap();
