@@ -33,7 +33,7 @@ Log in from the laptop. SSH handles the site’s prompts. A subsequent connectio
 tomojax-worker connect cluster --login
 ```
 
-If your site already provides TomoJAX, add its absolute interpreter path as `python = "/path/to/env/bin/python"` under `[cluster]`. The default is `python3`. Use this existing-environment setup with 1.0.0rc7. Builds after rc7 also provide `--install`. To install the laptop’s version with CUDA 12 support, run the command below. It needs `uv` and package-index access on the **first** SSH host, with a home directory shared by the machines that run Python.
+If your site already provides TomoJAX, add its absolute interpreter path as `python = "/path/to/env/bin/python"` under `[cluster]`. The default is `python3`. To install the laptop’s version with CUDA 12 support, run the command below. It needs `uv` and package-index access on the **first** SSH host, with a home directory shared by the machines that run Python.
 
 ```sh
 tomojax-worker connect cluster --install

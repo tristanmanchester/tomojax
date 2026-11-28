@@ -6,7 +6,7 @@ type: software
 authors:
   - family-names: "Manchester"
     given-names: "Tristan"
-version: "1.0.0rc7"
+version: "1.0.0rc8"
 date-released: "2026-11-28"
 license: GPL-3.0-only
 repository-code: "https://github.com/tristanmanchester/tomojax"

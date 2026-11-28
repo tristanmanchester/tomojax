@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc8 (2026-11-28)
 
+- Studio shows the first projection of a raw scan before its numerical inspection finishes, and reads only the pixels a view needs from NPY and HDF5 volumes. A 2560³ volume opens on a machine with an 8 GB process limit. Over a slow connection, moving pictures are smaller and integer detector planes are compressed in transit.
+- In Studio, Activity and Jobs describe scheduler states in sentences, an interrupted job is drawn differently from a failed one, a connection's job launcher is a choice of three, and panes keep their pictures when TomoJAX stops.
+- An MCP call longer than two minutes keeps its worker.
 - TomoJAX datasets and feature masks use NeXus format 2. A mask includes its recipe,
   coordinates and sparse bounding box. CLI and worker outputs embed their command,
   resolved settings and provenance. Read a saved record with `tomojax inspect FILE --json`.

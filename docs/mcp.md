@@ -8,8 +8,6 @@ What the agent sees after `reconstruct` on the FIPS walnut (three orbits, FISTA)
 
 ## Install and connect
 
-The native MCP server ships after 1.0.0rc7. For the Python server in rc7, use the [rc7 installation instructions](https://github.com/tristanmanchester/tomojax/blob/v1.0.0rc7/docs/mcp.md#install-and-connect).
-
 Install TomoJAX and the matching `tomojax-studio` wheel in the environment your MCP client will start. The wheel includes the native worker. For local CUDA 12 and physical X-ray spectra, run:
 
 ```bash
