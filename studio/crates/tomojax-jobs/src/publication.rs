@@ -144,6 +144,7 @@ pub fn receipt(
         let mut arrays = stored(&stage.join("result.nxs"))?;
         files.arrays(&mut arrays)?;
         result["type"] = json!("dataset");
+        result["method"] = product["method"].clone();
         result["path"] = json!(dest.join("result.nxs"));
         result["arrays"] = arrays;
         if slabs {

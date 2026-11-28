@@ -493,7 +493,7 @@ impl Session {
         }
         ensure!(self.active.len() < 1024, "too many pending requests");
         ensure!(
-            kind == "shutdown" || kind == "fetch" || self.permanent.len() < 100000,
+            matches!(kind, "shutdown" | "fetch" | "job" | "jobs") || self.permanent.len() < 100000,
             "session id limit reached"
         );
         if let Some(name) = &r.channel {
@@ -528,7 +528,7 @@ impl Session {
                 reply: reply.clone(),
             },
         );
-        if kind != "fetch" {
+        if !matches!(kind, "fetch" | "job" | "jobs") {
             self.permanent.insert(r.id.clone());
         }
         if !leases.is_empty() {

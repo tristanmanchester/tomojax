@@ -289,7 +289,7 @@ pub fn status(dir: &Path) -> io::Result<Value> {
             warning.unwrap_or(report.detail)
         };
         return Ok(
-            json!({"directory":dir,"state":state,"cancel_requested":after.cancel,"receipt":receipt,"checkpoint":checkpoint,
+            json!({"directory":dir,"state":state,"cancel_requested":after.cancel,"pause_requested":dir.join("paused").try_exists()?,"abandoned":after.abandoned,"receipt":receipt,"checkpoint":checkpoint,
             "launcher":claim.as_ref().map(|c|c.launcher),"job_name":claim.as_ref().map(|c|&c.name),"detail":detail}),
         );
     }
