@@ -1,151 +1,26 @@
 """Use real stdio for both MCP eras, including concurrent subscriptions and tasks."""
 
-from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
-from queue import Queue
 import shutil
 import subprocess
-import sys
-from threading import Thread
 import time
 
 import h5py
 import msgspec
 import pytest
 
+from tests.mcp_client import TASKS, connection
 import tomojax as tj
 from tomojax.cli.mcp import tools
 from tomojax.cli.mcp.tools import Open
 
 pytestmark = pytest.mark.surface
-TASKS = "io.modelcontextprotocol/tasks"
 ACK = {
     "resultType": "complete",
     "_meta": {"io.modelcontextprotocol/serverInfo": {"name": "tomojax", "version": tj.__version__}},
 }
-
-
-class Client:
-    def __init__(self, process, *, legacy):
-        self.process = process
-        self.legacy = legacy
-        self.messages = Queue()
-        self.inbox = []
-        self.serial = 0
-
-        def read_pipe():
-            for line in process.stdout:
-                row = json.loads(line)
-                if row.get("type") in ("result", "error", "protocol_error"):
-                    row["request_terminal"] = row.get("request")
-                self.messages.put(row)
-            self.messages.put(None)
-
-        self.reader = Thread(target=read_pipe, daemon=True)
-        self.reader.start()
-
-    def send(self, method, params, *, tasks=False, notify=False):
-        self.serial += 1
-        if not self.legacy:
-            params = {
-                **params,
-                "_meta": {
-                    **params.get("_meta", {}),
-                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
-                    "io.modelcontextprotocol/clientInfo": {"name": "pytest", "version": "1"},
-                    "io.modelcontextprotocol/clientCapabilities": {"extensions": {TASKS: {}}}
-                    if tasks
-                    else {},
-                },
-            }
-        row = {"jsonrpc": "2.0", "method": method, "params": params}
-        if not notify:
-            row["id"] = self.serial
-        self.process.stdin.write(json.dumps(row) + "\n")
-        self.process.stdin.flush()
-        return self.serial
-
-    def send_worker(self, name, args):
-        self.serial += 1
-        rid = str(self.serial)
-        self.process.stdin.write(
-            json.dumps({"id": rid, "command": {"type": "run", "operation": {"type": name, **args}}})
-            + "\n"
-        )
-        self.process.stdin.flush()
-        return rid
-
-    def receive(self, key, value):
-        while True:
-            for i, row in enumerate(self.inbox):
-                if row.get(key) == value:
-                    return self.inbox.pop(i)
-            row = self.messages.get(timeout=120)  # a hang, not a slow runner
-            assert row is not None, "server closed stdout"
-            self.inbox.append(row)
-
-    def rpc(self, method, params, *, tasks=False):
-        return self.receive("id", self.send(method, params, tasks=tasks))
-
-    def call(self, name, *, tasks=False, **args):
-        row = self.rpc("tools/call", {"name": name, "arguments": args}, tasks=tasks)
-        assert "error" not in row, row
-        return row["result"]
-
-    def task(self, action, task_id, **params):
-        return self.rpc("tasks/" + action, {"taskId": task_id, **params}, tasks=True)["result"]
-
-    def terminal(self, task_id):
-        end = time.monotonic() + 10
-        while time.monotonic() < end:
-            row = self.task("get", task_id)
-            if row["status"] != "working":
-                return row
-            time.sleep(0.01)
-        pytest.fail("Task did not settle")
-
-
-@contextmanager
-def connection(directory, *, legacy=False, overlay=False, exit_code=0):
-    scratch = directory / "cache"
-    scratch.mkdir(exist_ok=True)
-    env = {**os.environ, "TMPDIR": str(scratch), "CLAUDE_PROJECT_DIR": str(directory)}
-    cmd = [sys.executable, "-m", "tomojax.cli.main", "mcp"]
-    if overlay:
-        code = """
-import sys
-from tomojax.cli import mcp
-mcp.__path__.insert(0, sys.argv.pop())
-from tomojax.cli.mcp import tasks
-tasks.TTL = 2
-tasks.HEARTBEAT = .15
-tasks.PROGRESS_INTERVAL = .01
-sys.exit(mcp.main())
-"""
-        cmd = [sys.executable, "-c", code, str(directory)]
-    with subprocess.Popen(cmd, env=env, stdin=-1, stdout=-1, text=True) as proc:
-        client = Client(proc, legacy=legacy)
-        if legacy:
-            assert "result" in client.rpc(
-                "initialize",
-                dict(
-                    protocolVersion="2025-11-25",
-                    capabilities={},
-                    clientInfo={"name": "test", "version": "1"},
-                ),
-            )
-            client.send("notifications/initialized", {}, notify=True)
-        try:
-            yield client
-        finally:
-            proc.stdin.close()
-            try:
-                assert proc.wait(timeout=10) == exit_code
-            finally:
-                if proc.poll() is None:
-                    proc.kill()
 
 
 # A copy of the tool package gains handlers during the test. Every request,
