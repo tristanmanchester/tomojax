@@ -112,7 +112,7 @@ class CompletedRows:
     def mass(self) -> Float64Array:
         """Positive attenuation on virtual rays that no voxel of the requested grid can reach."""
         observed = np.sum(self.data, axis=-1, where=self.unseen, dtype=np.float64)
-        views = len(observed)
+        views = len(self.data)
         uncertainty: Float64Array | float = (
             np.sqrt(np.mean(np.diff(observed, axis=0) ** 2, axis=0) / (2 * views))
             if views > 1
@@ -146,7 +146,8 @@ class CompletedRows:
         plane = replace(wide, nz=1, vol_center=(0.0, 0.0, 0.0))
         panel = replace(detector, nv=1, center=(detector.center[0], 0.0))
         volume = host_array(wide.shape)
-        for row, measured in enumerate(self.support):
+        for row in range(detector.nv):
+            measured: NDArray[np.bool_] = self.support[row]
             if measured.any():
                 chord, columns = _crop(panel, measured)
                 with checkpoint.scope(f"exterior-chord-{row}"):

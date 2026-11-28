@@ -208,13 +208,19 @@ class RowSamples:
 
     @classmethod
     def on_panel(
-        cls, u: Float64Array, v: Float64Array, detector: Detector, *, edge_slopes: bool
+        cls,
+        u: Float64Array,
+        v: Float64Array,
+        detector: Detector,
+        *,
+        edge_slopes: bool,
+        native: int = 0,
     ) -> RowSamples:
         """Sample a measured chord, including the physical half pixels at its ends."""
         margin = 0.5 if edge_slopes else 0.0
         return cls(
             np.clip(u, -margin, detector.nu - 1 + margin),
-            np.clip(v, -margin, detector.nv - 1 + margin),
+            np.clip(v, -margin, detector.nv - 1 + margin) - native,
             edge_slopes=edge_slopes,
         )
 

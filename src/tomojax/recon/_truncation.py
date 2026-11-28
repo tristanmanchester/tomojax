@@ -136,8 +136,8 @@ class ChordSample:
                         v[i, left:right],
                         own,
                         edge_slopes=full_turn and not layout.quarter_turn,
+                        native=first,
                     )
-                    sample.v = sample.v - first
                     band = lower.item(row) - first, upper.item(row) - first
                     chords.append(_Chord(sample, views, band, coordinates, z))
         return cls(

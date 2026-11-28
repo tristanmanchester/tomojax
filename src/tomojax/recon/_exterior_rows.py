@@ -64,6 +64,28 @@ class _Panel:
     layout: DetectorRows
     turns: int
 
+    def sample_into(
+        self,
+        data: np.ndarray | jax.Array | CuPyValue,
+        target: Float32Array,
+        detector: Detector,
+        samples: RowSamples | None,
+        inside: NDArray[np.bool_],
+        batch: int,
+    ) -> None:
+        """Rectify bounded view blocks into the measured interval of each row."""
+        for begin in range(self.first, self.stop, batch):
+            progress.check_canceled()
+            part = slice(begin, min(begin + batch, self.stop))
+            block = data[part]
+            transfer = getattr(block, "get", None)
+            host = np.asarray(transfer() if transfer is not None else block)
+            native = np.rot90(host, -self.turns, axes=(1, 2))
+            measured = (
+                detector_means(native, detector) if samples is None else samples.read(native, 0)
+            )
+            np.copyto(target[part], measured, where=inside)
+
 
 def _horizontal(geometry: Geometry, detector: Detector) -> Geometry:
     """Keep the per-view poses, source and panel center while removing in-plane roll."""
@@ -159,17 +181,7 @@ class ObliqueExterior:
             columns = np.arange(det.nu)
             inside = (columns >= low[:, None]) & (columns < high[:, None])
             for panel in panels:
-                for begin in range(panel.first, panel.stop, batch):
-                    progress.check_canceled()
-                    part = slice(begin, min(begin + batch, panel.stop))
-                    block = data[part]
-                    transfer = getattr(block, "get", None)
-                    host = np.asarray(transfer() if transfer is not None else block)
-                    native = np.rot90(host, -panel.turns, axes=(1, 2))
-                    measured = (
-                        detector_means(native, det) if samples is None else samples.read(native, 0)
-                    )
-                    np.copyto(full[part, :, pad : pad + det.nu], measured, where=inside)
+                panel.sample_into(data, full[..., pad : pad + det.nu], det, samples, inside, batch)
             indices = np.concatenate([np.arange(p.first, p.stop) for p in panels])
             selected = indices[radius_views(len(indices))]
             for row in range(det.nv):

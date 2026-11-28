@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- On an offset axial parallel full turn, iterative reconstruction continues only the far detector edge. The coarse fit uses physical line integrals along each measured horizontal chord, including on a rolled panel. FBP, Fourier inversion and the truncation record use the same edge selection.
+
 - Studio Explore lists the available export formats and their options. Choose a destination to preview the file count, payload size and reader calibration before queueing the export.
 
 - Interrupted TIFF slice directories, raw files and MetaImage exports can resume from synced slabs when the input file and options match. The CLI, Python, worker and MCP use the same journal and destination lock.
