@@ -1,8 +1,8 @@
 //! Draw registered planes and their labels using the same cell dimensions as the executor.
-use super::Panel;
+use super::{Panel, View, marks};
 use anyhow::{Result, ensure};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use image::{ExtendedColorType, GrayImage, ImageEncoder, Luma, codecs::png::PngEncoder};
+use image::{ExtendedColorType, GrayImage, ImageEncoder, Rgb, RgbImage, codecs::png::PngEncoder};
 use serde_json::{Value, json};
 use std::sync::LazyLock;
 
@@ -13,7 +13,7 @@ static FONT: LazyLock<GrayImage> = LazyLock::new(|| {
         .unwrap()
         .into_luma8()
 });
-fn text(canvas: &mut GrayImage, mut x: i32, y: i32, line: &str) {
+pub(super) fn label(canvas: &mut RgbImage, mut x: i32, y: i32, line: &str, color: Rgb<u8>) {
     for c in line.chars() {
         let index = u8::try_from(c as u32).unwrap_or(0) as u32;
         let (gx, gy) = (index % 16 * 16, index / 16 * 16);
@@ -24,8 +24,10 @@ fn text(canvas: &mut GrayImage, mut x: i32, y: i32, line: &str) {
                     && let Some(dst) = canvas
                         .get_pixel_mut_checked((x + dx as i32 - 1) as u32, (y + dy as i32) as u32)
                 {
-                    dst.0[0] =
-                        ((u32::from(dst.0[0]) * (255 - alpha) + 248 * alpha + 127) / 255) as u8;
+                    for (v, c) in dst.0.iter_mut().zip(color.0) {
+                        *v = ((u32::from(*v) * (255 - alpha) + u32::from(c) * alpha + 127) / 255)
+                            as u8;
+                    }
                 }
             }
         }
@@ -56,19 +58,19 @@ pub(super) fn number(value: f64) -> String {
         decimal(format!("{:.*}", (4 - exponent) as usize, value))
     }
 }
-fn lines(text: &str) -> Vec<String> {
+fn lines(text: &str, width: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut line = String::new();
     for word in text.split_whitespace() {
-        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > 49 {
+        if !line.is_empty() && line.chars().count() + 1 + word.chars().count() > width {
             out.push(std::mem::take(&mut line));
         }
         if !line.is_empty() {
             line.push(' ');
         }
         line.push_str(word);
-        while line.chars().count() > 49 {
-            let k = line.char_indices().nth(49).unwrap().0;
+        while line.chars().count() > width {
+            let k = line.char_indices().nth(width).unwrap().0;
             let tail = line.split_off(k);
             out.push(std::mem::replace(&mut line, tail));
         }
@@ -79,7 +81,7 @@ fn lines(text: &str) -> Vec<String> {
     if out.len() > 3 {
         out.truncate(3);
         let last = &mut out[2];
-        while last.chars().count() > 46 {
+        while last.chars().count() > width - 3 {
             last.pop();
         }
         last.push_str("...");
@@ -110,11 +112,88 @@ pub(super) fn limits(panels: &[Panel], panel: &Panel) -> [f64; 2] {
     }
 }
 
-pub(super) fn render(
-    panels: &[Panel],
-    explicit: Option<[f64; 2]>,
-    first: u64,
-) -> Result<(Value, Vec<Value>)> {
+#[derive(Clone, Copy)]
+pub(super) struct Cell {
+    pub left: usize,
+    pub top: usize,
+    pub width: usize,
+    pub height: usize,
+    pub sx: f64,
+    pub sy: f64,
+}
+impl Cell {
+    pub fn pixel(&self, r: f64, c: f64) -> [f64; 2] {
+        [
+            self.left as f64 + (c + 0.5) * self.sx,
+            self.top as f64 + (r + 0.5) * self.sy,
+        ]
+    }
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        (self.left..self.left + self.width).contains(&(x as usize))
+            && (self.top..self.top + self.height).contains(&(y as usize))
+    }
+}
+fn advance(text: &str) -> i32 {
+    text.chars()
+        .map(|c| {
+            let i = u8::try_from(c as u32).unwrap_or(0) as u32;
+            i32::from(FONT.get_pixel(i % 16 * 16, i / 16 * 16 + 15).0[0])
+        })
+        .sum()
+}
+fn ticks(p: &Panel, c: Cell, img: &mut RgbImage) {
+    let color = Rgb([150; 3]);
+    for (dim, len) in p.displayed.iter().zip([p.height, p.width]) {
+        let [start, _, stride] = p.window[*dim];
+        let end = start + stride * (len - 1);
+        let raw = ((end - start) as f64).max(1.) / 8.;
+        let base = 10_f64.powf(raw.log10().floor());
+        let step = [1., 2., 5., 10.]
+            .map(|v| v * base)
+            .into_iter()
+            .min_by(|a, b| (a - raw).abs().total_cmp(&(b - raw).abs()))
+            .unwrap()
+            .round_ties_even()
+            .max(1.) as usize;
+        for index in (start.div_ceil(step) * step..=end).step_by(step) {
+            let pos = (index - start) as f64 / stride as f64;
+            let text = index.to_string();
+            if *dim == p.displayed[1] {
+                let x = c.pixel(0., pos)[0] as i32;
+                let y = c.top as i32;
+                for i in 1..5 {
+                    img.put_pixel(x as u32, (y - i) as u32, color);
+                }
+                label(img, x - (advance(&text) + 1) / 2, y - 15, &text, color);
+            } else {
+                let x = c.left as i32;
+                let y = c.pixel(pos, 0.)[1] as i32;
+                for i in 1..5 {
+                    img.put_pixel((x - i) as u32, y as u32, color);
+                }
+                label(img, x - 6 - advance(&text), y - 6, &text, color);
+            }
+        }
+    }
+    label(
+        img,
+        (c.left + c.width + 3) as i32,
+        c.top as i32 - 15,
+        &p.axes[1],
+        color,
+    );
+    label(
+        img,
+        c.left as i32 - 6 - advance(&p.axes[0]),
+        (c.top + c.height + 3) as i32 - 3,
+        &p.axes[0],
+        color,
+    );
+}
+pub(super) fn render(panels: &[Panel], form: &View, first: u64) -> Result<(Value, Vec<Value>)> {
+    let explicit = form.limits;
+    let decorated = !form.marks.is_empty() || form.ticks == Some(true) || form.grid;
+    let mut reports = marks::reports(&form.marks);
     if let Some([lo, hi]) = explicit {
         ensure!(lo < hi, "limits must be (low, high) with low < high");
     }
@@ -135,23 +214,35 @@ pub(super) fn render(
                 std::iter::once(&p.title)
                     .chain(&p.labels)
                     .chain(std::iter::once(&scale))
-                    .flat_map(|s| lines(s))
+                    .flat_map(|s| lines(s, if decorated { 70 } else { 49 }))
                     .collect::<Vec<_>>(),
             );
             summaries.push(json!({"array":p.title,"labels":p.labels,"unit":p.unit,"intensity_limits":[lo,hi],"image":id}));
         }
-        let height = 250 + 18 * labels.iter().map(Vec::len).max().unwrap() as u32;
-        let width = 328 * group.len() as u32;
-        let mut canvas = GrayImage::from_pixel(width, height, Luma([28]));
+        let (cell_w, cell_h) = if decorated {
+            [(960, 720), (768, 576), (512, 400)][group.len() - 1]
+        } else {
+            (328usize, 240usize)
+        };
+        let (ml, mt, mr, mb) = if decorated {
+            (40, 16, 14, 14)
+        } else {
+            (6, 0, 6, 0)
+        };
+        let height = (cell_h + 10 + 18 * labels.iter().map(Vec::len).max().unwrap()) as u32;
+        let width = (cell_w * group.len()) as u32;
+        let mut canvas = RgbImage::from_pixel(width, height, Rgb([28; 3]));
         for (j, p) in group.iter().enumerate() {
             let [lo, hi] = ranges[batch * 3 + j];
-            let scale = (316. / p.width as f64).min(240. / (p.height as f64 * p.aspect));
+            let (room_w, room_h) = (cell_w - ml - mr, cell_h - mt - mb);
+            let scale =
+                (room_w as f64 / p.width as f64).min(room_h as f64 / (p.height as f64 * p.aspect));
             let w = (p.width as f64 * scale).round_ties_even().max(1.) as usize;
             let h = (p.height as f64 * p.aspect * scale)
                 .round_ties_even()
                 .max(1.) as usize;
-            let left = j * 328 + 6 + (316 - w) / 2;
-            let top = (240 - h) / 2;
+            let left = j * cell_w + ml + (room_w - w) / 2;
+            let top = mt + (room_h - h) / 2;
             // Pillow's nearest-neighbour transform advances a floating sample centre.
             let step_x = p.width as f64 / w as f64;
             let step_y = p.height as f64 / h as f64;
@@ -166,27 +257,72 @@ pub(super) fn render(
                     } else {
                         0.
                     };
-                    canvas.put_pixel((left + x) as u32, (top + y) as u32, Luma([level as u8]));
+                    canvas.put_pixel((left + x) as u32, (top + y) as u32, Rgb([level as u8; 3]));
                     sx += step_x;
                 }
                 sy += step_y;
             }
+            let cell = Cell {
+                left,
+                top,
+                width: w,
+                height: h,
+                sx: w as f64 / p.width as f64,
+                sy: h as f64 / p.height as f64,
+            };
+            if decorated && form.ticks.unwrap_or(true) {
+                ticks(p, cell, &mut canvas);
+            }
+            let overlay = marks::Overlay {
+                panel: p,
+                cell,
+                index: batch * 3 + j,
+                image: &id,
+                limits: [lo, hi],
+            };
+            for (mark, report) in form.marks.iter().zip(&mut reports) {
+                report["panels"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(overlay.draw(&mut canvas, mark)?);
+            }
             for (i, line) in labels[j].iter().enumerate() {
-                text(
+                label(
                     &mut canvas,
-                    (j * 328 + 6) as i32,
-                    (245 + i * 18) as i32,
+                    (j * cell_w + 6) as i32,
+                    (cell_h + 5 + i * 18) as i32,
                     line,
+                    Rgb([248; 3]),
                 );
             }
         }
+        if form.grid {
+            let color = Rgb([90, 170, 255]);
+            for x in (100..width).step_by(100) {
+                for y in (0..height).step_by(4) {
+                    canvas.put_pixel(x, y, color);
+                }
+                label(&mut canvas, x as i32 + 2, 2, &x.to_string(), color);
+            }
+            for y in (100..height).step_by(100) {
+                for x in (0..width).step_by(4) {
+                    canvas.put_pixel(x, y, color);
+                }
+                label(&mut canvas, 2, y as i32 + 2, &y.to_string(), color);
+            }
+        }
         let mut png = vec![];
-        PngEncoder::new(&mut png).write_image(
-            canvas.as_raw(),
-            width,
-            height,
-            ExtendedColorType::L8,
-        )?;
+        if decorated {
+            PngEncoder::new(&mut png).write_image(
+                canvas.as_raw(),
+                width,
+                height,
+                ExtendedColorType::Rgb8,
+            )?;
+        } else {
+            let gray = canvas.pixels().map(|v| v.0[0]).collect::<Vec<_>>();
+            PngEncoder::new(&mut png).write_image(&gray, width, height, ExtendedColorType::L8)?;
+        }
         blocks.push(json!({"type":"image","data":STANDARD.encode(png),"mimeType":"image/png"}));
         images.push(json!({"image":id,"width":width,"height":height}));
     }
@@ -196,6 +332,9 @@ pub(super) fn render(
         && ranges.iter().all(|v| v == first)
     {
         output["intensity_limits"] = json!(first);
+    }
+    if !reports.is_empty() {
+        output["marks"] = json!(reports);
     }
     Ok((output, blocks))
 }

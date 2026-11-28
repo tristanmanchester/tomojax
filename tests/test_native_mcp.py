@@ -292,3 +292,29 @@ def test_difference_preserves_float64_storage_and_matches_reference(tmp_path, na
         assert a["structuredContent"]["intensity_limits"] == [delta, delta]
         assert a["structuredContent"] == b["structuredContent"]
         np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))
+
+
+def test_point_drawers_report_the_same_sample_and_draw_the_same_pixels(tmp_path, native):
+    array = np.zeros((11, 14), dtype=np.float64)
+    array[4, 8] = 5
+    np.save(tmp_path / "point.npy", array)
+    args = {"source": "point.npy", "marks": [{"type": "point", "at": [4, 8]}], "ticks": False}
+    with native() as rust, connection(tmp_path) as python:
+        a, b = (checked(client, "view", **args) for client in (rust, python))
+        assert a["structuredContent"]["marks"][0]["panels"][0]["value"] == 5
+        assert a["structuredContent"] == b["structuredContent"]
+        np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))
+
+
+@pytest.mark.parametrize("server", ["rust", "python"])
+def test_cancel_task_on_running_reconstruction(tmp_path, native, server):
+    with native() if server == "rust" else connection(tmp_path) as client:
+        scan = checked(client, "simulate", size=12, n_views=16)["structuredContent"]["members"][
+            "scan"
+        ]
+        task = client.call("reconstruct", source=scan, method="sirt", iterations=10000, tasks=True)
+        tid = task["taskId"]
+        assert client.task("get", tid)["status"] == "working"
+        client.task("cancel", tid)
+        assert client.terminal(tid)["status"] == "cancelled"
+        assert not checked(client, "status")["structuredContent"]["jobs"]
