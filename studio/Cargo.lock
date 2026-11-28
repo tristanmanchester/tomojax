@@ -3445,6 +3445,7 @@ dependencies = [
  "blake3",
  "fastrand",
  "flate2",
+ "getrandom 0.4.3",
  "libc",
  "proptest",
  "serde",
@@ -3453,7 +3454,7 @@ dependencies = [
  "stateright",
  "tempfile",
  "toml",
- "zstd 0.13.6",
+ "zstd",
  "zune-jpeg",
 ]
 

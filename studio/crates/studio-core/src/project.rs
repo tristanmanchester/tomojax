@@ -53,13 +53,8 @@ pub fn now_ms() -> u64 {
 }
 
 pub fn new_id(prefix: &str) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static NEXT: AtomicU64 = AtomicU64::new(0);
-    format!(
-        "{prefix}-{:x}-{:x}",
-        now_ms(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
+    let random = getrandom::u64().expect("Linux random source unavailable");
+    format!("{prefix}-{:x}-{random:016x}", now_ms())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
