@@ -4036,6 +4036,7 @@ dependencies = [
  "anyhow",
  "half",
  "hdf5-metno",
+ "hdf5-metno-sys",
  "jpeg-encoder",
  "memmap2",
  "ndarray",

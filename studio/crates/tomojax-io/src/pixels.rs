@@ -7,6 +7,14 @@ use serde_json::{Value, json};
 use studio_core::protocol::Storage;
 
 use crate::npy::Npy;
+mod neighbors;
+use neighbors::Neighbors;
+
+#[derive(Default)]
+pub struct PlaneCache {
+    floats: Neighbors<f32>,
+    doubles: Neighbors<f64>,
+}
 
 use studio_core::pixels::Encoding;
 
@@ -20,6 +28,7 @@ pub struct Fetch {
     window: Option<[f64; 2]>,
 }
 
+#[derive(Clone)]
 struct Selection {
     shape: Vec<usize>,
     start: Vec<usize>,
@@ -211,7 +220,7 @@ fn level(value: f64, [lo, hi]: [f64; 2], max: f64) -> u16 {
     ((value.clamp(lo, hi) - lo) * (max / (hi - lo))).round_ties_even() as u16
 }
 
-pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
+pub fn fetch(cmd: &Fetch, cache: &PlaneCache) -> Result<(Value, Vec<u8>)> {
     let mut selection = Selection::new(cmd)?;
     let shape = selection.count.clone();
     let mut range = None;
@@ -237,9 +246,28 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
             let data = file.dataset(dataset)?;
             selection.stored(&data.shape())?;
             if f32_only {
-                (selection.read::<f32>(&data)?, vec![])
+                (cache.floats.read(&data, &selection)?, vec![])
+            } else if cmd.encoding == Encoding::Jpeg && !data.filters().is_empty() && {
+                let dtype = data.dtype()?;
+                dtype.is::<f32>()
+                    || dtype.is::<u16>()
+                    || dtype.is::<i16>()
+                    || dtype.is::<u8>()
+                    || dtype.is::<i8>()
+            } {
+                // All these stored values are exactly representable in f32. A matching
+                // preview and quantitative request can share the decompressed strip.
+                (
+                    vec![],
+                    cache
+                        .floats
+                        .read(&data, &selection)?
+                        .into_iter()
+                        .map(f64::from)
+                        .collect(),
+                )
             } else {
-                (vec![], selection.read::<f64>(&data)?)
+                (vec![], cache.doubles.read(&data, &selection)?)
             }
         }
         Storage::Member { .. } => bail!("fetch needs stored data"),

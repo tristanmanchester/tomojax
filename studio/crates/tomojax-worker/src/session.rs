@@ -88,6 +88,7 @@ pub struct Session {
     uploads: HashMap<String, transfer::Upload>,
     events: SyncSender<Event>,
     pool: crate::Pool,
+    planes: Arc<crate::pixels::PlaneCache>,
     scripts: crate::inline::Queue,
     jobs: Arc<tomojax_jobs::service::Service>,
     job_pool: crate::Pool,
@@ -130,6 +131,7 @@ impl Session {
             cpu_only,
             events,
             pool: crate::Pool::new(),
+            planes: Default::default(),
         })
     }
 

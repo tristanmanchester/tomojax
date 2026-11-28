@@ -50,7 +50,7 @@ impl Session {
                 if let Some(path) = cmd["storage"]["path"].as_str() {
                     leases.extend(self.lease(path, fetch.storage.artifact())?);
                 }
-                Work::Fetch(fetch)
+                Work::Fetch(fetch, self.planes.clone())
             }
             "copy" => {
                 let request: files::Copy = serde_json::from_value(cmd.clone())?;
@@ -93,7 +93,7 @@ pub(super) enum Work {
         tomojax_jobs::commands::Command,
         Arc<tomojax_jobs::service::Service>,
     ),
-    Fetch(pixels::Fetch),
+    Fetch(pixels::Fetch, Arc<pixels::PlaneCache>),
     Copy(files::Copy),
     Results(crate::results::Results),
     Stored(PathBuf, Option<Value>),
@@ -115,8 +115,8 @@ impl Work {
                 )
                 .map_err(std::io::Error::other)
             })?),
-            Work::Fetch(request) => {
-                let (result, bytes) = pixels::fetch(&request)?;
+            Work::Fetch(request, cache) => {
+                let (result, bytes) = pixels::fetch(&request, &cache)?;
                 Output::Stream(Payload::Frame {
                     result,
                     bytes,
