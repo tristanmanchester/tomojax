@@ -68,13 +68,31 @@ fn paging_leaves_torn_bytes_for_the_next_attempt() {
 fn a_stalled_reader_cannot_mix_preview_generations() {
     let root = tempfile::tempdir().unwrap();
     let original = root.path().join("input.npy");
-    for n in 1..=3 {
+    let publish = |n: u8| {
         fs::write(&original, [n]).unwrap();
         let array = json!({"storage":{"type":"npy","path":original,"artifact":"a"},"axes":[{"coordinates":{"type":"coordinates","values":{"type":"npy","path":original,"artifact":"a"}}}]});
         let row = json!({"type":"progress","record":{"event":"preview","arrays":{"plane":array,"poses":array}}});
         publication::preview(root.path(), 2, n.into(), row).unwrap();
-    }
-    assert!(!root.path().join("preview/2-1/array-0.npy").exists());
+    };
+    let storage = |preview: &Value, key: &str| {
+        std::path::PathBuf::from(
+            preview["record"]["arrays"][key]["storage"]["path"]
+                .as_str()
+                .unwrap(),
+        )
+    };
+    publish(1);
+    let first = publication::current_preview(root.path()).unwrap().unwrap();
+    let plane = fs::read(storage(&first, "plane")).unwrap();
+    publish(2);
+    publish(3);
+    // The reader already has the plane. Its remaining fetch belongs to that same
+    // generation and must fail, so the client discards the partial frame.
+    assert_eq!(plane, [1]);
+    assert_eq!(
+        fs::read(storage(&first, "poses")).unwrap_err().kind(),
+        std::io::ErrorKind::NotFound
+    );
     assert_eq!(
         fs::read(root.path().join("preview/2-2/array-0.npy")).unwrap(),
         [2]
