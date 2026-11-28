@@ -11,6 +11,7 @@ struct Flight {
     request: Request,
     selection: PlaneSelection,
     encoding: Encoding,
+    sent: Instant,
 }
 
 impl Flight {
@@ -43,8 +44,36 @@ impl Flight {
     }
 }
 
+struct Pane {
+    stream: PaneStream,
+    preview_edge: usize,
+}
+
+impl Default for Pane {
+    fn default() -> Self {
+        Self {
+            stream: PaneStream::default(),
+            preview_edge: 384,
+        }
+    }
+}
+
+impl Pane {
+    // Use request-to-arrival time, which includes storage and transport. A broad
+    // dead band keeps the sampled grid stable while a user scrolls similar slices.
+    fn preview_received(&mut self, actual_edge: usize, elapsed: std::time::Duration) {
+        let seconds = elapsed.as_secs_f64();
+        if seconds > 0.120 {
+            let factor = (0.1 / seconds).sqrt().max(0.7);
+            self.preview_edge = ((actual_edge as f64 * factor) as usize).clamp(192, 512);
+        } else if seconds < 0.075 {
+            self.preview_edge = (self.preview_edge * 3 / 2).min(512);
+        }
+    }
+}
+
 pub(super) struct Remote {
-    panes: HashMap<u32, PaneStream>,
+    panes: HashMap<u32, Pane>,
     flights: HashMap<String, Arc<Flight>>,
     leases: Vec<Weak<Flight>>,
     queue: Arc<FrameQueue<(Arc<Flight>, Pixels)>>,
@@ -102,12 +131,12 @@ impl Remote {
                 continue;
             }
             let pane = self.panes.entry(id).or_default();
-            let Some(encoding) = pane.next(request.generation) else {
+            let Some(encoding) = pane.stream.next(request.generation) else {
                 continue;
             };
             let mut edge = request.crop.map_or(request.key.edge, |crop| crop.edge);
             if encoding == Encoding::Jpeg {
-                edge = edge.min(512);
+                edge = edge.min(pane.preview_edge);
             }
             let flight = PlaneSelection::for_region(
                 &request.descriptor.shape,
@@ -127,12 +156,13 @@ impl Remote {
                         request: request.clone(),
                         selection,
                         encoding,
+                        sent: Instant::now(),
                     }),
                 ))
             });
             match flight {
                 Ok((rid, flight)) => {
-                    *pane = PaneStream::Waiting(request.generation, encoding);
+                    pane.stream = PaneStream::Waiting(request.generation, encoding);
                     self.leases.push(Arc::downgrade(&flight));
                     self.flights.insert(rid, flight);
                 }
@@ -154,7 +184,7 @@ impl Remote {
         };
         let request = &flight.request;
         let pane = self.panes.get_mut(&request.slot)?;
-        if !pane.receive(request.generation, flight.encoding) || stale {
+        if !pane.stream.receive(request.generation, flight.encoding) || stale {
             return None;
         }
         let error = match response {
@@ -162,6 +192,10 @@ impl Remote {
                 result: ResultValue::Pixels(frame),
                 ..
             } => {
+                if flight.encoding == Encoding::Jpeg {
+                    let edge = flight.selection.count.iter().copied().max().unwrap_or(1);
+                    pane.preview_received(edge, flight.sent.elapsed());
+                }
                 self.queue.push(
                     (flight.encoding == Encoding::Jpeg).then_some(request.slot),
                     (flight, frame),
@@ -204,5 +238,29 @@ impl Drop for Remote {
         if let Some(decoder) = self.decoder.take() {
             let _ = decoder.join();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Pane;
+    use std::time::Duration;
+
+    #[test]
+    fn preview_size_tracks_delivery_and_recovers_when_the_link_clears() {
+        let mut pane = Pane::default();
+        pane.preview_received(342, Duration::from_millis(250));
+        assert!(pane.preview_edge < 342);
+        let slow_edge = pane.preview_edge;
+        pane.preview_received(205, Duration::from_millis(100));
+        assert_eq!(pane.preview_edge, slow_edge);
+        for _ in 0..10 {
+            pane.preview_received(205, Duration::from_millis(300));
+        }
+        assert_eq!(pane.preview_edge, 192);
+        for _ in 0..10 {
+            pane.preview_received(205, Duration::from_millis(40));
+        }
+        assert_eq!(pane.preview_edge, 512);
     }
 }
