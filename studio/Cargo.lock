@@ -3777,6 +3777,7 @@ dependencies = [
  "shlex",
  "studio-core",
  "tempfile",
+ "tomojax-jobs",
  "zip",
  "zstd",
 ]

@@ -18,8 +18,20 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 pub const CAPABILITIES: &[&str] = &[
-    "fetch", "list", "stored", "peek", "copy", "upload", "download", "status", "control",
+    "fetch",
+    "list",
+    "stored",
+    "peek",
+    "copy",
+    "upload",
+    "download",
+    "status",
+    "control",
     "shutdown",
+    "submit",
+    "jobs",
+    "job",
+    "job_control",
 ];
 
 #[derive(Deserialize)]
@@ -71,7 +83,9 @@ pub struct Session {
     events: SyncSender<Event>,
     pool: crate::Pool,
     scripts: crate::inline::Queue,
-    pub scripts_client: crate::inline::Scripts,
+    jobs: Arc<tomojax_jobs::service::Service>,
+    job_pool: crate::Pool,
+    placement: Option<crate::jobs::Placement>,
     cpu_only: bool,
 }
 
@@ -80,6 +94,9 @@ impl Session {
         let mut out = Outbox::default();
         let ready = json!({"type":"ready","protocol":1,"progress":2,"host":rustix::system::uname().nodename().to_string_lossy(),"home":std::env::var("HOME")?,"directory":std::env::current_dir()?,"jobs":opts.jobs,"pixel_credit":crate::wire::CREDIT,"capabilities":CAPABILITIES});
         out.send(ready);
+        let jobs = crate::jobs::service(&opts, crate::inline::Scripts::new(events.clone()))?;
+        let placement = crate::jobs::Placement::new(opts.jobs)?;
+        let cpu_only = placement.as_ref().is_some_and(|p| p.cpu_only());
         Ok(Self {
             opts,
             out,
@@ -99,9 +116,11 @@ impl Session {
             leases: HashMap::new(),
             deferred: VecDeque::new(),
             uploads: HashMap::new(),
-            scripts_client: crate::inline::Scripts::new(events.clone()),
+            jobs,
+            job_pool: crate::Pool::new(),
+            placement,
             scripts: Default::default(),
-            cpu_only: false,
+            cpu_only,
             events,
             pool: crate::Pool::new(),
         })
@@ -113,7 +132,21 @@ impl Session {
         self.out.send(self.detail.clone());
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&mut self) -> Result<()> {
+        if self.closing.is_none()
+            && let Some(placement) = &mut self.placement
+        {
+            let idle =
+                self.scripts.idle() && !self.active.values().any(|a| a.side == Side::Executor);
+            match placement.check(idle)? {
+                Some(crate::jobs::Move::ToCpu(lease)) => {
+                    self.restart(true, "the GPU was given to a job");
+                    drop(lease);
+                }
+                Some(crate::jobs::Move::ToGpu) => self.restart(false, "the GPU is available"),
+                None => {}
+            }
+        }
         if self.closing.is_none() && self.executor.is_none() && Instant::now() >= self.retry {
             self.generation += 1;
             self.state("starting", Value::Null);
@@ -122,6 +155,7 @@ impl Session {
                 Err(e) => self.gone(self.generation, format!("{e:#}")),
             }
         }
+        Ok(())
     }
 
     pub fn gone(&mut self, generation: u64, reason: String) {
@@ -453,7 +487,12 @@ impl Session {
         } else if let Some(work) = work {
             let send = self.events.clone();
             let id = r.id.clone();
-            self.pool.submit(move || {
+            let pool = if matches!(work, Work::Job(..)) {
+                &self.job_pool
+            } else {
+                &self.pool
+            };
+            pool.submit(move || {
                 if cancel.load(Ordering::Acquire) {
                     let _ = send.send(Event::Done(id, sequence, Err(anyhow::anyhow!("canceled"))));
                     return;
@@ -475,6 +514,9 @@ impl Session {
 
     fn prepare(&self, kind: &str, cmd: &Value, leases: &mut Vec<String>) -> Result<Option<Work>> {
         Ok(Some(match kind {
+            "submit" | "jobs" | "job" | "job_control" => {
+                Work::Job(serde_json::from_value(cmd.clone())?, Arc::clone(&self.jobs))
+            }
             "fetch" => {
                 let fetch: pixels::Fetch = serde_json::from_value(cmd.clone())?;
                 if let Some(path) = cmd["storage"]["path"].as_str() {
@@ -672,6 +714,7 @@ impl Session {
         if self.closing.is_some() {
             return;
         }
+        self.jobs.stop_inline();
         self.closing = Some(Instant::now());
         self.scripts = Default::default();
         let local = self
@@ -692,6 +735,10 @@ impl Session {
 }
 
 enum Work {
+    Job(
+        tomojax_jobs::commands::Command,
+        Arc<tomojax_jobs::service::Service>,
+    ),
     Fetch(pixels::Fetch),
     Copy(files::Copy),
     File(String, PathBuf, Option<String>),
@@ -703,6 +750,13 @@ pub enum Output {
 impl Work {
     fn run(self, cancel: &AtomicBool, progress: impl FnMut(u64)) -> Result<Output> {
         Ok(match self {
+            Work::Job(command, service) => Output::Result(command.execute(&service, |path| {
+                files::resolve(
+                    path.to_str()
+                        .ok_or_else(|| std::io::Error::other("expected a UTF-8 path"))?,
+                )
+                .map_err(std::io::Error::other)
+            })?),
             Work::Fetch(request) => {
                 let (result, bytes) = pixels::fetch(&request)?;
                 Output::Stream(Payload::Frame {

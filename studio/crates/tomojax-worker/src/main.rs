@@ -2,6 +2,7 @@
 mod executor;
 mod files;
 pub mod inline;
+mod jobs;
 #[path = "../../tomojax-studio/src/metadata.rs"]
 mod metadata;
 #[path = "../../tomojax-studio/src/imaging/npy.rs"]
@@ -25,7 +26,8 @@ struct Options {
     python: String,
     session: Vec<String>,
     results: PathBuf,
-    jobs: String,
+    jobs: tomojax_jobs::script::Launcher,
+    sbatch: Vec<String>,
     idle: Option<Duration>,
 }
 
@@ -35,7 +37,8 @@ impl Options {
             python: "python3".into(),
             session: Vec::new(),
             results: files::resolve("~")?,
-            jobs: "inline".into(),
+            jobs: tomojax_jobs::script::Launcher::Inline,
+            sbatch: Vec::new(),
             idle: None,
         };
         while let Some(key) = args.next() {
@@ -50,13 +53,12 @@ impl Options {
                 }
                 "--results" => opts.results = files::resolve(&v)?,
                 "--jobs" => {
-                    ensure!(
-                        matches!(v.as_str(), "inline" | "process" | "slurm"),
-                        "unknown launcher"
-                    );
-                    opts.jobs = v;
+                    opts.jobs = serde_json::from_value(serde_json::Value::String(v))
+                        .context("unknown job launcher")?
                 }
-                "--sbatch" => {} // Consumed by the job launcher.
+                "--sbatch" => {
+                    opts.sbatch = shlex::split(&v).context("unclosed quote in scheduler options")?
+                }
                 "--idle-exit" => {
                     let secs = v.parse::<u64>()?;
                     ensure!(secs > 0, "idle exit must be positive");
@@ -159,7 +161,7 @@ fn serve(opts: Options) -> Result<()> {
         {
             session.stop();
         }
-        session.tick();
+        session.tick()?;
         session.flush();
         if session.out.overloaded() {
             bail!("output backlog exceeds 16 MiB");
@@ -231,10 +233,14 @@ fn main() -> std::process::ExitCode {
                 }
             };
         }
+        Some("job") => match jobs::run(args) {
+            Ok(code) => return std::process::ExitCode::from(code),
+            Err(error) => Err(error),
+        },
         Some("serve") => Options::parse(args).and_then(serve),
         Some("--help" | "-h") => {
             println!(
-                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--idle-exit SECONDS]"
+                "Usage: tomojax-worker serve [--python PATH] [--session COMMAND] [--results DIR] [--jobs LAUNCHER] [--sbatch OPTIONS] [--idle-exit SECONDS]\n       tomojax-worker job DIR"
             );
             Ok(())
         }
