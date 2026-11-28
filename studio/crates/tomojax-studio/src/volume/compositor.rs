@@ -12,7 +12,7 @@ use super::{
 struct Resources {
     key: DeviceKey,
     pipes: Pipelines,
-    planes: HashMap<u32, ImageTexture>,
+    planes: HashMap<(u32, bool), ImageTexture>,
     volumes: HashMap<u32, VolumeGpu>,
 }
 
@@ -67,16 +67,28 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
         self.uploading = false;
         for item in &items {
             match item {
-                RenderItem::Plane { mark, data, .. } => {
+                RenderItem::Plane {
+                    mark,
+                    data,
+                    display,
+                } => {
                     if !sites.contains_key(mark) {
                         continue;
                     }
-                    planes.insert(*mark);
-                    if resources.planes.get(mark).is_none_or(|p| p.id != data.id) {
-                        resources.planes.insert(
-                            *mark,
-                            ImageTexture::plane(frame.device, frame.queue, &resources.pipes, data),
-                        );
+                    for (detail, layer) in data.layers(display) {
+                        let key = (*mark, detail);
+                        planes.insert(key);
+                        if resources.planes.get(&key).is_none_or(|p| p.id != layer.id) {
+                            resources.planes.insert(
+                                key,
+                                ImageTexture::plane(
+                                    frame.device,
+                                    frame.queue,
+                                    &resources.pipes,
+                                    layer,
+                                ),
+                            );
+                        }
                     }
                 }
                 RenderItem::Volume {
@@ -128,13 +140,14 @@ impl<S: 'static> Compositor<S> for ScientificCompositor<S> {
                             data,
                             display,
                         } if *mark == site.mark => {
-                            if let Some(image) = resources.planes.get(mark) {
+                            for (detail, layer) in data.layers(display) {
+                                let image = &resources.planes[&(*mark, detail)];
                                 image.draw(
                                     frame.queue,
                                     &resources.pipes,
                                     pass,
                                     site,
-                                    Some((data, display)),
+                                    Some((data, display, layer)),
                                 );
                             }
                         }

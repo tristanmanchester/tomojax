@@ -92,6 +92,8 @@ fn scalar_window_and_inversion_are_gpu_updates_of_the_same_quantitative_texture(
         values: vec![0., 10., 0., 10.].into(),
         shape: [2, 2],
         source_shape: [2, 2],
+        region: [[0, 2], [0, 2]],
+        detail: None,
         axes: ["y", "x"].map(|name| AxisScale {
             name: name.into(),
             frame: "world".into(),

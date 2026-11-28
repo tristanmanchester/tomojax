@@ -165,22 +165,27 @@ impl AppState {
             10 => &self.difference.as_ref()?.1,
             12 => {
                 let composite = &self.split.as_ref()?.1;
-                if !composite.lossless {
+                let layer = composite.layer_at(uv);
+                if !layer.lossless {
                     return None;
                 }
-                let col = composite.displayed_index(uv)[1] / composite.stride;
-                let edge = (self.ui.compare_split * composite.shape[1] as f32).round() as usize;
-                self.imaging.plane(if col < edge { 6 } else { 7 })?
+                let col = layer.texel(uv)[1];
+                let edge = layer.split_column(self.ui.compare_split);
+                let side = self.imaging.plane(if col < edge { 6 } else { 7 })?;
+                let samples = if std::ptr::eq(layer, composite.as_ref()) {
+                    side.as_ref()
+                } else {
+                    side.detail.as_deref()?
+                };
+                let [row, column] = samples.texel(uv);
+                let value = samples.sample(row, column)?;
+                let [r, c] = composite.displayed_index(uv);
+                return Some(probe_label(samples, [r, c], value));
             }
             slot => self.imaging.plane(slot)?,
         };
         let ([row, col], value) = data.probe(uv)?;
-        Some(format!(
-            "{}[{row}]  {}[{col}]   {value:.5} {}",
-            data.axes[0].name,
-            data.axes[1].name,
-            crate::ui::unit_name(&data.value_unit)
-        ))
+        Some(probe_label(data, [row, col], value))
     }
 
     pub(super) fn start_engine(&mut self) {
@@ -207,34 +212,46 @@ impl AppState {
     }
 
     pub fn render_panes(&mut self, sizes: &[(u32, f32)]) -> Vec<crate::volume::RenderItem> {
-        if self.relay.is_some() || self.remote_project().is_some() {
-            let mut edges = [0; 8];
-            for &(mark, length) in sizes {
-                let edge = (length.ceil().clamp(256., 2048.) as usize).next_power_of_two();
-                match mark {
-                    1..=7 => edges[mark as usize] = edges[mark as usize].max(edge),
-                    9 => {
-                        let slot = self.ui.main_view.mark() as usize;
-                        if slot < edges.len() {
-                            edges[slot] = edges[slot].max(edge);
-                        }
-                    }
-                    10 | 12 => {
-                        edges[6] = edges[6].max(edge);
-                        edges[7] = edges[7].max(edge);
-                    }
-                    _ => {}
+        let mut edges = [0; 8];
+        let mut zoomed = [false; 8];
+        for &(mark, length) in sizes {
+            let edge = (length.ceil().clamp(256., 2048.) as usize).next_power_of_two();
+            let mut pane = |slot: usize, interactive: bool| {
+                if slot < edges.len() {
+                    edges[slot] = edges[slot].max(edge);
+                    zoomed[slot] |= interactive;
                 }
+            };
+            match mark {
+                1..=7 => pane(mark as usize, mark >= 6),
+                9 => pane(self.ui.main_view.mark() as usize, true),
+                10 | 12 => {
+                    pane(6, true);
+                    pane(7, true);
+                }
+                _ => {}
             }
+        }
+        let mut resized = false;
+        for (old, new) in self.pane_edges.iter_mut().zip(edges) {
+            if new != 0 && *old != new {
+                *old = new;
+                resized = true;
+            }
+        }
+        if resized {
+            self.refresh_images();
+        }
+        if !self.data_offline() {
+            let display = self.display_settings();
             let mut changed = false;
-            for (old, new) in self.pane_edges.iter_mut().zip(edges) {
-                if new != 0 && *old != new {
-                    *old = new;
-                    changed = true;
-                }
+            for (slot, active) in zoomed.into_iter().enumerate().skip(1) {
+                changed |= self
+                    .imaging
+                    .view_region(slot as u32, active.then_some(&display));
             }
             if changed {
-                self.refresh_images();
+                self.refresh_plane_model();
             }
         }
         self.render_items()
@@ -347,4 +364,13 @@ pub(super) fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
         view.quality.push_str(" · moving preview");
     }
     view
+}
+
+fn probe_label(data: &crate::imaging::PlaneData, [row, col]: [usize; 2], value: f32) -> String {
+    format!(
+        "{}[{row}]  {}[{col}]   {value:.5} {}",
+        data.axes[0].name,
+        data.axes[1].name,
+        crate::ui::unit_name(&data.value_unit)
+    )
 }
