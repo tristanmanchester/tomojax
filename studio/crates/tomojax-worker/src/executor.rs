@@ -1,4 +1,5 @@
 //! Own one executor process group, including a pending scheduler launcher.
+use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 
@@ -31,30 +32,36 @@ impl Executor {
         let directory = tempfile::Builder::new()
             .prefix("session-")
             .tempdir_in(base)?;
+        let mut environment: Vec<(&str, OsString)> = vec![("TMPDIR", directory.path().into())];
+        if cpu_only {
+            environment.extend([
+                ("JAX_PLATFORMS", "cpu".into()),
+                ("CUDA_VISIBLE_DEVICES", "".into()),
+            ]);
+        }
+        // A launcher may rewrite the environment of what it starts (Slurm sets
+        // TMPDIR=/tmp in every task), so the assignments are repeated inside the launch.
+        let assignments = (!options.session.is_empty()).then(|| {
+            std::iter::once(OsString::from("env")).chain(environment.iter().map(|(key, value)| {
+                let mut pair = OsString::from(format!("{key}="));
+                pair.push(value);
+                pair
+            }))
+        });
         let args = options
             .session
             .iter()
-            .cloned()
-            .chain([
-                options.python.clone(),
-                "-u".into(),
-                "-m".into(),
-                "tomojax.cli.main".into(),
-                "serve".into(),
-            ])
+            .map(OsString::from)
+            .chain(assignments.into_iter().flatten())
+            .chain([&options.python, "-u", "-m", "tomojax.cli.main", "serve"].map(OsString::from))
             .collect::<Vec<_>>();
         let mut command = Command::new(&args[0]);
         command
             .args(&args[1..])
-            .env("TMPDIR", directory.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        if cpu_only {
-            command
-                .env("JAX_PLATFORMS", "cpu")
-                .env("CUDA_VISIBLE_DEVICES", "");
-        }
+            .stderr(Stdio::piped())
+            .envs(environment);
         let command = if options.session.is_empty() {
             studio_core::connection::process::own_executor(&mut command)
         } else {
@@ -62,7 +69,7 @@ impl Executor {
         };
         let mut child = command
             .spawn()
-            .with_context(|| format!("start {}", args[0]))?;
+            .with_context(|| format!("start {}", args[0].to_string_lossy()))?;
         let mut stdin = child.stdin.take().context("missing executor stdin")?;
         let stdout = child.stdout.take().context("missing executor stdout")?;
         let stderr = child.stderr.take().context("missing executor stderr")?;

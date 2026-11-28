@@ -325,6 +325,25 @@ def test_file_requests_run_while_an_executor_request_is_waiting(tmp_path):
         check_files(client, path, "busy")
 
 
+def test_executor_shares_its_session_root_through_a_launcher_that_resets_tmpdir(tmp_path):
+    # Slurm at Diamond starts every task with TMPDIR=/tmp, whatever srun was given.
+    launcher = tmp_path / "launch"
+    launcher.write_text('#!/bin/sh\nTMPDIR=/tmp exec "$@"\n')
+    launcher.chmod(0o700)
+    executable = tmp_path / "python"
+    executable.write_text(
+        f"#!{sys.executable}\n"
+        "import json, sys, tempfile\n"
+        'print(json.dumps({"type":"ready","protocol":1,"root":tempfile.mkdtemp()}), flush=True)\n'
+        "sys.stdin.read()\n"
+    )
+    executable.chmod(0o700)
+    with worker(tmp_path, "--session", str(launcher), "--python", str(executable)) as client:
+        while (row := client.read()).get("state") not in ("ready", "gone"):
+            pass
+        assert row["state"] == "ready", row["detail"]
+
+
 @pytest.mark.parametrize("phase", ["starting", "idle", "running", "shutdown"])
 def test_direct_executor_dies_with_worker(tmp_path, phase):
     # The direct interpreter deliberately ignores TERM, including after stdin closes.
