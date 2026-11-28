@@ -637,6 +637,8 @@ def _model(
     ):
         return
     unseen = _unseen(geometry, complete, grid, poses)
+    if not unseen.any():
+        return
     completed = (
         sample.completed(geometry, data, unseen, edge)
         if oblique is None

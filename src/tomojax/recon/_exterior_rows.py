@@ -158,10 +158,8 @@ class ObliqueExterior:
         data: np.ndarray | jax.Array | CuPyValue,
         coarse: Detector,
         unseen: NDArray[np.bool_],
-    ) -> CompletedRows | None:
+    ) -> CompletedRows:
         """Fill the bounded auxiliary detector, continuing only actual measured chords."""
-        if not unseen.any():
-            return None
         views, rows, cols = data.shape
         full = host_array((views, coarse.nv, 3 * coarse.nu), copies=4)
         missing = host_array(full.shape, dtype=bool)
