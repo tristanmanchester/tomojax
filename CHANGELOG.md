@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `tj.inspect` computes projection statistics faster and uses less memory on integer detector stacks. Studio shows the first TIFF or vendor projection before those statistics finish and lets you probe its values. On remote HDF5 data, held scrolling through compressed side planes and reading sinograms from frame-chunked scans are faster.
+
 - TomoJAX datasets and feature masks use NeXus format 2. A mask includes its recipe,
   coordinates and sparse bounding box. CLI and worker outputs embed their command,
   resolved settings and provenance. Read a saved record with `tomojax inspect FILE --json`.
