@@ -137,7 +137,7 @@ pub(crate) async fn run(
         }
     }
     let form: View = serde_json::from_value(json!({"source":""}))?;
-    let (mut view, images) = draw::render(&panels?, &form, 0)?;
+    let (mut view, images) = draw::render(&panels?, &form, 0, None)?;
     let mut data = if region {
         let mut summary = session
             .ledger

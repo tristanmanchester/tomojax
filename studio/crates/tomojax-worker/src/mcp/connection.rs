@@ -52,6 +52,7 @@ impl Inventory {
 
 pub struct Connections {
     pub name: String,
+    generation: AtomicU64,
     current: tokio::sync::Mutex<Option<(Instant, Arc<Session>)>>,
 }
 
@@ -60,6 +61,7 @@ impl Connections {
         Self {
             name,
             current: Default::default(),
+            generation: AtomicU64::new(1),
         }
     }
 
@@ -81,7 +83,10 @@ impl Connections {
                 session.clone()
             }
             _ => {
-                let session = Arc::new(Session::start(&self.name)?);
+                let session = Arc::new(Session::start(
+                    &self.name,
+                    self.generation.fetch_add(1, Ordering::Relaxed),
+                )?);
                 *current = Some((Instant::now(), session.clone()));
                 session
             }
@@ -149,6 +154,8 @@ type PendingCalls = Arc<Mutex<Option<HashMap<String, Pending>>>>;
 
 pub struct Session {
     pub renders: AtomicU64,
+    pub generation: u64,
+    pub placements: Mutex<super::view::Placements>,
     pub ledger: Mutex<super::ledger::Ledger>,
     inventory: watch::Receiver<Inventory>,
     outgoing: mpsc::Sender<Vec<u8>>,
@@ -158,7 +165,7 @@ pub struct Session {
 }
 
 impl Session {
-    fn start(name: &str) -> Result<Self> {
+    fn start(name: &str, generation: u64) -> Result<Self> {
         let mut child = Command::new(std::env::current_exe()?)
             .args(["connect", name])
             .stdin(Stdio::piped())
@@ -202,6 +209,8 @@ impl Session {
         });
         Ok(Self {
             renders: AtomicU64::new(1),
+            generation,
+            placements: Mutex::default(),
             ledger: Default::default(),
             inventory,
             outgoing,

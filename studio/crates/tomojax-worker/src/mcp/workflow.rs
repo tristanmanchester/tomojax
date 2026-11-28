@@ -283,6 +283,10 @@ pub async fn python(session: &Session, mut args: Value) -> Result<(Value, Vec<Va
         }
     }
     value["handles"] = Value::Object(summaries);
+    if session.generation > 1 {
+        value["namespace_generation"] = json!(session.generation);
+        value["restart_notice"] = json!("Worker restart cleared the preceding namespace.");
+    }
     let mut blocks = vec![];
     let render = async {
         for image in images.as_array().context("Expected image list")? {
