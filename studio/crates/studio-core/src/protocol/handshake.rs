@@ -7,6 +7,8 @@ use serde_json::Value;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Ready {
     pub protocol: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pixel_credit: Option<usize>,
     pub capabilities: Vec<String>,
     #[serde(flatten)]
     pub peer: Peer,

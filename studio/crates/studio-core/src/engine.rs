@@ -19,7 +19,6 @@ use crate::protocol::{ExecutorState, Peer, Ready, Response, ResultValue, SchemaC
 
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
 const REQUEST_BYTES: usize = 1024 * 1024;
-const RESPONSE_BYTES: u64 = 16 * 1024 * 1024;
 const EXECUTION_LIMIT: usize = 60;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +70,7 @@ struct Pending {
 #[derive(Default)]
 struct Requests {
     next: u64,
+    fetches: u64,
     pending: HashMap<String, Pending>,
     revisions: BTreeMap<String, u64>,
 }
@@ -147,19 +147,46 @@ impl WorkerCommand {
 }
 
 impl Engine {
+    /// In development, prefix the real worker with a stdio relay run by the same interpreter.
+    pub fn spawn_through(
+        python: impl AsRef<Path>,
+        relay: &[String],
+        wake: Wake,
+    ) -> Result<Self, String> {
+        let worker = WorkerCommand::from(python.as_ref());
+        if relay.is_empty() {
+            return Self::spawn(worker, wake);
+        }
+        let mut command = Command::new(python.as_ref());
+        command
+            .args(relay)
+            .arg("--")
+            .arg(worker.0.get_program())
+            .args(worker.0.get_args());
+        Self::spawn(WorkerCommand(command), wake)
+    }
+
     pub fn spawn(worker: impl Into<WorkerCommand>, wake: Wake) -> Result<Self, String> {
         let WorkerCommand(mut command) = worker.into();
         let workspace = tempfile::Builder::new()
             .prefix("tomojax-studio-serve-")
             .tempdir()
             .map_err(|error| format!("Could not create the worker's private workspace: {error}"))?;
-        let mut child = own_group(&mut command)
+        let child = own_group(&mut command)
             .env("TMPDIR", workspace.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Could not start {:?}: {e}", command.get_program()))?;
+        Self::attach(child, workspace, wake)
+    }
+
+    fn attach(
+        mut child: std::process::Child,
+        workspace: tempfile::TempDir,
+        wake: Wake,
+    ) -> Result<Self, String> {
         let (Some(mut input), Some(output), Some(errors)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -183,61 +210,19 @@ impl Engine {
                 }
             }
         });
-        let reader_send = send.clone();
-        let reader_wake = wake.clone();
-        let reader_stop = terminate.clone();
-        let reader = thread::spawn(move || {
-            let mut buffered = BufReader::new(output);
-            loop {
-                let mut line = Vec::new();
-                let message = match buffered
-                    .by_ref()
-                    .take(RESPONSE_BYTES + 1)
-                    .read_until(b'\n', &mut line)
-                {
-                    Ok(0) => break,
-                    Ok(_) if line.len() as u64 > RESPONSE_BYTES || !line.ends_with(b"\n") => {
-                        Incoming::Fault(
-                            "Worker returned an oversized or incomplete protocol line".into(),
-                        )
-                    }
-                    Ok(_) => match serde_json::from_slice::<Response>(&line) {
-                        Ok(response) => Incoming::Response(response),
-                        Err(error) => Incoming::Fault(format!("Invalid worker response: {error}")),
-                    },
-                    Err(error) => Incoming::Fault(format!("Could not read worker output: {error}")),
-                };
-                let failed = matches!(message, Incoming::Fault(_));
-                if reader_send.send(message).is_err() {
-                    break;
-                }
-                reader_wake();
-                if failed {
-                    let _ = reader_stop.send(());
-                    break;
-                }
-            }
-        });
-        let stderr_send = send.clone();
-        let stderr_wake = wake.clone();
-        let stderr = thread::spawn(move || {
-            let mut buffered = BufReader::new(errors);
-            loop {
-                let mut line = Vec::new();
-                match buffered.by_ref().take(65536).read_until(b'\n', &mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {
-                        let message = String::from_utf8_lossy(&line).trim_end().to_owned();
-                        if !message.is_empty() {
-                            if stderr_send.send(Incoming::Diagnostic(message)).is_err() {
-                                break;
-                            }
-                            stderr_wake();
-                        }
-                    }
-                }
-            }
-        });
+        let reader = {
+            let (send, credits, stop, wake) = (
+                send.clone(),
+                outgoing.clone(),
+                terminate.clone(),
+                wake.clone(),
+            );
+            thread::spawn(move || read_worker(output, send, credits, stop, wake))
+        };
+        let stderr = {
+            let (send, wake) = (send.clone(), wake.clone());
+            thread::spawn(move || read_diagnostics(errors, send, wake))
+        };
         let writer_close = outgoing.clone();
         let supervisor = thread::spawn(move || {
             let status = loop {
@@ -356,7 +341,14 @@ impl Engine {
         }
         let execution = !matches!(
             tag,
-            "describe" | "devices" | "status" | "control" | "close" | "release" | "shutdown"
+            "fetch"
+                | "describe"
+                | "devices"
+                | "status"
+                | "control"
+                | "close"
+                | "release"
+                | "shutdown"
         );
         if execution
             && channel.map_or_else(
@@ -366,14 +358,19 @@ impl Engine {
         {
             return Err("The execution queue is full; wait for a job to finish".into());
         }
-        if !shutdown && self.requests.next >= 99000 {
+        if tag != "fetch" && !shutdown && self.requests.next >= 99000 {
             return Err(
                 "Restart the worker before submitting more work; its session ID limit is near"
                     .into(),
             );
         }
-        self.requests.next += 1;
-        let id = format!("studio-{}", self.requests.next);
+        let id = if tag == "fetch" {
+            self.requests.fetches += 1;
+            format!("pixel-{}", self.requests.fetches)
+        } else {
+            self.requests.next += 1;
+            format!("studio-{}", self.requests.next)
+        };
         let mut line = serde_json::to_vec(&json!({"id":id,"command":command,"channel":channel}))
             .map_err(|e| format!("Could not encode request: {e}"))?;
         if line.len() > REQUEST_BYTES {
@@ -485,6 +482,7 @@ impl Engine {
                     if self.lifecycle == Lifecycle::Starting {
                         self.lifecycle = Lifecycle::Ready;
                         if matches!(ready.peer, Peer::Executor { .. })
+                            && ready.capabilities.iter().any(|tag| tag == "describe")
                             && let Err(error) = self.request(json!({"type":"describe"}), None)
                         {
                             self.lifecycle = Lifecycle::Failed(error);
@@ -562,6 +560,55 @@ impl Engine {
             }
         }
         events
+    }
+}
+
+fn read_worker(
+    output: impl Read,
+    incoming: mpsc::SyncSender<Incoming>,
+    credits: mpsc::SyncSender<Outgoing>,
+    stop: mpsc::Sender<()>,
+    wake: Wake,
+) {
+    let mut wire = crate::pixels::wire::WireReader::new(BufReader::new(output));
+    loop {
+        let message = match wire.next(|bytes| {
+            let line = format!("{{\"credit\":{bytes}}}\n").into_bytes();
+            credits
+                .send(Outgoing::Line(line))
+                .map_err(|e| e.to_string())
+        }) {
+            Ok(Some(response)) => Incoming::Response(response),
+            Ok(None) => break,
+            Err(error) => Incoming::Fault(error),
+        };
+        let failed = matches!(message, Incoming::Fault(_));
+        if incoming.send(message).is_err() {
+            break;
+        }
+        wake();
+        if failed {
+            let _ = stop.send(());
+            break;
+        }
+    }
+}
+fn read_diagnostics(errors: impl Read, incoming: mpsc::SyncSender<Incoming>, wake: Wake) {
+    let mut buffered = BufReader::new(errors);
+    loop {
+        let mut line = Vec::new();
+        match buffered.by_ref().take(65536).read_until(b'\n', &mut line) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => {
+                let message = String::from_utf8_lossy(&line).trim_end().to_owned();
+                if !message.is_empty() {
+                    if incoming.send(Incoming::Diagnostic(message)).is_err() {
+                        break;
+                    }
+                    wake();
+                }
+            }
+        }
     }
 }
 
