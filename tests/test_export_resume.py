@@ -179,6 +179,34 @@ def test_stale_or_unidentified_source_starts_again(tmp_path, change):
     assert reads[-35:] == [[i, i + 1] for i in range(35)]
 
 
+def test_loaded_volume_identifies_the_mapped_view_without_procfs(tmp_path, monkeypatch):
+    import h5py
+
+    from tomojax._loading.files import mapped_identity
+
+    source(tmp_path)
+    path = tmp_path / "source.nxs"
+    with h5py.File(path) as file:
+        offset = file["entry/volume/data"].id.get_offset()
+    volume = tj.load_reconstruction(path).volume
+    view = volume[3::-1, 1:, ::2]
+    stat = path.stat()
+    open_path = Path.open
+
+    def without_maps(path, *args, **kwargs):
+        if path == Path("/proc/self/maps"):
+            raise FileNotFoundError(path)
+        return open_path(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", without_maps)
+    expected = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns)
+    assert mapped_identity(view) == (*expected, offset + (3 * 4 * 5 + 5) * 4, -80, 20, 8)
+
+    path.rename(tmp_path / "previous.nxs")
+    source(tmp_path)
+    assert mapped_identity(view) is None
+
+
 def test_failed_export_removes_partial_and_preserves_published_files(tmp_path):
     name = tmp_path / "volume.mhd"
     source(tmp_path)

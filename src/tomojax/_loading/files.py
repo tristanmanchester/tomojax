@@ -185,7 +185,7 @@ def _loading(path: Path) -> tuple[dict[str, object], Grid | None]:
 
 def mapped_identity(pixels: object) -> tuple[int, ...] | None:
     """Identify the mapped bytes, including a sliced view's actual offset and strides."""
-    from tomojax.core.host_volume import mapped_storage
+    from tomojax.core.host_volume import InputMapping, mapped_storage
 
     mapping = mapped_storage(pixels)
     if (
@@ -197,6 +197,16 @@ def mapped_identity(pixels: object) -> tuple[int, ...] | None:
         return None
     try:
         stat = Path(mapping.filename).stat()
+        # Derived memmap views can have their own offset and data pointer. Use
+        # the original mapping as the anchor for the selected view's first byte.
+        root = mapping
+        while isinstance(root.base, np.memmap):
+            root = root.base
+        if isinstance(root, InputMapping):
+            if not os.path.samestat(stat, root.opened):
+                return None
+            offset = root.offset + pixels.ctypes.data - root.ctypes.data
+            return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, offset, *pixels.strides
         with Path("/proc/self/maps").open() as regions:
             for line in regions:
                 bounds, _, offset, device, inode, *_ = line.split(maxsplit=5)
