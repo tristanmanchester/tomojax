@@ -43,12 +43,13 @@ if [[ "$cmd" == scheduler ]]; then
     done
 fi
 if [[ -e "$root/offline" ]]; then echo 'controller offline' >&2; exit 1; fi
-name= user= cluster= output=
+name= user= cluster= output= numeric=
 for arg in "$@"; do
     case "$arg" in
         --name=*|--job-name=*) name=${arg#*=};;
         --user=*) user=${arg#*=};;
         --clusters=*) cluster=${arg#*=};;
+        --jobs=*) numeric=${arg#*=};;
         --output=*) output=${arg#*=};;
     esac
 done
@@ -73,6 +74,7 @@ case "$cmd" in
     squeue|sacct)
         for job in "$root"/[0-9]*; do
             [[ -d "$job" ]] || continue
+            [[ -z "$numeric" || "$numeric" == "${job##*/}" ]] || continue
             matches || continue
             phase=$(cat "$job/state")
             case "$phase" in
@@ -98,8 +100,19 @@ case "$cmd" in
                 [[ ! -e "$root/fail-requeue" ]] || exit 1
                 job="$root/$2"
                 lock
-                touch "$job/requeue"
+                case "$(cat "$job/state")" in
+                    RUNNING) touch "$job/requeue";;
+                    PENDING|REQUEUE_HOLD) ;;
+                    *)
+                        rm -f "$job/cancel"
+                        state "$job" PENDING
+                        setsid scheduler "$2" 9>&- </dev/null >/dev/null 2>&1 &
+                        ;;
+                esac
                 [[ "$1" != requeuehold ]] || touch "$job/hold"
+                ;;
+            release)
+                rm -f "$root/$2/hold"
                 ;;
             *) exit 2;;
         esac

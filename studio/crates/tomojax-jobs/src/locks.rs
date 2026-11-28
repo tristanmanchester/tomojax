@@ -10,13 +10,21 @@ use std::{
 };
 
 pub fn try_lock(path: &Path) -> io::Result<Option<File>> {
+    lock_file(path, false)
+}
+
+fn lock_file(path: &Path, shared: bool) -> io::Result<Option<File>> {
     let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(path)?;
-    match file.try_lock() {
+    match if shared {
+        file.try_lock_shared()
+    } else {
+        file.try_lock()
+    } {
         Ok(()) => Ok(Some(file)),
         Err(std::fs::TryLockError::WouldBlock) => Ok(None),
         Err(std::fs::TryLockError::Error(e)) => Err(e),
@@ -43,20 +51,20 @@ impl Machine {
     }
 
     pub fn take_job(&self, stopped: &impl Fn() -> bool) -> io::Result<(File, File)> {
-        let wait = |name| loop {
+        let wait = |name, shared| loop {
             if stopped() {
                 return Err(io::Error::new(
                     ErrorKind::Interrupted,
                     "job stopped waiting for machine",
                 ));
             }
-            if let Some(lock) = try_lock(&self.0.join(name))? {
+            if let Some(lock) = lock_file(&self.0.join(name), shared)? {
                 return Ok(lock);
             }
             thread::sleep(Duration::from_millis(50));
         };
-        let job = wait("jobs.lock")?;
-        Ok((job, wait("gpu.lock")?))
+        let job = wait("jobs.lock", true)?;
+        Ok((job, wait("gpu.lock", false)?))
     }
 
     /// Keep the returned lease until the GPU executor process has been reaped.

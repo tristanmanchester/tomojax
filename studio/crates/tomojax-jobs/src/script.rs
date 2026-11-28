@@ -29,7 +29,13 @@ pub struct Claim {
 }
 
 pub fn read_claim(dir: &Path) -> io::Result<Claim> {
-    Ok(serde_json::from_slice(&fs::read(dir.join("launch"))?)?)
+    let claim: Claim = serde_json::from_slice(&fs::read(dir.join("launch"))?)?;
+    if claim.launcher == Launcher::Slurm && claim.cluster.as_deref().is_none_or(str::is_empty) {
+        return Err(io::Error::other(
+            "Slurm launch claim is missing its cluster",
+        ));
+    }
+    Ok(claim)
 }
 
 pub fn job_id(dir: &Path) -> io::Result<&str> {
@@ -61,6 +67,28 @@ pub fn read_script(dir: &Path) -> io::Result<Vec<Value>> {
         .collect()
 }
 
+fn validate_inputs(value: &Value, previous: &HashSet<&str>) -> io::Result<()> {
+    match value {
+        Value::Object(_) if value["type"] == "member" => {
+            if !value["handle"]
+                .as_str()
+                .is_some_and(|id| previous.contains(id))
+            {
+                return Err(io::Error::other(
+                    "a script member must belong to an earlier line",
+                ));
+            }
+            Ok(())
+        }
+        Value::Object(_) if value["type"] == "npy" && !value["artifact"].is_null() => {
+            Err(io::Error::other("a job cannot borrow a session artifact"))
+        }
+        Value::Object(map) => map.values().try_for_each(|v| validate_inputs(v, previous)),
+        Value::Array(items) => items.iter().try_for_each(|v| validate_inputs(v, previous)),
+        _ => Ok(()),
+    }
+}
+
 /// Persist the client's exact script before competing for the launch claim. Linux directory
 /// rename refuses an existing, nonempty job directory even across submit hosts.
 pub fn publish_script(dir: &Path, script: &[Value]) -> io::Result<LauncherChoice> {
@@ -82,6 +110,7 @@ pub fn publish_script(dir: &Path, script: &[Value]) -> io::Result<LauncherChoice
             .ok_or_else(|| {
                 io::Error::other("script request ID must start with the job ID and a dot")
             })?;
+        validate_inputs(&line["command"], &ids)?;
         if !ids.insert(request) {
             return Err(io::Error::other("duplicate script request ID"));
         }
@@ -104,21 +133,21 @@ pub fn publish_script(dir: &Path, script: &[Value]) -> io::Result<LauncherChoice
         .prefix(".submit-")
         .tempdir_in(parent)?;
     fs::write(stage.path().join("script.jsonl"), &bytes)?;
-    match rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        stage.path(),
-        rustix::fs::CWD,
-        dir,
-        rustix::fs::RenameFlags::NOREPLACE,
-    ) {
-        Ok(()) => {}
-        Err(rustix::io::Errno::EXIST) if read_script(dir)? == script => {}
-        Err(rustix::io::Errno::EXIST) => {
-            return Err(io::Error::other(
-                "job directory contains a different script",
-            ));
+    if !dir.try_exists()? {
+        match fs::rename(stage.path(), dir) {
+            Ok(()) => {}
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::DirectoryNotEmpty | io::ErrorKind::AlreadyExists
+                ) => {}
+            Err(e) => return Err(e),
         }
-        Err(error) => return Err(error.into()),
+    }
+    if read_script(dir)? != script {
+        return Err(io::Error::other(
+            "job directory contains a different script",
+        ));
     }
     Ok(if runs {
         LauncherChoice::Configured
@@ -135,6 +164,9 @@ pub enum LauncherChoice {
 pub fn prepare(dir: &Path, launcher: Launcher, lines: &mut [Value]) -> io::Result<Option<PathBuf>> {
     let mut checkpoint = None;
     for line in lines {
+        if let Some(channel) = line["channel"].as_str() {
+            line["channel"] = json!(format!("{}.{}", job_id(dir)?, channel));
+        }
         let Some(operation) = line.pointer_mut("/command/operation") else {
             continue;
         };

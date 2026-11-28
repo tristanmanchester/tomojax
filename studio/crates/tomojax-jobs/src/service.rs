@@ -229,6 +229,12 @@ pub fn status(dir: &Path) -> io::Result<Value> {
         let Some(state) = observed(before, report.account, after) else {
             continue;
         };
+        if after.launch == Launch::Claimed
+            && let Some(id) = report.id
+        {
+            create_record(&dir.join("submission.json"), &Submission::Accepted(id))?;
+            continue;
+        }
         if !withdrew
             && needs_withdrawal(after, report.account)
             && let (Some(claim), Some(id)) = (&claim, report.id)

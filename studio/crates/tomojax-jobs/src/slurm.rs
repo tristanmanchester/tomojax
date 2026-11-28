@@ -175,7 +175,13 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
     };
     // Accounting can lag or contain the previous attempt of a requeued allocation.
     // Query it before the controller, so the controller's live phase always wins.
-    let history = output(scheduler("sacct", claim).args([
+    let mut accounting = scheduler("sacct", claim);
+    if let Launch::Accepted(id) = launch {
+        // An allocation canceled while held has no eligible time. Some sites
+        // omit it from time-range queries unless the ID is also supplied.
+        accounting.arg(format!("--jobs={id}"));
+    }
+    let history = output(accounting.args([
         "-X",
         "-n",
         "-P",
@@ -194,9 +200,8 @@ pub fn lookup(claim: &Claim, launch: Launch) -> io::Result<Report> {
             .next()
             .ok_or_else(|| io::Error::other("squeue omitted job state"))?;
         let account = match phase {
-            "PENDING" | "REQUEUED" | "REQUEUE_FED" | "REQUEUE_HOLD" | "RESV_DEL_HOLD" => {
-                Account::Pending
-            }
+            "PENDING" | "SPECIAL_EXIT" | "REQUEUED" | "REQUEUE_FED" | "REQUEUE_HOLD"
+            | "RESV_DEL_HOLD" => Account::Pending,
             "COMPLETED" | "CANCELLED" | "FAILED" | "TIMEOUT" | "OUT_OF_MEMORY" | "PREEMPTED"
             | "NODE_FAIL" | "BOOT_FAIL" | "DEADLINE" | "REVOKED" => {
                 Account::Absent { accounted: true }

@@ -93,6 +93,28 @@ impl<'a> Publication<'a> {
     }
 }
 
+/// A provenance tree can mention the handle an earlier script request produced.
+/// The durable record refers to that immutable request and its named output.
+fn provenance(value: &mut Value, stage: &Path, destination: &Path) {
+    match value {
+        Value::Object(_) if value["type"] == "member" => {
+            *value = json!({"request":value["handle"], "output":value["member"]});
+        }
+        Value::Object(map) => map
+            .values_mut()
+            .for_each(|v| provenance(v, stage, destination)),
+        Value::Array(items) => items
+            .iter_mut()
+            .for_each(|v| provenance(v, stage, destination)),
+        Value::String(path) => {
+            if let Ok(rel) = Path::new(path).strip_prefix(stage) {
+                *path = destination.join(rel).to_string_lossy().into_owned();
+            }
+        }
+        _ => {}
+    }
+}
+
 pub fn receipt(
     dir: &Path,
     command: &Value,
@@ -138,20 +160,19 @@ pub fn receipt(
         result["type"] = json!("arrays");
         result["arrays"] = arrays;
     }
+    provenance(&mut result["manifest"], &stage, &dest);
+    provenance(&mut result["info"]["summary"], &stage, &dest);
     Ok(result)
 }
 
 pub fn publish(dir: &Path, receipt: &Value) -> io::Result<()> {
     let stage = dir.join("work/result");
-    create_record(&stage.join("receipt.json"), receipt)?;
-    rustix::fs::renameat_with(
-        rustix::fs::CWD,
-        stage,
-        rustix::fs::CWD,
-        dir.join("result"),
-        rustix::fs::RenameFlags::NOREPLACE,
-    )?;
-    Ok(())
+    if !create_record(&stage.join("receipt.json"), receipt)? {
+        return Err(io::Error::other("staging already contains a receipt"));
+    }
+    // One runner owns the directory. POSIX rename cannot replace a previously
+    // published nonempty result and is supported on the cluster filesystem.
+    fs::rename(stage, dir.join("result"))
 }
 
 pub fn preview(dir: &Path, attempt: u64, n: u64, mut row: Value) -> io::Result<()> {
