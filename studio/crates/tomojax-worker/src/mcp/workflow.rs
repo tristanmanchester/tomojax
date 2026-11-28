@@ -248,10 +248,11 @@ fn snapshot(bytes: &[u8]) -> Result<Value> {
         ),
         _ => bail!("Unexpected Python image shape {shape:?}"),
     };
-    let img = if img.width().max(img.height()) > 1024 {
-        img.resize(1024, 1024, image::imageops::FilterType::Lanczos3)
-    } else {
-        img
+    use super::thumbnail::{Filter, fit};
+    let img = match img {
+        DynamicImage::ImageLuma8(g) => DynamicImage::ImageLuma8(fit(g, Filter::Lanczos)),
+        DynamicImage::ImageRgb8(rgb) => DynamicImage::ImageRgb8(fit(rgb, Filter::Lanczos)),
+        _ => unreachable!(),
     };
     let mut png = Cursor::new(Vec::new());
     img.write_to(&mut png, ImageFormat::Png)?;
@@ -372,5 +373,5 @@ pub fn tool(name: &str) -> Value {
     if !defs.is_empty() {
         schema["$defs"] = Value::Object(defs);
     }
-    json!({"name":name,"description":schema["description"],"inputSchema":schema,"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":false,"openWorldHint":false}})
+    json!({"name":name,"description":schema["description"],"inputSchema":schema,"outputSchema":super::schema::output(name),"annotations":super::schema::annotations(name)})
 }

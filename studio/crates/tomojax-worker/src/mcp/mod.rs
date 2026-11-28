@@ -12,6 +12,7 @@ mod parts;
 mod schema;
 mod summary;
 mod tasks;
+mod thumbnail;
 mod tools;
 mod transfers;
 mod view;
@@ -113,7 +114,30 @@ impl ServerHandler for Server {
             .enable_tools()
             .build();
         ServerConfig::new(capabilities).with_server_info(identity()).with_instructions(
-            "Use inspect to identify an acquisition and open to load it. Use describe for parameters and units. Check geometry and labelled slices before choosing a reconstruction. Handles last until closed, the executor restarts or the session ends. For work that must survive disconnection, submit a job with saved input paths. Use jobs to recover it. Data paths belong to the connected machine. The laptop paths of upload and download are relative to the client project directory."
+            r"Use TomoJAX for parallel-beam CT, cone-beam CT and laminography.
+Start with inspect to identify an acquisition and open to load it. Use describe for
+parameter choices and units. status lists devices, current jobs and live data.
+A bare handle supplies the whole object to save/export, or the primary array to an array
+field (simulation phantom, reconstruction volume, alignment working image, scan projections).
+For a scan operation use a scan handle or .scan on a simulation, alignment or reconstruction.
+Select another array with .member, e.g. .poses (alpha, beta, phi in degrees, then x, z, y
+in the geometry length unit).
+Handles last until closed, worker restart or server exit. Array fields accept handle members,
+session arrays, .npy files and file.h5::/dataset in storage order. For acquisitions, open
+and select .projections, or open with kind=frames and select .counts. For a first look use
+inspect with preview=true, or preview with correction_preview for corrected rows.
+View and project.volume also accept saved TomoJAX volumes by path in logical (z, y, x) order.
+Workflow source fields accept acquisition paths. Relative data paths use the worker directory.
+Use ./@name for a literal path starting with @.
+The usual workflow is inspect, open, correct, align the center, reconstruct, view slices
+and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector spacings
+share one physical length unit. Check slices before trusting a residual. Use dry_run
+before large jobs on tools that support it. See tools/list for installed workflows.
+To show the user a structure, draw view marks in array indices and ask; make the agreed
+region a feature and outline it with view features. On the local connection, use python for sweeps or custom measures.
+Use submit with saved inputs for a job that must survive disconnection. Reconnect and use
+jobs to read its receipt and result slices. The laptop paths of upload and download use
+the client project directory."
         )
     }
     async fn list_tools(
@@ -191,7 +215,7 @@ impl ServerHandler for Server {
         ctx: Context,
     ) -> Result<ListResourceTemplatesResult, McpError> {
         response(
-            json!({"resourceTemplates":[{"name":"read","uriTemplate":"tomojax://result/{call}/{n}","mimeType":"application/json","description":"Read a page by index. JSON escaping can at most double its ASCII length."},{"name":"describe","uriTemplate":"tomojax://describe/{operation}","mimeType":"application/json","description":"Read the parameters, choices and units for one worker operation."},{"name":"guide","description":"Read a reference of the packaged Agent Skill, the single source of the guides.","uriTemplate":"tomojax://guide/{topic}","mimeType":"text/markdown"}]}),
+            json!({"resourceTemplates":[{"name":"handle","uriTemplate":"tomojax://handle/{id}","mimeType":"application/json","description":"Read a live handle's summary and provenance."},{"name":"read","uriTemplate":"tomojax://result/{call}/{n}","mimeType":"application/json","description":"Read a page by index. JSON escaping can at most double its ASCII length."},{"name":"describe","uriTemplate":"tomojax://describe/{operation}","mimeType":"application/json","description":"Read the parameters, choices and units for one worker operation."},{"name":"guide","description":"Read a reference of the packaged Agent Skill, the single source of the guides.","uriTemplate":"tomojax://guide/{topic}","mimeType":"text/markdown"}]}),
             &ctx,
         )
     }
@@ -214,6 +238,18 @@ impl ServerHandler for Server {
                 })?;
             (
                 serde_json::to_string_pretty(&page).unwrap(),
+                "application/json",
+            )
+        } else if let Some(id) = request.uri.strip_prefix("tomojax://handle/") {
+            let missing = |e: anyhow::Error| McpError::resource_not_found(e.to_string(), None);
+            let (session, _) = self.connections.open(true).await.map_err(missing)?;
+            let ledger = session.space.ledger.lock().unwrap();
+            let entry = ledger.record(id).map_err(missing)?;
+            let mut data = entry["summary"].clone();
+            data["handle"] = json!(id);
+            data["manifest"] = entry["manifest"].clone();
+            (
+                serde_json::to_string_pretty(&data).unwrap(),
                 "application/json",
             )
         } else if let Some(operation) = request.uri.strip_prefix("tomojax://describe/") {

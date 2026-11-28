@@ -8,8 +8,8 @@ from tests.test_mcp_stdio import connection
 
 pytestmark = pytest.mark.surface
 
-WRITES = {"save", "export", "reconstruct_slabs", "control", "python"}
-READS = {"status", "inspect", "describe", "view", "preview"}
+WRITES = {"save", "export", "reconstruct_slabs", "control", "python", "cancel_job"}
+READS = {"status", "inspect", "describe", "view", "preview", "jobs"}
 
 
 def test_annotations_and_results_conform(tmp_path):

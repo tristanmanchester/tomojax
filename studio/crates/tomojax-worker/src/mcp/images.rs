@@ -17,6 +17,22 @@ pub async fn slice(
 ) -> Result<(Value, Value)> {
     let index = *array.shape.get(axis).context("No such slice axis")? / 2;
     let plane = PlaneSelection::new(&array.shape, axis, index, edge).map_err(anyhow::Error::msg)?;
+    let samples = samples(session, array, &plane).await?;
+    let [h, w] = plane.remaining.map(|ax| plane.count[ax]);
+    let (png, limits) = gray(&samples, w, h)?;
+    let header = json!({"axis":array.axes.get(axis).map(|a|&a.name),"index":index,
+        "width":w,"height":h,"stride":plane.step,"intensity_limits":limits,"unit":array.unit});
+    Ok((
+        header,
+        json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(png)}),
+    ))
+}
+
+async fn samples(
+    session: &Session,
+    array: &ArrayDescriptor,
+    plane: &PlaneSelection,
+) -> Result<Vec<f64>> {
     let encoding = if array.dtype == "float32" {
         Encoding::Float32
     } else {
@@ -32,22 +48,65 @@ pub async fn slice(
     );
     let mut pixels: Pixels = serde_json::from_value(reply.header["result"].clone())?;
     pixels.attach(reply.bytes).map_err(anyhow::Error::msg)?;
-    let samples = match encoding {
+    match encoding {
         Encoding::Float32 => pixels
             .floats(&plane.count)
             .map(|v| v.into_iter().map(f64::from).collect()),
         Encoding::Float64 => pixels.doubles(&plane.count),
         _ => unreachable!(),
     }
-    .map_err(anyhow::Error::msg)?;
+    .map_err(anyhow::Error::msg)
+}
+
+pub async fn inspection(session: &Session, array: &ArrayDescriptor) -> Result<Value> {
+    // Compute display limits on the entire central plane before reducing its image.
+    let edge = array
+        .shape
+        .iter()
+        .copied()
+        .max()
+        .context("Missing inspection shape")?;
+    let plane = PlaneSelection::new(&array.shape, 0, array.shape[0] / 2, edge)
+        .map_err(anyhow::Error::msg)?;
+    let values: Vec<f32> = samples(session, array, &plane)
+        .await?
+        .into_iter()
+        .map(|x| x as f32)
+        .collect();
+    let mut finite: Vec<_> = values.iter().copied().filter(|v| v.is_finite()).collect();
+    finite.sort_unstable_by(f32::total_cmp);
+    let percentile = |q: f64| {
+        let x = (finite.len() - 1) as f64 * q;
+        let (a, b) = (finite[x.floor() as usize], finite[x.ceil() as usize]);
+        let difference = f64::from(b - a);
+        if x.fract() < 0.5 {
+            (f64::from(a) + difference * x.fract()) as f32
+        } else {
+            (f64::from(b) - difference * (1. - x.fract())) as f32
+        }
+    };
+    let (lo, hi) = if finite.is_empty() {
+        (0., 1.)
+    } else {
+        (percentile(0.005), percentile(0.995))
+    };
+    let range = if hi > lo { hi - lo } else { 1. };
+    let pixels = values
+        .into_iter()
+        .map(|v| (((v - lo) / range).clamp(0., 1.) * 255.).round_ties_even() as u8)
+        .collect();
     let [h, w] = plane.remaining.map(|ax| plane.count[ax]);
-    let (png, limits) = gray(&samples, w, h)?;
-    let header = json!({"axis":array.axes.get(axis).map(|a|&a.name),"index":index,
-        "width":w,"height":h,"stride":plane.step,"intensity_limits":limits,"unit":array.unit});
-    Ok((
-        header,
-        json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(png)}),
-    ))
+    let input = image::GrayImage::from_raw(w.try_into()?, h.try_into()?, pixels)
+        .context("Incomplete inspection plane")?;
+    let image = super::thumbnail::fit(input, super::thumbnail::Filter::Bicubic);
+    let mut png = Vec::new();
+    PngEncoder::new(&mut png).write_image(
+        &image,
+        image.width(),
+        image.height(),
+        ExtendedColorType::L8,
+    )?;
+    Ok(json!({"type":"image","mimeType":"image/png","data":STANDARD.encode(png)}))
 }
 
 fn gray(samples: &[f64], w: usize, h: usize) -> Result<(Vec<u8>, [f64; 2])> {

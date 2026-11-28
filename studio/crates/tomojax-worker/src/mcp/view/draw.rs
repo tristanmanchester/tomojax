@@ -461,11 +461,22 @@ pub(super) fn render(
                 image: &id,
                 limits: [lo, hi],
             };
-            for (mark, report) in form.marks.iter().zip(&mut reports) {
-                report["panels"]
-                    .as_array_mut()
-                    .unwrap()
-                    .push(overlay.draw(&mut canvas, mark)?);
+            if !form.marks.is_empty() {
+                let mut shapes = image::RgbaImage::new(cell.width as u32, cell.height as u32);
+                for (mark, report) in form.marks.iter().zip(&mut reports) {
+                    report["panels"].as_array_mut().unwrap().push(overlay.draw(
+                        &mut canvas,
+                        &mut shapes,
+                        mark,
+                    )?);
+                }
+                for (x, y, ink) in shapes.enumerate_pixels().filter(|(_, _, p)| p[3] != 0) {
+                    canvas.put_pixel(
+                        cell.left as u32 + x,
+                        cell.top as u32 + y,
+                        Rgb([ink[0], ink[1], ink[2]]),
+                    );
+                }
             }
             for (i, line) in labels[j].iter().enumerate() {
                 label(

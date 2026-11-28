@@ -76,19 +76,13 @@ pub async fn inspect(
         let arrays = stored["arrays"]
             .as_object()
             .context("Missing inspection arrays")?;
-        let image =
-            if let Some(descriptor) = arrays.get("projections").or_else(|| arrays.get("volume")) {
-                super::images::slice(
-                    session,
-                    &serde_json::from_value(descriptor.clone())?,
-                    0,
-                    1024,
-                )
-                .await?
-                .1
-            } else {
-                executor_plane(session, &path, &full).await?
-            };
+        let image = if let Some(descriptor) =
+            arrays.get("projections").or_else(|| arrays.get("volume"))
+        {
+            super::images::inspection(session, &serde_json::from_value(descriptor.clone())?).await?
+        } else {
+            executor_plane(session, &path, &full).await?
+        };
         images.push(image);
     }
     if !matches!(form.detail, Some(Detail::Full)) {
@@ -150,7 +144,7 @@ async fn executor_plane(
         >(item["array"].clone())?);
     }
     let plane = descriptors.first().context("no inspection plane")?;
-    let image = super::images::slice(session, plane, 0, 1024).await;
+    let image = super::images::inspection(session, plane).await;
     for token in descriptors
         .iter()
         .flat_map(|d| d.artifacts())
@@ -158,7 +152,7 @@ async fn executor_plane(
     {
         query(session, json!({"type":"release","artifact":token})).await?;
     }
-    Ok(image?.1)
+    image
 }
 
 pub fn summary(path: &str, data: &Value) -> Option<String> {
