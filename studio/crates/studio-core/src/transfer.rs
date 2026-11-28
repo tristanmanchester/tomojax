@@ -1,6 +1,7 @@
 // Ported from T3 Code (MIT, © 2026 T3 Tools Inc.), apps/server/src/attachmentStore.ts at d2c44031; see THIRD_PARTY_NOTICES.md.
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -71,7 +72,12 @@ impl Upload {
         let parent = destination.parent().context("missing destination folder")?;
         sweep(parent)?;
         Ok(Self {
-            stage: Builder::new().prefix(PREFIX).tempfile_in(parent)?,
+            // Published by a hard link, so the stage's mode is the file's: the
+            // umask's, as for every other file the worker writes.
+            stage: Builder::new()
+                .prefix(PREFIX)
+                .permissions(fs::Permissions::from_mode(0o666))
+                .tempfile_in(parent)?,
             destination,
             left: bytes,
             expected,
@@ -158,5 +164,28 @@ impl Download {
 
     pub fn digest(&self) -> String {
         format!("{:x}", self.hash.clone().finalize())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_uploaded_file_gets_the_mode_of_any_file_the_user_creates_there() {
+        // A shared visit folder relies on the umask and default ACLs; a private
+        // 0600 upload would be unreadable by the rest of the visit.
+        let tmp = tempfile::tempdir().unwrap();
+        let reference = tmp.path().join("reference");
+        File::create(&reference).unwrap();
+        let body = b"config";
+        let digest = format!("{:x}", Sha256::digest(body));
+        let destination = tmp.path().join("uploaded");
+        let mut upload = Upload::start(destination.clone(), body.len() as u64, digest).unwrap();
+        upload.write(body).unwrap();
+        upload.publish().unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&destination), mode(&reference));
+        assert_eq!(fs::read(&destination).unwrap(), body);
     }
 }
