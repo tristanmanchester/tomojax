@@ -95,7 +95,7 @@ pub(super) fn prepare(
         if s.starts_with('@')
             && let Some(live) = ledger
         {
-            *value = live.resolve(s, names.contains(&"PathInput") && !names.contains(&"Npy"))?;
+            *value = live.resolve(s, !names.contains(&"Npy"))?;
             return Ok(());
         }
         ensure!(

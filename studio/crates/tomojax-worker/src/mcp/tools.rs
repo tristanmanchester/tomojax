@@ -27,7 +27,7 @@ pub fn list(local: bool) -> Vec<Value> {
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
         ("control","Pause, resume or cancel a request, close a handle, or restart the session.",json!({"action":{"enum":["pause","resume","cancel","close","restart"]},"target":{"type":"string"}}),vec!["action"]),
         ("python","Run Python in the local TomoJAX executor. Use tj, np, handles, register, view and show with the session’s data.",json!({"code":{"type":"string"},"reset":{"type":"boolean"},"traceback":{"type":"boolean"}}),vec![]),
-        ("view","View registered planes and projections, subtract two volumes, or read statistics, a line profile or a pose table.",json!({"source":{"anyOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},"mode":{"enum":["planes","projection","sinogram","difference","statistics","profile","pose_table"]},"axis":{"type":"string"},"index":{"type":"integer","minimum":0},"roi":{"type":"array"},"stride":{"type":"array"},"limits":{"type":"array"},"percentiles":{"type":"array"},"bins":{"type":"integer"},"other":{"type":"string"},"marks":{"type":"array","items":{"type":"object","properties":{"type":{"const":"point"},"at":{"type":"array","items":{"type":"number"}},"label":{"type":"string"},"color":{"enum":["yellow","cyan","magenta","orange","green","red"]}},"required":["type","at"]}},"grid":{"type":"boolean"},"ticks":{"type":"boolean"}}),vec!["source"]),
+        ("view","View registered planes and projections, subtract two volumes, or read statistics, a line profile or a pose table.",json!({"source":{"anyOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},"mode":{"enum":["planes","projection","sinogram","difference","statistics","profile","pose_table","pose_plot"]},"axis":{"type":"string"},"index":{"type":"integer","minimum":0},"roi":{"type":"array"},"stride":{"type":"array"},"limits":{"type":"array"},"percentiles":{"type":"array"},"bins":{"type":"integer"},"other":{"type":"string"},"marks":{"type":"array","items":{"type":"object","properties":{"type":{"const":"point"},"at":{"type":"array","items":{"type":"number"}},"label":{"type":"string"},"color":{"enum":["yellow","cyan","magenta","orange","green","red"]}},"required":["type","at"]}},"features":{"type":"array","items":{"type":"string"}},"grid":{"type":"boolean"},"ticks":{"type":"boolean"}}),vec!["source"]),
         ("download","Copy one worker file to a new file on the laptop. A relative destination uses the project directory.",
          json!({"path":{"type":"string"},"to":{"type":"string"}}),vec!["path","to"]),
         ("upload","Copy one laptop file to a new file on the connected machine. A relative source uses the project directory.",
@@ -91,10 +91,31 @@ pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<
             _ => {}
         }
     }
+    if connections.name == "local"
+        && let Some(paths) = data["paths"].as_array()
+    {
+        const ESCAPE: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+            .remove(b'/')
+            .remove(b'-')
+            .remove(b'_')
+            .remove(b'.')
+            .remove(b'~');
+        for s in paths.iter().filter_map(Value::as_str) {
+            let path = std::path::Path::new(s);
+            if path.is_absolute() {
+                let url = format!(
+                    "file://{}",
+                    percent_encoding::utf8_percent_encode(s, ESCAPE)
+                );
+                content.push(json!({"type":"resource_link","name":path.file_name().and_then(|s|s.to_str()),"uri":url}));
+            }
+        }
+    }
     let text = input
         .as_deref()
         .filter(|_| name == "inspect")
         .and_then(|path| super::inspect::summary(path, &data))
+        .or_else(|| super::workflow::summary(&data))
         .unwrap_or_else(|| serde_json::to_string_pretty(&data).unwrap());
     content.insert(0, json!({"type":"text","text":text}));
     Ok(json!({"content":content,"structuredContent":data,"isError":false}))

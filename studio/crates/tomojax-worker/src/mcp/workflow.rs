@@ -24,25 +24,25 @@ pub const OPERATIONS: &[&str] = &[
     "save",
     "export",
     "edit_scan",
+    "preview",
 ];
 
-pub async fn run(
+fn prepare(
     session: &Session,
     inventory: &Inventory,
     name: &str,
     mut cmd: Value,
-) -> Result<(Value, Vec<Value>)> {
+) -> Result<(Value, bool, bool)> {
     let fields = cmd.as_object_mut().context("Expected tool arguments")?;
     let full = fields.shift_remove("detail") == Some(json!("full"));
     let dry = fields.shift_remove("dry_run") == Some(json!(true));
-    if name == "edit_scan" {
+    if matches!(name, "edit_scan" | "preview") {
         cmd = fields
             .shift_remove("operation")
             .context("Missing scan edit")?;
         ensure!(
-            ["select", "crop", "bin", "poses", "combine"]
-                .contains(&cmd["type"].as_str().unwrap_or("")),
-            "Unknown scan edit"
+            choices(name).contains(&cmd["type"].as_str().unwrap_or("")),
+            "Unknown {name} operation"
         );
     } else {
         cmd["type"] = json!(name);
@@ -80,6 +80,18 @@ pub async fn run(
         describe::definitions(),
         Some(&session.ledger.lock().unwrap()),
     )?;
+    Ok((cmd, full, dry))
+}
+pub async fn run(
+    session: &Session,
+    inventory: &Inventory,
+    name: &str,
+    cmd: Value,
+) -> Result<(Value, Vec<Value>)> {
+    let (cmd, full, dry) = prepare(session, inventory, name, cmd)?;
+    if name == "preview" {
+        return super::view::preview::run(session, inventory, cmd).await;
+    }
     let start = Instant::now();
     let request = if dry {
         json!({"type":"validate","operation":cmd})
@@ -95,14 +107,14 @@ pub async fn run(
     let mut data = output["value"].clone();
     if dry {
         if data["type"] == "validated" {
-            data["operation"] = json!(tag);
+            data["operation"] = cmd["type"].clone();
             if let Some(Value::Object(details)) =
                 data.as_object_mut().unwrap().shift_remove("details")
             {
                 data.as_object_mut().unwrap().extend(details);
             }
             if data.as_object().unwrap().len() == 2 {
-                data["parameters"] = cmd;
+                data["parameters"] = cmd.clone();
             }
         }
     } else {
@@ -122,13 +134,46 @@ pub async fn run(
                 .unwrap()
                 .publish(&cmd, &output, &data, None)?
         };
+        if name != "evaluate" {
+            let _ = super::activity::CURRENT.try_with(|a| a.report(&mut data));
+        }
         data["wall_seconds"] = json!((start.elapsed().as_secs_f64() * 1000.).round() / 1000.);
     }
     if full {
         data["info"] = output["info"].clone();
         data["manifest"] = output["manifest"].clone();
     }
-    Ok((data, vec![]))
+    let mut content = Vec::new();
+    if !dry && matches!(name, "align" | "reconstruct") {
+        for field in ["poses", "image", "volume"] {
+            if field == "poses" {
+                let poses = match cmd.get("fit") {
+                    None | Some(Value::Null) => cmd["method"] != "opposite-views",
+                    Some(Value::Array(v)) => {
+                        v.iter().any(|k| k == "rotations" || k == "translations")
+                    }
+                    Some(v) => v == "rotations" || v == "translations",
+                };
+                if !poses {
+                    continue;
+                }
+            }
+            if let Some(reference) = data["members"].get(field) {
+                match super::view::run(
+                    session,
+                    inventory,
+                    json!({"source":reference,"mode":if field=="poses"{"pose_plot"}else{"planes"}}),
+                )
+                .await
+                {
+                    Ok((_, images)) => content.extend(images),
+                    Err(e) => content
+                        .push(json!({"type":"text","text":format!("Panel unavailable: {e}")})),
+                }
+            }
+        }
+    }
+    Ok((data, content))
 }
 
 pub async fn control(connections: &Connections, session: &Session, args: &Value) -> Result<Value> {
@@ -143,7 +188,8 @@ pub async fn control(connections: &Connections, session: &Session, args: &Value)
             .cloned()
             .collect();
         connections.close().await;
-        return Ok(json!({"action":action,"lost_handles":lost}));
+        connections.open(true).await?;
+        return Ok(json!({"reason":"Worker restarted","lost":lost}));
     }
     let id = args["target"]
         .as_str()
@@ -260,15 +306,28 @@ pub async fn python(session: &Session, mut args: Value) -> Result<(Value, Vec<Va
     Ok((value, blocks))
 }
 
+fn choices(name: &str) -> Vec<&str> {
+    match name {
+        "edit_scan" => vec!["select", "crop", "bin", "poses", "combine"],
+        "preview" => vec![
+            "slice",
+            "center_sweep",
+            "correction_preview",
+            "region_preview",
+        ],
+        other => vec![other],
+    }
+}
 pub fn tool(name: &str) -> Value {
     let catalog = describe::workflows();
-    let choices: Vec<&str> = if name == "edit_scan" {
-        vec!["select", "crop", "bin", "poses", "combine"]
-    } else {
-        vec![name]
-    };
+    let choices = choices(name);
     let roots = choices.iter().map(|t| catalog[t].0).collect::<Vec<_>>();
     let mut defs = jobs::parameter_defs(&roots, true);
+    if name == "preview" {
+        for root in ["Slice", "CenterSweep"] {
+            defs.get_mut(root).unwrap()["properties"]["roi"] = json!({"type":"array","description":"Three half-open z, y and x volume intervals."});
+        }
+    }
     let mut schema = if roots.len() == 1 {
         let mut item = defs.shift_remove(roots[0]).unwrap();
         item["properties"]
@@ -288,10 +347,114 @@ pub fn tool(name: &str) -> Value {
             required.retain(|k| k != "kind");
         }
     }
+    if name == "preview" {
+        schema["description"] = json!(
+            "Preview a slice, sweep the rotation center, compare corrections or estimate a region."
+        );
+    }
     schema["properties"]["dry_run"] = json!({"type":"boolean","default":false});
     schema["properties"]["detail"] = json!({"enum":["summary","full"],"default":"summary"});
     if !defs.is_empty() {
         schema["$defs"] = Value::Object(defs);
     }
     json!({"name":name,"description":schema["description"],"inputSchema":schema,"outputSchema":{"type":"object"},"annotations":{"readOnlyHint":false,"openWorldHint":false}})
+}
+
+pub fn summary(data: &Value) -> Option<String> {
+    let time = data["wall_seconds"].as_f64()?;
+    let kind = data["kind"].as_str()?;
+    let mut parts = vec![
+        data["handle"].as_str().unwrap_or("Saved").to_owned(),
+        kind.into(),
+    ];
+    if let Some(shape) = data["shape"].as_array() {
+        let sizes = shape
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join(" x ");
+        parts.push(format!(
+            "{sizes} {}",
+            data["unit"].as_str().unwrap_or("None")
+        ));
+    }
+    if let Some(method) = data["method"].as_str() {
+        parts.push(format!("method {method}"));
+    }
+    if let (Some(n), Some(reason)) = (
+        data["effective_iterations"].as_u64(),
+        data["termination"].as_str(),
+    ) {
+        let stop = match reason {
+            "projection_discrepancy" => "stopped at the estimated projection discrepancy",
+            "noise_score" => "stopped at the estimated noise level",
+            "objective_tolerance" => "stopped at the objective tolerance",
+            "roundoff_limit" => "stopped at the float32 roundoff limit",
+            "numerical_breakdown" => "stopped at a numerical breakdown",
+            "iteration_limit" => "ran to the iteration limit",
+            other => other,
+        };
+        let mut message = format!("{n} updates, {}", stop.replace('_', " "));
+        if data["tv_weight"].is_null()
+            && let Some(weight) = data["resolved_tv_weight"].as_f64()
+        {
+            message += &format!("; automatic TV weight {weight}");
+        }
+        parts.push(message);
+    }
+    for key in [
+        "geometry",
+        "calibration",
+        "checkpoint",
+        "slice_count",
+        "first_file",
+        "last_file",
+    ] {
+        if let Some(value) = data.get(key) {
+            parts.push(format!(
+                "{key} {}",
+                value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string())
+            ));
+        }
+    }
+    if let Some(a) = data.pointer("/automatic/reasons").and_then(Value::as_array) {
+        parts.extend(a.iter().filter_map(Value::as_str).map(str::to_owned));
+    }
+    if let (Some(rms), Some(cols)) = (
+        data.pointer("/poses/rms").and_then(Value::as_array),
+        data.pointer("/poses/columns").and_then(Value::as_array),
+    ) {
+        let terms = cols
+            .iter()
+            .zip(rms)
+            .map(|(col, v)| {
+                format!(
+                    "{} {} {}",
+                    col["name"].as_str().unwrap_or(""),
+                    v.as_f64().unwrap_or_default(),
+                    col["unit"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>();
+        parts.push(format!("pose RMS {}", terms.join(", ")));
+    }
+    if let Some(m) = data
+        .pointer("/disturbed_views/message")
+        .and_then(Value::as_str)
+    {
+        parts.push(m.into());
+    }
+    for k in ["paths", "devices"] {
+        if let Some(a) = data[k].as_array() {
+            parts.extend(a.iter().filter_map(Value::as_str).map(str::to_owned));
+        }
+    }
+    parts.push(format!("{time} s"));
+    if let Some(a) = data["notes"].as_array() {
+        parts.extend(a.iter().filter_map(Value::as_str).map(str::to_owned));
+    }
+    Some(parts.join(" · "))
 }

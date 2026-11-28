@@ -69,7 +69,7 @@ command = "tomojax-worker"
 args = ["mcp", "--connection", "beamline"]
 ```
 
-Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. The native server currently provides `status`, `inspect`, `describe`, `submit`, `jobs`, `cancel_job`, `upload` and `download`.
+Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. The native server supports point marks in array coordinates and outlines of registered features. The installed Python server also supports snapping, pixel positions and the other annotation shapes described below. The native `python` tool is available on the built-in `local` connection.
 
 To run a small simulation, pass these arguments to `submit`.
 

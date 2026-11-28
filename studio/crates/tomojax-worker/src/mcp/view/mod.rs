@@ -1,6 +1,8 @@
 //! Read worker-owned hyperslabs and compare the scientific samples before converting to gray.
 mod draw;
 mod marks;
+mod poses;
+pub(super) mod preview;
 use super::{
     connection::{Inventory, Session},
     jobs, ledger,
@@ -18,6 +20,8 @@ struct View {
     source: Sources,
     #[serde(default)]
     marks: Vec<marks::Mark>,
+    #[serde(default)]
+    features: Vec<String>,
     ticks: Option<bool>,
     #[serde(default)]
     grid: bool,
@@ -56,6 +60,7 @@ struct Panel {
     labels: Vec<String>,
     axes: [String; 2],
     pixels: Vec<f64>,
+    outlines: Vec<Vec<f64>>,
     window: Vec<[usize; 3]>,
     normal: Option<usize>,
     displayed: [usize; 2],
@@ -81,6 +86,24 @@ async fn samples(
     shape: &[usize],
     dtype: &str,
 ) -> Result<Vec<f64>> {
+    selection(session, storage, shape, dtype, None).await
+}
+async fn selection(
+    session: &Session,
+    storage: &Value,
+    shape: &[usize],
+    dtype: &str,
+    roi: Option<&[[usize; 2]]>,
+) -> Result<Vec<f64>> {
+    let count: Vec<_> = if let Some(roi) = roi {
+        ensure!(
+            roi.len() == shape.len() && roi.iter().zip(shape).all(|([a, b], n)| a < b && b <= n),
+            "preview roi outside array extent"
+        );
+        roi.iter().map(|[a, b]| b - a).collect()
+    } else {
+        shape.to_vec()
+    };
     let f32 = dtype == "float32";
     let encoding = if f32 {
         Encoding::Float32
@@ -88,18 +111,20 @@ async fn samples(
         Encoding::Float64
     };
     let reply = session
-        .request(json!({"type":"fetch","storage":storage,"shape":shape,"encoding":encoding}))
+        .request(
+            json!({"type":"fetch","storage":storage,"shape":shape,"roi":roi,"encoding":encoding}),
+        )
         .await?;
     let mut p: Pixels = serde_json::from_value(reply.result()?.clone())?;
     p.attach(reply.bytes).map_err(anyhow::Error::msg)?;
     if f32 {
-        Ok(p.floats(shape)
+        Ok(p.floats(&count)
             .map_err(anyhow::Error::msg)?
             .into_iter()
             .map(f64::from)
             .collect())
     } else {
-        p.doubles(shape).map_err(anyhow::Error::msg)
+        p.doubles(&count).map_err(anyhow::Error::msg)
     }
 }
 async fn coordinates(session: &Session, axis: &Value, n: usize) -> Result<Vec<f64>> {
@@ -144,16 +169,22 @@ impl Reader<'_> {
     }
     async fn panel(&self, item: &Value, title: &str) -> Result<Panel> {
         let a = &item["array"];
-        let dims: Vec<usize> = serde_json::from_value(a["shape"].clone())?;
+        let shape: Vec<usize> = serde_json::from_value(a["shape"].clone())?;
         let axes = a["axes"].as_array().context("missing axes")?;
-        ensure!(axes.len() == dims.len(), "axis count differs from shape");
-        let data = samples(
+        ensure!(shape.len() == axes.len(), "axis count differs from shape");
+        let roi: Vec<[usize; 2]> = match item.get("display_roi") {
+            Some(v) => serde_json::from_value(v.clone())?,
+            None => shape.iter().map(|n| [0, *n]).collect(),
+        };
+        let data = selection(
             self.session,
             &a["storage"],
-            &dims,
+            &shape,
             a["dtype"].as_str().unwrap_or(""),
+            Some(&roi),
         )
         .await?;
+        let dims: Vec<_> = roi.iter().map(|[a, b]| b - a).collect();
         let dim = item["dimension"].as_u64().map(|d| d as usize);
         let mut labels = vec![];
         if let Some(fixed) = a["fixed"].as_array() {
@@ -174,7 +205,7 @@ impl Reader<'_> {
                 "{}[{}] = {} {}",
                 ax["name"].as_str().unwrap_or(""),
                 item["index"],
-                draw::number(coordinates(self.session, ax, 1).await?[0]),
+                draw::number(coordinates(self.session, ax, shape[i]).await?[roi[i][0]]),
                 ax["unit"].as_str().unwrap_or("")
             ));
         }
@@ -183,7 +214,8 @@ impl Reader<'_> {
             .try_into()
             .map_err(|_| anyhow::anyhow!("Expected two displayed axes"))?;
         for i in [r, c] {
-            let coord = coordinates(self.session, &axes[i], dims[i]).await?;
+            let coords = coordinates(self.session, &axes[i], shape[i]).await?;
+            let coord = &coords[roi[i][0]..roi[i][1]];
             labels.push(format!(
                 "{} [{}, {}] {}",
                 axes[i]["name"].as_str().unwrap_or(""),
@@ -217,14 +249,137 @@ impl Reader<'_> {
             labels,
             axes: [r, c].map(|i| axes[i]["name"].as_str().unwrap_or("").into()),
             pixels: data,
+            outlines: vec![],
         })
+    }
+    async fn series(
+        &mut self,
+        src: &Value,
+        mode: &str,
+        form: &View,
+    ) -> Result<(Value, Vec<Value>)> {
+        let v = self
+            .read(json!({"type":"read","source":src,"roi":form.roi,"stride":form.stride}))
+            .await?;
+        let a = &v["array"];
+        let dims: Vec<usize> = serde_json::from_value(a["shape"].clone())?;
+        let pixels = samples(
+            self.session,
+            &a["storage"],
+            &dims,
+            a["dtype"].as_str().unwrap_or(""),
+        )
+        .await?;
+        if mode == "profile" {
+            let dims: Vec<_> = dims.iter().enumerate().filter(|(_, n)| **n > 1).collect();
+            ensure!(
+                dims.len() == 1,
+                "profile needs a line ROI with one varying axis"
+            );
+            let ax = &a["axes"][dims[0].0];
+            let coords = coordinates(self.session, ax, pixels.len()).await?;
+            return Ok((
+                json!({"profile":pixels,"unit":a["unit"],"axis":ax["name"],"coordinates":coords,"axis_unit":ax["unit"]}),
+                vec![],
+            ));
+        }
+        ensure!(
+            a["domain"] == "poses" && dims.len() == 2 && dims[1] == 6,
+            "choose a registered .poses member with all six columns"
+        );
+        let ax = &a["axes"][0];
+        let coords = coordinates(self.session, ax, dims[0]).await?;
+        if mode == "pose_plot" {
+            let image = poses::image(
+                &pixels,
+                &a["columns"],
+                &coords,
+                ax["unit"].as_str().unwrap_or(""),
+            )?;
+            return Ok((
+                json!({"columns":a["columns"],"views":dims[0],"view_unit":ax["unit"]}),
+                vec![image],
+            ));
+        }
+        Ok((
+            json!({"columns":a["columns"],"views":dims[0],"view_unit":ax["unit"],"coordinates":coords,"table":pixels.chunks(6).collect::<Vec<_>>()}),
+            vec![],
+        ))
+    }
+    async fn comparison(
+        &mut self,
+        items: &[Value],
+        cmd: &Value,
+        form: &View,
+        reference: &Value,
+    ) -> Result<Vec<Panel>> {
+        let mut other = vec![];
+        let name = form.other.as_deref().context("difference requires other")?;
+        let src = source(self.session, self.inventory, name)?;
+        let grid = self.layout(&src).await?;
+        let order = compare_grid(reference, &grid, true)
+            .map_err(|e| anyhow::anyhow!("{} and {name}: {e}", form.source.names()[0]))?;
+        for item in items {
+            let d = item["dimension"]
+                .as_u64()
+                .context("difference requires a volume")? as usize;
+            let mut read = cmd.clone();
+            read["source"] = src.clone();
+            read["axis"] = reference["axes"][d]["name"].clone();
+            read["index"] = item["index"].clone();
+            if let Some(roi) = &form.roi {
+                read["roi"] = json!(order.iter().map(|i| roi[*i]).collect::<Vec<_>>());
+            }
+            if let Some(stride) = &form.stride {
+                read["stride"] = json!(order.iter().map(|i| stride[*i]).collect::<Vec<_>>());
+            }
+            let v = self.read(read).await?;
+            other.push(self.panel(&v["planes"][0], name).await?);
+        }
+        Ok(other)
+    }
+    async fn outlines(&mut self, form: &View, grid: &Value, panels: &mut [Panel]) -> Result<()> {
+        ensure!(
+            form.features.len() <= 5,
+            "outline at most 5 features in one view"
+        );
+        for name in &form.features {
+            let id = name.split('.').next().unwrap_or(name);
+            ensure!(
+                self.session.ledger.lock().unwrap().record(id)?["product"]["type"] == "feature",
+                "{name} is not a feature handle"
+            );
+            let source = source(self.session, self.inventory, name)?;
+            let feature = self.layout(&source).await?;
+            compare_grid(grid, &feature, false).map_err(|e| anyhow::anyhow!("{name}: {e}"))?;
+            for p in panels.iter_mut() {
+                let roi = p.window.iter().map(|w| [w[0], w[1]]).collect::<Vec<_>>();
+                let stride = p.window.iter().map(|w| w[2]).collect::<Vec<_>>();
+                let v = self
+                    .read(json!({"type":"read","source":source,"roi":roi,"stride":stride}))
+                    .await?;
+                let a = &v["array"];
+                let shape: Vec<usize> = serde_json::from_value(a["shape"].clone())?;
+                let mask = samples(self.session, &a["storage"], &shape, "bool").await?;
+                ensure!(
+                    mask.len() == p.pixels.len(),
+                    "feature mask shape differs from plane"
+                );
+                p.outlines.push(mask);
+            }
+        }
+        Ok(())
     }
     async fn view(&mut self, form: &View) -> Result<(Value, Vec<Value>)> {
         let names = form.source.names();
         let first = names.first().context("give a source")?;
         let mode = form.mode.as_deref().unwrap_or("planes");
         let src = source(self.session, self.inventory, first)?;
-        if !form.marks.is_empty() || form.ticks == Some(true) || form.grid {
+        if !form.features.is_empty()
+            || !form.marks.is_empty()
+            || form.ticks == Some(true)
+            || form.grid
+        {
             ensure!(
                 matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
                 "marks, ticks and grid need a plane view"
@@ -242,50 +397,16 @@ impl Reader<'_> {
             }
             return Ok((self.read(cmd).await?, vec![]));
         }
-        if matches!(mode, "profile" | "pose_table") {
+        if matches!(mode, "profile" | "pose_table" | "pose_plot") {
             ensure!(names.len() == 1, "{mode} needs one source");
-            let v = self
-                .read(json!({"type":"read","source":src,"roi":form.roi,"stride":form.stride}))
-                .await?;
-            let a = &v["array"];
-            let dims: Vec<usize> = serde_json::from_value(a["shape"].clone())?;
-            let pixels = samples(
-                self.session,
-                &a["storage"],
-                &dims,
-                a["dtype"].as_str().unwrap_or(""),
-            )
-            .await?;
-            if mode == "profile" {
-                let dims: Vec<_> = dims.iter().enumerate().filter(|(_, n)| **n > 1).collect();
-                ensure!(
-                    dims.len() == 1,
-                    "profile needs a line ROI with one varying axis"
-                );
-                let ax = &a["axes"][dims[0].0];
-                let coords = coordinates(self.session, ax, pixels.len()).await?;
-                return Ok((
-                    json!({"profile":pixels,"unit":a["unit"],"axis":ax["name"],"coordinates":coords,"axis_unit":ax["unit"]}),
-                    vec![],
-                ));
-            }
-            ensure!(
-                a["domain"] == "poses" && dims.len() == 2 && dims[1] == 6,
-                "choose a registered .poses member with all six columns"
-            );
-            let ax = &a["axes"][0];
-            let coords = coordinates(self.session, ax, dims[0]).await?;
-            return Ok((
-                json!({"columns":a["columns"],"views":dims[0],"view_unit":ax["unit"],"coordinates":coords,"table":pixels.chunks(6).collect::<Vec<_>>()}),
-                vec![],
-            ));
+            return self.series(&src, mode, form).await;
         }
         ensure!(
             matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
             "Unknown view mode {mode}"
         );
         let mut panels = vec![];
-        let need_grid = names.len() > 1 || mode == "difference";
+        let need_grid = !form.features.is_empty() || names.len() > 1 || mode == "difference";
         let reference = if need_grid {
             Some(self.layout(&src).await?)
         } else {
@@ -306,30 +427,9 @@ impl Reader<'_> {
             let mut other = vec![];
             if mode == "difference" {
                 ensure!(names.len() == 1, "difference takes one source and other");
-                let name = form.other.as_deref().context("difference requires other")?;
-                let src = source(self.session, self.inventory, name)?;
-                let grid = self.layout(&src).await?;
-                let reference = reference.as_ref().unwrap();
-                let order = compare_grid(reference, &grid, true)?;
-                for item in items {
-                    let d = item["dimension"]
-                        .as_u64()
-                        .context("difference requires a volume")?
-                        as usize;
-                    let mut read = cmd.clone();
-                    read["source"] = src.clone();
-                    read["axis"] = reference["axes"][d]["name"].clone();
-                    read["index"] = item["index"].clone();
-                    if let Some(roi) = &form.roi {
-                        read["roi"] = json!(order.iter().map(|i| roi[*i]).collect::<Vec<_>>());
-                    }
-                    if let Some(stride) = &form.stride {
-                        read["stride"] =
-                            json!(order.iter().map(|i| stride[*i]).collect::<Vec<_>>());
-                    }
-                    let v = self.read(read).await?;
-                    other.push(self.panel(&v["planes"][0], name).await?);
-                }
+                other = self
+                    .comparison(items, &cmd, form, reference.as_ref().unwrap())
+                    .await?;
             }
             for (j, item) in items.iter().enumerate() {
                 let mut p = self.panel(item, name).await?;
@@ -358,6 +458,10 @@ impl Reader<'_> {
                 }
                 panels.push(p);
             }
+        }
+        if !form.features.is_empty() {
+            self.outlines(form, reference.as_ref().unwrap(), &mut panels)
+                .await?;
         }
         let first = self
             .session
@@ -434,7 +538,7 @@ pub async fn run(
     args: Value,
 ) -> Result<(Value, Vec<Value>)> {
     let mut form: View = serde_json::from_value(args)?;
-    if form.mode.as_deref() == Some("pose_table")
+    if matches!(form.mode.as_deref(), Some("pose_table" | "pose_plot"))
         && let Sources::One(name) = &mut form.source
         && name.starts_with('@')
         && !name.contains('.')

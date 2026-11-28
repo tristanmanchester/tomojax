@@ -1,4 +1,5 @@
 //! Model Context Protocol over stdio.
+mod activity;
 mod connection;
 mod describe;
 mod guidance;
@@ -91,7 +92,9 @@ impl ServerHandler for Server {
             .enable_tasks()
             .enable_tools()
             .build();
-        ServerConfig::new(capabilities).with_server_info(identity())
+        ServerConfig::new(capabilities).with_server_info(identity()).with_instructions(
+            "Use inspect to identify an acquisition and open to load it. Use describe for parameters and units. Check geometry and labelled slices before choosing a reconstruction. Handles last until closed, the executor restarts or the session ends. For work that must survive disconnection, submit a job with saved input paths. Use jobs to recover it. Data paths belong to the connected machine. The laptop paths of upload and download are relative to the client project directory."
+        )
     }
     async fn list_tools(
         &self,
@@ -117,9 +120,22 @@ impl ServerHandler for Server {
         {
             return self.tasks.start(self.clone(), name.into(), arguments);
         }
-        let reply = tasks::CANCEL
-            .scope(ctx.ct.clone(), self.execute(name, arguments))
-            .await;
+        let activity = activity::Activity::default();
+        let call = tasks::CANCEL.scope(
+            ctx.ct.clone(),
+            activity::CURRENT.scope(activity.clone(), self.execute(name, arguments)),
+        );
+        tokio::pin!(call);
+        let token = ctx.meta.get_progress_token().or_else(|| {
+            ctx.meta
+                .get("progress_token")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+        });
+        let reply = if let Some(token) = token {
+            tokio::select! {reply=&mut call=>reply,_=activity.notify(&ctx,token)=>call.await}
+        } else {
+            call.await
+        };
         let result: CallToolResult = response(reply, &ctx)?;
         Ok(result.into())
     }
