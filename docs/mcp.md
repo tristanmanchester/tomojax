@@ -71,7 +71,7 @@ command = "tomojax"
 args = ["mcp", "--connection", "beamline"]
 ```
 
-Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. If the executor is waiting for an allocation, scientific tools return the queue status. You can still list jobs, inspect directories and transfer files. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The native `python` tool is available on the built-in `local` connection.
+Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. If the executor is waiting for an allocation, scientific tools return the queue status. You can still list jobs, inspect directories and transfer files. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The `python` tool runs in the executor on the connected machine, so its files and devices are that machine's.
 
 To run a small simulation, pass these arguments to `submit`.
 
@@ -117,7 +117,7 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `evaluate` | Score candidate settings on held-out views |
 | `save`, `export` | Write a dataset or feature mask with its manifest and return the written `paths`, or [export a registered volume](export.md). Use `dry_run` to inspect destinations, axes, value mapping and space requirements |
 | `control` | Cancel, pause or resume a session request, close a handle or restart the worker |
-| `python` | Run Python on the local connection with live handles and `tj` in scope |
+| `python` | Run Python on the connected machine with live handles and `tj` in scope |
 | `submit`, `jobs`, `cancel_job` | Start, inspect or cancel a durable job on the connected machine |
 | `download`, `upload` | Transfer a file between the laptop and the connected machine |
 

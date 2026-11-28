@@ -13,7 +13,7 @@ struct Describe {
     method: Option<String>,
 }
 
-pub fn list(local: bool) -> Vec<Value> {
+pub fn list() -> Vec<Value> {
     let mut tools: Vec<_> = [
         ("inspect","Inspect an acquisition or list the datasets and checkpoints in a directory on the connected machine.",
             json!({"path":{"type":"string"},"preview":{"type":"boolean","default":false},"detail":{"enum":["summary","full"]}}),vec!["path"]),
@@ -26,14 +26,14 @@ pub fn list(local: bool) -> Vec<Value> {
         ("jobs","List durable jobs, or read a job by ID and byte offset. Use the returned offset to request new records.",
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
         ("control","Pause, resume or cancel a request, close a handle, or restart the session.",json!({"action":{"enum":["pause","resume","cancel","close","restart"]},"target":{"type":"string"}}),vec!["action"]),
-        ("python","Run Python in the local TomoJAX executor. Use tj, np, handles, register, view and show with the session’s data.",json!({"code":{"type":"string"},"reset":{"type":"boolean"},"traceback":{"type":"boolean"}}),vec![]),
+        ("python","Run Python in the TomoJAX executor on the connected machine. Use tj, np, handles, register, view and show with the session’s data.",json!({"code":{"type":"string"},"reset":{"type":"boolean"},"traceback":{"type":"boolean"}}),vec![]),
         ("view","View registered planes and projections, subtract two volumes, or read statistics, a line profile or a pose table.",json!({"source":{"anyOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},"mode":{"enum":["planes","projection","sinogram","difference","statistics","profile","pose_table","pose_plot"]},"axis":{"type":"string"},"index":{"type":"integer","minimum":0},"roi":{"type":"array"},"stride":{"type":"array"},"limits":{"type":"array"},"percentiles":{"type":"array"},"bins":{"type":"integer"},"other":{"type":"string"},"marks":super::view::marks_schema(),"features":{"type":"array","items":{"type":"string"}},"grid":{"type":"boolean"},"ticks":{"type":"boolean"}}),vec!["source"]),
         ("download","Copy one worker file to a new file on the laptop. A relative destination uses the project directory.",
          json!({"path":{"type":"string"},"to":{"type":"string"}}),vec!["path","to"]),
         ("upload","Copy one laptop file to a new file on the connected machine. A relative source uses the project directory.",
          json!({"from":{"type":"string"},"path":{"type":"string"}}),vec!["from","path"]),
         ("cancel_job","Request cancellation of a durable job by ID.",json!({"job":{"type":"string"},"results":{"type":"string"}}),vec!["job"]),
-     ].into_iter().filter(|(name,_,_,_)| local || *name != "python").map(|(name,description,properties,required)| {
+     ].into_iter().map(|(name,description,properties,required)| {
         let schema=if name=="submit" {super::jobs::submission_schema()} else {json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})};
         json!({"name":name,"description":description,"inputSchema":schema,
             "outputSchema":super::schema::output(name),"annotations":super::schema::annotations(name)})
@@ -66,9 +66,7 @@ pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<
         let (session, inventory) = connections.open(true).await?;
         let (data, images) = super::view::run(&session, &inventory, args).await?;
         (data, session, images)
-    } else if name == "python" && connections.name == "local"
-        || super::workflow::OPERATIONS.contains(&name)
-    {
+    } else if name == "python" || super::workflow::OPERATIONS.contains(&name) {
         let (session, state) = connections.open(true).await?;
         let (data, images) = if name == "python" {
             super::workflow::python(&session, args).await?

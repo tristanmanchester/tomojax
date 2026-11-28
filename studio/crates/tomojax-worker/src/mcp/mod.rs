@@ -113,8 +113,10 @@ impl ServerHandler for Server {
             .enable_tasks()
             .enable_tools()
             .build();
-        ServerConfig::new(capabilities).with_server_info(identity()).with_instructions(
-            r"Use TomoJAX for parallel-beam CT, cone-beam CT and laminography.
+        ServerConfig::new(capabilities)
+            .with_server_info(identity())
+            .with_instructions(
+                r"Use TomoJAX for parallel-beam CT, cone-beam CT and laminography.
 Start with inspect to identify an acquisition and open to load it. Use describe for
 parameter choices and units. status lists devices, current jobs and live data.
 A bare handle supplies the whole object to save/export, or the primary array to an array
@@ -134,21 +136,18 @@ and save. Volumes use (z, y, x), projections (view, v, u). Voxel and detector sp
 share one physical length unit. Check slices before trusting a residual. Use dry_run
 before large jobs on tools that support it. See tools/list for installed workflows.
 To show the user a structure, draw view marks in array indices and ask; make the agreed
-region a feature and outline it with view features. On the local connection, use python for sweeps or custom measures.
+region a feature and outline it with view features. Use python for sweeps or custom measures.
 Use submit with saved inputs for a job that must survive disconnection. Reconnect and use
 jobs to read its receipt and result slices. The laptop paths of upload and download use
-the client project directory."
-        )
+the client project directory.",
+            )
     }
     async fn list_tools(
         &self,
         _: Option<PaginatedRequestParams>,
         ctx: Context,
     ) -> Result<ListToolsResult, McpError> {
-        response(
-            json!({"tools":tools::list(self.connections.name=="local")}),
-            &ctx,
-        )
+        response(json!({"tools":tools::list()}), &ctx)
     }
     async fn call_tool(
         &self,
@@ -158,8 +157,7 @@ the client project directory."
         let name = request.name.as_ref();
         let arguments = Value::Object(request.arguments.unwrap_or_default());
         if tasks::negotiated(&ctx)
-            && (name == "python" && self.connections.name == "local"
-                || workflow::OPERATIONS.contains(&name))
+            && (name == "python" || workflow::OPERATIONS.contains(&name))
             && arguments["dry_run"] != true
         {
             return self.tasks.start(self.clone(), name.into(), arguments);

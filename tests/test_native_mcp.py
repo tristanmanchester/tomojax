@@ -120,6 +120,15 @@ def test_worker_filesystem_namespace(tmp_path, monkeypatch, native):
         assert (
             checked(client, "inspect", path=str(local))["structuredContent"]["tiff_files"] == 4201
         )
+        # The worker's file has 8 rows where the laptop's file at the same path has 4.
+        code = (
+            f"import h5py\nwith h5py.File({str(local / 'unknown.h5')!r}) as f:\n"
+            "    signal = f['signal'][:]\n"
+            "signal[6, 2] = 3\n"
+            "reports = show(signal, marks=[{'type': 'point', 'at': [6, 2]}])\n"
+            "signal.shape[0] + reports[0]['panels'][0]['value']"
+        )
+        assert checked(client, "python", code=code)["structuredContent"]["value"] == 11
         report = checked(client, "inspect", path=str(local / "unknown.h5"))["structuredContent"]
         assert report["datasets"]["/signal"]["shape"] == [8, 5]
         npz = checked(client, "inspect", path=str(local / "scan.npz"), preview=True)
