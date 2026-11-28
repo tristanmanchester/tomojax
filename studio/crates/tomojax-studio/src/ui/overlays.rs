@@ -95,8 +95,9 @@ pub fn jobs_workspace(state: &AppState) -> El {
 
 fn job_color(status: JobStatus) -> rune::Color {
     match status {
-        JobStatus::Failed | JobStatus::Interrupted => error(),
-        JobStatus::Paused => warning(),
+        JobStatus::Failed => error(),
+        // Stopped but resumable, or not located: these need attention, not alarm.
+        JobStatus::Interrupted | JobStatus::Unknown | JobStatus::Paused => warning(),
         JobStatus::Running | JobStatus::Completed => forest(),
         _ => muted(),
     }
@@ -201,7 +202,7 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
         .child(icon(
             match job.status {
                 JobStatus::Completed => Icon::Check,
-                JobStatus::Failed | JobStatus::Interrupted => Icon::Alert,
+                JobStatus::Failed | JobStatus::Interrupted | JobStatus::Unknown => Icon::Alert,
                 JobStatus::Paused => Icon::Pause,
                 _ => Icon::Jobs,
             },
@@ -293,7 +294,7 @@ fn job_body(state: &AppState, job: &JobView, mut body: El, compact: bool, expand
         );
     }
     if let Some(error) = &job.error {
-        body = body.child(label(error, 11.5, tokens::error()).wrap());
+        body = body.child(label(error, 11.5, job_color(job.status)).wrap());
     }
     if let Some(note) = match job.status {
         JobStatus::Unknown => Some(
