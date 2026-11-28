@@ -183,8 +183,28 @@ pub fn copy(request: &Copy, canceled: &AtomicBool, mut progress: impl FnMut(u64)
         file.sync_all()?;
     }
     check()?;
-    renameat_with(CWD, stage.path(), CWD, &destination, RenameFlags::NOREPLACE)?;
+    publish_directory(
+        stage.path(),
+        &destination,
+        renameat_with(CWD, stage.path(), CWD, &destination, RenameFlags::NOREPLACE),
+    )?;
     Ok(json!({"type":"copy","path":destination,"bytes":bytes}))
+}
+
+/// GPFS and older NFS servers may support POSIX rename but not its Linux flags.
+/// A completed, nonempty copy cannot be replaced by a competing directory rename.
+fn publish_directory(stage: &Path, dest: &Path, result: rustix::io::Result<()>) -> Result<()> {
+    match result {
+        Err(rustix::io::Errno::INVAL | rustix::io::Errno::OPNOTSUPP | rustix::io::Errno::NOSYS) => {
+            ensure!(
+                fs::symlink_metadata(dest).is_err_and(|e| e.kind() == ErrorKind::NotFound),
+                "destination already exists or is inaccessible"
+            );
+            fs::rename(stage, dest)?;
+        }
+        other => other?,
+    }
+    Ok(())
 }
 
 pub fn stored(path: &Path) -> Result<Value> {
@@ -287,4 +307,25 @@ pub fn peek(path: &Path) -> Result<Value> {
         .into());
     }
     Ok(json!({"type":"peek","datasets":datasets}))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publish_on_gpfs_keeps_the_first_copy_and_refuses_an_existing_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stage = tmp.path().join("stage");
+        let dest = tmp.path().join("result");
+        fs::create_dir(&stage).unwrap();
+        fs::write(stage.join("data"), b"first").unwrap();
+        fs::create_dir(&dest).unwrap();
+        assert!(publish_directory(&stage, &dest, Err(rustix::io::Errno::INVAL)).is_err());
+        fs::remove_dir(&dest).unwrap();
+        publish_directory(&stage, &dest, Err(rustix::io::Errno::INVAL)).unwrap();
+        fs::create_dir(&stage).unwrap();
+        assert!(publish_directory(&stage, &dest, Err(rustix::io::Errno::INVAL)).is_err());
+        assert_eq!(fs::read(dest.join("data")).unwrap(), b"first");
+    }
 }

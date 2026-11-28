@@ -92,7 +92,7 @@ impl Upload {
             "upload SHA-256 differs"
         );
         self.stage.as_file().sync_all()?;
-        self.stage.persist_noclobber(self.destination)?;
+        fs::hard_link(self.stage.path(), self.destination)?;
         Ok(())
     }
 }
