@@ -1,0 +1,108 @@
+#!/bin/bash
+# A test controller. All scheduler commands address one private directory.
+set -eu
+root=${FAKE_SLURM:?missing fake scheduler directory}
+cmd=${0##*/}
+state() { echo "$2" > "$1/state.$$"; mv "$1/state.$$" "$1/state"; }
+lock() { exec 9>"$root/controller.lock"; flock 9; }
+unlock() { flock -u 9; exec 9>&-; }
+matches() {
+    [[ -z "$name" || "$name" == "$(cat "$job/name")" ]] &&
+    [[ -z "$user" || "$user" == "$(cat "$job/user")" ]] &&
+    [[ -z "$cluster" || "$cluster" == "fixture" ]]
+}
+if [[ "$cmd" == srun ]]; then
+    shift # --ntasks=1
+    job="$root/$SLURM_JOB_ID"
+    lock
+    [[ ! -e "$job/cancel" ]] || exit 130
+    echo "$$" > "$job/task"
+    unlock
+    exec "$@"
+fi
+if [[ "$cmd" == scheduler ]]; then
+    job="$root/$1"
+    export SLURM_JOB_ID="$1"
+    while true; do
+        lock
+        if [[ -e "$job/cancel" ]]; then state "$job" CANCELLED; exit 0; fi
+        if [[ -e "$root/hold" || -e "$job/hold" ]]; then unlock; sleep 0.05; continue; fi
+        state "$job" RUNNING
+        unlock
+        rc=0
+        sh "$job/batch" >> "$(cat "$job/log")" 2>&1 || rc=$?
+        lock
+        rm -f "$job/task"
+        echo "$rc" >> "$job/exits"
+        if [[ -e "$job/cancel" ]]; then state "$job" CANCELLED; exit 0; fi
+        if [[ -e "$job/requeue" ]]; then
+            rm -f "$job/requeue"; state "$job" PENDING; unlock; continue
+        fi
+        if ((rc==0)); then state "$job" COMPLETED; else state "$job" FAILED; fi
+        exit 0
+    done
+fi
+if [[ -e "$root/offline" ]]; then echo 'controller offline' >&2; exit 1; fi
+name= user= cluster= output=
+for arg in "$@"; do
+    case "$arg" in
+        --name=*|--job-name=*) name=${arg#*=};;
+        --user=*) user=${arg#*=};;
+        --clusters=*) cluster=${arg#*=};;
+        --output=*) output=${arg#*=};;
+    esac
+done
+case "$cmd" in
+    sbatch)
+        lock
+        id=$(cat "$root/next" 2>/dev/null || echo 100)
+        echo "$((id+1))" > "$root/next"
+        job="$root/$id"
+        mkdir "$job"
+        printf '%s\n' "$@" > "$job/args"
+        echo "$name" > "$job/name"
+        id -un > "$job/user"
+        echo "$output" > "$job/log"
+        cat > "$job/batch"
+        state "$job" PENDING
+        unlock
+        setsid scheduler "$id" </dev/null >/dev/null 2>&1 &
+        [[ ! -e "$root/lose-reply" ]] || exit 1
+        echo "$id;fixture"
+        ;;
+    squeue|sacct)
+        for job in "$root"/[0-9]*; do
+            [[ -d "$job" ]] || continue
+            matches || continue
+            phase=$(cat "$job/state")
+            case "$phase" in
+                PENDING|RUNNING|REQUEUE_HOLD)
+                    [[ "$cmd" == squeue ]] && echo "${job##*/}|$name|$phase|reason|start|node" ;;
+                *)
+                    [[ "$cmd" == sacct && ! -e "$root/late" ]] && echo "${job##*/}|$name|$phase" ;;
+            esac
+        done
+        exit 0
+        ;;
+    scancel)
+        job="$root/${!#}"
+        lock
+        matches || exit 1
+        touch "$job/cancel"
+        if [[ -e "$job/task" ]]; then kill -TERM "$(cat "$job/task")" 2>/dev/null || true; fi
+        ;;
+    scontrol)
+        case "$1" in
+            show) echo 'ClusterName = fixture';;
+            requeue|requeuehold)
+                [[ ! -e "$root/fail-requeue" ]] || exit 1
+                job="$root/$2"
+                lock
+                touch "$job/requeue"
+                [[ "$1" != requeuehold ]] || touch "$job/hold"
+                ;;
+            *) exit 2;;
+        esac
+        ;;
+    *) exit 2;;
+esac
