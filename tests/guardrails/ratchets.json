@@ -82,7 +82,7 @@
     "studio/crates/studio-core/src/previews.rs::poll": 130,
     "studio/crates/studio-core/src/previews/responses.rs::preview_response": 104,
     "studio/crates/studio-core/src/progress.rs::apply": 105,
-    "studio/crates/studio-core/src/project.rs::open": 124,
+    "studio/crates/studio-core/src/project.rs::open": 122,
     "studio/crates/tomojax-io/src/metadata.rs::projection_arrays": 138,
     "studio/crates/tomojax-io/src/metadata.rs::quick_metadata": 165,
     "studio/crates/tomojax-studio/src/app/actions.rs::action": 556,

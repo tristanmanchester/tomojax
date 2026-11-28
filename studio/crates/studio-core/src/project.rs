@@ -623,8 +623,8 @@ impl Project {
         let (signal, work) = mpsc::channel();
         let (ack, completed) = mpsc::channel();
         let writer = thread::spawn(move || {
-            let _lock = lock;
-            while work.recv().is_ok() {
+            loop {
+                let closed = work.recv().is_err();
                 while work.try_recv().is_ok() {}
                 let snapshot = writer_pending.locked().take();
                 if let Some(snapshot) = snapshot {
@@ -634,14 +634,12 @@ impl Project {
                         error,
                     });
                 }
+                if closed {
+                    break;
+                }
             }
-            if let Some(snapshot) = writer_pending.locked().take() {
-                let error = atomic_write(&manifest, &snapshot.bytes).err();
-                let _ = ack.send(SaveAck {
-                    generation: snapshot.generation,
-                    error,
-                });
-            }
+            // A concurrently forked child can retain this file description until exec.
+            let _ = lock.unlock();
         });
         let mut project = Self {
             root,
