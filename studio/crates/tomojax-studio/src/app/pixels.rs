@@ -327,14 +327,7 @@ pub(super) fn plane_view(plane: &crate::imaging::PlaneData) -> PlaneView {
         quality: plane
             .fixed
             .iter()
-            .map(|fixed| {
-                format!(
-                    "{} = {:.4} {}",
-                    fixed.name,
-                    fixed.coordinate,
-                    crate::ui::unit_name(&fixed.unit)
-                )
-            })
+            .filter_map(|fixed| crate::ui::coordinate(&fixed.name, fixed.coordinate, &fixed.unit))
             .chain([
                 plane.domain.replace('_', " "),
                 if visible.stride == 1 {

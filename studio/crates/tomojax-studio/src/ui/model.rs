@@ -285,7 +285,6 @@ pub struct UiModel {
     pub error: Option<String>,
     pub can_undo: bool,
     pub can_redo: bool,
-    pub render_quality: String,
     pub render_loading: bool,
     pub measurements: Vec<MeasurementView>,
 }

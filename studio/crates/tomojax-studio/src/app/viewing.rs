@@ -445,9 +445,9 @@ impl AppState {
                     index: 0,
                     count: 1,
                     quality: if volume.stride == 1 {
-                        "Full-resolution scalar texture".into()
+                        "full resolution".into()
                     } else {
-                        format!("1:{} preview texture", volume.stride)
+                        format!("preview at 1:{} sampling", volume.stride)
                     },
                     range: [statistics.min as f64, statistics.max as f64],
                     histogram: statistics.histogram.clone(),
@@ -473,21 +473,6 @@ impl AppState {
                 ImagingStatus::Loading | ImagingStatus::Refining
             )
         });
-        self.model.render_quality = if let Some(volume) = self.imaging.volume(8) {
-            format!(
-                "GPU volume · {} × {} × {}{}",
-                volume.shape[2],
-                volume.shape[1],
-                volume.shape[0],
-                if volume.stride > 1 {
-                    format!(" · 1:{} preview", volume.stride)
-                } else {
-                    " · full resolution".into()
-                }
-            )
-        } else {
-            "Native scalar viewer".into()
-        };
         if let ImagingStatus::Error(error) = self.imaging.status(8) {
             self.model.error = Some(error.clone());
         }
@@ -1193,13 +1178,13 @@ impl AppState {
                                 .map(|a| a.unit.clone())
                                 .unwrap_or_default(),
                             missing: p.missing_local_asset(a),
+                            // Empty when there is nothing to report; the tree then names the kind.
                             status: a.issue.clone().unwrap_or_else(|| {
                                 if a.arrays.is_empty() {
-                                    "Reading metadata"
+                                    "Reading metadata".into()
                                 } else {
-                                    "Ready"
+                                    String::new()
                                 }
-                                .into()
                             }),
                             description: format!(
                                 "{} · {}",
