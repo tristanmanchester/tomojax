@@ -53,12 +53,16 @@ fn doubles(files: &FileReads, storage: &Storage, shape: &[usize]) -> Result<Vec<
     )?
     .doubles(shape)
 }
+mod coordinates;
+pub(super) use coordinates::{CoordinateVectors, CoordinateWindow};
+
 fn scale(
     files: &FileReads,
     descriptor: &ArrayDescriptor,
     dimension: usize,
     region: Option<[usize; 2]>,
     stride: usize,
+    cached: &mut Option<CoordinateWindow>,
 ) -> Result<AxisScale, String> {
     let axis = &descriptor.axes[dimension];
     let count = descriptor.shape[dimension];
@@ -73,12 +77,8 @@ fn scale(
             if count > 1_000_000 {
                 return Err("The coordinate vector exceeds the registration budget.".into());
             }
-            let positions = pixels(
-                files,
-                json!({"type":"fetch", "storage":values, "shape":[count],
-                "roi":[[start,end]], "stride":[stride], "encoding":"float64"}),
-            )?
-            .doubles(&[(end - start).div_ceil(stride)])?;
+            let positions =
+                coordinates::selected(files, values, count, [start, end], stride, cached)?;
             if positions.iter().any(|v| !v.is_finite()) {
                 return Err("The coordinate vector contains nonfinite positions.".into());
             }
@@ -88,7 +88,7 @@ fn scale(
             } else {
                 1.
             };
-            (origin, spacing, Some(Arc::from(positions)))
+            (origin, spacing, Some(positions))
         }
     };
     Ok(AxisScale {
@@ -112,17 +112,25 @@ pub(crate) fn plane(
     let slab = PlaneSelection::new(&descriptor.shape, axis, index, max_edge)?;
     let values = pixels(files, slab.fetch(descriptor, Encoding::Float32, None))?
         .decode(&slab, Encoding::Float32)?;
-    registered_plane(files, descriptor, axis, index, &slab, values, true)
+    registered_plane(
+        files,
+        descriptor,
+        (axis, index),
+        &slab,
+        values,
+        true,
+        &mut Default::default(),
+    )
 }
 
 pub(super) fn registered_plane(
     files: &FileReads,
     descriptor: &ArrayDescriptor,
-    axis: usize,
-    index: usize,
+    (axis, index): (usize, usize),
     slab: &PlaneSelection,
     values: Vec<f32>,
     lossless: bool,
+    coordinates: &mut CoordinateVectors,
 ) -> Result<PlaneData, String> {
     let dimensions = descriptor.shape.len();
     let remaining = slab.remaining;
@@ -131,7 +139,14 @@ pub(super) fn registered_plane(
     let source_shape = remaining.map(|a| descriptor.shape[a]);
     let mut fixed = descriptor.fixed.clone();
     if dimensions == 3 {
-        let fixed_axis = scale(files, descriptor, axis, Some([index, index + 1]), 1)?;
+        let fixed_axis = scale(
+            files,
+            descriptor,
+            axis,
+            Some([index, index + 1]),
+            1,
+            &mut coordinates[axis],
+        )?;
         fixed.push(Fixed {
             name: fixed_axis.name.clone(),
             frame: fixed_axis.frame.clone(),
@@ -156,6 +171,7 @@ pub(super) fn registered_plane(
                 remaining[0],
                 Some(slab.region[0]),
                 stride,
+                &mut coordinates[remaining[0]],
             )?,
             scale(
                 files,
@@ -163,6 +179,7 @@ pub(super) fn registered_plane(
                 remaining[1],
                 Some(slab.region[1]),
                 stride,
+                &mut coordinates[remaining[1]],
             )?,
         ],
         fixed,
@@ -198,8 +215,8 @@ pub(crate) fn table(
         values: values.into(),
         shape: [descriptor.shape[0], descriptor.shape[1]],
         axes: [
-            scale(files, descriptor, 0, None, 1)?,
-            scale(files, descriptor, 1, None, 1)?,
+            scale(files, descriptor, 0, None, 1, &mut None)?,
+            scale(files, descriptor, 1, None, 1, &mut None)?,
         ],
         columns: descriptor.columns.clone(),
         domain: descriptor.domain.clone(),
@@ -242,7 +259,7 @@ pub(super) fn volume(
     let source_shape = axis_order.map(|a| descriptor.shape[a]);
     let scales: Vec<_> = axis_order
         .iter()
-        .map(|&a| scale(files, descriptor, a, None, 1))
+        .map(|&a| scale(files, descriptor, a, None, 1, &mut None))
         .collect::<Result<_, _>>()?;
     if scales
         .iter()

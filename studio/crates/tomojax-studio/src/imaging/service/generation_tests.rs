@@ -52,7 +52,7 @@ proptest! {
                     let (sent_epoch,request,exact)=replies.swap_remove(choice%replies.len());
                     let (axis,i)=request.key.plane.unwrap();
                     let selection=PlaneSelection::new(&request.descriptor.shape,axis,i,32).unwrap();
-                    let plane=reader::registered_plane(&worker.files(),&request.descriptor,axis,i,&selection,vec![i as f32;16],exact).unwrap();
+                    let plane=reader::registered_plane(&worker.files(),&request.descriptor,(axis,i),&selection,vec![i as f32;16],exact,&mut Default::default()).unwrap();
                     let ticket=(request.generation,exact);
                     let expected=sent_epoch==epoch && bound.is_some() && request.generation>=floor
                         && (!exact || wanted==Some(request.generation)) && displayed.is_none_or(|last| ticket>=last);
@@ -90,11 +90,11 @@ fn delayed_crops_cannot_overwrite_a_pan_fit_slice_rebind_or_reconnect() {
         let plane = reader::registered_plane(
             &files,
             &request.descriptor,
-            axis,
-            index,
+            (axis, index),
             &selection,
             values,
             finished,
+            &mut Default::default(),
         )
         .unwrap();
         Completion {
