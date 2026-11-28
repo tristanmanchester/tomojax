@@ -352,6 +352,47 @@ fn job_row(state: &AppState, job: &JobView, compact: bool) -> El {
         }
         body = body.child(details);
     }
+    job_files(state, job, body, expanded || compact)
+}
+
+fn job_files(state: &AppState, job: &JobView, mut body: El, show_files: bool) -> El {
+    if state.remote_project().is_some()
+        && let Some(record) = state
+            .project
+            .as_ref()
+            .and_then(|p| p.document.jobs.iter().find(|j| j.id == job.id))
+    {
+        if state.data_offline() {
+            let seen = record
+                .finished
+                .or(record.started)
+                .unwrap_or(record.submitted);
+            let seconds = crate::project::now_ms().saturating_sub(seen) / 1000;
+            body = body.child(label(
+                format!("Last recorded state · {seconds} s ago"),
+                11.,
+                muted(),
+            ));
+        } else if job.status == JobStatus::Completed && show_files {
+            let files = record.outputs.iter();
+            let destination = record
+                .destination
+                .iter()
+                .filter(|_| record.outputs.is_empty());
+            for (i, path) in files.chain(destination).enumerate() {
+                body = body.child(
+                    action_button(
+                        &format!("job-file-{}-{i}", job.id),
+                        &format!("Show {}", path.name()),
+                        false,
+                        true,
+                        UiAction::Files(crate::app::files::Action::Output(path.clone())),
+                    )
+                    .help(path.to_string()),
+                );
+            }
+        }
+    }
     body
 }
 

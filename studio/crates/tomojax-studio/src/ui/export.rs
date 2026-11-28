@@ -6,49 +6,20 @@ use serde_json::Value;
 
 pub(super) fn form(state: &AppState) -> El {
     let selected = state.active_export_format();
+    if state.remote_project().is_some() && selected != "array" {
+        return section(
+            "Output",
+            help(
+                "To copy a saved file, open Files on this connection and choose Copy to this computer.",
+            ),
+        );
+    }
     let name = match selected {
         "nxs" => "TomoJAX result (.nxs)",
         "array" => "NPY array bundle",
         name => name,
     };
-    let open = state.ui.choice_menu.as_deref() == Some("export-format");
-    let mut body = col().gap(8.).child(
-        button(
-            "export-format",
-            name,
-            false,
-            selected != "array",
-            move |s, _| {
-                s.ui.choice_menu = (!open).then(|| "export-format".into());
-            },
-        )
-        .w_full()
-        .justify_between()
-        .child(icon(Icon::Down, 14., muted())),
-    );
-    if open {
-        let spatial = state
-            .model
-            .active()
-            .is_some_and(|a| a.export == Export::Volume);
-        let choices = std::iter::once(("nxs", "TomoJAX result (.nxs)")).chain(
-            state
-                .catalog
-                .export_formats
-                .iter()
-                .filter(|f| spatial || !f.spatial_only)
-                .map(|f| (f.name.as_str(), f.name.as_str())),
-        );
-        for (key, label) in choices {
-            let action = UiAction::SetExportFormat(key.into());
-            body = body.child(menu_option(
-                &format!("export-format-{key}"),
-                label,
-                key == selected,
-                move |s, tx| s.dispatch(action.clone(), tx),
-            ));
-        }
-    }
+    let mut body = format_picker(state, selected, name);
     let Some(format) = state.interchange_format() else {
         return section("Output", body);
     };
@@ -126,8 +97,64 @@ pub(super) fn form(state: &AppState) -> El {
     section("Output", body)
 }
 
+fn format_picker(state: &AppState, selected: &str, name: &str) -> El {
+    let open = state.ui.choice_menu.as_deref() == Some("export-format");
+    let mut body = col().gap(8.).child(
+        button(
+            "export-format",
+            name,
+            false,
+            selected != "array",
+            move |s, _| {
+                s.ui.choice_menu = (!open).then(|| "export-format".into());
+            },
+        )
+        .w_full()
+        .justify_between()
+        .child(icon(Icon::Down, 14., muted())),
+    );
+    if open {
+        let spatial = state
+            .model
+            .active()
+            .is_some_and(|a| a.export == Export::Volume);
+        let choices = std::iter::once(("nxs", "TomoJAX result (.nxs)")).chain(
+            state
+                .catalog
+                .export_formats
+                .iter()
+                .filter(|f| spatial || !f.spatial_only)
+                .map(|f| (f.name.as_str(), f.name.as_str())),
+        );
+        for (key, label) in choices {
+            let action = UiAction::SetExportFormat(key.into());
+            body = body.child(menu_option(
+                &format!("export-format-{key}"),
+                label,
+                key == selected,
+                move |s, tx| s.dispatch(action.clone(), tx),
+            ));
+        }
+    }
+    body
+}
+
 pub(super) fn submit(state: &AppState) -> El {
     let format = state.active_export_format();
+    if state.remote_project().is_some() && format != "array" {
+        return action_button_icon(
+            "browse-outputs",
+            "Browse files…",
+            Icon::Folder,
+            false,
+            !state.data_offline(),
+            UiAction::Files(crate::app::files::Action::Browse(
+                crate::app::files::Purpose::Browse,
+            )),
+        )
+        .w_full()
+        .h(40.);
+    }
     let selected = state.interchange_format().is_some();
     let queue = selected && state.ui.export_path.is_some();
     let title = if queue {
@@ -144,7 +171,7 @@ pub(super) fn submit(state: &AppState) -> El {
         title,
         Icon::Export,
         true,
-        !format.is_empty() && (!queue || state.export_plan_current()),
+        !state.data_offline() && !format.is_empty() && (!queue || state.export_plan_current()),
         if queue {
             UiAction::QueueExport
         } else {

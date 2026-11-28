@@ -1,10 +1,55 @@
 //! Explore's registered export draft, worker preflight and durable queue entry.
 use super::*;
-use crate::protocol::ExportFormat;
+use crate::project::Job;
+use crate::protocol::{ExportFormat, Storage};
 use crate::ui::model::Export;
 use rune::{FileDialogOptions, Tx};
 
 impl AppState {
+    pub(super) fn export_array(&mut self, job: &Job) {
+        let Some(input) = job.inputs.first().cloned() else {
+            self.fail_job(&job.id, "Array export needs an input", false);
+            return;
+        };
+        let Some(destination) = job
+            .parameters
+            .get("path")
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+        else {
+            self.fail_job(&job.id, "Array export needs a destination", false);
+            return;
+        };
+        let id = job.id.clone();
+        let files = self.file_reads();
+        self.spawn_local(Some(id.clone()), move |canceled| {
+            let result = (|| {
+                let mut sources = Vec::new();
+                let mut arrays = input.arrays;
+                for (index, array) in arrays.values_mut().enumerate() {
+                    let mut copy = |storage: &mut Storage, suffix: &str| -> Result<(), String> {
+                        let Storage::Npy { path, artifact } = storage else {
+                            return Err("This bundle export supports durable NPY arrays only".into());
+                        };
+                        let name = format!("array-{index}{suffix}.npy");
+                        sources.push(json!({"name":name,"path":path,"artifact":artifact}));
+                        *storage = Storage::Npy {path:name, artifact:None};
+                        Ok(())
+                    };
+                    copy(&mut array.storage, "")?;
+                    for (axis, dimension) in array.axes.iter_mut().enumerate() {
+                        if let crate::protocol::Coordinates::Coordinates {values} = &mut dimension.coordinates {
+                            copy(values, &format!("-axis{axis}"))?;
+                        }
+                    }
+                }
+                let document = json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
+                local::copy(files, &destination, sources, json!({"arrays.json":document}), &canceled)
+            })();
+            LocalEvent::Exported {job:id,result}
+        });
+    }
+
     pub(crate) fn active_export_format(&self) -> &str {
         let Some(asset) = self.model.active() else {
             return "";

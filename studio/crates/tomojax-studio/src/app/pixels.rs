@@ -64,6 +64,12 @@ impl AppState {
     pub(super) fn select_project_source(&mut self) {
         self.pane_edges = [1024; 8];
         self.imaging.invalidate();
+        if self.remote_project().is_some() || self.engine.owner().is_some() {
+            self.previews.disconnected();
+            self.live.disconnected();
+            self.imaging.detach();
+            self.model.backend = Default::default();
+        }
         if let Some(name) = self.remote_project() {
             self.engine = match session::Session::named(name, self.wake.clone()) {
                 Ok(session) => session,
@@ -72,7 +78,6 @@ impl AppState {
                     session::Session::Closed
                 }
             };
-            self.model.backend = Default::default();
         } else {
             if self.engine.owner().is_some() {
                 self.engine = session::Session::Closed;
@@ -232,6 +237,23 @@ impl AppState {
         self.render_items()
     }
 
+    pub(super) fn view_plane(
+        &mut self,
+        slot: u32,
+        descriptor: ArrayDescriptor,
+        axis: usize,
+        index: usize,
+        edge: usize,
+    ) -> Result<(), String> {
+        if self.data_offline() {
+            self.imaging.retain_source(slot, &descriptor, Some(axis));
+            Ok(())
+        } else {
+            self.imaging
+                .request_plane(slot, descriptor, axis, index, edge)
+        }
+    }
+
     pub(super) fn request_native_volume(&mut self, volume: crate::protocol::ArrayDescriptor) {
         if self.native_data_available() {
             use studio_core::pixels::Encoding;
@@ -244,7 +266,7 @@ impl AppState {
                 self.model.error = Some(error);
             }
         } else {
-            self.imaging.clear(8);
+            self.imaging.retain_source(8, &volume, None);
         }
     }
 

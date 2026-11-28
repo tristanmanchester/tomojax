@@ -759,15 +759,7 @@ fn statusbar(state: &AppState) -> El {
     if !state.model.render_quality.is_empty() {
         bar = bar.child(label(&state.model.render_quality, 11., muted()));
     }
-    let connection = if state.remote_project().is_some() {
-        format!(
-            "{} · {}",
-            state.connection_status(),
-            state.model.backend.status
-        )
-    } else {
-        format!("This computer · {}", state.model.backend.status)
-    };
+    let connection = state.connection_status();
     bar = bar.child(
         quiet_button("connections", &connection, false, |s, tx| {
             s.dispatch(
@@ -777,11 +769,20 @@ fn statusbar(state: &AppState) -> El {
         })
         .h(24.),
     );
-    if state.data_offline() {
-        bar = bar.child(label("Not live", 11., warning()));
+    let executor_visible = state.remote_project().is_none()
+        || matches!(
+            state.connection_state(),
+            Some(studio_core::connection::State::Connected(_))
+        );
+    if executor_visible && !state.model.backend.status.is_empty() {
+        bar = bar.child(
+            label(&state.model.backend.status, 11., muted())
+                .truncate()
+                .help(&state.model.backend.status),
+        );
     }
-    if !state.model.backend.device.is_empty() {
-        bar = bar.child(label(&state.model.backend.device, 11., muted()).pl(12.));
+    if executor_visible && state.model.backend.ready && !state.model.backend.device.is_empty() {
+        bar = bar.child(label(&state.model.backend.device, 11., muted()));
     }
     bar
 }

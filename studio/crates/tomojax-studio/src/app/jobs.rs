@@ -47,6 +47,12 @@ impl AppState {
             .retire_resources(artifacts, output.value.handle().map(str::to_owned));
     }
 
+    pub(crate) fn operation_available_here(&self, operation: &str) -> bool {
+        self.remote_project().is_none()
+            || operation == "inspect"
+            || previewing::kind(operation).is_some()
+    }
+
     pub(super) fn queue_operation(&mut self, operation: &str) -> Result<(), String> {
         if matches!(
             operation,
@@ -54,7 +60,7 @@ impl AppState {
         ) {
             return self.request_interactive(operation);
         }
-        if self.remote_project().is_some() && operation != "inspect" {
+        if !self.operation_available_here(operation) {
             return Err("Run processing jobs in a project on this computer.".into());
         }
         if !self.model.backend.ready {
@@ -167,50 +173,6 @@ impl AppState {
         });
         self.mark_dirty();
         self.advance_job();
-    }
-
-    fn export_array(&mut self, job: &Job) {
-        let Some(input) = job.inputs.first().cloned() else {
-            self.fail_job(&job.id, "Array export needs an input", false);
-            return;
-        };
-        let Some(destination) = job
-            .parameters
-            .get("path")
-            .and_then(Value::as_str)
-            .map(PathBuf::from)
-        else {
-            self.fail_job(&job.id, "Array export needs a destination", false);
-            return;
-        };
-        let id = job.id.clone();
-        let files = self.file_reads();
-        self.spawn_local(Some(id.clone()), move |canceled| {
-            let result = (|| {
-                let mut sources = Vec::new();
-                let mut arrays = input.arrays;
-                for (index, array) in arrays.values_mut().enumerate() {
-                    let mut copy = |storage: &mut Storage, suffix: &str| -> Result<(), String> {
-                        let Storage::Npy { path, artifact } = storage else {
-                            return Err("This bundle export supports durable NPY arrays only".into());
-                        };
-                        let name = format!("array-{index}{suffix}.npy");
-                        sources.push(json!({"name":name,"path":path,"artifact":artifact}));
-                        *storage = Storage::Npy {path:name, artifact:None};
-                        Ok(())
-                    };
-                    copy(&mut array.storage, "")?;
-                    for (axis, dimension) in array.axes.iter_mut().enumerate() {
-                        if let crate::protocol::Coordinates::Coordinates {values} = &mut dimension.coordinates {
-                            copy(values, &format!("-axis{axis}"))?;
-                        }
-                    }
-                }
-                let document = json!({"format":"tomojax-registered-arrays","version":1,"source":input.path,"arrays":arrays});
-                local::copy(files, &destination, sources, json!({"arrays.json":document}), &canceled)
-            })();
-            LocalEvent::Exported {job:id,result}
-        });
     }
 
     pub(super) fn advance_job(&mut self) {
@@ -471,8 +433,7 @@ impl AppState {
                 } else if matches!(output.value, Product::Region { .. }) {
                     self.persist_arrays(&job, output);
                 } else if let Product::Files { paths } = &output.value {
-                    self.complete_job(&job, None);
-                    self.model.status = format!("Exported {} output files", paths.len());
+                    self.complete_export(&job, paths);
                 } else if output.value.is_plan()
                     || matches!(output.value, Product::Validated { .. })
                 {
@@ -541,6 +502,14 @@ impl AppState {
             }
             Pending::Control { .. } | Pending::ControlStatus { .. } => {}
         }
+    }
+
+    fn complete_export(&mut self, job: &str, paths: &[String]) {
+        if let Some(entry) = self.project.as_mut().and_then(|p| p.document.job_mut(job)) {
+            entry.outputs = paths.iter().map(|p| p.as_str().into()).collect();
+        }
+        self.complete_job(job, None);
+        self.model.status = format!("Exported {} output files", paths.len());
     }
 
     pub(super) fn result_asset(

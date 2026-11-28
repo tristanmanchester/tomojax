@@ -33,6 +33,7 @@ pub(crate) struct FilePanel {
     pub path: TextEdit,
     pub listing: Option<Listing>,
     pub selected: Option<(WorkerPath, u64)>,
+    pub transfer: Option<String>,
     pub loading: bool,
     pub first_scan: Option<(WorkerPath, bool)>,
     revision: u64,
@@ -50,6 +51,7 @@ impl Default for FilePanel {
             path: Default::default(),
             listing: None,
             selected: None,
+            transfer: None,
             loading: false,
             first_scan: None,
             revision: 0,
@@ -59,6 +61,7 @@ impl Default for FilePanel {
 impl FilePanel {
     pub fn close_browser(&mut self) {
         self.panel = Panel::Closed;
+        self.transfer = None;
         self.listing = None;
         self.selected = None;
         self.loading = false;
@@ -69,7 +72,7 @@ impl FilePanel {
 pub(super) enum FileReply {
     Listed(u64, bool, Result<Listing, String>),
     Claimed(WorkerPath, Result<WorkerPath, String>),
-    Transferred(Result<String, String>),
+    Transferred(Result<(String, Option<WorkerPath>), String>),
     Imported(Result<Vec<(PathBuf, bool)>, String>),
 }
 
@@ -84,6 +87,7 @@ pub enum Action {
     Retry,
     Browse(Purpose),
     List(Option<WorkerPath>),
+    Output(WorkerPath),
     EnterPath,
     More,
     Select(WorkerPath, u64),
@@ -127,26 +131,27 @@ impl AppState {
             .and_then(|p| p.results)
             .map(|s| WorkerPath::from(s.as_str()));
         self.files.panel = Panel::Browser(Purpose::Results);
+        let project = self
+            .project
+            .as_ref()
+            .ok_or("Open a project")?
+            .document
+            .name
+            .clone();
         self.begin_listing(false, move || {
-            if let Some((scan, folder)) = scan {
-                let directory = if folder {
-                    Some(scan.clone())
+            let directory = scan.as_ref().and_then(|(path, folder)| {
+                if *folder {
+                    Some(path.clone())
                 } else {
-                    scan.parent()
-                };
-                let copies_folder = folder || !project::holds_whole_acquisition(scan.lexical());
-                if !(managed && copies_folder)
-                    && let Some(path) = directory
-                    && let Ok(list) = files.list(Some(&path), None)
-                    && list.writable
-                {
-                    return Ok(list);
+                    path.parent()
                 }
-            }
-            for path in [last, profile].into_iter().flatten() {
+            });
+            let source = managed_source(scan.as_ref(), managed);
+            for path in [directory, last, profile].into_iter().flatten() {
                 if let Ok(list) = files.list(Some(&path), None)
                     && list.directory
                     && list.writable
+                    && outside_source(&list.path, &project, source.as_ref())
                 {
                     return Ok(list);
                 }
@@ -188,7 +193,7 @@ impl AppState {
             FileReply::Listed(rev, append, result) if rev == self.files.revision => {
                 self.files.loading = false;
                 result.map(|mut list| {
-                    self.files.path = TextEdit::new(&list.path.to_string());
+                    self.files.path = TextEdit::new(list.path.to_string());
                     if append && let Some(old) = &mut self.files.listing {
                         old.entries.append(&mut list.entries);
                         old.after = list.after;
@@ -221,12 +226,71 @@ impl AppState {
                     self.preferences.save()
                 })
             }
-            FileReply::Transferred(result) => result.map(|s| self.model.status = s),
+            FileReply::Transferred(result) => result.and_then(|(message, uploaded_to)| {
+                self.model.status = message.clone();
+                self.files.transfer = Some(message);
+                if let Some(folder) = uploaded_to
+                    && self
+                        .files
+                        .listing
+                        .as_ref()
+                        .is_some_and(|list| list.path == folder)
+                {
+                    self.list_folder(Some(folder), None)?;
+                }
+                Ok(())
+            }),
             FileReply::Imported(result) => result.map(|paths| self.import_selected(paths)),
         };
         if let Err(error) = result {
             self.model.error = Some(error);
         }
+    }
+
+    fn edit_connection(&mut self, name: Option<String>) -> Result<(), String> {
+        let profile = name
+            .as_deref()
+            .map(Profile::load)
+            .transpose()
+            .map_err(|e| e.to_string())?;
+        let value = serde_json::to_value(&profile).map_err(|e| e.to_string())?;
+        let hops = profile
+            .as_ref()
+            .map(|p| p.hops().join(" "))
+            .unwrap_or_default();
+        self.files.editor = [
+            name.as_deref().unwrap_or(""),
+            &hops,
+            value["python"].as_str().unwrap_or(""),
+            value["session"].as_str().unwrap_or(""),
+            value["jobs"].as_str().unwrap_or(""),
+            value["sbatch"].as_str().unwrap_or(""),
+            value["results"].as_str().unwrap_or(""),
+        ]
+        .map(TextEdit::new);
+        self.files.original = profile;
+        self.files.panel = Panel::Editor;
+        Ok(())
+    }
+    fn save_connection(&mut self, tx: &mut Tx) -> Result<(), String> {
+        let [name, ssh, python, session, jobs, sbatch, results] =
+            self.files.editor.each_ref().map(|edit| edit.text.trim());
+        let mut draft = json!({"ssh":ssh.split_whitespace().collect::<Vec<_>>()});
+        for (key, value) in [
+            ("python", python),
+            ("session", session),
+            ("jobs", jobs),
+            ("sbatch", sbatch),
+            ("results", results),
+        ] {
+            if !value.is_empty() {
+                draft[key] = json!(value);
+            }
+        }
+        let profile = serde_json::from_value(draft).map_err(|e| e.to_string())?;
+        Profile::save(name, self.files.original.as_ref(), &profile).map_err(|e| e.to_string())?;
+        self.file_action(Action::Connections(self.files.creating), tx)?;
+        Ok(())
     }
 
     pub(super) fn file_action(&mut self, action: Action, tx: &mut Tx) -> Result<(), String> {
@@ -259,7 +323,8 @@ impl AppState {
                         Err(e) => s.model.error = Some(e.to_string()),
                         Ok(None) => {}
                     });
-                } else if let Some(project) = &mut self.project
+                } else if self.data_offline()
+                    && let Some(project) = &mut self.project
                     && project.document.connection.is_some()
                 {
                     project.document.connection =
@@ -270,50 +335,8 @@ impl AppState {
                     self.select_project_source();
                 }
             }
-            Action::Edit(name) => {
-                let profile = name
-                    .as_deref()
-                    .map(Profile::load)
-                    .transpose()
-                    .map_err(|e| e.to_string())?;
-                let value = serde_json::to_value(&profile).map_err(|e| e.to_string())?;
-                let hops = profile
-                    .as_ref()
-                    .map(|p| p.hops().join(" "))
-                    .unwrap_or_default();
-                self.files.editor = [
-                    name.as_deref().unwrap_or(""),
-                    &hops,
-                    value["python"].as_str().unwrap_or(""),
-                    value["session"].as_str().unwrap_or(""),
-                    value["jobs"].as_str().unwrap_or(""),
-                    value["sbatch"].as_str().unwrap_or(""),
-                    value["results"].as_str().unwrap_or(""),
-                ]
-                .map(TextEdit::new);
-                self.files.original = profile;
-                self.files.panel = Panel::Editor;
-            }
-            Action::Save => {
-                let [name, ssh, python, session, jobs, sbatch, results] =
-                    self.files.editor.each_ref().map(|edit| edit.text.trim());
-                let mut draft = json!({"ssh":ssh.split_whitespace().collect::<Vec<_>>()});
-                for (key, value) in [
-                    ("python", python),
-                    ("session", session),
-                    ("jobs", jobs),
-                    ("sbatch", sbatch),
-                    ("results", results),
-                ] {
-                    if !value.is_empty() {
-                        draft[key] = json!(value);
-                    }
-                }
-                let profile = serde_json::from_value(draft).map_err(|e| e.to_string())?;
-                Profile::save(name, self.files.original.as_ref(), &profile)
-                    .map_err(|e| e.to_string())?;
-                self.file_action(Action::Connections(self.files.creating), tx)?;
-            }
+            Action::Edit(name) => self.edit_connection(name)?,
+            Action::Save => self.save_connection(tx)?,
             Action::Retry => {
                 if let Some(owner) = self.engine.owner_mut() {
                     owner.retry_now();
@@ -346,6 +369,11 @@ impl AppState {
                     .and_then(|v| v.first())
                     .cloned();
                 self.list_folder(path, None)?;
+            }
+            Action::Output(path) => {
+                self.files.panel = Panel::Browser(Purpose::Browse);
+                self.list_folder(Some(path), None)?;
+                self.ui.activity.close();
             }
             Action::List(path) => self.list_folder(path, None)?,
             Action::EnterPath => {
@@ -401,6 +429,12 @@ impl AppState {
                 }
                 let files = self.browsing_files()?;
                 let doc = &self.project.as_ref().ok_or("Open a project")?.document;
+                let source = managed_source(self.files.first_scan.as_ref(), self.ui.import_copy);
+                if !outside_source(&path, &doc.name, source.as_ref()) {
+                    return Err(
+                        "Choose a results folder outside the acquisition being copied.".into(),
+                    );
+                }
                 let cmd = json!({"type":"project_results","action":"claim","parent":path,"name":doc.name,"project":doc.id});
                 self.files.loading = true;
                 self.spawn_local(None, move |_| {
@@ -466,9 +500,12 @@ impl AppState {
                     match result {
                         Ok(Some(dest)) => s.spawn_local(None, move |_| {
                             LocalEvent::FilePanel(FileReply::Transferred(
-                                files
-                                    .download(&source, size, &dest)
-                                    .map(|()| format!("Copied to {}", dest.display())),
+                                files.download(&source, size, &dest).map(|()| {
+                                    (
+                                        format!("Copied {} to {}", source.name(), dest.display()),
+                                        None,
+                                    )
+                                }),
                             ))
                         }),
                         Err(e) => s.model.error = Some(e.to_string()),
@@ -502,9 +539,12 @@ impl AppState {
                                 .ok_or("Choose a file with a UTF-8 name".into())
                                 .and_then(|name| {
                                     let dest = folder.join(name);
-                                    files
-                                        .upload(&source, &dest)
-                                        .map(|()| format!("Copied to {dest}"))
+                                    files.upload(&source, &dest).map(|()| {
+                                        (
+                                            format!("Uploaded {name} to {folder}"),
+                                            Some(folder.clone()),
+                                        )
+                                    })
                                 });
                             LocalEvent::FilePanel(FileReply::Transferred(result))
                         }),
@@ -537,4 +577,18 @@ fn acquisitions(files: &FileReads, folder: &WorkerPath) -> Result<Vec<(PathBuf, 
         answer.push((PathBuf::from(folder.lexical()), true));
     }
     Ok(answer)
+}
+
+fn managed_source(scan: Option<&(WorkerPath, bool)>, managed: bool) -> Option<WorkerPath> {
+    let (path, folder) = scan.filter(|_| managed)?;
+    if *folder {
+        Some(path.clone())
+    } else if project::holds_whole_acquisition(path.lexical()) {
+        None
+    } else {
+        path.parent()
+    }
+}
+fn outside_source(parent: &WorkerPath, name: &str, source: Option<&WorkerPath>) -> bool {
+    source.is_none_or(|source| !parent.join(name).lexical().starts_with(source.lexical()))
 }

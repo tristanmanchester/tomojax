@@ -1,7 +1,7 @@
 //! Studio owns one connection. An engine becomes available to project reads only
 //! after the worker confirms the marker in the manifest's results folder.
 use super::*;
-use studio_core::connection::{Owner, State};
+use studio_core::connection::{Owner, Profile, State};
 use studio_core::engine::WorkerCommand;
 
 #[derive(Default)]
@@ -87,6 +87,24 @@ impl AppState {
     pub(crate) fn data_offline(&self) -> bool {
         self.remote_project().is_some() && self.engine.as_ref().is_none()
     }
+    pub(super) fn interrupt_file_jobs(&mut self, reason: &str) {
+        let ids: Vec<_> = self
+            .local_tasks
+            .values()
+            .filter_map(|task| task.job.clone())
+            .collect();
+        for id in ids {
+            if self.project.as_ref().is_some_and(|p| {
+                p.document
+                    .jobs
+                    .iter()
+                    .any(|j| j.id == id && j.status.active())
+            }) {
+                self.fail_job(&id, reason, false);
+            }
+        }
+    }
+
     pub(super) fn session_ready(&mut self) {
         let Some(owner) = self.engine.owner() else {
             return;
@@ -113,6 +131,11 @@ impl AppState {
         if let Err(error) = result {
             self.imaging.invalidate();
             self.refresh_plane_model();
+            self.files.names = Profile::catalog()
+                .map(|catalog| catalog.into_keys().collect())
+                .unwrap_or_default();
+            self.files.creating = false;
+            self.files.panel = files::Panel::Connections;
             self.model.error = Some(error);
             return;
         }

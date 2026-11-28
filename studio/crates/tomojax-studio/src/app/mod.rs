@@ -1,9 +1,13 @@
 //! Application ownership: persistent project, one official worker, independent viewer.
 mod actions;
+#[cfg(test)]
+#[cfg(unix)]
+mod connection_tests;
 mod controls;
 mod editing;
 mod export;
 pub(crate) mod files;
+mod imports;
 mod jobs;
 mod local;
 mod pixels;
@@ -128,6 +132,7 @@ pub struct AppState {
     preview_context: previewing::PreviewContext,
     engine: session::Session,
     connection_epoch: u64,
+    last_connection_status: String,
     pub(crate) files: files::FilePanel,
     relay: Option<Vec<String>>,
     pane_edges: [usize; 8],
@@ -192,6 +197,7 @@ impl AppState {
             preview_context: previewing::PreviewContext::default(),
             engine: session::Session::Closed,
             connection_epoch: 0,
+            last_connection_status: String::new(),
             files: Default::default(),
             relay: None,
             pane_edges: [1024; 8],
@@ -268,7 +274,9 @@ impl AppState {
         self.imaging.set_waker(wake.clone());
         self.live.set_waker(wake.clone());
         if std::env::var_os("TOMOJAX_STUDIO_OFFLINE").is_some() || rune::tooling::is_headless() {
-            self.model.backend.status = "Viewing saved project".into();
+            if self.remote_project().is_none() {
+                self.model.backend.status = "Viewing saved project".into();
+            }
             return;
         }
         if self.engine.is_none() {
@@ -340,9 +348,12 @@ impl AppState {
             self.interacting = interacting;
             changed = true;
         }
-        let status_before = self.connection_status();
         let events = self.engine.poll();
-        changed |= status_before != self.connection_status();
+        if self.engine.owner().is_some() {
+            let status = self.connection_status();
+            changed |= self.last_connection_status != status;
+            self.last_connection_status = status;
+        }
         for event in events {
             changed = true;
             self.engine_event(event);
@@ -536,6 +547,8 @@ impl AppState {
                     self.metadata_pending = 0;
                     self.copying = 0;
                     self.files.close_browser();
+                    self.interrupt_file_jobs(&reason);
+                    self.imaging.detach();
                 }
                 if self.remote_project().is_none() {
                     self.imaging.disconnected();
@@ -625,11 +638,17 @@ impl AppState {
             }
             Response::Executor(crate::protocol::ExecutorState::Starting(detail)) => {
                 self.model.backend.ready = false;
-                self.model.backend.status = detail.as_str().unwrap_or("Starting TomoJAX").into();
+                self.model.backend.status = detail.as_str().map_or_else(
+                    || "Starting TomoJAX".into(),
+                    |message| format!("Starting TomoJAX · {message}"),
+                );
             }
             Response::Executor(crate::protocol::ExecutorState::Gone(detail)) => {
                 self.model.backend.ready = false;
-                self.model.backend.status = detail.as_str().unwrap_or("Executor stopped").into();
+                self.model.backend.status = format!(
+                    "TomoJAX stopped · {}",
+                    detail.as_str().unwrap_or("Restarting executor")
+                );
                 self.imaging.invalidate();
                 self.live.disconnected();
                 self.image_key.clear();
@@ -675,14 +694,13 @@ impl AppState {
         opened
     }
 
-    fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {
+    fn can_switch_project(&self) -> Result<(), String> {
         // Kept previews copy their arrays on a local task while their job runs.
         let running_job = self.project.as_ref().is_some_and(|project| {
-            project
-                .document
-                .jobs
-                .iter()
-                .any(|job| job.status == project::JobStatus::Running)
+            project.document.jobs.iter().any(|job| {
+                job.status == project::JobStatus::Running
+                    && (project.document.connection.is_none() || self.local_job(&job.id))
+            })
         });
         if self.running.is_some()
             || running_job
@@ -692,6 +710,11 @@ impl AppState {
         {
             return Err("Finish or cancel active work before switching projects".into());
         }
+        Ok(())
+    }
+
+    fn open_project(&mut self, path: &Path, create: bool) -> Result<(), String> {
+        self.can_switch_project()?;
         if let Some(current) = &self.project
             && std::fs::canonicalize(project::folder(path, create))
                 .ok()
@@ -715,15 +738,8 @@ impl AppState {
                     )
                 })?;
         }
-        let project = Project::open_on(
-            path,
-            create,
-            if create {
-                self.files.new_connection.take()
-            } else {
-                None
-            },
-        )?;
+        let connection = self.files.new_connection.take().filter(|_| create);
+        let project = Project::open_on(path, create, connection)?;
         // View undo belongs to the project it was recorded in.
         self.view_history.clear();
         self.view_future.clear();
@@ -754,7 +770,7 @@ impl AppState {
             .collect();
         self.preferences.visit(&project.root)?;
         self.connection_epoch += 1;
-        self.files.close_browser();
+        self.files = files::FilePanel::default();
         self.project = Some(project);
         self.previews.reset();
         self.preview_context = previewing::PreviewContext::default();
@@ -799,135 +815,6 @@ impl AppState {
         Ok(())
     }
 
-    pub fn import_paths(&mut self, paths: Vec<PathBuf>) {
-        if self.remote_project().is_some() {
-            self.model.error = Some("Use Import to select a file on this connection, or Copy from this computer to upload one.".into());
-            return;
-        }
-        let mut selected = Vec::new();
-        for path in paths {
-            match std::fs::canonicalize(&path) {
-                Ok(path) => {
-                    let folder = path.is_dir();
-                    selected.push((path, folder));
-                }
-                Err(e) => self.model.error = Some(format!("{}: {e}", path.display())),
-            }
-        }
-        self.import_selected(selected);
-    }
-
-    fn import_selected(&mut self, paths: Vec<(PathBuf, bool)>) {
-        let selection = self.selected_inputs();
-        let Some(project) = &mut self.project else {
-            self.model.error = Some("Create or open a project before importing scans".into());
-            return;
-        };
-        let mut metadata = Vec::new();
-        let mut copies = Vec::new();
-        for (path, folder) in paths {
-            if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-            {
-                self.model.error = Some(
-                    "NPZ files can't be imported. Use NXtomo/HDF5 or an acquisition folder.".into(),
-                );
-                continue;
-            }
-            if project
-                .document
-                .assets
-                .iter()
-                .any(|a| project.resolve(&a.path).lexical() == path)
-            {
-                continue;
-            }
-            let mut asset = Asset::at(path.clone().into(), false, folder);
-            if self.ui.import_copy {
-                let inputs = project.data_root().join("inputs").join(&asset.id);
-                copies.push((asset, path, inputs));
-            } else {
-                asset.path = project.stored_path(&path);
-                metadata.push(asset.id.clone());
-                project.document.assets.push(asset);
-            }
-        }
-        for (asset, path, inputs) in copies {
-            self.copying += 1;
-            let selection = selection.clone();
-            let files = self.file_reads();
-            self.spawn_local(Some(IMPORT_COPY.into()), move |canceled| {
-                let result =
-                    local::copy_acquisition(files, &path, asset.folder, &inputs, &canceled);
-                LocalEvent::Copied {
-                    asset,
-                    result,
-                    selection,
-                }
-            });
-        }
-        self.ui.workspace = Workspace::Prepare;
-        if let Some(id) = metadata.last() {
-            self.model.selected_assets = [id.clone()].into();
-            self.activate(id.clone());
-        }
-        self.set_operation("open", None);
-        self.mark_dirty();
-        self.refresh_model();
-        for id in metadata {
-            self.start_metadata(&id);
-        }
-    }
-
-    fn start_metadata(&mut self, id: &str) {
-        if self.shutting_down || !self.native_data_available() {
-            return;
-        }
-        let Some(path) = self
-            .project
-            .as_ref()
-            .and_then(|p| p.document.asset(id).map(|a| p.resolve(&a.path)))
-        else {
-            return;
-        };
-        let asset = id.to_owned();
-        let files = self.file_reads();
-        self.metadata_pending += 1;
-        self.spawn_local(None, move |canceled| {
-            let result =
-                check_cancel(&canceled).and_then(|()| local::stored(files, path.lexical(), None));
-            LocalEvent::Metadata { asset, result }
-        });
-    }
-
-    fn submit_imports(&mut self) {
-        while let Some(id) = self.imports.pop_front() {
-            if self
-                .engine
-                .as_ref()
-                .is_none_or(|e| e.execution_capacity() < 58)
-            {
-                self.imports.push_front(id);
-                break;
-            }
-            let path = self
-                .project
-                .as_ref()
-                .and_then(|p| p.document.asset(&id).map(|a| p.resolve(&a.path)));
-            if let Some(path) = path
-                && let Err(error) = self.send(
-                    json!({"type":"inspect","path":path}),
-                    Pending::Inspect(id.clone()),
-                )
-            {
-                self.imports.push_front(id);
-                self.model.error = Some(error);
-                break;
-            }
-        }
-    }
-
     pub fn shutdown(&mut self) {
         if self.shutting_down {
             return;
@@ -963,9 +850,7 @@ impl AppState {
                 self.local_event(message.event);
             }
         }
-        if let Some(project) = &mut self.project
-            && project.document.connection.is_none()
-        {
+        if let Some(project) = &mut self.project {
             project.document.recover();
         }
         let workspace = self.capture_workspace();

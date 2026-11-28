@@ -115,40 +115,6 @@ impl AppState {
         self.refresh_images();
     }
 
-    /// Points asset `id` at `path`, chosen by the user after its data moved.
-    pub(super) fn relink(&mut self, id: &str, path: &Path) {
-        if path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("npz"))
-        {
-            self.model.error = Some(
-                "NPZ inputs are not supported. Choose NXtomo/HDF5 or a recognized acquisition."
-                    .into(),
-            );
-            return;
-        }
-        let mut reread = true;
-        if let Some(project) = &mut self.project {
-            let path = project.stored_path(path).lexical().to_owned();
-            let root = project.data_root().to_owned();
-            if let Some(asset) = project.document.asset_mut(id) {
-                asset.relink(path, &root);
-                reread = !asset.is_result();
-            }
-        }
-        self.model
-            .measurements
-            .retain(|measurement| measurement.asset != id);
-        self.imaging.invalidate();
-        if reread {
-            self.start_metadata(id);
-        }
-        self.image_key.clear();
-        self.mark_dirty();
-        self.refresh_model();
-        self.refresh_images();
-    }
-
     /// The zoom in effect on screen: the 3D camera keeps to its own range.
     pub(crate) fn shown_zoom(&self) -> f32 {
         let zoom = self.ui.display.zoom;
@@ -279,9 +245,6 @@ impl AppState {
     }
 
     pub(super) fn refresh_images(&mut self) {
-        if self.data_offline() {
-            return;
-        }
         self.ensure_image_worker();
         if let Some(volume) = self.active_volume().cloned() {
             let volume = self.resolved(&volume);
@@ -296,7 +259,7 @@ impl AppState {
                 if self.ui.workspace != Workspace::Compare {
                     self.ui.display.indices[axis] = index;
                 }
-                if let Err(error) = self.imaging.request_plane(
+                if let Err(error) = self.view_plane(
                     (axis + 1) as u32,
                     volume.clone(),
                     stored,
@@ -323,7 +286,7 @@ impl AppState {
                     if self.ui.workspace != Workspace::Compare {
                         self.ui.display.indices[axis] = index;
                     }
-                    if let Err(error) = self.imaging.request_plane(
+                    if let Err(error) = self.view_plane(
                         plane.mark(),
                         self.resolved(&array),
                         0,
@@ -355,7 +318,7 @@ impl AppState {
         }
         for (slot, compared) in [6, 7].into_iter().zip(compared) {
             if let Some((descriptor, axis)) = compared {
-                if let Err(error) = self.imaging.request_plane(
+                if let Err(error) = self.view_plane(
                     slot,
                     self.resolved(&descriptor),
                     axis,
@@ -388,7 +351,7 @@ impl AppState {
                 .display
                 .sinogram_row
                 .min(projections.shape[1].saturating_sub(1));
-            if let Err(error) = self.imaging.request_plane(
+            if let Err(error) = self.view_plane(
                 4,
                 projections.clone(),
                 0,
@@ -397,7 +360,7 @@ impl AppState {
             ) {
                 self.model.error = Some(error);
             }
-            if let Err(error) = self.imaging.request_plane(
+            if let Err(error) = self.view_plane(
                 5,
                 projections,
                 1,
@@ -1203,8 +1166,7 @@ impl AppState {
                                 .and_then(|a| a.axes.last())
                                 .map(|a| a.unit.clone())
                                 .unwrap_or_default(),
-                            missing: p.document.connection.is_none()
-                                && !p.resolve(&a.path).lexical().exists(),
+                            missing: p.missing_local_asset(a),
                             status: a.issue.clone().unwrap_or_else(|| {
                                 if a.arrays.is_empty() {
                                     "Reading metadata"

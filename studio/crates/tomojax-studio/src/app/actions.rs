@@ -301,7 +301,9 @@ impl AppState {
                     .iter()
                     .find(|j| j.id == id)
                     .ok_or("Job not found")?;
-                if project.document.connection.is_some() && old.operation != "inspect" {
+                if project.document.connection.is_some()
+                    && !matches!(old.operation.as_str(), "inspect" | "export_array")
+                {
                     return Err("Remote processing jobs are unavailable".into());
                 }
                 if old.status.active() {
@@ -320,6 +322,7 @@ impl AppState {
                 let mut job =
                     project::Job::new(&old.operation, old.parameters.clone(), old.inputs.clone());
                 job.name = format!("{} · retry", old.name);
+                job.destination.clone_from(&old.destination);
                 project.document.jobs.push(job);
                 self.mark_dirty();
             }

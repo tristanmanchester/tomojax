@@ -994,62 +994,9 @@ fn result_picker(state: &AppState, side: usize, title: &str, selected: Option<&s
     picker
 }
 
-fn footer(state: &AppState) -> El {
-    if state.model.preview.is_some() {
-        return super::preview::footer(state);
-    }
-    let mut content = col().px(22.).py(18.).gap(8.).fill(paper());
-    match state.ui.workspace {
-        Workspace::Prepare | Workspace::Reconstruct => {
-            let name = match state.ui.operation.as_str() {
-                "open" => "Open selected scans",
-                "reconstruct" => "Queue reconstruction",
-                "correct" => "Queue corrections",
-                "align" => "Queue alignment",
-                "simulate" => "Queue simulation",
-                _ => "Queue operation",
-            };
-            let invalid = state
-                .current_validation_error(&state.ui.operation)
-                .is_some();
-            let available = state.model.backend.ready
-                && (state.model.selection_count() > 0 || state.ui.operation == "simulate")
-                && state.model.active().is_none_or(|a| !a.missing)
-                && !invalid;
-            if !available {
-                let reason = if !state.model.backend.ready {
-                    if state.model.backend.status.is_empty() {
-                        "Waiting for TomoJAX"
-                    } else {
-                        &state.model.backend.status
-                    }
-                } else if state.model.active().is_some_and(|asset| asset.missing) {
-                    "Reconnect the source to queue processing."
-                } else if invalid {
-                    "Resolve the validation error to queue this operation."
-                } else {
-                    "Select inputs to queue this operation."
-                };
-                content = content.child(help(reason).key("queue-unavailable").role("status"));
-            }
-            content = content.child(
-                action_button_icon(
-                    "queue-operation",
-                    name,
-                    Icon::Play,
-                    true,
-                    available,
-                    UiAction::QueueOperation(state.ui.operation.clone()),
-                )
-                .w_full()
-                .h(40.),
-            );
-        }
-        Workspace::Explore => content = content.child(super::export::submit(state)),
-        Workspace::Compare | Workspace::Jobs => return el(),
-    }
-    col().w_full().child(separator()).child(content)
-}
+#[path = "inspector/footer.rs"]
+mod footer;
+use footer::footer;
 
 #[cfg(test)]
 mod tests {

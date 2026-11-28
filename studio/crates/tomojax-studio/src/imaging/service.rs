@@ -212,9 +212,18 @@ impl Imaging {
         }
     }
 
-    pub fn disconnected(&mut self) {
+    /// Drop the connection's request IDs and decoder. Displayed samples stay
+    /// available until a source changes or the next worker verifies the project.
+    pub fn detach(&mut self) {
+        *self.shared.files.locked() = None;
         if self.remote.is_some() {
             self.remote = Some(Remote::new(self.shared.clone()));
+        }
+    }
+
+    pub fn disconnected(&mut self) {
+        if self.remote.is_some() {
+            self.detach();
             for slot in self
                 .slots
                 .values_mut()
@@ -460,6 +469,14 @@ impl Imaging {
     }
     pub fn timings(&self) -> &VecDeque<LatencySample> {
         &self.timings
+    }
+
+    pub fn retain_source(&mut self, slot: u32, descriptor: &ArrayDescriptor, axis: Option<usize>) {
+        if self.slots.get(&slot).is_some_and(|s| {
+            s.request.descriptor.as_ref() != descriptor || s.request.key.plane.map(|p| p.0) != axis
+        }) {
+            self.clear(slot);
+        }
     }
 
     pub fn clear(&mut self, slot: u32) {
