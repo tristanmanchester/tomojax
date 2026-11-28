@@ -1,7 +1,7 @@
 //! Blocking I/O runs in bounded pools. The owner retains request admission and file leases.
 use super::Session;
 use crate::{Event, files, pixels, transfer, wire::Payload};
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::sync::{
@@ -64,19 +64,24 @@ impl Session {
                 files::resolve(cmd["path"].as_str().context("expected path")?)?,
                 cmd.get("inspection").cloned(),
             ),
-            "list" | "peek" | "download" => {
-                let path = cmd["path"]
-                    .as_str()
-                    .or_else(|| (kind == "list" && cmd["path"].is_null()).then_some("~"))
-                    .context("expected path")?;
-                if kind == "download" {
-                    leases.extend(self.lease(path, cmd["artifact"].as_str())?);
-                }
-                Work::File(
-                    kind.into(),
-                    files::resolve(path)?,
+            "list" => {
+                let path: Option<String> = serde_json::from_value(cmd["path"].clone())?;
+                Work::List(
+                    files::resolve(path.as_deref().unwrap_or("~"))?,
                     cmd["after"].as_str().map(str::to_owned),
+                    cmd.get("limit")
+                        .map(|v| serde_json::from_value(v.clone()))
+                        .transpose()?
+                        .unwrap_or(4096),
                 )
+            }
+            "peek" => Work::Peek(files::resolve(
+                cmd["path"].as_str().context("expected path")?,
+            )?),
+            "download" => {
+                let path = cmd["path"].as_str().context("expected path")?;
+                leases.extend(self.lease(path, cmd["artifact"].as_str())?);
+                Work::Download(files::resolve(path)?)
             }
             _ => return Ok(None),
         }))
@@ -92,7 +97,9 @@ pub(super) enum Work {
     Copy(files::Copy),
     Results(crate::results::Results),
     Stored(PathBuf, Option<Value>),
-    File(String, PathBuf, Option<String>),
+    List(PathBuf, Option<String>, usize),
+    Peek(PathBuf),
+    Download(PathBuf),
 }
 pub enum Output {
     Result(Value),
@@ -126,12 +133,11 @@ impl Work {
                 }
                 None => files::stored(&path)?,
             }),
-            Work::File(kind, path, after) => match kind.as_str() {
-                "list" => Output::Result(files::list(&path, after.as_deref())?),
-                "peek" => Output::Result(files::peek(&path)?),
-                "download" => Output::Stream(Payload::File(transfer::Download::open(&path)?)),
-                _ => bail!("unknown file operation"),
-            },
+            Work::List(path, after, limit) => {
+                Output::Result(files::list(&path, after.as_deref(), limit)?)
+            }
+            Work::Peek(path) => Output::Result(files::peek(&path)?),
+            Work::Download(path) => Output::Stream(Payload::File(transfer::Download::open(&path)?)),
         })
     }
 }
