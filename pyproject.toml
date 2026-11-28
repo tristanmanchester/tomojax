@@ -9,7 +9,7 @@ description = "TomoJAX — CT projector, reconstruction, and alignment"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "GPL-3.0-only"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",

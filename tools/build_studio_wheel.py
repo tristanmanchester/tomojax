@@ -16,7 +16,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
-LICENSE_FILE = ROOT / "LICENSE"
+LICENSE_FILES = (ROOT / "LICENSE", ROOT / "THIRD_PARTY_NOTICES.md")
 STUDIO_README = ROOT / "studio" / "README.md"
 
 ALLOWED_SYSTEM_LIBS = frozenset(
@@ -90,7 +90,7 @@ def _metadata(version: str) -> str:
         "Home-page: https://tomojax.dev/studio/",
         "Author-email: Tristan Manchester <tmanchester96@gmail.com>",
         "License-Expression: GPL-3.0-only",
-        "License-File: LICENSE",
+        *(f"License-File: {path.name}" for path in LICENSE_FILES),
         "Project-URL: Documentation, https://tomojax.dev/studio/",
         "Project-URL: Repository, https://github.com/tristanmanchester/tomojax",
         "Project-URL: Issues, https://github.com/tristanmanchester/tomojax/issues",
@@ -128,7 +128,6 @@ def build_wheel(binary: Path, version: str, platform_tag: str, out_dir: Path) ->
     out_dir.mkdir(parents=True, exist_ok=True)
 
     binary_bytes = binary.read_bytes()
-    license_bytes = LICENSE_FILE.read_bytes()
     metadata_bytes = _metadata(version).encode("utf-8")
     wheel_bytes = _wheel_file(platform_tag).encode("utf-8")
 
@@ -136,7 +135,10 @@ def build_wheel(binary: Path, version: str, platform_tag: str, out_dir: Path) ->
         (data_scripts, binary_bytes, 0o100755),
         (f"{dist_info}/METADATA", metadata_bytes, 0o100644),
         (f"{dist_info}/WHEEL", wheel_bytes, 0o100644),
-        (f"{dist_info}/licenses/LICENSE", license_bytes, 0o100644),
+        *(
+            (f"{dist_info}/licenses/{path.name}", path.read_bytes(), 0o100644)
+            for path in LICENSE_FILES
+        ),
     ]
     record_name = f"{dist_info}/RECORD"
     record_lines = [_record_line(name, payload) for name, payload, _ in entries]
@@ -166,12 +168,13 @@ def build_tarball(
         bin_info.uname = bin_info.gname = ""
         with binary.open("rb") as handle:
             archive.addfile(bin_info, handle)
-        lic_info = archive.gettarinfo(str(LICENSE_FILE), arcname="LICENSE")
-        lic_info.mode = 0o644
-        lic_info.uid = lic_info.gid = 0
-        lic_info.uname = lic_info.gname = ""
-        with LICENSE_FILE.open("rb") as handle:
-            archive.addfile(lic_info, handle)
+        for path in LICENSE_FILES:
+            lic_info = archive.gettarinfo(str(path), arcname=path.name)
+            lic_info.mode = 0o644
+            lic_info.uid = lic_info.gid = 0
+            lic_info.uname = lic_info.gname = ""
+            with path.open("rb") as handle:
+                archive.addfile(lic_info, handle)
     digest = hashlib.sha256(tar_path.read_bytes()).hexdigest()
     sha_path = out_dir / f"{tar_path.name}.sha256"
     _ = sha_path.write_text(f"{digest}  {tar_path.name}\n", encoding="utf-8")
