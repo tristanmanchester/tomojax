@@ -51,11 +51,13 @@ def test_lossless_plane(tmp_path, stored, line_detector):
     assert frame.shape == expected.shape and frame.bytes == len(payload)
 
 
-@pytest.mark.parametrize("case", ["ramp", "step", "constant", "zero-window", "noise"])
+@pytest.mark.parametrize("case", ["ramp", "fortran", "step", "constant", "zero-window", "noise"])
 def test_jpeg(tmp_path, case):
     source = np.tile(np.arange(255, dtype="f4"), (97, 1))
     limits = (0, 254)
-    if case == "step":
+    if case == "fortran":
+        source = np.asfortranarray(source)
+    elif case == "step":
         source = 254 * (source >= 53).astype("f4")
     elif case == "constant":
         source[:] = 4

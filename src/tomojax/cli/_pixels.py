@@ -99,5 +99,5 @@ def fetch(cmd: e.Fetch) -> tuple[e.Pixels, bytes | bytearray | memoryview]:
             )
             if gray.ndim == 3:
                 gray = gray.squeeze(gray.shape.index(1))
-            payload = imagecodecs.jpeg8_encode(gray, level=60, optimize=True)
+            payload = imagecodecs.jpeg8_encode(np.ascontiguousarray(gray), level=60, optimize=True)
     return e.Pixels(shape, cmd.encoding, len(payload), limits), payload
