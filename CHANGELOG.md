@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `tj.inspect` computes projection statistics faster and uses less memory on integer detector stacks. Studio shows the first TIFF or vendor projection before those statistics finish and lets you probe its values. On remote HDF5 data, held scrolling through compressed side planes and reading sinograms from frame-chunked scans are faster.
+
 ## 1.0.0rc8 (2026-11-28)
 
 - Studio shows the first projection of a raw scan before its numerical inspection finishes, and reads only the pixels a view needs from NPY and HDF5 volumes. A 2560³ volume opens on a machine with an 8 GB process limit. Over a slow connection, moving pictures are smaller and integer detector planes are compressed in transit.
