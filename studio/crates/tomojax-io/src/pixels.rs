@@ -101,12 +101,25 @@ impl Selection {
     }
     /// A detector plane, or a contiguous stack of them, can be read in storage
     /// order and decimated without asking HDF5 to gather individual pixels.
-    fn dense_counts<T>(&self, data: &hdf5::Dataset) -> Option<Vec<usize>> {
-        let first = self.count.iter().position(|&n| n > 1)?;
-        if self.count[first..].contains(&1) || self.stride[first..].iter().all(|&s| s == 1) {
+    fn dense_counts<T>(&self, data: &hdf5::Dataset) -> Option<(usize, Vec<usize>)> {
+        let first = self
+            .count
+            .iter()
+            .rposition(|&n| n == 1)
+            .map_or(0, |i| i + 1);
+        if self.stride[first..].iter().all(|&s| s == 1) {
             return None;
         }
         let chunks = data.chunk();
+        // When several selected rows share a chunk, HDF5 can gather them together.
+        // Separate frame chunks instead benefit from one contiguous read per row.
+        if self.count[..first].iter().any(|&n| n > 1)
+            && chunks
+                .as_ref()
+                .is_some_and(|c| !(0..first).any(|a| self.count[a] > 1 && self.stride[a] >= c[a]))
+        {
+            return None;
+        }
         let mut counts = self.count.clone();
         for (axis, n) in counts.iter_mut().enumerate().skip(first) {
             let step = self.stride[axis];
@@ -126,29 +139,32 @@ impl Selection {
             .iter()
             .try_fold(1usize, |size, n| size.checked_mul(*n))?;
         let selected = self.count.iter().product::<usize>();
-        (expanded <= (64 << 20) / size_of::<T>() && expanded <= selected * 32).then_some(counts)
+        (expanded <= (64 << 20) / size_of::<T>() && expanded <= selected * 32)
+            .then_some((first, counts))
     }
 
     fn read<T>(&self, data: &hdf5::Dataset) -> Result<Vec<T>>
     where
         T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>,
     {
-        let Some(counts) = self.dense_counts::<T>(data) else {
+        let Some((first, counts)) = self.dense_counts::<T>(data) else {
             return Ok(data
                 .read_slice::<T, _, ndarray::IxDyn>(self.slab(&self.stride, &self.count))?
                 .into_raw_vec_and_offset()
                 .0);
         };
-        let slab = self.slab(&vec![1; counts.len()], &counts);
+        let mut steps = self.stride.clone();
+        steps[first..].fill(1);
+        let slab = self.slab(&steps, &counts);
         let dtype = data.dtype()?;
         if dtype.is::<u8>() {
-            self.decimate::<u8, T>(data, slab)
+            self.decimate::<u8, T>(data, slab, first)
         } else if dtype.is::<u16>() {
-            self.decimate::<u16, T>(data, slab)
+            self.decimate::<u16, T>(data, slab, first)
         } else if dtype.is::<f32>() {
-            self.decimate::<f32, T>(data, slab)
+            self.decimate::<f32, T>(data, slab, first)
         } else {
-            self.decimate::<T, T>(data, slab)
+            self.decimate::<T, T>(data, slab, first)
         }
     }
 
@@ -156,9 +172,10 @@ impl Selection {
         &self,
         data: &hdf5::Dataset,
         slab: Hyperslab,
+        first: usize,
     ) -> Result<Vec<T>> {
         let mut block = data.read_slice::<S, _, ndarray::IxDyn>(slab)?;
-        for (axis, &step) in self.stride.iter().enumerate() {
+        for (axis, &step) in self.stride.iter().enumerate().skip(first) {
             if self.count[axis] > 1 && step > 1 {
                 block.slice_axis_inplace(
                     ndarray::Axis(axis),
@@ -328,6 +345,32 @@ mod tests {
             .flat_map(|y| [2, 8, 14, 20, 26].map(|x| ((19 + y) * 31 + x) as f32))
             .collect();
         assert_eq!(selection.read::<f32>(&data).unwrap(), expected);
+    }
+
+    #[test]
+    fn sinogram_decimation_preserves_the_outer_view_stride() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = hdf5::File::create(dir.path().join("raw.h5")).unwrap();
+        let source =
+            ndarray::Array3::from_shape_fn((15, 3, 17), |(z, y, x)| (100 * z + 20 * y + x) as u16);
+        let data = file
+            .new_dataset_builder()
+            .with_data(&source)
+            .chunk((1, 3, 17))
+            .create("counts")
+            .unwrap();
+        let selection = Selection {
+            shape: vec![15, 3, 17],
+            start: vec![2, 1, 3],
+            count: vec![4, 1, 5],
+            stride: vec![4, 1, 3],
+        };
+        assert!(selection.dense_counts::<f32>(&data).is_some());
+        let want = source.slice(ndarray::s![2..15;4,1,3..16;3]).mapv(f32::from);
+        assert_eq!(
+            selection.read::<f32>(&data).unwrap(),
+            want.iter().copied().collect::<Vec<_>>()
+        );
     }
 
     #[test]
