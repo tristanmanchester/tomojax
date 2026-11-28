@@ -1,5 +1,6 @@
 //! Read worker-owned hyperslabs and compare the scientific samples before converting to gray.
 mod draw;
+mod marks;
 use super::{
     connection::{Inventory, Session},
     jobs, ledger,
@@ -15,6 +16,11 @@ use studio_core::pixels::{Encoding, Pixels};
 #[serde(deny_unknown_fields)]
 struct View {
     source: Sources,
+    #[serde(default)]
+    marks: Vec<marks::Mark>,
+    ticks: Option<bool>,
+    #[serde(default)]
+    grid: bool,
     mode: Option<String>,
     axis: Option<String>,
     index: Option<usize>,
@@ -50,6 +56,9 @@ struct Panel {
     labels: Vec<String>,
     axes: [String; 2],
     pixels: Vec<f64>,
+    window: Vec<[usize; 3]>,
+    normal: Option<usize>,
+    displayed: [usize; 2],
 }
 
 fn source(session: &Session, inventory: &Inventory, name: &str) -> Result<Value> {
@@ -196,6 +205,9 @@ impl Reader<'_> {
             1.
         };
         Ok(Panel {
+            window: serde_json::from_value(item["window"].clone())?,
+            normal: dim,
+            displayed: [r, c],
             title: title.into(),
             unit: a["unit"].as_str().unwrap_or("").into(),
             domain: a["domain"].as_str().unwrap_or("").into(),
@@ -212,6 +224,12 @@ impl Reader<'_> {
         let first = names.first().context("give a source")?;
         let mode = form.mode.as_deref().unwrap_or("planes");
         let src = source(self.session, self.inventory, first)?;
+        if !form.marks.is_empty() || form.ticks == Some(true) || form.grid {
+            ensure!(
+                matches!(mode, "planes" | "projection" | "sinogram" | "difference"),
+                "marks, ticks and grid need a plane view"
+            );
+        }
         if mode == "statistics" {
             ensure!(names.len() == 1, "statistics needs one source");
             let mut cmd =
@@ -345,7 +363,7 @@ impl Reader<'_> {
             .session
             .renders
             .fetch_add(panels.len().div_ceil(3) as u64, Ordering::Relaxed);
-        draw::render(&panels, form.limits, first)
+        draw::render(&panels, form, first)
     }
 }
 
