@@ -270,3 +270,25 @@ def test_submit_resolves_nested_and_top_level_paths(tmp_path, monkeypatch, nativ
         finally:
             checked(client, "cancel_job", job=job)
             (control / "hold").unlink()
+
+
+def test_difference_preserves_float64_storage_and_matches_reference(tmp_path, native):
+    geom = tj.simulate(size=8, n_views=12).scan.geometry
+    first, second = tmp_path / "left.nxs", tmp_path / "right.nxs"
+    delta = 2.0**-25
+    for path, value in [(first, 1.0 + delta), (second, 1.0)]:
+        tj.save(path, tj.Reconstruction(np.ones((8, 8, 8), np.float32), geom, "fbp", {}))
+        with h5py.File(path, "r+") as file:
+            volume = file["entry/volume/data"]
+            attrs = dict(volume.attrs)
+            shape = volume.shape
+            del file["entry/volume/data"]
+            file.create_dataset(
+                "entry/volume/data", data=np.full(shape, value, dtype="<f8")
+            ).attrs.update(attrs)
+    with native() as rust, connection(tmp_path) as python:
+        args = {"source": "left.nxs", "other": "right.nxs", "mode": "difference", "axis": "z"}
+        a, b = (checked(client, "view", **args) for client in (rust, python))
+        assert a["structuredContent"]["intensity_limits"] == [delta, delta]
+        assert a["structuredContent"] == b["structuredContent"]
+        np.testing.assert_array_equal(image(a["content"][1]), image(b["content"][1]))

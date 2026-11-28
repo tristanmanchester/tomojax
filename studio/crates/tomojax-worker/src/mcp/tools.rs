@@ -27,6 +27,7 @@ pub fn list(local: bool) -> Vec<Value> {
          json!({"job":{"type":"string"},"offset":{"type":"integer","minimum":0},"results":{"type":"string"}}),vec![]),
         ("control","Pause, resume or cancel a request, close a handle, or restart the session.",json!({"action":{"enum":["pause","resume","cancel","close","restart"]},"target":{"type":"string"}}),vec!["action"]),
         ("python","Run Python in the local TomoJAX executor. Use tj, np, handles, register, view and show with the session’s data.",json!({"code":{"type":"string"},"reset":{"type":"boolean"},"traceback":{"type":"boolean"}}),vec![]),
+        ("view","View registered planes and projections, subtract two volumes, or read statistics, a line profile or a pose table.",json!({"source":{"anyOf":[{"type":"string"},{"type":"array","items":{"type":"string"}}]},"mode":{"enum":["planes","projection","sinogram","difference","statistics","profile","pose_table"]},"axis":{"type":"string"},"index":{"type":"integer","minimum":0},"roi":{"type":"array"},"stride":{"type":"array"},"limits":{"type":"array"},"percentiles":{"type":"array"},"bins":{"type":"integer"},"other":{"type":"string"}}),vec!["source"]),
         ("download","Copy one worker file to a new file on the laptop. A relative destination uses the project directory.",
          json!({"path":{"type":"string"},"to":{"type":"string"}}),vec!["path","to"]),
         ("upload","Copy one laptop file to a new file on the connected machine. A relative source uses the project directory.",
@@ -58,6 +59,10 @@ pub async fn call(connections: &Connections, name: &str, args: Value) -> Result<
     let (mut data, session, mut content) = if name == "inspect" {
         let (session, inventory) = connections.open(false).await?;
         let (data, images) = super::inspect::inspect(&session, &inventory, args).await?;
+        (data, session, images)
+    } else if name == "view" {
+        let (session, inventory) = connections.open(true).await?;
+        let (data, images) = super::view::run(&session, &inventory, args).await?;
         (data, session, images)
     } else if name == "python" && connections.name == "local"
         || super::workflow::OPERATIONS.contains(&name)

@@ -10,6 +10,7 @@ mod parts;
 mod tasks;
 mod tools;
 mod transfers;
+mod view;
 mod workflow;
 
 use anyhow::{Result, bail};
