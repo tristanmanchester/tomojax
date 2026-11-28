@@ -6,6 +6,9 @@
       "$ref": "#/$defs/Credit"
     },
     {
+      "$ref": "#/$defs/PixelWindow"
+    },
+    {
       "$ref": "#/$defs/Request"
     },
     {
@@ -55,6 +58,22 @@
       },
       "required": [
         "credit"
+      ],
+      "additionalProperties": false
+    },
+    "PixelWindow": {
+      "title": "PixelWindow",
+      "description": "Set the shared limit on outstanding pixel bytes.",
+      "type": "object",
+      "properties": {
+        "window": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1048576
+        }
+      },
+      "required": [
+        "window"
       ],
       "additionalProperties": false
     },
@@ -601,6 +620,12 @@
           "items": {
             "$ref": "#/$defs/Device"
           }
+        },
+        "pixel_credit": {
+          "type": "integer",
+          "minimum": 65536,
+          "maximum": 1048576,
+          "default": 262144
         }
       },
       "required": [

@@ -558,3 +558,39 @@ def test_fetch_overtakes_paused_work_and_retires_queued_bytes(client, tmp_path):
     assert client.end("old")["error"]["kind"] == "canceled"
     client.end("cancel")
     client.shutdown()
+
+
+def test_resize_with_unacknowledged_blocks(client, tmp_path):
+    block = 65536
+    data = np.random.default_rng(79).standard_normal((768, 768), dtype=np.float32)
+    path = tmp_path / "large.npy"
+    np.save(path, data)
+    client.send(
+        "large",
+        "fetch",
+        storage=dict(type="npy", path=str(path)),
+        shape=list(data.shape),
+        encoding="float32",
+    )
+
+    def control(**message):
+        client.proc.stdin.write(json.dumps(message).encode() + b"\n")
+        client.proc.stdin.flush()
+
+    def outstanding(size):
+        while len(client.blocks.get("large", b"")) < size:
+            client.read()
+
+    outstanding(4 * block)
+    control(window=block)
+    control(credit=3 * block)
+    client.send("barrier", "status")
+    client.end("barrier")
+    assert len(client.blocks["large"]) == 4 * block
+    control(credit=block + 1)
+    assert "exceeds outstanding" in client.read()["message"]
+    control(credit=block)
+    outstanding(5 * block)
+    control(window=3 * block)
+    outstanding(7 * block)
+    client.shutdown()

@@ -13,32 +13,34 @@ pub(crate) struct WireReader<R> {
     credit: CreditWindow,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Flow {
+    Credit(usize),
+    Window(usize),
+}
+
+#[derive(Default)]
 struct CreditWindow {
-    available: usize,
-    limit: usize,
-    target: usize,
+    target: Option<usize>,
     rate: Option<f64>,
 }
 
 impl CreditWindow {
-    fn consumed(&mut self, bytes: usize, transfer: Duration) -> Result<usize, String> {
-        self.available = self
-            .available
-            .checked_sub(bytes)
-            .ok_or("Worker exceeded its pixel credit")?;
-        if bytes >= BLOCK / 2 && !transfer.is_zero() {
-            let rate = bytes as f64 / transfer.as_secs_f64();
-            // Smooth transfer time per byte, so a buffered block does not dominate.
-            let rate = self
-                .rate
-                .map_or(rate, |old| 1. / (0.75 / old + 0.25 / rate));
-            self.rate = Some(rate);
-            self.target =
-                ((rate * 0.1 / BLOCK as f64).round() as usize).clamp(1, self.limit / BLOCK) * BLOCK;
+    fn measure(&mut self, bytes: usize, transfer: Duration) -> Option<usize> {
+        let current = self.target?;
+        if bytes < BLOCK / 2 || transfer.is_zero() {
+            return None;
         }
-        let grant = self.target.saturating_sub(self.available);
-        self.available += grant;
-        Ok(grant)
+        let rate = bytes as f64 / transfer.as_secs_f64();
+        // Smooth transfer time per byte, so a buffered block does not dominate.
+        let rate = self
+            .rate
+            .map_or(rate, |old| 1. / (0.75 / old + 0.25 / rate));
+        self.rate = Some(rate);
+        let target = ((rate * 0.1 / BLOCK as f64).round() as usize).clamp(1, 16) * BLOCK;
+        self.target = Some(target);
+        (current != target).then_some(target)
     }
 }
 
@@ -47,18 +49,13 @@ impl<R: BufRead> WireReader<R> {
         Self {
             input,
             partial: HashMap::new(),
-            credit: CreditWindow {
-                available: 4 * BLOCK,
-                target: 4 * BLOCK,
-                limit: 4 * BLOCK,
-                rate: None,
-            },
+            credit: CreditWindow::default(),
         }
     }
 
     pub(crate) fn next(
         &mut self,
-        mut grant: impl FnMut(usize) -> Result<(), String>,
+        mut flow: impl FnMut(Flow) -> Result<(), String>,
     ) -> Result<Option<Response>, String> {
         let mut line = Vec::new();
         loop {
@@ -83,9 +80,7 @@ impl<R: BufRead> WireReader<R> {
                         if !(BLOCK..=1 << 20).contains(&initial) {
                             return Err("Invalid initial pixel credit".into());
                         }
-                        self.credit.available = initial;
-                        self.credit.target = initial;
-                        self.credit.limit = 1 << 20;
+                        self.credit.target = Some(initial);
                     }
                 }
                 Response::Block { request, bytes } => {
@@ -106,10 +101,10 @@ impl<R: BufRead> WireReader<R> {
                     self.input
                         .read_exact(&mut data[start..])
                         .map_err(|e| format!("Incomplete worker pixel block: {e}"))?;
-                    let credit = self.credit.consumed(*bytes, before.elapsed())?;
-                    if credit > 0 {
-                        grant(credit)?;
+                    if let Some(size) = self.credit.measure(*bytes, before.elapsed()) {
+                        flow(Flow::Window(size))?;
                     }
+                    flow(Flow::Credit(*bytes))?;
                     continue;
                 }
                 Response::Result {
@@ -141,26 +136,21 @@ impl<R: BufRead> WireReader<R> {
 mod tests {
     use super::*;
     #[test]
-    fn new_worker_grows_credit_and_legacy_worker_withholds_only_consumed_bytes() {
-        for (initial, limit) in [(4 * BLOCK, 4 * BLOCK), (BLOCK, 1 << 20)] {
-            let mut window = CreditWindow {
-                available: initial,
-                target: initial,
-                limit,
-                rate: None,
-            };
-            let mut granted = 0;
-            for _ in 0..4 {
-                granted += window
-                    .consumed(BLOCK, Duration::from_secs_f64(BLOCK as f64 / 1_200_000.))
-                    .unwrap();
-            }
-            assert_eq!(window.available, 2 * BLOCK);
-            assert_eq!(initial + granted, 6 * BLOCK);
-            for _ in 0..100 {
-                window.consumed(BLOCK, Duration::from_micros(500)).unwrap();
-            }
-            assert_eq!(window.available, limit);
+    fn size_window_from_tenths_of_a_second_of_block_transfer() {
+        let mut window = CreditWindow {
+            target: Some(4 * BLOCK),
+            rate: None,
+        };
+        let duration = Duration::from_secs_f64(BLOCK as f64 / 1_200_000.);
+        assert_eq!(window.measure(BLOCK, duration), Some(2 * BLOCK));
+        assert_eq!(window.measure(BLOCK, duration), None);
+        for _ in 0..100 {
+            window.measure(BLOCK, Duration::from_micros(500));
         }
+        assert_eq!(window.target, Some(1 << 20));
+        for _ in 0..100 {
+            window.measure(BLOCK, Duration::from_secs(2));
+        }
+        assert_eq!(window.target, Some(BLOCK));
     }
 }

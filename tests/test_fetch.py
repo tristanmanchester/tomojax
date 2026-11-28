@@ -1,14 +1,19 @@
 """Storage-order planes and the two wire encodings, checked with independent decoders."""
 
+from contextlib import ExitStack
 from io import BytesIO
+import json
+from threading import Condition
 
 import h5py
+from hypothesis import given, strategies as st
 import imagecodecs
 import numpy as np
 from PIL import Image
 import pytest
 
 from tomojax.cli import envelope as e
+from tomojax.cli._pixel_lane import PixelLane, Read  # check-public-imports: allow-private
 from tomojax.cli._pixels import fetch, gray_levels  # check-public-imports: allow-private
 from tomojax.wire.arrays import Hdf5, Npy
 
@@ -91,3 +96,43 @@ def test_levels_before_lossy_encoding():
     levels, limits = gray_levels(values, None)
     assert limits == (3, 5)
     np.testing.assert_array_equal(levels, [[0, 128, 255, 0, 0, 0]])
+
+
+@given(
+    st.lists(
+        st.tuples(st.sampled_from(["send", "ack", "resize"]), st.integers(1, 1048576)),
+        min_size=1,
+        max_size=80,
+    )
+)
+def test_outstanding_pixel_blocks_follow_window_and_acknowledgments(actions):
+    lane = PixelLane(Condition(), lambda _: None, lambda: None)
+    data = bytes(8 << 20)
+    read = Read(
+        "p",
+        None,
+        e.Fetch(storage=Npy("p.npy"), shape=(2048, 1024), encoding="float32"),
+        ExitStack(),
+    )
+    lane.active[read.id] = read
+    lane.ready[read] = e.Pixels((2048, 1024), "float32", len(data)), memoryview(data)
+    window, outstanding = 262144, 0
+    for action, n in actions:
+        if action == "resize":
+            window = max(65536, n)
+            lane.resize(window)
+        elif action == "ack" and outstanding:
+            amount = min(outstanding, n)
+            lane.acknowledge(amount)
+            outstanding -= amount
+        else:
+            block = lane.take()
+            if outstanding >= window:
+                assert not block
+            else:
+                header, payload = block.split(b"\n", 1)
+                assert (
+                    json.loads(header)["bytes"] == len(payload) == min(65536, window - outstanding)
+                )
+                outstanding += len(payload)
+                assert outstanding <= window

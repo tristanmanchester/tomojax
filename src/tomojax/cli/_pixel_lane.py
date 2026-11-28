@@ -15,7 +15,6 @@ from tomojax.cli._pixels import fetch
 from tomojax.errors import classify
 from tomojax.wire.progress import Error
 
-CREDIT = 262144
 BLOCK = 65536
 
 
@@ -37,7 +36,8 @@ class PixelLane:
         self.active: dict[str, Read] = {}
         self.waiting: dict[Read, None] = {}
         self.ready: dict[Read, tuple[e.Pixels, memoryview]] = {}
-        self.credit = CREDIT
+        self.window = e.INITIAL_PIXEL_CREDIT
+        self.outstanding = 0
         self.closed = False
 
     def admit(self, read: Read) -> None:
@@ -87,12 +87,13 @@ class PixelLane:
                         read.pins.close()
 
     def take(self) -> bytes:
-        if not self.ready or not self.credit:
+        available = self.window - self.outstanding
+        if not self.ready or available <= 0:
             return b""
         read = min(self.ready, key=lambda read: len(self.ready[read][1]))
         result, data = self.ready[read]
-        size = min(self.credit, BLOCK, len(data))
-        self.credit -= size
+        size = min(available, BLOCK, len(data))
+        self.outstanding += size
         if size == len(data):
             del self.ready[read], self.active[read.id]
             read.pins.close()
@@ -103,6 +104,10 @@ class PixelLane:
 
     def acknowledge(self, n: int) -> None:
         with self.changed:
-            if n > CREDIT - self.credit:
+            if n > self.outstanding:
                 raise ValueError("credit exceeds outstanding pixel bytes")
-            self.credit += n
+            self.outstanding -= n
+
+    def resize(self, size: int) -> None:
+        with self.changed:
+            self.window = size
