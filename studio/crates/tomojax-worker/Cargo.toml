@@ -12,6 +12,8 @@ static-hdf5 = ["tomojax-io/static-hdf5"]
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png"] }
 base64 = "0.22"
+jiff = { version = "1", default-features = false, features = ["std"] }
+tokio-util = "0.7"
 uuid = { version = "1", features = ["v4"] }
 rmcp = { version = "3.12", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "sync", "io-util", "time"] }

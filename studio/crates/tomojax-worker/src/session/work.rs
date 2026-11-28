@@ -69,6 +69,9 @@ impl Session {
                     .as_str()
                     .or_else(|| (kind == "list" && cmd["path"].is_null()).then_some("~"))
                     .context("expected path")?;
+                if kind == "download" {
+                    leases.extend(self.lease(path, cmd["artifact"].as_str())?);
+                }
                 Work::File(
                     kind.into(),
                     files::resolve(path)?,

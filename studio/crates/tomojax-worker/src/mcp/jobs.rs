@@ -72,11 +72,12 @@ fn alternatives<'a>(schema: &'a Value, result: &mut Vec<&'a Value>) {
     }
 }
 
-fn prepare(
+pub(super) fn prepare(
     value: &mut Value,
     schema: &Value,
     inventory: &Inventory,
     defs: &serde_json::Map<String, Value>,
+    ledger: Option<&super::ledger::Ledger>,
 ) -> Result<()> {
     let mut options = Vec::new();
     alternatives(schema, &mut options);
@@ -89,6 +90,12 @@ fn prepare(
             .iter()
             .any(|name| matches!(*name, "Npy" | "Member" | "PathInput"))
         {
+            return Ok(());
+        }
+        if s.starts_with('@')
+            && let Some(live) = ledger
+        {
+            *value = live.resolve(s, names.contains(&"PathInput") && !names.contains(&"Npy"))?;
             return Ok(());
         }
         ensure!(
@@ -146,14 +153,14 @@ fn prepare(
             {
                 *value = json!(path(inventory, s)?);
             } else if let Some(field) = definition["properties"].get(key) {
-                prepare(value, field, inventory, defs)?;
+                prepare(value, field, inventory, defs, ledger)?;
             }
         }
     } else if let Some(items) = value.as_array_mut()
         && let Some(item) = options.iter().find_map(|s| s.get("items"))
     {
         for value in items {
-            prepare(value, item, inventory, defs)?;
+            prepare(value, item, inventory, defs, ledger)?;
         }
     }
     Ok(())
@@ -189,7 +196,7 @@ pub async fn run(
             .get(tag)
             .context("Unknown tomography operation")?
             .1;
-        prepare(&mut operation, planned, inventory, defs)?;
+        prepare(&mut operation, planned, inventory, defs, None)?;
         let id = uuid::Uuid::new_v4().simple().to_string();
         let directory = root(results.as_deref())?.join("jobs").join(&id);
         let line = json!({"id":format!("{id}.1"),"command":{"type":"run","operation":operation}});
@@ -239,10 +246,16 @@ pub async fn run(
 /// Include just the reachable parameter records. A detached input can also be
 /// supplied as a file name at any field that accepts stored arrays or objects.
 pub fn submission_schema() -> Value {
-    use std::collections::{BTreeSet, VecDeque};
     let catalog = super::describe::workflows();
     let names = OPERATIONS.map(|tag| catalog[tag].0);
-    let mut queue = VecDeque::from(names.map(str::to_owned));
+    let defs = parameter_defs(&names, false);
+    let choices = names.map(|name| json!({"$ref":format!("#/$defs/{name}")}));
+    json!({"type":"object","properties":{"operation":{"oneOf":choices},"results":{"type":"string"}},
+        "required":["operation"],"additionalProperties":false,"$defs":defs})
+}
+pub(super) fn parameter_defs(names: &[&str], session: bool) -> serde_json::Map<String, Value> {
+    use std::collections::{BTreeSet, VecDeque};
+    let mut queue: VecDeque<_> = names.iter().map(|s| s.to_string()).collect();
     let mut defs = serde_json::Map::new();
     while let Some(name) = queue.pop_front() {
         if defs.contains_key(&name) {
@@ -261,15 +274,13 @@ pub fn submission_schema() -> Value {
             required.retain(|k| k != "type");
         }
         let mut needed = BTreeSet::new();
-        path_fields(&mut node, &mut needed);
+        path_fields(&mut node, &mut needed, session);
         queue.extend(needed);
         defs.insert(name, node);
     }
-    let choices = names.map(|name| json!({"$ref":format!("#/$defs/{name}")}));
-    json!({"type":"object","properties":{"operation":{"oneOf":choices},"results":{"type":"string"}},
-        "required":["operation"],"additionalProperties":false,"$defs":defs})
+    defs
 }
-fn path_fields(node: &mut Value, needed: &mut std::collections::BTreeSet<String>) {
+fn path_fields(node: &mut Value, needed: &mut std::collections::BTreeSet<String>, session: bool) {
     match node {
         Value::Object(map) => {
             if let Some(name) = map
@@ -278,7 +289,11 @@ fn path_fields(node: &mut Value, needed: &mut std::collections::BTreeSet<String>
                 .and_then(|r| r.strip_prefix("#/$defs/"))
             {
                 if name == "Member" {
-                    *node = Value::Bool(false);
+                    *node = if session {
+                        json!({"type":"string"})
+                    } else {
+                        Value::Bool(false)
+                    };
                     return;
                 }
                 needed.insert(name.into());
@@ -289,13 +304,13 @@ fn path_fields(node: &mut Value, needed: &mut std::collections::BTreeSet<String>
                 // Paths can be passed as strings, without a wire type discriminator.
                 map.remove("discriminator");
                 for child in map.values_mut() {
-                    path_fields(child, needed);
+                    path_fields(child, needed, session);
                 }
             }
         }
         Value::Array(items) => {
             for item in items {
-                path_fields(item, needed);
+                path_fields(item, needed, session);
             }
         }
         _ => {}
