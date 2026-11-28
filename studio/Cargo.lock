@@ -3456,6 +3456,7 @@ dependencies = [
  "stateright",
  "tempfile",
  "toml",
+ "toml_edit",
  "zstd",
  "zune-jpeg",
 ]
@@ -3709,6 +3710,7 @@ dependencies = [
  "indexmap",
  "toml_datetime",
  "toml_parser",
+ "toml_writer",
  "winnow",
 ]
 

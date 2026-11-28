@@ -17,6 +17,7 @@ tempfile.workspace = true
 sha2 = "0.10"
 flate2 = "1"
 blake3 = "1"
+toml_edit = "0.25"
 toml = { version = "1", default-features = false, features = ["parse", "display", "serde", "std"] }
 libc = "0.2"
 fastrand = "2"

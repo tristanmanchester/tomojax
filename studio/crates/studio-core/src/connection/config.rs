@@ -93,14 +93,28 @@ impl Profile {
             .truncate(false)
             .open(path.with_extension("lock"))?;
         lock.lock()?;
-        let mut catalog = Self::catalog()?;
+        let text = match fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let mut doc = text
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| Failure::blocked(e.to_string()))?;
+        let catalog: BTreeMap<String, Self> =
+            toml::from_str(&text).map_err(|e| Failure::blocked(e.to_string()))?;
         if catalog.get(name) != prior {
             return Err(Failure::blocked(
                 "This connection has changed. Reopen it before saving.",
             ));
         }
-        catalog.insert(name.to_owned(), entry.clone());
-        let text = toml::to_string_pretty(&catalog).map_err(|e| Failure::blocked(e.to_string()))?;
+        let table = toml::to_string(entry)
+            .map_err(|e| Failure::blocked(e.to_string()))?
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| Failure::blocked(e.to_string()))?
+            .into_table();
+        doc[name] = toml_edit::Item::Table(table);
+        let text = doc.to_string();
         let mut stage = tempfile::NamedTempFile::new_in(parent)?;
         stage.write_all(text.as_bytes())?;
         stage.as_file().sync_all()?;
