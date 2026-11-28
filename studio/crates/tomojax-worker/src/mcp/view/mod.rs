@@ -1,6 +1,7 @@
 //! Read worker-owned hyperslabs and compare the scientific samples before converting to gray.
 mod draw;
 mod marks;
+pub(super) use marks::schema as marks_schema;
 mod placement;
 pub(super) use placement::Placements;
 mod poses;

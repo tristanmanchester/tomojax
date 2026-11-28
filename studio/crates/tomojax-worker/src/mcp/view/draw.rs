@@ -133,7 +133,7 @@ impl Cell {
             && (self.top..self.top + self.height).contains(&(y as usize))
     }
 }
-fn advance(text: &str) -> i32 {
+pub(super) fn advance(text: &str) -> i32 {
     text.chars()
         .map(|c| {
             let i = u8::try_from(c as u32).unwrap_or(0) as u32;
@@ -319,9 +319,13 @@ fn outlines(canvas: &mut RgbImage, cell: Cell, p: &Panel) {
         }
     }
 }
-fn panel_labels(p:&Panel,[lo,hi]:[f64;2],decorated:bool)->Vec<String>{
-    let scale=format!("limits [{}, {}] {}", number(lo), number(hi), p.unit);
-    std::iter::once(&p.title).chain(&p.labels).chain(std::iter::once(&scale)).flat_map(|s|lines(s,if decorated{70}else{49})).collect()
+fn panel_labels(p: &Panel, [lo, hi]: [f64; 2], decorated: bool) -> Vec<String> {
+    let scale = format!("limits [{}, {}] {}", number(lo), number(hi), p.unit);
+    std::iter::once(&p.title)
+        .chain(&p.labels)
+        .chain(std::iter::once(&scale))
+        .flat_map(|s| lines(s, if decorated { 70 } else { 49 }))
+        .collect()
 }
 
 pub(super) fn render(
@@ -351,7 +355,7 @@ pub(super) fn render(
         let mut labels = vec![];
         for (j, p) in group.iter().enumerate() {
             let [lo, hi] = ranges[batch * 3 + j];
-            labels.push(panel_labels(p,[lo,hi],decorated));
+            labels.push(panel_labels(p, [lo, hi], decorated));
             summaries.push(json!({"array":p.title,"labels":p.labels,"unit":p.unit,"intensity_limits":[lo,hi],"image":id}));
         }
         let (cell_w, cell_h) = if decorated {

@@ -8,6 +8,7 @@ mod inspect;
 mod jobs;
 mod ledger;
 mod parts;
+mod schema;
 mod tasks;
 mod tools;
 mod transfers;
@@ -64,7 +65,15 @@ impl Server {
                 let kind = wire
                     .and_then(|e| e["kind"].as_str())
                     .unwrap_or("invalid_parameter");
+                let invalid = error.downcast_ref::<schema::ArgumentError>();
+                let checkpoint = wire.and_then(|w| w["checkpoint"].as_str());
                 let next = match kind {
+                    _ if invalid.is_some() => invalid.unwrap().next.clone(),
+                    _ if checkpoint.is_some() => format!(
+                        "Its state is saved in {}: call {name} again with the same arguments, on the same input, to resume (inspect shows what the checkpoint holds).",
+                        checkpoint.unwrap()
+                    ),
+                    "superseded" => "Use the newer job.".into(),
                     "out_of_memory" => {
                         "Try dry_run, slab reconstruction, binning or different devices.".into()
                     }
@@ -76,8 +85,14 @@ impl Server {
                     "internal" => "Check status for worker and device information.".into(),
                     _ => format!("Check the {name} tool parameters and retry."),
                 };
-                json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],
-                    "structuredContent":{"kind":kind,"path":wire.and_then(|e|e.get("path")),"message":message,"next":next},"isError":true})
+                let path = invalid
+                    .map(|e| e.path.as_str())
+                    .or_else(|| wire.and_then(|e| e["path"].as_str()));
+                let mut data = json!({"kind":kind,"path":path,"message":message,"next":next});
+                if let Some(file) = checkpoint {
+                    data["checkpoint"] = json!(file);
+                }
+                json!({"content":[{"type":"text","text":format!("{kind}: {message}. {next}")}],"structuredContent":data,"isError":true})
             }
         };
         self.parts.lock().unwrap().bounded(reply)

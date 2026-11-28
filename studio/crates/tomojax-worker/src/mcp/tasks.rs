@@ -122,6 +122,10 @@ impl rmcp::Service<rmcp::RoleServer> for Service {
         );
         rmcp::Service::handle_request(&self.0, req, ctx)
             .await
+            .map(|result| match result {
+                rmcp::model::ServerResult::TaskAckResult(_) => rmcp::model::CustomResult::new(json!({"resultType":"complete","_meta":{"io.modelcontextprotocol/serverInfo":identity()}})).into(),
+                result => result,
+            })
             .map_err(|mut e| {
                 if task && e.code == rmcp::model::ErrorCode::MISSING_REQUIRED_CLIENT_CAPABILITY {
                     e.message = "Declare the tasks extension on this request".into();

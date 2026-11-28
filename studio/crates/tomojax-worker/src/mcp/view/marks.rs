@@ -9,16 +9,65 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 #[derive(Clone, Deserialize)]
+pub(super) struct Mark {
+    label: Option<String>,
+    color: Option<Color>,
+    #[serde(flatten)]
+    shape: Shape,
+}
+#[derive(Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
-pub(super) enum Mark {
+enum Shape {
     Point {
         at: Vec<f64>,
-        label: Option<String>,
-        color: Option<Color>,
         snap: Option<Snap>,
         within: Option<f64>,
     },
+    Text {
+        at: Vec<f64>,
+    },
+    Box {
+        corners: [Vec<f64>; 2],
+    },
+    Circle {
+        at: Vec<f64>,
+        radius: f64,
+    },
+    Arrow {
+        from: Vec<f64>,
+        to: Vec<f64>,
+    },
+    Polyline {
+        points: Vec<Vec<f64>>,
+    },
+    Polygon {
+        points: Vec<Vec<f64>>,
+    },
 }
+impl Shape {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Point { .. } => "point",
+            Self::Text { .. } => "text",
+            Self::Box { .. } => "box",
+            Self::Circle { .. } => "circle",
+            Self::Arrow { .. } => "arrow",
+            Self::Polyline { .. } => "polyline",
+            Self::Polygon { .. } => "polygon",
+        }
+    }
+    fn positions(&self) -> Vec<&[f64]> {
+        match self {
+            Self::Point { at, .. } | Self::Text { at } | Self::Circle { at, .. } => vec![at],
+            Self::Box { corners } => corners.iter().map(Vec::as_slice).collect(),
+            Self::Arrow { from, to } => vec![from, to],
+            Self::Polygon { points } | Self::Polyline { points } => {
+                points.iter().map(Vec::as_slice).collect()
+            }
+        }
+    }
+}
+mod shapes;
 mod snapping;
 use snapping::Snap;
 #[derive(Clone, Copy, Deserialize)]
@@ -55,12 +104,58 @@ fn significant(v: f64) -> f64 {
         format!("{v:.5e}").parse().unwrap_or(v)
     }
 }
+pub(crate) fn schema() -> Value {
+    let numbers = json!({"type":"array","items":{"type":"number"}});
+    let position = json!({"oneOf":[numbers,{"type":"object","properties":{"pixel":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"number"}},"image":{"type":"string"}},"required":["image","pixel"],"additionalProperties":false}]});
+    let radius = json!({"type":"number","exclusiveMinimum":0});
+    let mut choices = Vec::new();
+    for (kind, keys) in [
+        ("point", vec!["at"]),
+        ("text", vec!["at", "label"]),
+        ("circle", vec!["at", "radius"]),
+        ("box", vec!["corners"]),
+        ("arrow", vec!["from", "to"]),
+        ("polygon", vec!["points"]),
+        ("polyline", vec!["points"]),
+    ] {
+        let mut fields = json!({"type":{"const":kind},"label":{"type":"string"},"color":{"enum":["yellow","cyan","magenta","orange","green","red"]}});
+        for &key in &keys {
+            fields[key] = match key {
+                "corners" => json!({"type":"array","items":position,"minItems":2,"maxItems":2}),
+                "points" => {
+                    json!({"type":"array","items":position,"minItems":if kind=="polygon"{3}else{2}})
+                }
+                "radius" => radius.clone(),
+                "label" => json!({"type":"string","minLength":1}),
+                _ => position.clone(),
+            };
+        }
+        if kind == "point" {
+            fields["snap"] = json!({"enum":["peak","trough","edge"]});
+            fields["within"] = radius.clone();
+        }
+        let required = std::iter::once("type").chain(keys).collect::<Vec<_>>();
+        choices.push(json!({"type":"object","properties":fields,"required":required,"additionalProperties":false}));
+    }
+    json!({"type":"array","items":{"oneOf":choices}})
+}
 pub(super) fn reports(marks: &[Mark]) -> Vec<Value> {
-    marks.iter().map(|Mark::Point{at,label,..}|{
-        let mut record=json!({"type":"point","positions":[at.iter().map(|v|round(*v,2)).collect::<Vec<_>>()],"panels":[]});
-        if let Some(label)=label{record["label"]=json!(label);}
-        record
-    }).collect()
+    marks
+        .iter()
+        .map(|m| {
+            let positions = m
+                .shape
+                .positions()
+                .into_iter()
+                .map(|p| p.iter().map(|v| round(*v, 2)).collect::<Vec<_>>())
+                .collect::<Vec<_>>();
+            let mut report = json!({"type":m.shape.kind(),"positions":positions,"panels":[]});
+            if let Some(label) = &m.label {
+                report["label"] = json!(label)
+            }
+            report
+        })
+        .collect()
 }
 pub(super) struct Overlay<'a> {
     pub panel: &'a Panel,
@@ -209,21 +304,41 @@ fn percentile(ordered: &[f64], value: f64) -> f64 {
 }
 
 impl Overlay<'_> {
+    fn measure(&self, reply: &mut Value, [r, c]: [f64; 2], raw: f64, extended: bool) -> Vec<f64> {
+        let [x, y] = self.cell.pixel(r, c);
+        reply["drawn"] = json!(true);
+        reply["image"] = json!(self.image);
+        reply["pixel"] = json!([round(x, 1), round(y, 1)]);
+        let value = significant(raw);
+        reply[if extended { "mean" } else { "value" }] = json!(value);
+        let sorted = order(self.panel.pixels.iter().copied());
+        if value.is_finite() && !sorted.is_empty() {
+            reply["percentile"] = json!(percentile(&sorted, value));
+            let [lo, hi] = self.limits;
+            reply["display"] = if hi > lo {
+                json!(round((value - lo) / (hi - lo), 2))
+            } else {
+                Value::Null
+            };
+        }
+        sorted
+    }
     pub fn draw(&self, canvas: &mut RgbImage, mark: &Mark) -> Result<Value> {
-        let Mark::Point {
-            at,
-            color,
-            label,
-            snap,
-            within,
-        } = mark;
         let p = self.panel;
         let c = self.cell;
+        let label = &mark.label;
+        let tint = mark.color.unwrap_or(Color::Yellow).pixel();
         ensure!(
-            at.len() == p.window.len(),
+            mark.shape
+                .positions()
+                .iter()
+                .all(|at| at.len() == p.window.len()),
             "give one per source axis ({}) as array indices",
             p.source_axes.join(", ")
         );
+        let Shape::Point { at, snap, within } = &mark.shape else {
+            return shapes::draw(self, mark, canvas, tint);
+        };
         let mut reply = json!({"panel":self.index});
         if let Some(d) = p.normal {
             let distance = (at[d] - p.window[d][0] as f64).abs();
@@ -244,7 +359,7 @@ impl Overlay<'_> {
             None => [r, col],
         };
         let [x, y] = c.pixel(r, col);
-        let tint = color.unwrap_or(Color::Yellow).pixel();
+
         let (cx, cy) = (x as i32, y as i32);
         // Two concentric nine-pixel point symbols, drawn with a dark halo.
         let halo = [56, 254, 254, 511, 495, 511, 254, 254, 56];
@@ -262,22 +377,8 @@ impl Overlay<'_> {
         if let Some(label) = label {
             draw::label(canvas, cx + 7, cy - 17, label, tint);
         }
-        reply["drawn"] = json!(true);
-        reply["image"] = json!(self.image);
-        reply["pixel"] = json!([round(x, 1), round(y, 1)]);
         let raw = p.pixels[r.round_ties_even() as usize * p.width + col.round_ties_even() as usize];
-        let value = significant(raw);
-        reply["value"] = json!(value);
-        let ordered = order(p.pixels.iter().copied());
-        if value.is_finite() && !ordered.is_empty() {
-            reply["percentile"] = json!(percentile(&ordered, value));
-            let [lo, hi] = self.limits;
-            reply["display"] = if hi > lo {
-                json!(round((value - lo) / (hi - lo), 2))
-            } else {
-                Value::Null
-            };
-        }
+        let ordered = self.measure(&mut reply, [r, col], raw, false);
         nearby(&mut reply, p, [r, col], &ordered);
         Ok(reply)
     }

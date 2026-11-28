@@ -273,4 +273,7 @@ def test_large_python_images_and_value_keep_worker_alive(tmp_path):
         reply = c.call("python", code="show(np.eye(3))\nregister(np.arange(7))\n'x' * (17 << 20)")
         assert reply["isError"] and "too large" in reply["content"][0]["text"]
         assert python(c, f"[list(handles), int(handles[{saved!r}].sum())]")["value"] == [[saved], 3]
-        assert len(list((tmp_path / "cache").rglob("*.npy"))) == 1
+        # Only the registered array survives the failed publication. The worker chooses
+        # the session directory on the machine where it runs.
+        count = "import tempfile\nfrom pathlib import Path\nlen(list(Path(tempfile.gettempdir()).rglob('*.npy')))"
+        assert python(c, count)["value"] == 1
