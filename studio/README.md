@@ -175,7 +175,7 @@ Select a result and choose its output format in Explore. **TomoJAX result (.nxs)
 
 ## Verification
 
-From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio. It captures the Start screen, each workspace of a small simulated project, the remote file browser, transfers, connection states, and seven Activity states from a worker using a test Slurm scheduler into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
+From the repository root, `just studio-check` runs formatting, Clippy and the tests, and `just studio-verify` builds Studio. It captures the Start screen, each workspace of a small simulated project, Prepare and Reconstruct again with TomoJAX ready, the remote file browser, transfers, connection states, and seven Activity states from a worker using a test Slurm scheduler into `.artifacts/studio-snap/`. It fails on a missing, wrongly sized or blank image; look at the images to judge a visual change. The underlying commands:
 
 ```sh
 export RUSTUP_TOOLCHAIN=1.99.1
