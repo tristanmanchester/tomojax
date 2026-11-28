@@ -74,8 +74,8 @@ fn gather<T: Copy + Send + From<u8>, const N: usize>(
     convert: fn([u8; N]) -> T,
 ) -> Option<Vec<T>> {
     let mut data = vec![0u8.into(); offsets.len() * columns];
-    // Network filesystems can have many small reads in flight even on one CPU.
-    let per_thread = offsets.len().div_ceil(8);
+    // Overlap NFS round trips while keeping enough reads per lane to amortize a thread.
+    let per_thread = offsets.len().div_ceil(32).max(64);
     thread::scope(|scope| {
         let mut tasks = Vec::new();
         for (starts, output) in offsets
