@@ -37,6 +37,8 @@ struct World {
     submit: Submit,
     queue: Queue,
     runner_exited: bool,
+    // The batch shell exited 0: the runner returned after recording `completed`.
+    finished: bool,
     requeued: bool,
     accounting: bool,
     // 0 connected, 1 offline, 2 reconnected
@@ -62,6 +64,9 @@ impl World {
                 Queue::Reused => return Account::Allocated,
                 _ => {}
             }
+        }
+        if self.accounting && self.finished {
+            return Account::Finished;
         }
         Account::Absent {
             accounted: self.accounting,
@@ -202,6 +207,13 @@ impl World {
                     runner_exited: true,
                     ..self
                 });
+                if f.end == Some(Outcome::Completed) {
+                    next.push(Self {
+                        runner_exited: true,
+                        finished: true,
+                        ..self
+                    });
+                }
             }
             _ => {}
         }
@@ -396,6 +408,7 @@ fn every_bounded_interleaving() {
     let reverse: Vec<_> = order.iter().copied().rev().collect();
     let after = reachable(&reverse, &nodes, &worlds, |n| &n.parents);
     let mut triples = HashSet::new();
+    let mut late = HashSet::new();
     let mut schedules = 0_u64;
     for (i, w) in worlds.iter().enumerate() {
         for first in &before[i] {
@@ -406,15 +419,58 @@ fn every_bounded_interleaving() {
             }
         }
     }
+    // The runner's files (its record, reply log and result folder) are written on the
+    // compute node and can reach a reader elsewhere late, as Diamond's NFS view of GPFS
+    // showed: as of any earlier moment, and the renamed result folder even after the end
+    // record. Files that workers write are current. Both observations see the same view.
+    for (i, w) in worlds.iter().enumerate() {
+        for seen in &before[i] {
+            for hidden in [false, true] {
+                if hidden && !seen.receipt {
+                    continue;
+                }
+                let view = Files {
+                    runner: seen.runner,
+                    attempt: seen.attempt,
+                    end: seen.end,
+                    receipt: seen.receipt && !hidden,
+                    ..w.files
+                };
+                late.insert((view, w.account()));
+            }
+        }
+    }
+    for (view, lookup) in &late {
+        let n = views.len();
+        let read = *views
+            .entry(*view)
+            .or_insert_with(|| fixture(&root.path().join(n.to_string()), *view));
+        assert_eq!(read, *view);
+        let result = observed(*view, *lookup, *view).unwrap();
+        assert_eq!(
+            result == State::Completed,
+            view.receipt,
+            "{view:?} {lookup:?}"
+        );
+        // The launcher reports success, or the runner recorded completion, only after
+        // the result was published: the job finished.
+        if *lookup == Account::Finished || view.end == Some(Outcome::Completed) {
+            assert!(
+                !matches!(result, State::Interrupted | State::Canceled | State::Failed),
+                "a finished job read {result:?} before its files were visible: {view:?} {lookup:?}"
+            );
+        }
+    }
     for (first, lookup, last, oracle) in &triples {
         assert_eq!(observed(*first, *lookup, *last), *oracle);
     }
     eprintln!(
-        "{} writer states, {} disk views, {} reader placements, {} distinct reader inputs with oracle",
+        "{} writer states, {} disk views, {} reader placements, {} distinct reader inputs with oracle, {} with the runner's files late",
         worlds.len(),
         views.len(),
         schedules,
-        triples.len()
+        triples.len(),
+        late.len()
     );
 }
 

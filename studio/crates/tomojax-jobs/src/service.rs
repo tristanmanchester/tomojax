@@ -9,7 +9,7 @@ use crate::{
         publish_script, read_claim,
     },
     slurm::{self, Report},
-    state::{Account, Launch, State, needs_withdrawal, observed},
+    state::{Account, Launch, Outcome, State, needs_withdrawal, observed},
 };
 use serde_json::{Value, json};
 use std::{
@@ -285,6 +285,10 @@ pub fn status(dir: &Path) -> io::Result<Value> {
             && let Some(err) = optional(fs::read(dir.join("submission-error.json")))?
         {
             serde_json::from_slice(&err)?
+        } else if state == State::Running
+            && (report.account == Account::Finished || after.end == Some(Outcome::Completed))
+        {
+            "finished; its result is not visible on this machine yet".into()
         } else {
             warning.unwrap_or(report.detail)
         };
