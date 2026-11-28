@@ -94,15 +94,7 @@ class Pixels(Record, tag="pixels"):
 
 
 type Command = (
-    Fetch
-    | ExecutionInput
-    | Describe
-    | Devices
-    | Close
-    | Release
-    | ControlRequest
-    | Status
-    | Shutdown
+    ExecutionInput | Describe | Devices | Close | Release | ControlRequest | Status | Shutdown
 )
 
 
@@ -110,8 +102,14 @@ class Request(Record):
     """One client line. A non-null channel enables superseding."""
 
     id: Id
-    command: Command
+    command: Fetch | Command
     channel: Id | None = None
+
+
+class ExecutorRequest(Request):
+    """The subset of worker commands forwarded to Python."""
+
+    command: Command
 
 
 class Versions(Record):

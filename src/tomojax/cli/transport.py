@@ -21,7 +21,6 @@ import msgspec
 
 import tomojax
 from tomojax.cli import envelope as e, execution as ex, operations as op
-from tomojax.cli._pixel_lane import PixelLane
 from tomojax.cli._session import Session
 from tomojax.wire import progress as w
 
@@ -40,7 +39,6 @@ class _Outbox:
     def __init__(self, wake: socket.socket) -> None:
         self.wake = wake
         self.lock = Condition()
-        self.pixels = PixelLane(self.lock, self.send, self.notify)
         self.queue: deque[tuple[bytes, tuple[str, int] | None]] = deque()
         self.size = 0
         self.lost = False
@@ -69,7 +67,7 @@ class _Outbox:
     def take(self) -> memoryview:
         with self.lock:
             if not self.queue:
-                return memoryview(self.pixels.take())
+                return memoryview(b"")
             data, _ = self.queue.popleft()
             self.size -= len(data)
             return memoryview(data)
@@ -92,7 +90,7 @@ class _Input:
     def __init__(self) -> None:
         self.buffer = bytearray()
         self.discard = False
-        self.decode = msgspec.json.Decoder(e.Request)
+        self.decode = msgspec.json.Decoder(e.ExecutorRequest)
 
     def feed(self, data: bytes, session: Session) -> None:
         for index, chunk in enumerate(data.split(b"\n")):
@@ -114,25 +112,9 @@ class _Input:
         try:
             request = self.decode.decode(self.buffer)
         except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as err:
-            self.flow_control(session, err)
+            self.reject(session, err)
         else:
             session.admit(request)
-
-    def flow_control(self, session: Session, request_error: Exception) -> None:
-        try:
-            credit = msgspec.json.decode(self.buffer, type=e.Credit)
-        except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
-            try:
-                window = msgspec.json.decode(self.buffer, type=e.PixelWindow)
-            except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
-                self.reject(session, request_error)
-            else:
-                session.pixels.resize(window.window)
-        else:
-            try:
-                session.pixels.acknowledge(credit.credit)
-            except ValueError as invalid:
-                self.reject(session, invalid)
 
     def reject(self, session: Session, err: Exception) -> None:
         rid = None
@@ -208,7 +190,6 @@ def serve(
         writer,
         tempfile.TemporaryDirectory(prefix="tomojax-") as root,
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-executor") as executor,
-        ThreadPoolExecutor(max_workers=4, thread_name_prefix="tomojax-io") as io,
     ):
         writer.setblocking(False)
         box = _Outbox(writer)
@@ -217,9 +198,7 @@ def serve(
         inventory = executor.submit(ready).result() if callable(ready) else ready
         schema = resources.files("tomojax.cli").joinpath("parameters.json").read_bytes()
         inventory = msgspec.structs.replace(inventory, root=root, schema=sha256(schema).hexdigest())
-        session = Session(Path(root), execute, box.send, inventory, description, box.pixels)
-        for _ in range(4):
-            io.submit(box.pixels.work).add_done_callback(_executor_done)
+        session = Session(Path(root), execute, box.send, inventory, description, box.lock)
         box.send(inventory)
         running = executor.submit(session.work)
         running.add_done_callback(_executor_done)
@@ -228,7 +207,6 @@ def serve(
         finally:
             session.stop()
             running.result()
-            io.shutdown()
             session.close()
 
 
@@ -284,7 +262,6 @@ def _ready() -> e.Ready:
         2,
         e.Versions(tomojax.__version__, jax.__version__, cuda, cupy),
         (
-            "fetch",
             "describe",
             "devices",
             "status",

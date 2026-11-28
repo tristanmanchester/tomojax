@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 from functools import partial
 import logging
 from pathlib import Path
+from threading import Condition
 
 import msgspec
 
 from tomojax import progress
 from tomojax.cli import envelope as e, execution as ex, operations as op, products as p
-from tomojax.cli._pixel_lane import PixelLane, Read
 from tomojax.cli._staging import Stages
 from tomojax.core.input_files import InputFiles, reading
 from tomojax.errors import Canceled, classify
@@ -82,7 +82,7 @@ class Session:
         emit: Callable[[e.Response], None],
         ready: e.Ready,
         description: e.Description,
-        pixels: PixelLane,
+        changed: Condition,
     ) -> None:
         self.root = root
         self.execute = execute
@@ -98,14 +98,13 @@ class Session:
         self.handles: dict[str, Handle] = {}
         self.artifacts: dict[str, Artifact] = {}
         self.snapshots: dict[tuple[str, str], p.Snapshot] = {}
-        self.pixels = pixels
-        self.changed = pixels.changed
+        self.changed = changed
         self.closing = False
 
-    def admit(self, request: e.Request) -> None:
+    def admit(self, request: e.ExecutorRequest) -> None:
         with self.changed:
             rid, cmd = request.id, request.command
-            if rid in self.seen or rid in self.pixels.active:
+            if rid in self.seen:
                 self.emit(e.ProtocolError("invalid_request", "duplicate id", rid))
                 return
             channel = None
@@ -114,15 +113,13 @@ class Session:
                     raise ValueError("request and channel IDs are limited to 256 UTF-8 bytes")
                 if cmd.__struct_config__.tag not in self.ready.capabilities:
                     raise ValueError("command unavailable in this worker")
-                if len(self.seen) >= 100000 and not isinstance(cmd, e.Shutdown | e.Fetch):
+                if len(self.seen) >= 100000 and not isinstance(cmd, e.Shutdown):
                     raise ValueError("session id limit reached")
                 if request.channel:
                     channel = e.ChannelRevision(
                         request.channel, self.revisions.get(request.channel, 0) + 1
                     )
-                if isinstance(cmd, e.Fetch):
-                    self._admit_fetch(rid, channel, cmd)
-                elif isinstance(
+                if isinstance(
                     cmd,
                     e.Describe
                     | e.Devices
@@ -147,16 +144,6 @@ class Session:
                     self.emit(e.ErrorReply(rid, channel, classify(err)))
                 else:
                     self.emit(e.ProtocolError("invalid_request", str(err), rid))
-
-    def _admit_fetch(self, rid: str, channel: e.ChannelRevision | None, cmd: e.Fetch) -> None:
-        if not channel and sum(r.channel is None for r in self.pixels.active.values()) >= 8:
-            raise ValueError("eight unchanneled fetches pending")
-        with ExitStack() as pins:
-            ref = cmd.storage
-            if isinstance(ref, Npy) and ref.artifact:
-                _ = self._pin_artifact(ref, pins)
-            self._accept(rid, channel, permanent=False)
-            self.pixels.admit(Read(rid, channel, cmd, pins.pop_all()))
 
     def python_inputs(self, cmd: op.Python) -> op.Python:
         """Bind the live identifiers under the admission lock, before close can retire them."""
@@ -236,16 +223,10 @@ class Session:
         artifact.resource.pin(pins)
         return artifact
 
-    def _accept(
-        self, rid: str, channel: e.ChannelRevision | None, *, permanent: bool = True
-    ) -> None:
-        if permanent:
-            self.seen.add(rid)
+    def _accept(self, rid: str, channel: e.ChannelRevision | None) -> None:
+        self.seen.add(rid)
         if channel:
             self.revisions[channel.name] = channel.revision
-            for read in tuple(self.pixels.active.values()):
-                if read.channel and read.channel.name == channel.name:
-                    self.pixels.cancel(read, "superseded")
             for job in list(self.jobs.values()):
                 if job.channel and job.channel.name == channel.name:
                     self._stop_job(job, superseded=True)
@@ -295,7 +276,6 @@ class Session:
     def stop(self) -> None:
         with self.changed:
             self.closing = True
-            self.pixels.stop()
             for job in list(self.jobs.values()):
                 self._stop_job(job)
             self.changed.notify_all()

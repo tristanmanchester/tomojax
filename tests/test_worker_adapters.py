@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 import subprocess
-import sys
 
 import h5py
 import jax
@@ -13,6 +12,7 @@ import pytest
 import tomojax as tj
 
 from ._helpers import write_rc6_dataset
+from .worker_process import command as worker_command
 
 pytestmark = pytest.mark.surface
 
@@ -20,14 +20,17 @@ pytestmark = pytest.mark.surface
 @pytest.fixture(scope="module")
 def worker():
     with subprocess.Popen(
-        [sys.executable, "-m", "tomojax.cli.main", "serve"],
+        worker_command(),
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         text=True,
         bufsize=1,
     ) as proc:
         try:
-            ready = json.loads(proc.stdout.readline())
+            assert json.loads(proc.stdout.readline())["type"] == "ready"
+            while (row := json.loads(proc.stdout.readline()))["state"] != "ready":
+                assert row["state"] == "starting", row
+            ready = row["detail"]
             # The references below run in this process; the worker must use the same backend.
             assert {d["platform"] for d in ready["devices"]} == {jax.default_backend()}, ready
             assert {"validate", "plan", "run", "plane", "inspect", "open"} <= set(

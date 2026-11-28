@@ -8,13 +8,14 @@ from pathlib import Path
 import select
 import signal
 import subprocess
-import sys
 from typing import Any
 
 import numpy as np
 import pytest
 
 import tomojax as tj
+
+from .worker_process import command
 
 pytestmark = pytest.mark.surface
 
@@ -24,11 +25,13 @@ class Worker:
 
     def __init__(self, cwd: Path) -> None:
         self.proc = subprocess.Popen(
-            [sys.executable, "-m", "tomojax.cli.main", "serve"],
+            command(),
             cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, bufsize=0,
         )  # fmt: skip
         self.buffer = b""
         assert self.read()["type"] == "ready"
+        while (row := self.read())["state"] != "ready":
+            assert row["state"] == "starting", row
 
     def read(self) -> dict[str, Any]:
         assert self.proc.stdout is not None
