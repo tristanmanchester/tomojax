@@ -6,9 +6,7 @@ impl AppState {
         let mut descriptor = descriptor.clone();
         let resolve = |storage: &mut Storage| match storage {
             Storage::Hdf5 { path, .. } | Storage::Npy { path, .. } => {
-                if let Some(project) = &self.project
-                    && self.remote_project().is_none()
-                {
+                if let Some(project) = &self.project {
                     *path = project.resolve(Path::new(path)).to_string_lossy().into();
                 }
             }

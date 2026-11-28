@@ -16,6 +16,7 @@ use serde_json::Value;
 
 use crate::protocol::{ArrayDescriptor, Provenance};
 use crate::sync::Locked;
+use crate::worker_path::WorkerPath;
 
 /// The project's own name, from its manifest, without opening the project.
 pub fn manifest_name(root: &Path) -> Option<String> {
@@ -86,6 +87,10 @@ pub struct Asset {
 impl Asset {
     pub fn input(path: PathBuf, managed: bool) -> Self {
         let folder = path.is_dir();
+        Self::at(path, managed, folder)
+    }
+
+    pub fn at(path: PathBuf, managed: bool, folder: bool) -> Self {
         Self {
             id: new_id("scan"),
             name: path
@@ -150,7 +155,7 @@ impl Asset {
             new.parent().map(Path::to_owned),
         );
         self.path = path;
-        self.folder = new.is_dir();
+
         self.managed = false;
         self.issue = None;
         if !self.is_result() {
@@ -436,6 +441,8 @@ pub struct Workspace {
 pub struct Document {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<String>,
+    #[serde(default)]
+    pub results: Option<WorkerPath>,
     pub version: u32,
     pub id: String,
     pub name: String,
@@ -450,7 +457,8 @@ pub struct Document {
 impl Document {
     fn new(path: &Path) -> Self {
         Self {
-            version: 2,
+            version: 3,
+            results: Some(".".into()),
             connection: None,
             id: new_id("project"),
             name: path
@@ -534,6 +542,10 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 impl Project {
     pub fn open(path: &Path, create: bool) -> Result<Self, String> {
+        Self::open_on(path, create, None)
+    }
+
+    pub fn open_on(path: &Path, create: bool, connection: Option<String>) -> Result<Self, String> {
         let path = folder(path, create);
         if create {
             fs::create_dir_all(path).map_err(|e| e.to_string())?;
@@ -554,7 +566,12 @@ impl Project {
         lock.try_lock()
             .map_err(|_| "This project is already open in another TomoJAX window".to_string())?;
         let mut document = if create {
-            Document::new(&root)
+            let mut doc = Document::new(&root);
+            if connection.is_some() {
+                doc.connection = connection;
+                doc.results = None;
+            }
+            doc
         } else {
             let size = fs::metadata(&manifest)
                 .map_err(|e| format!("No project manifest in {}: {e}", root.display()))?
@@ -601,16 +618,29 @@ impl Project {
             }
             document.version = 2;
         }
-        if document.version != 2 {
+        if document.version == 2 {
+            document.version = 3;
+            document.connection = None;
+            document.results = Some(".".into());
+        }
+        if document.version != 3 {
             return Err(format!(
                 "Project version {} is not supported by this build",
                 document.version
             ));
         }
         validate_document(&document)?;
-        document.recover();
-        for directory in ["derived", "inputs", "cache"] {
-            fs::create_dir_all(root.join(directory)).map_err(|e| e.to_string())?;
+        if document.connection.is_none() {
+            document.recover();
+            for directory in ["derived", "inputs", "cache", "kept"] {
+                fs::create_dir_all(root.join(directory)).map_err(|e| e.to_string())?;
+            }
+        } else if document
+            .results
+            .as_ref()
+            .is_some_and(|p| !p.as_str().starts_with('/'))
+        {
+            return Err("A remote results folder needs an absolute path".into());
         }
         if create {
             atomic_write(
@@ -655,22 +685,35 @@ impl Project {
         project.changed()?;
         Ok(project)
     }
+    /// Base for lexical data paths. A local project moves with its manifest.
+    pub fn data_root(&self) -> &Path {
+        match self.document.connection {
+            None => &self.root,
+            Some(_) => Path::new(
+                self.document
+                    .results
+                    .as_ref()
+                    .map_or("", WorkerPath::as_str),
+            ),
+        }
+    }
+
     pub fn resolve(&self, path: &Path) -> PathBuf {
         if path.is_absolute() {
             path.into()
         } else {
-            self.root.join(path)
+            self.data_root().join(path)
         }
     }
     pub fn stored_path(&self, path: &Path) -> PathBuf {
-        path.strip_prefix(&self.root).unwrap_or(path).into()
+        path.strip_prefix(self.data_root()).unwrap_or(path).into()
     }
     pub fn capture(&self, id: &str) -> Result<CapturedInput, String> {
         let asset = self
             .document
             .asset(id)
             .ok_or("The selected input no longer exists")?;
-        Ok(CapturedInput::from_asset(asset, &self.root))
+        Ok(CapturedInput::from_asset(asset, self.data_root()))
     }
     pub fn changed(&mut self) -> Result<(), String> {
         self.document.modified = now_ms();

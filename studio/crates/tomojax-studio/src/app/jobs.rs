@@ -54,6 +54,9 @@ impl AppState {
         ) {
             return self.request_interactive(operation);
         }
+        if self.remote_project().is_some() && operation != "inspect" {
+            return Err("Run processing jobs in a project on this computer.".into());
+        }
         if !self.model.backend.ready {
             return Err("Wait for the TomoJAX worker to become ready".into());
         }
@@ -139,10 +142,10 @@ impl AppState {
             .project
             .as_ref()
             .and_then(|p| {
-                p.document
-                    .jobs
-                    .iter()
-                    .find(|j| j.status == JobStatus::Queued)
+                p.document.jobs.iter().find(|j| {
+                    j.status == JobStatus::Queued
+                        && (p.document.connection.is_none() || j.operation == "inspect")
+                })
             })
             .cloned();
         let Some(job) = job else { return };
@@ -555,7 +558,7 @@ impl AppState {
             .iter()
             .find(|j| j.id == job_id)
             .ok_or("The result's job no longer exists")?;
-        let mut asset = Asset::input(project.stored_path(path), true);
+        let mut asset = Asset::at(project.stored_path(path), true, false);
         asset.id = id.into();
         asset.kind = output.value.kind().into();
         // A projection's result belongs to the input its roles name (for a back
@@ -599,7 +602,7 @@ impl AppState {
             self.retire_output(&output);
             return;
         };
-        let derived = project.root.join("derived");
+        let derived = project.data_root().join("kept");
         let destination = derived.join(&id);
         let path = destination.join("array.npy");
         let mut asset = match self.result_asset(job, &id, &path, &output) {

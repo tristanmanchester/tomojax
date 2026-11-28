@@ -130,7 +130,7 @@ impl AppState {
         let mut reread = true;
         if let Some(project) = &mut self.project {
             let path = project.stored_path(path);
-            let root = project.root.clone();
+            let root = project.data_root().to_owned();
             if let Some(asset) = project.document.asset_mut(id) {
                 asset.relink(path, &root);
                 reread = !asset.is_result();
@@ -241,7 +241,7 @@ impl AppState {
         let Some(project) = &mut self.project else {
             return;
         };
-        let root = project.root.clone();
+        let root = project.data_root().to_owned();
         let Some(asset) = project.document.asset_mut(id) else {
             return;
         };
@@ -1200,7 +1200,8 @@ impl AppState {
                                 .and_then(|a| a.axes.last())
                                 .map(|a| a.unit.clone())
                                 .unwrap_or_default(),
-                            missing: !p.resolve(&a.path).exists(),
+                            missing: p.document.connection.is_none()
+                                && !p.resolve(&a.path).exists(),
                             status: a.issue.clone().unwrap_or_else(|| {
                                 if a.arrays.is_empty() {
                                     "Reading metadata"

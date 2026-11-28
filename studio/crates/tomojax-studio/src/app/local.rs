@@ -33,7 +33,7 @@ impl AppState {
             .map(|(kind, arrays, _)| (kind, arrays));
         if let Some(job) = job {
             if let Some(project) = &mut self.project {
-                let root = project.root.clone();
+                let root = project.data_root().to_owned();
                 if let Some(asset) = project.document.asset_mut(&asset) {
                     if !asset.is_result()
                         && let Ok((_, arrays)) = &read

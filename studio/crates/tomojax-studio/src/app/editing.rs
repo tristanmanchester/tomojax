@@ -67,7 +67,7 @@ impl AppState {
             selected_count,
             inputs: assets
                 .iter()
-                .map(|asset| CapturedInput::from_asset(asset, &project.root))
+                .map(|asset| CapturedInput::from_asset(asset, project.data_root()))
                 .collect(),
         };
         true
