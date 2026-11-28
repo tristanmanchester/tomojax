@@ -1,4 +1,9 @@
-"""Measure three Studio-style panes through a worker's stdio, including decoding."""
+"""Measure three Studio-style panes through a worker's stdio, including decoding.
+
+The worker's own executor writes the synthetic stack into its session folder, so
+the same run measures a local worker or one on another machine through
+`tomojax-worker connect NAME`; the worker removes the stack with its session.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +15,6 @@ import json
 from pathlib import Path
 from statistics import median
 import sys
-import tempfile
 from time import monotonic
 
 import imagecodecs
@@ -27,7 +31,6 @@ class Options(argparse.Namespace):
     seconds: float
     repeats: int
     json_out: Path | None
-    scratch: Path | None
 
 
 @dataclass
@@ -191,13 +194,6 @@ class Viewer:
 
     async def exercise(self, seconds: float, repeats: int) -> dict[str, object]:
         """Scroll the main pane, let it settle, then interrupt a known lossless frame halfway."""
-        if (
-            "fetch"
-            not in msgspec.json.decode(
-                await self.stream.readline(), type=e.WorkerReady
-            ).capabilities
-        ):
-            raise ValueError("worker lacks fetch")
         started = monotonic()
         for slot in range(3):
             self.move(slot, slot)
@@ -253,7 +249,69 @@ class Viewer:
         }
 
 
-async def measure(args: Options, path: Path, shape: tuple[int, ...]) -> dict[str, object]:
+class PythonOutput(msgspec.Struct):
+    """What the stack-writing code printed."""
+
+    stdout: str
+
+
+class PythonResult(msgspec.Struct):
+    """The executor's result for the stack-writing code."""
+
+    value: PythonOutput
+
+
+class Line(msgspec.Struct):
+    """The fields of a reply or event this tool waits on before and after measuring."""
+
+    type: str
+    state: str | None = None
+    request: str | None = None
+    result: msgspec.Raw = msgspec.Raw(b"null")
+
+
+SHAPE = (64, 1024, 1024)
+# Independent standard normal planes, written by the executor into its session folder.
+WRITE_STACK = f"""
+import tempfile
+import numpy as np
+path = tempfile.mkdtemp(prefix="measure-fetch-") + "/planes.npy"
+rng = np.random.default_rng(20261128)
+data = np.lib.format.open_memmap(path, mode="w+", dtype="<f4", shape={SHAPE})
+for index in range({SHAPE[0]}):
+    data[index] = rng.standard_normal({SHAPE[1:]}, dtype=np.float32)
+data.flush()
+print(path)
+"""
+
+
+async def prepare(proc: asyncio.subprocess.Process) -> tuple[Path, dict[str, object]]:
+    """Wait for the executor and have it write the stack on the worker's machine."""
+    assert proc.stdin is not None
+    assert proc.stdout is not None
+    started = monotonic()
+    ready = msgspec.json.decode(await proc.stdout.readline(), type=e.WorkerReady)
+    if "fetch" not in ready.capabilities:
+        raise ValueError("worker lacks fetch")
+    line = msgspec.json.Decoder(Line)
+    while line.decode(await proc.stdout.readline()).state != "ready":
+        pass
+    executor = monotonic()
+    request: dict[str, object] = {"id": "stack", "command": {"type": "python", "code": WRITE_STACK}}
+    proc.stdin.write(msgspec.json.encode(request) + b"\n")
+    while (row := line.decode(await proc.stdout.readline())).request != "stack":
+        pass
+    if row.type != "result":
+        raise RuntimeError(f"the executor could not write the stack: {row}")
+    path = Path(msgspec.json.decode(row.result, type=PythonResult).value.stdout.strip())
+    return path, {
+        "host": ready.host,
+        "executor_ready_s": executor - started,
+        "stack_written_s": monotonic() - executor,
+    }
+
+
+async def measure(args: Options) -> dict[str, object]:
     """Drive the production protocol and reap the command on exit."""
     command = args.command
     if command[:1] == ["--"]:
@@ -261,13 +319,16 @@ async def measure(args: Options, path: Path, shape: tuple[int, ...]) -> dict[str
     command = command or ["tomojax-worker", "serve", "--python", sys.executable]
     proc = await asyncio.create_subprocess_exec(*command, stdin=-1, stdout=-1)
     try:
-        viewer = Viewer(proc, path, shape)
+        path, setup = await prepare(proc)
+        viewer = Viewer(proc, path, SHAPE)
         record = await viewer.exercise(args.seconds, args.repeats)
         viewer.send({"id": "quit", "command": {"type": "shutdown"}})
-        reply = msgspec.json.decode(await viewer.stream.readline(), type=e.ResultReply)
-        if reply.request != "quit" or await proc.wait():
+        replies = msgspec.json.Decoder(Line)
+        while replies.decode(await viewer.stream.readline()).request != "quit":
+            pass
+        if await proc.wait():
             raise RuntimeError("worker shutdown failed")
-        return record
+        return setup | record
     finally:
         if proc.returncode is None:
             proc.kill()
@@ -275,27 +336,20 @@ async def measure(args: Options, path: Path, shape: tuple[int, ...]) -> dict[str
 
 
 def main() -> int:
-    """Create synthetic noise on disk and print the frame timings."""
+    """Print the frame timings."""
     parser = argparse.ArgumentParser(description=__doc__)
     _ = parser.add_argument("--seconds", type=float, default=10, help="held scroll duration")
     _ = parser.add_argument("--repeats", type=int, default=5, help="half-transfer interruptions")
     _ = parser.add_argument("--json-out", type=Path, help="write every measured frame")
-    _ = parser.add_argument("--scratch", type=Path, help="directory for the synthetic NPY stack")
     _ = parser.add_argument(
-        "command", nargs=argparse.REMAINDER, help="stdio worker or slowlink invocation"
+        "command",
+        nargs=argparse.REMAINDER,
+        help="stdio worker, `tomojax-worker connect NAME` or slowlink invocation",
     )
     args = parser.parse_args(namespace=Options())
     if args.seconds <= 0 or args.repeats < 1:
         parser.error("seconds and repeats must be positive")
-    with tempfile.TemporaryDirectory(dir=args.scratch) as directory:
-        path = Path(directory).resolve() / "planes.npy"
-        rng = np.random.default_rng(20261128)
-        shape = (64, 1024, 1024)
-        data = np.lib.format.open_memmap(path, mode="w+", dtype="<f4", shape=shape)
-        for index in range(shape[0]):
-            data[index] = rng.standard_normal((1024, 1024), dtype=np.float32)
-        del data
-        record = asyncio.run(measure(args, path, shape))
+    record = asyncio.run(measure(args))
     if args.json_out:
         _ = args.json_out.write_text(json.dumps(record, indent=2) + "\n")
     print(json.dumps({k: v for k, v in record.items() if k != "frames"}, indent=2))
