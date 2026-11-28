@@ -53,7 +53,7 @@ pub fn now_ms() -> u64 {
 }
 
 pub fn new_id(prefix: &str) -> String {
-    let random = getrandom::u64().expect("Linux random source unavailable");
+    let random = rand::random::<u64>();
     format!("{prefix}-{:x}-{random:016x}", now_ms())
 }
 

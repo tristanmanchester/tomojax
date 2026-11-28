@@ -2791,6 +2791,7 @@ version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f6fa277c67e6ea590466f04c3fe82cb509f0864fe470643e5570de9514a9b11"
 dependencies = [
+ "chacha20",
  "getrandom 0.4.3",
  "rand_core 0.10.1",
 ]
@@ -3445,9 +3446,9 @@ dependencies = [
  "blake3",
  "fastrand",
  "flate2",
- "getrandom 0.4.3",
  "libc",
  "proptest",
+ "rand 0.10.4",
  "serde",
  "serde_json",
  "sha2",
