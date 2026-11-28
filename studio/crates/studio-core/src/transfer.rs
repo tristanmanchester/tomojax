@@ -11,7 +11,7 @@ use tempfile::{Builder, NamedTempFile};
 pub const LIMIT: u64 = 100 << 20;
 const PREFIX: &str = ".tomojax-part-";
 
-fn check_size(size: u64) -> Result<()> {
+pub fn check_size(size: u64) -> Result<()> {
     ensure!(
         size <= LIMIT,
         "file is {size} bytes, limit is {LIMIT} bytes"
@@ -47,7 +47,7 @@ pub struct Upload {
     stage: NamedTempFile,
     destination: PathBuf,
     left: u64,
-    expected: String,
+    expected: Option<String>,
     hash: Sha256,
 }
 
@@ -58,6 +58,15 @@ impl Upload {
             expected.len() == 64 && expected.bytes().all(|b| b.is_ascii_hexdigit()),
             "invalid SHA-256 digest"
         );
+        Self::stage(destination, bytes, Some(expected))
+    }
+
+    pub fn download(destination: PathBuf, bytes: u64) -> Result<Self> {
+        check_size(bytes)?;
+        Self::stage(destination, bytes, None)
+    }
+
+    fn stage(destination: PathBuf, bytes: u64, expected: Option<String>) -> Result<Self> {
         ensure!(!destination.try_exists()?, "destination already exists");
         let parent = destination.parent().context("missing destination folder")?;
         sweep(parent)?;
@@ -85,10 +94,23 @@ impl Upload {
         self.left == 0
     }
 
+    pub fn finish_download(mut self, bytes: u64, digest: String) -> Result<()> {
+        ensure!(
+            bytes == self.stage.as_file().metadata()?.len(),
+            "download size differs"
+        );
+        self.expected = Some(digest);
+        self.publish()
+    }
+
     pub fn publish(self) -> Result<()> {
         ensure!(self.complete(), "upload ended before its declared size");
         ensure!(
-            format!("{:x}", self.hash.finalize()).eq_ignore_ascii_case(&self.expected),
+            format!("{:x}", self.hash.finalize()).eq_ignore_ascii_case(
+                self.expected
+                    .as_deref()
+                    .context("missing transfer digest")?
+            ),
             "upload SHA-256 differs"
         );
         self.stage.as_file().sync_all()?;

@@ -89,7 +89,7 @@ pub fn list(path: &Path, after: Option<&str>) -> Result<Value> {
         entries.push(json!({"name":name,"kind":kind,"size":meta.len(),"modified": meta.modified()?.duration_since(UNIX_EPOCH)?.as_secs_f64(), "hdf5":meta.is_file() && signature(&child).unwrap_or(false)}));
     }
     Ok(
-        json!({"type":"list","path":path,"writable":access(&path, Access::WRITE_OK).is_ok(),"entries":entries,"after":next}),
+        json!({"type":"list","directory":path.is_dir(),"path":path,"writable":access(&path, Access::WRITE_OK).is_ok(),"entries":entries,"after":next}),
     )
 }
 

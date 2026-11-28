@@ -15,3 +15,5 @@ pub mod progress;
 pub mod project;
 pub mod protocol;
 pub mod sync;
+pub mod transfer;
+pub mod worker_path;

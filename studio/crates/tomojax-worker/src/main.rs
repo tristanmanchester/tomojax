@@ -4,8 +4,9 @@ mod files;
 pub mod inline;
 mod jobs;
 use tomojax_io::{metadata, pixels};
+mod results;
 mod session;
-mod transfer;
+use studio_core::transfer;
 mod wire;
 
 use anyhow::{Context, Result, bail, ensure};

@@ -59,6 +59,7 @@ impl Session {
                 }
                 Work::Copy(request)
             }
+            "project_results" => Work::Results(serde_json::from_value(cmd.clone())?),
             "stored" => Work::Stored(
                 files::resolve(cmd["path"].as_str().context("expected path")?)?,
                 cmd.get("inspection").cloned(),
@@ -86,6 +87,7 @@ pub(super) enum Work {
     ),
     Fetch(pixels::Fetch),
     Copy(files::Copy),
+    Results(crate::results::Results),
     Stored(PathBuf, Option<Value>),
     File(String, PathBuf, Option<String>),
 }
@@ -112,6 +114,7 @@ impl Work {
                 })
             }
             Work::Copy(request) => Output::Result(files::copy(&request, cancel, progress)?),
+            Work::Results(request) => Output::Result(request.run()?),
             Work::Stored(path, report) => Output::Result(match report {
                 Some(report) => {
                     let arrays = crate::metadata::inspection_arrays(&report, &path)

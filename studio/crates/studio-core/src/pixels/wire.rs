@@ -102,9 +102,18 @@ impl<R: BufRead> WireReader<R> {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn next(
         &mut self,
         mut flow: impl FnMut(Flow) -> Result<(), String>,
+    ) -> Result<Option<Response>, String> {
+        self.next_with_files(&mut flow, |_, _| false)
+    }
+
+    pub(crate) fn next_with_files(
+        &mut self,
+        mut flow: impl FnMut(Flow) -> Result<(), String>,
+        mut download_block: impl FnMut(&str, &[u8]) -> bool,
     ) -> Result<Option<Response>, String> {
         let mut line = Vec::new();
         loop {
@@ -142,18 +151,18 @@ impl<R: BufRead> WireReader<R> {
                     {
                         return Err("Worker exceeded pixel block or active plane limit".into());
                     }
-                    let data = self.partial.entry(std::mem::take(request)).or_default();
-                    let end = data.len() + *bytes;
-                    // An incompressible 16 MiB plane can grow slightly in the codec.
-                    if end > 17 << 20 {
-                        return Err("Worker pixel payload exceeds the plane limit".into());
-                    }
-                    let start = data.len();
-                    data.resize(end, 0);
                     let before = Instant::now();
+                    let mut block = vec![0; *bytes];
                     self.input
-                        .read_exact(&mut data[start..])
-                        .map_err(|e| format!("Incomplete worker pixel block: {e}"))?;
+                        .read_exact(&mut block)
+                        .map_err(|e| format!("Incomplete worker block: {e}"))?;
+                    if !download_block(request, &block) {
+                        let data = self.partial.entry(std::mem::take(request)).or_default();
+                        if data.len() + bytes.to_owned() > 17 << 20 {
+                            return Err("Worker pixel payload exceeds the plane limit".into());
+                        }
+                        data.extend_from_slice(&block);
+                    }
                     if let Some(size) = self.credit.measure(*bytes, before.elapsed()) {
                         flow(Flow::Window(size))?;
                     }

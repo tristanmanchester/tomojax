@@ -404,8 +404,33 @@ pub struct Output {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Listing {
+    pub path: crate::worker_path::WorkerPath,
+    pub directory: bool,
+    pub writable: bool,
+    pub entries: Vec<FileEntry>,
+    pub after: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileEntry {
+    pub name: String,
+    pub kind: String,
+    pub size: u64,
+    pub hdf5: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResultValue {
+    ProjectResults {
+        path: crate::worker_path::WorkerPath,
+    },
+    List(Listing),
+    Download {
+        bytes: u64,
+        sha256: String,
+    },
     Stored {
         kind: Option<String>,
         arrays: BTreeMap<String, ArrayDescriptor>,

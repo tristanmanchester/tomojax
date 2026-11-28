@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 pub const CAPABILITIES: &[&str] = &[
     "fetch",
     "list",
+    "project_results",
     "stored",
     "peek",
     "copy",

@@ -596,13 +596,16 @@ fn read_worker(
 ) {
     let mut wire = crate::pixels::wire::WireReader::new(BufReader::new(output));
     loop {
-        let message = match wire.next(|flow| {
-            let mut line = serde_json::to_vec(&flow).map_err(|e| e.to_string())?;
-            line.push(b'\n');
-            credits
-                .send(Outgoing::Line(line))
-                .map_err(|e| e.to_string())
-        }) {
+        let message = match wire.next_with_files(
+            |flow| {
+                let mut line = serde_json::to_vec(&flow).map_err(|e| e.to_string())?;
+                line.push(b'\n');
+                credits
+                    .send(Outgoing::Line(line))
+                    .map_err(|e| e.to_string())
+            },
+            |id, block| files.download_block(id, block),
+        ) {
             Ok(Some(response)) => match files.route(response) {
                 Some(response) => Incoming::Response(response),
                 None => continue,
