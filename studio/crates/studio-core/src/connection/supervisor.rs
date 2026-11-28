@@ -116,15 +116,16 @@ impl Owner {
     pub fn status_text(&self, now: Instant) -> String {
         match self.state() {
             State::Closed => "Not connected".into(),
-            State::Connecting => format!("Connecting to {}", self.profile),
+            State::Connecting => format!("Connecting to {}…", self.profile),
             State::Connected(_) => format!("Connected to {}", self.profile),
             State::Waiting(at) => format!(
                 "Reconnecting in {} s",
                 at.saturating_duration_since(now).as_secs_f64().ceil() as u64
             ),
-            State::LoginNeeded => format!("{} needs a login", self.profile),
-            State::LoggingIn => format!("Logging in to {}", self.profile),
-            State::Blocked => self.diagnostic.clone(),
+            State::LoginNeeded => format!("{} needs you to log in", self.profile),
+            State::LoggingIn => format!("Logging in to {}…", self.profile),
+            // The diagnostic says why; the connections panel shows it under this line.
+            State::Blocked => format!("Cannot connect to {}", self.profile),
         }
     }
     pub fn diagnostic(&self) -> &str {

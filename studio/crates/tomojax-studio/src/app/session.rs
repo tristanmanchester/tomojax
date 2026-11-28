@@ -91,6 +91,14 @@ impl AppState {
             |owner| owner.status_text(Instant::now()),
         )
     }
+    /// Why the project's connection cannot be made, as the session reported it.
+    pub(crate) fn connection_problem(&self) -> Option<&str> {
+        self.engine
+            .owner()
+            .filter(|owner| owner.state() == State::Blocked)
+            .map(Owner::diagnostic)
+            .filter(|message| !message.is_empty())
+    }
     pub(crate) fn connection_state(&self) -> Option<State> {
         self.engine.owner().map(Owner::state)
     }

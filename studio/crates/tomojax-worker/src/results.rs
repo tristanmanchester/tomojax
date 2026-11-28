@@ -53,7 +53,8 @@ impl Results {
                 let path = files::resolve(&path)?;
                 ensure!(
                     belongs(&path, &marker),
-                    "This connection reaches other data. Choose the connection that owns this project's results."
+                    "This machine has no results folder for this project at {}. Choose the connection to the machine that holds them.",
+                    path.display()
                 );
                 path
             }
