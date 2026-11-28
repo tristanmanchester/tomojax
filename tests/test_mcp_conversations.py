@@ -21,7 +21,7 @@ pytestmark = pytest.mark.surface
 def conversation(directory, *, legacy, executable=None):
     """Return decoded replies in order, following this session's actual IDs."""
     transcript = []
-    names = {}
+    names = {str(directory): "PROJECT"}
 
     def record(value):
         def visit(item):
@@ -68,6 +68,25 @@ def conversation(directory, *, legacy, executable=None):
         assert [part["type"] for part in reply["content"]] == ["text", "image"]
         record(c.call("control", action="close", target=handle))
         assert record(c.call("control", action="close", target=handle))["isError"]
+        scan = c.call("python", code="register(tj.simulate(size=8, n_views=8).scan)")[
+            "structuredContent"
+        ]["value"]
+        names[scan] = "@scan-HANDLE"
+        saved = c.call("save", source=scan, path="trace #1.nxs")
+        assert not saved["isError"]
+        links = [p["uri"] for p in saved["content"] if p["type"] == "resource_link"]
+        path = directory / "trace #1.nxs"
+        assert links == [path.as_uri(), Path(str(path) + ".manifest.json").as_uri()]
+        # Duration varies between runs. Check that the summary reports the measured
+        # duration before normalizing the number, so a missing duration still fails.
+        seconds = saved["structuredContent"]["wall_seconds"]
+        assert isinstance(seconds, (float, int)) and seconds >= 0
+        duration = re.search(r"([0-9.e+-]+) s$", saved["content"][0]["text"])
+        assert duration and float(duration[1]) == seconds
+        saved["structuredContent"]["wall_seconds"] = "SECONDS"
+        saved["content"][0]["text"] = saved["content"][0]["text"][: duration.start()] + "SECONDS s"
+        record(saved)
+        record(c.call("control", action="close", target=scan))
         result = c.call("python", code="print('q' * 18000)", tasks=True)
         if not legacy:
             task = result["taskId"]
