@@ -10,3 +10,6 @@ publish.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+shlex = "2"
+rustix = { version = "1", features = ["process","fs","system"] }
+signal-hook = "0.3"

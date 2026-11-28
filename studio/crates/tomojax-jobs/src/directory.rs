@@ -75,9 +75,9 @@ fn last_attempt(dir: &Path) -> io::Result<(u64, Option<Outcome>)> {
     let mut attempt = (0, None);
     if let Some(file) = optional(File::open(dir.join("replies.jsonl")))? {
         let mut reader = BufReader::new(file);
-        let mut line = String::new();
-        while reader.read_line(&mut line)? > 0 && line.ends_with('\n') {
-            match serde_json::from_str(&line)? {
+        let mut line = Vec::new();
+        while reader.read_until(b'\n', &mut line)? > 0 && line.ends_with(b"\n") {
+            match serde_json::from_slice(&line)? {
                 Record::Attempt { number } => attempt = (number, None),
                 Record::End { outcome } => attempt.1 = Some(outcome),
                 Record::Other => {}
