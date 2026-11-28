@@ -8,14 +8,7 @@ use studio_core::protocol::Storage;
 
 use crate::npy::Npy;
 
-#[derive(Deserialize, Clone, Copy, PartialEq)]
-#[serde(rename_all = "lowercase")]
-enum Encoding {
-    Float32,
-    Float64,
-    Uint16,
-    Jpeg,
-}
+use studio_core::pixels::Encoding;
 
 #[derive(Deserialize)]
 pub struct Fetch {
@@ -55,7 +48,7 @@ impl Selection {
             start.push(lo);
         }
         let width = match cmd.encoding {
-            Encoding::Float32 => 4,
+            Encoding::Float32 | Encoding::Pco32 => 4,
             Encoding::Float64 => 8,
             Encoding::Uint16 => 2,
             Encoding::Jpeg => 1,
@@ -205,7 +198,7 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
     let mut selection = Selection::new(cmd)?;
     let shape = selection.count.clone();
     let mut range = None;
-    let f32_only = cmd.encoding == Encoding::Float32;
+    let f32_only = matches!(cmd.encoding, Encoding::Float32 | Encoding::Pco32);
     let (floats, doubles) = match &cmd.storage {
         Storage::Npy { path, .. } => {
             let file = Npy::open(path).map_err(anyhow::Error::msg)?;
@@ -238,6 +231,13 @@ pub fn fetch(cmd: &Fetch) -> Result<(Value, Vec<u8>)> {
         Encoding::Float32 => (
             "float32",
             compress(floats.into_iter().map(f32::to_le_bytes))?,
+        ),
+        Encoding::Pco32 => (
+            "pco32",
+            pco::standalone::simple_compress(
+                &floats,
+                &pco::ChunkConfig::default().with_compression_level(8),
+            )?,
         ),
         Encoding::Float64 => (
             "float64",

@@ -16,6 +16,7 @@ serde_json.workspace = true
 studio-core.workspace = true
 hdf5 = { package = "hdf5-metno", version = "0.15", features = ["lzf"] }
 jpeg-encoder = { version = "0.7", features = ["simd"] }
+pco = "1.1"
 zstd = "0.13"
 npyz = "0.9"
 ndarray = "0.17"

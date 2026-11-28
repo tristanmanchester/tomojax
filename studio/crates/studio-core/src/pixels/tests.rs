@@ -161,3 +161,36 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn pco_frames_preserve_scalar_bits_and_reject_a_wrong_declared_count() {
+    let bits = [0, 0x80000000, 0x7fc12345, 0xff800000, 1, 0x7f800000];
+    let values = bits.map(f32::from_bits);
+    let packed = pco::standalone::simple_compress(&values, &pco::ChunkConfig::default()).unwrap();
+    for n in [bits.len(), bits.len() - 1, bits.len() + 1] {
+        let mut data = vec![];
+        block(&mut data, "p", &packed);
+        terminal(&mut data, "p", Encoding::Pco32, [1, n], packed.len());
+        let mut wire = wire::WireReader::new(Cursor::new(data));
+        let Some(Response::Result {
+            result: ResultValue::Pixels(frame),
+            ..
+        }) = wire.next(|_| Ok(())).unwrap()
+        else {
+            panic!("missing pixel terminal")
+        };
+        let result = frame.floats(&[1, n]);
+        if n == bits.len() {
+            assert_eq!(
+                result
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.to_bits())
+                    .collect::<Vec<_>>(),
+                bits
+            );
+        } else {
+            assert!(result.is_err());
+        }
+    }
+}

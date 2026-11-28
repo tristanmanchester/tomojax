@@ -22,6 +22,7 @@ toml = { version = "1", default-features = false, features = ["parse", "display"
 libc = "0.2"
 fastrand = "2"
 zstd = { version = "0.13", default-features = false }
+pco = "1.1"
 zune-jpeg = "0.5"
 
 [dev-dependencies]

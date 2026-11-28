@@ -14,6 +14,7 @@ pub(crate) mod wire;
 #[serde(rename_all = "lowercase")]
 pub enum Encoding {
     Float32,
+    Pco32,
     Float64,
     Uint16,
     Jpeg,
@@ -27,6 +28,8 @@ pub struct Pixels {
     range: Option<[f64; 2]>,
     #[serde(skip)]
     payload: Vec<u8>,
+    #[serde(skip)]
+    wire_rate: Option<f64>,
 }
 
 impl Pixels {
@@ -37,6 +40,11 @@ impl Pixels {
         }
         self.payload = payload;
         Ok(())
+    }
+
+    /// Smoothed block throughput on this connection, in bytes per second.
+    pub fn transfer_rate(&self) -> Option<f64> {
+        self.wire_rate
     }
 
     fn shuffled<const N: usize>(
@@ -69,6 +77,24 @@ impl Pixels {
             .collect())
     }
     pub fn floats(&self, shape: &[usize]) -> Result<Vec<f32>, String> {
+        if self.encoding == Encoding::Pco32 {
+            if self.shape != shape {
+                return Err("Worker returned a different selection".into());
+            }
+            let n = self
+                .shape
+                .iter()
+                .try_fold(1usize, |a, n| a.checked_mul(*n))
+                .filter(|&n| n <= (16 << 20) / size_of::<f32>())
+                .ok_or("Selection exceeds the decoded limit")?;
+            let mut values = vec![0.; n];
+            let progress = pco::standalone::simple_decompress_into(&self.payload, &mut values)
+                .map_err(|e| e.to_string())?;
+            if !progress.finished || progress.n_processed != n {
+                return Err("Pco sample count differs from the declared selection".into());
+            }
+            return Ok(values);
+        }
         Ok(self
             .shuffled(shape, Encoding::Float32)?
             .into_iter()
@@ -92,7 +118,7 @@ impl Pixels {
             return Err("Worker returned a different pixel selection or encoding".into());
         }
         match encoding {
-            Encoding::Float32 => self.floats(&selection.count),
+            Encoding::Float32 | Encoding::Pco32 => self.floats(&selection.count),
             Encoding::Float64 | Encoding::Uint16 => Err("Expected a plane encoding".into()),
             Encoding::Jpeg => {
                 let [low, high] = self
