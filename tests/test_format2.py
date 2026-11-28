@@ -4,9 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-import os
 from pathlib import Path
-from threading import Barrier, Thread
 
 import h5py
 import numpy as np
@@ -92,34 +90,21 @@ def test_remapped_file_uses_original_descriptor(tmp_path, monkeypatch):
     a, b = tmp_path / "active.nxs", tmp_path / "replacement.nxs"
     tj.save(a, old, include_scan=True)
     tj.save(b, replace(old, volume=old.volume + 1000))
-    meet = Barrier(2, timeout=20)
+    enter = h5py.File.__enter__
 
-    def swap():
-        meet.wait()
-        os.replace(b, a)
-        meet.wait()
-
-    both = Thread(target=swap)
-    original = np.memmap
-
-    class RacedMap(original):
-        raced = False
-
-        def __new__(cls, *args, **kwargs):
-            if not cls.raced:
-                cls.raced = True
-                meet.wait()
-                meet.wait()
-            return super().__new__(cls, *args, **kwargs)
+    def replace_after_open(file):
+        opened = enter(file)
+        if Path(opened.filename) == a and b.exists():
+            b.replace(a)
+        return opened
 
     with monkeypatch.context() as mp:
-        mp.setattr(np, "memmap", RacedMap)
-        both.start()
+        mp.setattr(h5py.File, "__enter__", replace_after_open)
         loaded = tj.load_reconstruction(a)
-        both.join(20)
+    assert not b.exists()
+    assert tj.load_reconstruction(a).volume[1, 2, 1] == 1021.25
     assert loaded.scan.projections[2, 1, 3] == 19
     assert loaded.volume[1, 2, 1] == 21.25
-    assert tj.load_reconstruction(a).volume[1, 2, 1] == 1021.25
 
 
 def test_history_survives_scan_free_resave_and_source_removal(tmp_path):
