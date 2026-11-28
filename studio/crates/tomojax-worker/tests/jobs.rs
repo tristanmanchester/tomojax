@@ -151,7 +151,11 @@ fn signal(dir: &Path, signal: rustix::process::Signal) {
     rustix::process::kill_process(pid, signal).unwrap();
 }
 
-fn advanced(dir: &Path) {
+fn advanced(dir: &Path, request_index: usize) {
+    let request = format!(
+        "{}.{request_index}",
+        dir.file_name().unwrap().to_str().unwrap()
+    );
     let mut offset = 0;
     let mut solve = None;
     until(|| {
@@ -159,6 +163,9 @@ fn advanced(dir: &Path) {
         offset = next;
         for row in rows {
             let r = &row["record"];
+            if row["type"] == "progress" && row["request"] != request {
+                continue;
+            }
             if r["event"] == "started" && r["unit"] == "iterations" {
                 solve = r["task"].as_u64();
             }
@@ -181,8 +188,10 @@ fn simulate() -> Value {
 fn fake_slurm_requeues(worker: &mut Worker, op: &Value) {
     let dir = worker.submit("whole", vec![op.clone()]);
     let whole = worker.finished(&dir, "completed");
-    let dir = worker.submit("limited", vec![op.clone()]);
-    advanced(&dir);
+    let mut first = op.clone();
+    first["operation"]["iterations"] = json!(2);
+    let dir = worker.submit("limited", vec![first.clone(), op.clone()]);
+    advanced(&dir, 1);
     signal(&dir, rustix::process::Signal::TERM);
     let resumed = worker.finished(&dir, "completed");
     let compare=Command::new(python()).args(["-c","import sys, numpy as np, tomojax as tj; a,b=(tj.load_reconstruction(p).volume for p in sys.argv[1:]); np.testing.assert_array_equal(a,b)"])
@@ -196,11 +205,16 @@ fn fake_slurm_requeues(worker: &mut Worker, op: &Value) {
         1
     );
     fs::write(worker.root.join("slurm/fail-requeue"), "").unwrap();
-    let dir = worker.submit("requeue-failed", vec![op.clone()]);
-    advanced(&dir);
+    let dir = worker.submit("requeue-failed", vec![first, op.clone()]);
+    advanced(&dir, 1);
     signal(&dir, rustix::process::Signal::TERM);
     let failed = worker.finished(&dir, "interrupted");
     assert_eq!(failed["checkpoint"]["usable"], true);
+    assert_eq!(failed["checkpoint"]["line"], 1);
+    assert_eq!(
+        failed["checkpoint"]["path"],
+        json!(dir.join("checkpoint-1"))
+    );
 }
 
 #[test]
@@ -225,13 +239,13 @@ fn detached_scripts_survive_the_submitter_and_checkpoint_on_signals() {
     let mut op = json!({"type":"run","operation":{"type":"reconstruct","source":{"type":"path","path":scan},"method":"sirt","iterations":300}});
     let mut inline = Worker::start(root.path(), "inline", &python());
     let running = inline.submit("inline-killed", vec![op.clone()]);
-    advanced(&running);
+    advanced(&running, 0);
     inline.kill();
     worker.finished(&running, "interrupted");
     fake_slurm_requeues(&mut worker, &op);
     for i in 0..3 {
         let dir = worker.submit(&format!("cancel-{i}"), vec![op.clone()]);
-        advanced(&dir);
+        advanced(&dir, 0);
         worker.request(json!({"type":"job_control","directory":dir,"action":"cancel"}));
         let canceled = worker.finished(&dir, "canceled");
         assert_eq!(canceled["checkpoint"]["usable"], true);

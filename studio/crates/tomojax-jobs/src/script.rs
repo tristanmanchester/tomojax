@@ -161,8 +161,12 @@ pub enum LauncherChoice {
     Configured,
 }
 
-pub fn prepare(dir: &Path, launcher: Launcher, lines: &mut [Value]) -> io::Result<Option<PathBuf>> {
-    let mut checkpoint = None;
+pub fn prepare(
+    dir: &Path,
+    launcher: Launcher,
+    lines: &mut [Value],
+) -> io::Result<Vec<(usize, PathBuf)>> {
+    let mut checkpoints = Vec::new();
     let count = lines.len();
     for (index, line) in lines.iter_mut().enumerate() {
         if let Some(channel) = line["channel"].as_str() {
@@ -194,27 +198,38 @@ pub fn prepare(dir: &Path, launcher: Launcher, lines: &mut [Value]) -> io::Resul
             )
         {
             if operation["checkpoint"].is_null() && launcher != Launcher::Inline {
-                operation["checkpoint"] = json!(dir.join("checkpoint"));
+                let path = if checkpoints.is_empty() {
+                    dir.join("checkpoint")
+                } else {
+                    // Requeue replays the script from its first line. Each solve needs
+                    // a separate identity so earlier lines can finish again.
+                    dir.join(format!("checkpoint-{index}"))
+                };
+                operation["checkpoint"] = json!(path);
             }
             if let Some(path) = operation["checkpoint"].as_str() {
-                checkpoint = Some(std::path::absolute(path)?);
+                checkpoints.push((index, std::path::absolute(path)?));
             }
         }
     }
-    Ok(checkpoint)
+    Ok(checkpoints)
 }
 
 pub fn checkpoint_status(dir: &Path, launcher: Launcher) -> io::Result<Value> {
-    let Some(path) = prepare(dir, launcher, &mut read_script(dir)?)? else {
-        return Ok(Value::Null);
-    };
-    let usable = match optional(fs::read(path.join("checkpoint.json")))? {
-        Some(bytes) => serde_json::from_slice::<Value>(&bytes)?["entries"]
-            .as_object()
-            .is_some_and(|entries| !entries.is_empty()),
-        None => false,
-    };
-    Ok(json!({"path":path,"usable":usable}))
+    let mut status = Value::Null;
+    for (line, path) in prepare(dir, launcher, &mut read_script(dir)?)? {
+        let usable = match optional(fs::read(path.join("checkpoint.json")))? {
+            Some(bytes) => serde_json::from_slice::<Value>(&bytes)?["entries"]
+                .as_object()
+                .is_some_and(|entries| !entries.is_empty()),
+            None => false,
+        };
+        status = json!({"path":path,"line":line,"usable":usable});
+        if usable {
+            break;
+        }
+    }
+    Ok(status)
 }
 
 pub fn mark(dir: &Path, name: &str) -> io::Result<()> {

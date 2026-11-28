@@ -165,7 +165,7 @@ fn only_checkpointed_lines_and_resource_options_reach_the_launcher() {
         let mut script = vec![line(op)];
         let checkpoint = prepare(tmp.path(), Launcher::Slurm, &mut script).unwrap();
         let expected = matches!(op, "align" | "reconstruct" | "reconstruct_slabs");
-        assert_eq!(checkpoint.is_some(), expected);
+        assert_eq!(!checkpoint.is_empty(), expected);
         assert_eq!(
             script[0]["command"]["operation"]
                 .get("checkpoint")
@@ -176,10 +176,8 @@ fn only_checkpointed_lines_and_resource_options_reach_the_launcher() {
     let mut old: Value = line("reconstruct");
     old["command"]["operation"]["checkpoint"] = json!(tmp.path().join("other"));
     assert_eq!(
-        prepare(tmp.path(), Launcher::Slurm, &mut [old])
-            .unwrap()
-            .unwrap(),
-        tmp.path().join("other")
+        prepare(tmp.path(), Launcher::Slurm, &mut [old]).unwrap(),
+        vec![(0, tmp.path().join("other"))]
     );
     for forbidden in [
         "--clusters=other",
@@ -251,7 +249,7 @@ fn intermediate_slabs_and_a_final_plan_publish_only_the_report() {
         json!({"command":{"type":"plan","operation":{"type":"reconstruct_slabs","checkpoint":"/some/checkpoint"}}}),
     ];
     let checkpoint = prepare(dir, Launcher::Process, &mut lines).unwrap();
-    assert_eq!(checkpoint.unwrap(), dir.join("checkpoint"));
+    assert_eq!(checkpoint, vec![(0, dir.join("checkpoint"))]);
     assert_eq!(
         lines[0]["command"]["operation"]["path"],
         json!(dir.join("work/slabs-0.nxs"))

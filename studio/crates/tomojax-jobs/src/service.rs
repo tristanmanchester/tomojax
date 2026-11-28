@@ -96,7 +96,7 @@ impl Service {
                 .trim()
                 .into(),
         };
-        let checkpoint = prepare(&dir, launcher, &mut script.to_vec())?.is_some();
+        let checkpoint = !prepare(&dir, launcher, &mut script.to_vec())?.is_empty();
         if create_record(&dir.join("launch"), &claim)? {
             let response = if dir.join("cancel").try_exists()? {
                 Some(Submission::Prevented)
