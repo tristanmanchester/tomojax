@@ -56,14 +56,16 @@ def test_each_wire_field_has_a_tool_owner(tmp_path):
         fields = schemas["evaluate"]["$defs"][candidate.__name__]["properties"]
         assert set(candidate.__struct_fields__) <= fields.keys()
     assert op.Run.__struct_fields__ == ("operation", "previews")  # previews owned by M3 panels
+    # Studio consumes Inspect.previews during the job. MCP's preview option
+    # attaches a picture to the completed tool result.
+    assert set(op.Inspect.__struct_fields__) == set(schemas["inspect"]["required"]) | {"previews"}
     for wrapper in (op.Plan, op.Validate):
         assert wrapper.__struct_fields__ == ("operation",)  # dry_run
-    for cls in (op.Inspect, op.Open, *get_args(op.Workflow.__value__)):
+    for cls in (op.Open, *get_args(op.Workflow.__value__)):
         name = cls.__struct_config__.tag
         schema = schemas.get(name) or schemas["edit_scan"]["$defs"][cls.__name__]
         assert set(cls.__struct_fields__) <= schema["properties"].keys()
-        if name != "inspect":
-            assert "dry_run" in schemas.get(name, schemas["edit_scan"])["properties"]
+        assert "dry_run" in schemas.get(name, schemas["edit_scan"])["properties"]
         for key in ("config", "corrections"):
             if key in cls.__struct_fields__:
                 wire = msgspec.json.schema(cls)["$defs"]
