@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.0rc7 (2026-11-28)
 
 - On an offset axial parallel full turn, iterative reconstruction continues only the far detector edge. The coarse fit uses physical line integrals along each measured horizontal chord, including on a rolled panel. FBP, Fourier inversion and the truncation record use the same edge selection.
 
