@@ -143,7 +143,8 @@ fn heading(state: &AppState) -> El {
         && let [views, rows, columns] = asset.shape[..]
     {
         // Projection stacks are (view, v, u), as `tomojax inspect` reports them.
-        details.push(format!("{views} views of {rows} × {columns} pixels"));
+        let plural = if views == 1 { "" } else { "s" };
+        details.push(format!("{views} view{plural} of {rows} × {columns} pixels"));
     } else if !asset.shape.is_empty() {
         details.push(
             asset
