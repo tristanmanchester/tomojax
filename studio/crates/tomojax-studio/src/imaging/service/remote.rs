@@ -14,8 +14,28 @@ struct Flight {
     sent: Instant,
 }
 
+#[derive(Default)]
+struct Registration {
+    source: Option<(u64, Arc<str>)>,
+    axes: reader::CoordinateVectors,
+}
+
+impl Registration {
+    fn axes(&mut self, key: &Key) -> &mut reader::CoordinateVectors {
+        if self
+            .source
+            .as_ref()
+            .is_none_or(|(epoch, source)| *epoch != key.epoch || *source != key.source)
+        {
+            self.axes = Default::default();
+            self.source = Some((key.epoch, key.source.clone()));
+        }
+        &mut self.axes
+    }
+}
+
 impl Flight {
-    fn decode(&self, frame: Pixels) -> Result<Asset, String> {
+    fn decode(&self, frame: Pixels, registration: &mut Registration) -> Result<Asset, String> {
         let values = frame.decode(&self.selection, self.encoding)?;
         let (axis, index) = self
             .request
@@ -25,11 +45,11 @@ impl Flight {
         let data = reader::registered_plane(
             &self.files,
             &self.request.descriptor,
-            axis,
-            index,
+            (axis, index),
             &self.selection,
             values,
             self.encoding != Encoding::Jpeg,
+            registration.axes(&self.request.key),
         )?;
         Ok(Asset::Plane(Arc::new(data)))
     }
@@ -99,8 +119,9 @@ impl Remote {
         let worker = queue.clone();
         let events = send.clone();
         let decoder = std::thread::spawn(move || {
+            let mut registration = Registration::default();
             while let Some((flight, frame)) = worker.pop() {
-                let result = flight.decode(frame);
+                let result = flight.decode(frame, &mut registration);
                 if events.send(flight.completion(result)).is_err() {
                     break;
                 }
@@ -268,6 +289,27 @@ impl Drop for Remote {
 mod tests {
     use super::Pane;
     use std::time::Duration;
+
+    #[test]
+    fn registration_reuses_vectors_only_in_the_same_source_and_epoch() {
+        use super::{Encoding, Key, Registration};
+        let mut reg = Registration::default();
+        let mut key = Key {
+            epoch: 4,
+            source: "a".into(),
+            plane: Some((2, 3)),
+            edge: 1024,
+            encoding: Encoding::Float32,
+        };
+        reg.axes(&key)[0] = Some(Default::default());
+        key.plane = Some((0, 1));
+        assert!(reg.axes(&key)[0].is_some());
+        key.epoch += 1;
+        assert!(reg.axes(&key)[0].is_none());
+        reg.axes(&key)[0] = Some(Default::default());
+        key.source = "b".into();
+        assert!(reg.axes(&key)[0].is_none());
+    }
 
     #[test]
     fn preview_size_tracks_delivery_and_recovers_when_the_link_clears() {
