@@ -26,7 +26,7 @@ This page lists supported workflows, acquisition formats, and numerical backends
 | Checkpoint and resume long runs (Python, CLI, worker, and MCP) | `checkpoint=DIR` on `tj.reconstruct`, `tj.reconstruct_slabs`, and `tj.align`; `--checkpoint DIR` on `tomojax reconstruct` and `tomojax align`; `checkpoint` on worker and MCP `reconstruct`, `reconstruct_slabs`, and `align` ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)) |
 | Plan, watch, or stream JSON progress for CLI and Python runs | `--dry-run`, `--watch-dir DIR`, `--progress auto\|bar\|json\|none`; `tomojax.progress.watch` |
 | Native desktop workspace (projects, live jobs, linked views, 3D volume rendering, comparison) | `tomojax studio [PROJECT_OR_INPUT] [--build] [--demo]` ([Studio](../studio/README.md)) |
-| AI agent integration over MCP stdio | `tomojax mcp` with `tomojax[mcp]` ([MCP guide](mcp.md)) |
+| AI agent integration over MCP stdio | `tomojax mcp` with the `tomojax-worker` binary ([MCP guide](mcp.md)) |
 | Local JSON Lines worker for GUI and custom clients | `tomojax serve` ([worker protocol](protocol.md)) |
 | Multi-GPU reconstruction (single machine; Python, worker, and MCP) | `devices=` on `tj.project`, `tj.backproject`, and `tj.reconstruct` (`fbp`, `cgls`, `fista`), or `devices` on worker and MCP `project`, `backproject`, and `reconstruct` ([several GPUs](large-scans.md#use-several-gpus)) |
 

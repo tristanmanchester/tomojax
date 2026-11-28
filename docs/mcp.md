@@ -8,18 +8,20 @@ What the agent sees after `reconstruct` on the FIPS walnut (three orbits, FISTA)
 
 ## Install and connect
 
-The server needs the `mcp` extra. Install it with the CUDA 12 extra on a GPU machine, and the `spectra` extra if you want `tube_spectrum`:
+Install TomoJAX and the matching `tomojax-studio` wheel in the environment your MCP client will start. The wheel includes the native worker. For local CUDA 12 and physical X-ray spectra, run:
 
 ```bash
-uv pip install "tomojax[mcp,cuda12,spectra]"
+uv pip install "tomojax[cuda12,spectra]" tomojax-studio
 ```
+
+For a remote connection, install TomoJAX with the compute machine’s CPU or CUDA dependencies there. On the laptop, `tomojax mcp --connection NAME` starts the native server for that connection.
 
 ### Claude Code
 
 Add the server, then allow its tools so that calls run without a permission prompt:
 
 ```bash
-claude mcp add tomojax -- uvx --from "tomojax[mcp,cuda12,spectra]" tomojax mcp
+claude mcp add tomojax -- tomojax mcp
 ```
 
 ```json
@@ -36,8 +38,8 @@ Put the `permissions` block in `.claude/settings.json` (shared with the project)
 {
   "mcpServers": {
     "tomojax": {
-      "command": "uvx",
-      "args": ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
+      "command": "tomojax",
+      "args": ["mcp"]
     }
   }
 }
@@ -45,7 +47,7 @@ Put the `permissions` block in `.claude/settings.json` (shared with the project)
 
 A project server needs approval once per checkout. Pre-approve it with `"enabledMcpjsonServers": ["tomojax"]` in `.claude/settings.local.json`.
 
-From a development checkout, run the server from source with `uv run --extra mcp --extra cuda12 tomojax mcp`.
+From a development checkout, build the worker with `(cd studio && cargo build --locked -p tomojax-worker)`. Put the directory containing that binary on `PATH`, then run `uv run tomojax mcp`.
 
 The repository also carries a Claude Code plugin in `plugins/tomojax/`, with this server and the Agent Skill described below.
 
@@ -55,21 +57,21 @@ Any MCP client that starts stdio servers can run the same command. For Codex, ad
 
 ```toml
 [mcp_servers.tomojax]
-command = "uvx"
-args = ["--from", "tomojax[mcp,cuda12,spectra]", "tomojax", "mcp"]
+command = "tomojax"
+args = ["mcp"]
 ```
 
 ### Inspect and submit jobs on another machine
 
-With the native worker built, a stdio client can start the server on your laptop and use a named connection from `~/.config/tomojax/connections.toml`. This Codex entry starts the server for a connection named `beamline`.
+A stdio client on your laptop can use a named connection from `~/.config/tomojax/connections.toml`. This Codex entry starts the server for a connection named `beamline`.
 
 ```toml
 [mcp_servers.tomojax_beamline]
-command = "tomojax-worker"
+command = "tomojax"
 args = ["mcp", "--connection", "beamline"]
 ```
 
-Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The native `python` tool is available on the built-in `local` connection.
+Use `status` to see the connected host, working directory and job launcher. Data paths belong to that machine. If the connection needs a login, run `tomojax-worker connect beamline --login` in your terminal, then retry the call. If the executor is waiting for an allocation, scientific tools return the queue status. You can still list jobs, inspect directories and transfer files. Use `open` for a session handle, then pass that handle to a correction or reconstruction. `view` can show planes, projections, sinograms and differences, report statistics and line profiles, and plot or tabulate poses. Use `preview` to compare corrections or sweep the rotation center. Use marks for points, labels, arrows, boxes, circles and paths. A mark can use array indices or a pixel from one of the last 256 view images. Point marks can snap to a peak, trough or edge. Use a registered feature for an outline that follows the grid across views. The native `python` tool is available on the built-in `local` connection.
 
 To run a small simulation, pass these arguments to `submit`.
 
@@ -114,8 +116,10 @@ tomojax skill -o ~/.codex/skills     # Codex
 | `feature` | Make a named mask from a box, sphere, cylinder or prism, a region grown from seed points, or a band around another feature |
 | `evaluate` | Score candidate settings on held-out views |
 | `save`, `export` | Write a dataset or feature mask with its manifest and return the written `paths`, or [export a registered volume](export.md). Use `dry_run` to inspect destinations, axes, value mapping and space requirements |
-| `control` | Cancel, pause or resume a job; close a handle; reload tool definitions or restart the worker |
-| `python` | Run Python in the worker, with the live handles and `tj` in scope |
+| `control` | Cancel, pause or resume a session request, close a handle or restart the worker |
+| `python` | Run Python on the local connection with live handles and `tj` in scope |
+| `submit`, `jobs`, `cancel_job` | Start, inspect or cancel a durable job on the connected machine |
+| `download`, `upload` | Transfer a file between the laptop and the connected machine |
 
 Tools that accept `dry_run` report what a call would do without running it: the method and grid a reconstruction would use and its memory estimate, the files an export would create, or the shapes a simulation would produce. Use `describe` before setting expert keys in `config`. A call with a malformed argument returns an error that shows the shape the argument should have, so the agent can correct it on the next try.
 
@@ -123,7 +127,7 @@ Tools that accept `dry_run` report what a call would do without running it: the 
 
 Each result is kept in the server as a handle with an ID such as `@scan-3fa94c1e`. Pass that ID to any tool that takes data. Add a member to choose part of a result, for example `@align-91c0d2aa.scan` for the aligned scan or `@sim-07be55f1.phantom` for a simulation's phantom. A bare handle gives the whole object to `save` and `export`, and its main array (volume, projections, phantom or working image) to an array field.
 
-Workflow `source` fields accept acquisition paths through the normal loader. For array fields, use a handle member, a session array such as `@array-…`, a `.npy` file or an explicit HDF5 dataset such as `scan.h5::/entry/data/data`. Literal arrays use storage order. Relative paths resolve against `CLAUDE_PROJECT_DIR` when set, otherwise the server's working directory. Write `./@name` for a file whose name starts with `@`.
+Workflow `source` fields accept acquisition paths through the normal loader. For array fields, use a handle member, a session array such as `@array-…`, a `.npy` file or an explicit HDF5 dataset such as `scan.h5::/entry/data/data`. Literal arrays use storage order. Relative data paths resolve against the connected worker’s directory, shown by `status`. Write `./@name` for a file whose name starts with `@`.
 
 To view or backproject measured line integrals, use `open` and select the scan's `.projections`. For raw counts, open with `kind=frames` and select `.counts`. Use `inspect` with `preview=true` for a first look, or `preview` with `correction_preview` to compare raw and corrected rows.
 
@@ -153,7 +157,7 @@ Every handle reply that carries a scan (`open`, `correct`, `reconstruct`, `align
 
 ### Long jobs that must survive a kill
 
-`reconstruct`, `reconstruct_slabs` and `align` take `checkpoint`, a directory (relative paths resolve against `CLAUDE_PROJECT_DIR` when set, otherwise the server's working directory) where the run saves its state at its work boundaries ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). When a run stops before it finishes, because the agent canceled it with `control`, the scheduler sent `SIGTERM`, or the session ended, it saves first and the tool returns a `canceled` error whose `checkpoint` field names the directory and whose `next` says how to resume. Call the same tool again with the same arguments on the same input to continue; the directory is deleted when the run completes. A `reconstruct_slabs` run keeps finished slabs in `checkpoint/volume.npy` until it completes. A kill that allows no save (`SIGKILL`, a lost node) resumes from the last periodic save.
+`reconstruct`, `reconstruct_slabs` and `align` take `checkpoint`, a directory (relative to the worker’s directory) where the run saves its state at its work boundaries ([resume a run after a kill](large-scans.md#resume-a-run-after-a-kill)). When a run stops before it finishes, because the agent canceled it with `control`, the scheduler sent `SIGTERM`, or the session ended, it saves first and the tool returns a `canceled` error whose `checkpoint` field names the directory and whose `next` says how to resume. Call the same tool again with the same arguments on the same input to continue; the directory is deleted when the run completes. A `reconstruct_slabs` run keeps finished slabs in `checkpoint/volume.npy` until it completes. A kill that allows no save (`SIGKILL`, a lost node) resumes from the last periodic save.
 
 When the server itself is stopped, by `SIGTERM` or by its client closing it, it gives a worker running a checkpointed job up to two minutes to save and exit before it kills the worker. A scheduler may signal only the process it started: on Slurm, `--signal` reached an agent client inside `srun` but not the MCP server the client had started, so the run saved only once the client, on being signaled, stopped its server. Run the client so that it ends its MCP server when it is terminated, as clients do when they exit.
 
@@ -175,7 +179,7 @@ For an inner rim one voxel thick, use `inner=-1, outer=0`. The space beyond ever
 
 `save`, `export` and `reconstruct_slabs` refuse to replace an existing file unless the call sets `force`. Files stay protected while a running operation, open handle, unreleased artifact or reachable Python result depends on them. A dry run releases its inputs on success or failure. Protection covers HDF5 links, virtual datasets, external raw storage, individual frame files and calibration from another scan. It also applies to sidecars and checkpoint directories. A conflicting path, including a symlink or hard link, returns an error naming the input. Choose a different destination. Each output is written beside its destination and moved into place once whole.
 
-The tools carry MCP annotations for clients that decide what to confirm: `status`, `inspect`, `describe`, `view` and `preview` are read-only; `save`, `export`, `reconstruct_slabs`, `control` (which can close handles and restart the worker) and `python` (which runs any code) are marked destructive; the others only add handles. None reaches beyond the local machine.
+The tool annotations identify read-only operations, including `jobs`, and operations that can discard work or replace files, including `cancel_job`, `save`, `export`, `reconstruct_slabs`, `control` and `python`.
 
 ## Python
 
@@ -189,6 +193,6 @@ The server publishes the Agent Skill's references as resources, and its workflow
 
 ## Transport and session lifetime
 
-The server communicates over stdio, running alongside the agent on the same Linux machine as the GPU. Live handles and active tasks persist for the lifetime of the server process; use `save` or `export` for results you want to keep across sessions.
+The server communicates over stdio on the agent’s machine. The connection selects the worker that owns the scan and compute devices. Live handles and active tasks persist for the lifetime of the server process; use `save` or `export` for results you want to keep across sessions.
 
 To export an aligned scan as sinograms, give `export` the scan’s `<handle>.projections` member, a destination path and `axis="v"`. Use `dry_run=true` to inspect the written axes, shape and file list.
