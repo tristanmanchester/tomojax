@@ -146,13 +146,26 @@ impl Remote {
         engine: &mut Engine,
         slots: &mut HashMap<u32, Slot>,
         windows: &[Option<[f32; 2]>],
+        primary: Option<u32>,
     ) -> bool {
         if engine.lifecycle() != &Lifecycle::Ready {
             return false;
         }
         self.leases.retain(|flight| flight.strong_count() > 0);
+        // A transverse thumbnail can hold the HDF5 lock for seconds. Let the
+        // chosen pane show its first preview before competing reads start.
+        let first = primary.filter(|id| {
+            slots.get(id).is_some_and(|slot| {
+                slot.request.key.plane.is_some()
+                    && slot.asset.is_none()
+                    && slot.status == ImagingStatus::Loading
+            })
+        });
         let mut changed = false;
         for (&id, slot) in slots {
+            if first.is_some_and(|first| first != id) {
+                continue;
+            }
             let request = &slot.request;
             let Some((axis, index)) = request.key.plane else {
                 continue;

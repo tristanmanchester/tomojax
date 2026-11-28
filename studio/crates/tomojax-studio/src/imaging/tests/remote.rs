@@ -20,7 +20,7 @@ pub(super) fn advance(imaging: &mut Imaging, engine: &mut Engine) -> bool {
             _ => {}
         }
     }
-    imaging.dispatch(engine, &[Some([-2., 2.]); 8]);
+    imaging.dispatch(engine, &[Some([-2., 2.]); 8], Some(1));
     imaging.poll();
     true
 }
@@ -96,6 +96,33 @@ fn fixtures(directory: &Path) -> (ArrayDescriptor, ArrayDescriptor, ArrayDescrip
         [51, 1, 73],
     );
     (npy, hdf, lines)
+}
+
+#[test]
+#[ignore = "requires TOMOJAX_TEST_PYTHON with the real worker"]
+fn the_main_pane_gets_its_first_picture_before_a_transverse_thumbnail() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, data, _) = fixtures(directory.path());
+    let mut engine = worker(&[]);
+    let mut images = Imaging::default();
+    images.bind(&engine);
+    let until = Instant::now() + Duration::from_secs(15);
+    while engine.lifecycle() != &studio_core::engine::Lifecycle::Ready {
+        engine.poll();
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    images.request_plane(2, data.clone(), 1, 12, 64).unwrap();
+    images.request_plane(1, data, 0, 2, 64).unwrap();
+    let before = engine.pending_count();
+    images.dispatch(&mut engine, &[], Some(1));
+    assert_eq!(engine.pending_count(), before + 1);
+    while images.status(2) != &ImagingStatus::Ready || images.status(1) != &ImagingStatus::Ready {
+        assert!(advance(&mut images, &mut engine) && Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(images.timings().front().unwrap().slot, 1);
+    engine.drain_shutdown(Duration::from_secs(3));
 }
 
 #[test]

@@ -301,7 +301,8 @@ impl AppState {
         if !self.ui.compare_linked {
             windows[7] = None;
         }
-        self.imaging.dispatch(engine, &windows)
+        let primary = (self.ui.workspace != Workspace::Compare).then_some(self.ui.main_view.mark());
+        self.imaging.dispatch(engine, &windows, primary)
     }
 }
 

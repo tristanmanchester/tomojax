@@ -167,6 +167,36 @@ fn registered_projection_fixture() -> (tempfile::TempDir, AppState) {
 }
 
 #[test]
+fn mixed_detector_counts_start_on_a_sample_and_restore_a_chosen_flat() {
+    let (_directory, mut state) = registered_projection_fixture();
+    let asset = &mut state.project.as_mut().unwrap().document.assets[0];
+    let mut counts = asset.arrays.remove("projections").unwrap();
+    counts.axes[0].name = "frame".into();
+    counts.domain = "counts".into();
+    asset.arrays.insert("counts".into(), counts);
+    asset.inspection = json!({"flats_darks":{"first_sample":2}});
+    state.center_sinogram = true;
+    state.refresh_images();
+    drive(&mut state, |state| {
+        state
+            .imaging
+            .plane(4)
+            .is_some_and(|plane| plane.lossless && plane.index == 2)
+    });
+    assert_eq!(state.ui.display.projection_index, 2);
+    state.ui.display.projection_index = 1;
+    let saved = state.capture_workspace();
+    state.restore_workspace(&saved);
+    state.refresh_images();
+    drive(&mut state, |state| {
+        state
+            .imaging
+            .plane(4)
+            .is_some_and(|plane| plane.lossless && plane.index == 1)
+    });
+}
+
+#[test]
 fn default_sinogram_uses_the_central_row_and_preserves_an_explicit_row() {
     let (_directory, mut state) = registered_projection_fixture();
     assert_eq!(state.ui.display.sinogram_row, 2);

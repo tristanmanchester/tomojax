@@ -197,12 +197,17 @@ impl Imaging {
     pub fn bind(&mut self, engine: &Engine) {
         *self.shared.files.locked() = Some(engine.files());
     }
-    pub fn dispatch(&mut self, engine: &mut Engine, windows: &[Option<[f32; 2]>]) -> bool {
+    pub fn dispatch(
+        &mut self,
+        engine: &mut Engine,
+        windows: &[Option<[f32; 2]>],
+        primary: Option<u32>,
+    ) -> bool {
         // Consume completed reads before opening another round of up to MAX_SLOTS fetches.
         let changed = self.poll();
         self.remote
             .as_mut()
-            .is_some_and(|r| r.dispatch(engine, &mut self.slots, windows))
+            .is_some_and(|r| r.dispatch(engine, &mut self.slots, windows, primary))
             || changed
     }
 
