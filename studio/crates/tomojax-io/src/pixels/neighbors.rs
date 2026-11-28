@@ -85,15 +85,20 @@ impl<T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>> Neighbors<T> {
         };
         let axis = key.axis;
         let index = selection.start[axis] - key.start[axis];
-        let hit = self
-            .0
-            .locked()
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, v)| v.clone());
-        let block = if let Some(hit) = hit {
-            hit
-        } else {
+        let hit = self.0.locked().iter().rev().find_map(|(stored, block)| {
+            if stored.file != key.file || stored.dataset != key.dataset || stored.axis != axis {
+                return None;
+            }
+            stored.subgrid(selection).map(|grid| (block.clone(), grid))
+        });
+        if let Some((block, grid)) = hit {
+            let mut view = block.view();
+            for (dimension, slice) in grid.into_iter().enumerate() {
+                view.slice_axis_inplace(Axis(dimension), slice);
+            }
+            return Ok(view.iter().copied().collect());
+        }
+        let block = {
             let mut region = selection.clone();
             region.start = key.start.to_vec();
             region.count = key.count.to_vec();
@@ -118,6 +123,32 @@ impl<T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>> Neighbors<T> {
 }
 
 impl Key {
+    // A finer strip can supply a cropped or coarser pane when every requested
+    // sample is present on the stored grid, including the fixed plane index.
+    fn subgrid(&self, selection: &Selection) -> Option<[ndarray::Slice; 3]> {
+        let mut slices = [ndarray::Slice::from(..); 3];
+        for (a, slice) in slices.iter_mut().enumerate() {
+            let delta = selection.start[a].checked_sub(self.start[a])?;
+            let count = selection.count[a];
+            let stride = if count == 1 {
+                self.stride[a]
+            } else {
+                selection.stride[a]
+            };
+            if !delta.is_multiple_of(self.stride[a]) || !stride.is_multiple_of(self.stride[a]) {
+                return None;
+            }
+            let first = delta / self.stride[a];
+            let step = stride / self.stride[a];
+            let last = first + (count - 1) * step;
+            if last >= self.count[a] {
+                return None;
+            }
+            *slice = ndarray::Slice::new(first as isize, Some((last + 1) as isize), step as isize);
+        }
+        Some(slices)
+    }
+
     fn for_selection<T>(data: &hdf5::Dataset, selection: &Selection) -> Option<Self> {
         let mut count: [usize; 3] = selection.count.as_slice().try_into().ok()?;
         let axis = count.iter().position(|n| *n == 1)?;
@@ -177,6 +208,14 @@ mod tests {
             let s = selection(x);
             assert_eq!(cache.read(&a, &s).unwrap(), s.read::<f32>(&a).unwrap());
         }
+        let mut crop = selection(12);
+        crop.start[0] = 3;
+        crop.count = vec![2, 2, 1];
+        crop.stride = vec![2, 6, 1];
+        assert_eq!(
+            cache.read(&a, &crop).unwrap(),
+            crop.read::<f32>(&a).unwrap()
+        );
         assert_eq!(cache.0.locked().len(), 1);
         let replacement = tmp.path().join("replacement.h5");
         write(&replacement, 50000.);
