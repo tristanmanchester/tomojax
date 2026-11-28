@@ -5,8 +5,14 @@ from __future__ import annotations
 from math import ceil
 from typing import TYPE_CHECKING
 
+from tomojax.errors import InvalidParameter
+
 if TYPE_CHECKING:
     from collections.abc import Iterator, Sequence
+
+    from tomojax.cli.operations import Window
+
+READ_BYTES = 16 << 20
 
 
 def display_sampling(
@@ -59,3 +65,15 @@ def plane_windows(
         selected[d] = (at, at + 1)
         stride, sampling = display_sampling(selected, strides)
         yield d, at, selected, stride, sampling
+
+
+def window(shape: tuple[int, ...], request: Window) -> tuple[range, ...]:
+    roi = request.roi if request.roi is not None else tuple((0, n) for n in shape)
+    stride = request.stride if request.stride is not None else (1,) * len(shape)
+    if len(stride) != len(shape) or any(s < 1 for s in stride):
+        raise InvalidParameter("stride", "supply one positive stride per axis")
+    if len(roi) != len(shape) or any(
+        not 0 <= a < b <= n for (a, b), n in zip(roi, shape, strict=False)
+    ):
+        raise InvalidParameter("roi", f"expected nonempty half-open intervals inside {shape}")
+    return tuple(range(a, b, s) for (a, b), s in zip(roi, stride, strict=True))

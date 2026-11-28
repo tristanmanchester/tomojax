@@ -20,7 +20,7 @@ from tomojax.cli._arguments import explicit_dataset
 from tomojax.cli._features import FEATURE_GROUP, saved_mask_metadata
 from tomojax.cli._frame_reads import frame_pixels, windowed
 from tomojax.cli._handles import owned, stage_array
-from tomojax.cli._planes import plane_windows
+from tomojax.cli._planes import READ_BYTES, plane_windows, window
 from tomojax.cli._results import disk_volume, stored_grid
 from tomojax.core.array_grid import Grid, published, require_same_grid
 from tomojax.core.host_volume import host_array, release
@@ -33,8 +33,6 @@ if TYPE_CHECKING:
     import jax
 
     from tomojax.cli._frame_reads import WindowedFrames
-
-READ_BYTES = 16 << 20
 
 
 class SavedVolume:
@@ -191,18 +189,6 @@ def operator_input(
 def indexed(storage: Storage, data: Any) -> Array:
     axes = tuple(Axis(f"axis{i}", "array", "index", Uniform(0, 1)) for i in range(data.ndim))
     return Array(storage, data.shape, data.dtype.str, axes, "unspecified", "samples")
-
-
-def window(shape: tuple[int, ...], request: op.Window) -> tuple[range, ...]:
-    roi = request.roi if request.roi is not None else tuple((0, n) for n in shape)
-    stride = request.stride if request.stride is not None else (1,) * len(shape)
-    if len(stride) != len(shape) or any(s < 1 for s in stride):
-        raise InvalidParameter("stride", "supply one positive stride per axis")
-    if len(roi) != len(shape) or any(
-        not 0 <= a < b <= n for (a, b), n in zip(roi, shape, strict=False)
-    ):
-        raise InvalidParameter("roi", f"expected nonempty half-open intervals inside {shape}")
-    return tuple(range(a, b, s) for (a, b), s in zip(roi, stride, strict=True))
 
 
 def pixels(data: Any, ranges: tuple[range, ...]) -> np.ndarray:

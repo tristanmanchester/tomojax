@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from tomojax.cli.operations import ExecutionInput
+from tomojax.cli.operations import ExecutionInput, Window
 from tomojax.cli.products import Output, Snapshot
-from tomojax.wire.arrays import Count, Id, Positive, Record
+from tomojax.wire.arrays import Count, Hdf5, Id, Npy, Positive, Record
 from tomojax.wire.progress import Error, Event
 
 INLINE_LIMIT = 8 << 20  # Leave space in the worker outbox for framing and queued replies.
@@ -47,8 +47,50 @@ class Shutdown(Record, tag="shutdown"):
     """Cancel outstanding work and close the session."""
 
 
+PixelEncoding = Literal["jpeg", "float32"]
+
+
+class Fetch(Window, tag="fetch", kw_only=True):
+    """Fetch a plane from registered storage, independently of the executor."""
+
+    storage: Npy | Hdf5
+    shape: tuple[Positive, ...]
+    encoding: PixelEncoding
+    window: tuple[float, float] | None = None
+
+
+class Credit(Record):
+    """Return consumed pixel bytes to the shared flow-control window."""
+
+    credit: Positive
+
+
+class Block(Record, tag="block"):
+    """Read this many raw bytes immediately after the newline."""
+
+    request: Id
+    bytes: Positive
+
+
+class Pixels(Record, tag="pixels"):
+    """Description of the complete payload in the preceding blocks."""
+
+    shape: tuple[Positive, ...]
+    encoding: PixelEncoding
+    bytes: Positive
+    range: tuple[float, float] | None = None
+
+
 type Command = (
-    ExecutionInput | Describe | Devices | Close | Release | ControlRequest | Status | Shutdown
+    Fetch
+    | ExecutionInput
+    | Describe
+    | Devices
+    | Close
+    | Release
+    | ControlRequest
+    | Status
+    | Shutdown
 )
 
 
@@ -135,7 +177,7 @@ class Ack(Record, tag="ack"):
 class ResultReply(Reply, tag="result"):
     """Exactly one terminal on success."""
 
-    result: Output | Description | DeviceList | StatusReport | Ack
+    result: Pixels | Output | Description | DeviceList | StatusReport | Ack
 
 
 class ErrorReply(Reply, tag="error"):
@@ -152,4 +194,4 @@ class ProtocolError(Record, tag="protocol_error"):
     request: str | None = None
 
 
-type Response = Ready | EventReply | ResultReply | ErrorReply | ProtocolError
+type Response = Block | Ready | EventReply | ResultReply | ErrorReply | ProtocolError

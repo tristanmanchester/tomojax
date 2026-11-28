@@ -1,6 +1,6 @@
 # Local worker protocol
 
-Protocol 1 uses UTF-8 JSON Lines. The client writes one request per line. The worker flushes one reply per line on stdout and reserves stderr for diagnostics. The first line is `ready`. Its device IDs are the values to send in operation parameters. Its capabilities name supported top-level command tags. The versioned schemas and fixed conversations in [protocol/](protocol/) are the client contract. Resolve their absolute schema IDs to local files when validating offline.
+Protocol 1 uses UTF-8 JSON Lines. The client writes one request per line. The worker writes reply headers on stdout and reserves stderr for diagnostics. A pixel block header has a binary body. All other replies end at the newline. The first line is `ready`. Its device IDs are the values to send in operation parameters. Its capabilities name supported top-level command tags. The versioned schemas and fixed conversations in [protocol/](protocol/) are the client contract. Resolve their absolute schema IDs to local files when validating offline.
 
 A request has a unique string `id`, a tagged `command` and an optional `channel`. `type` selects the variant of a command, workflow, product or storage reference. Required fields and defaults are in the schemas. Omitting a defaulted field uses its declared default. An explicit null is valid only for a nullable field.
 
@@ -37,6 +37,7 @@ Columns below name accepted input kinds in addition to the options defined by th
 | `run.reconstruct_slabs` | Raw path or frames, slab method, NeXus destination `path`, optional `force`, grid, corrections, config, warm start, epsilon, `flat_weights` (`"views"` default or `"position"`) and `checkpoint` directory | `files.paths` contains the reconstruction and manifest. `info.summary` and the saved volume include whole-scan `truncation`, `config`, `host_slabs`, `source`, resolved `backend` (for Fourier), and iterative stopping diagnostics (including `slab_stopping` on independent planes). `inspect` returns the saved record in `volume.reconstruction_info`. Read the saved reconstruction with `open` or the registered volume at `/entry/volume/data`. |
 | `run.save` | Scan, reconstruction, alignment or simulation member, path, include_scan, force | `files.paths` includes the dataset and manifest. Caller owns committed destinations. |
 | `run.export` | Scan projections, registered volume or mask, path, dtype, range, crop, binning, axis, compress, force | `files.paths` includes the [exported array or file group](export.md) and its manifest. Caller owns committed destinations. |
+| `fetch` | NPY or HDF5 storage, registered shape, plane selection and encoding | Pixel blocks followed by a `pixels` result. See [Fetching a plane](#fetching-a-plane). |
 | `read` | Storage ref or saved volume path, optional half-open `roi`, `stride`, `metadata_only`, or display `mode`/`axis`/`index` | `array` (registered hyperslab up to 16 MiB as session npy, or metadata only) or `planes` when `mode` is set. |
 | `statistics` | Storage ref or saved volume path, optional `roi`, `stride`, `percentiles` and histogram `bins` | `statistics` with finite count, non-finite count, mean, std, percentiles, histogram and unit. |
 | `plane` | Volume member (including phantom or alignment image), axis and index | `plane.plane`, session npy. Works with a saved volume that has no scan. |
@@ -55,6 +56,22 @@ JSON document at `/entry/record`. A slab reconstruction adds the resolved
 solver settings when the final slab has been written. Saved array references
 name the HDF5 signal. The scan signal has axes `(view, v, u)`, and volumes,
 working images and phantoms have axes `(z, y, x)`.
+
+## Fetching a plane
+
+Give `fetch` the storage and shape from the array descriptor. It reads on the I/O threads while the executor works or waits. This request selects every second sample of a volume plane.
+
+```json
+{"id":"p1","channel":"axial","command":{"type":"fetch","storage":{"type":"hdf5","path":"volume.nxs","dataset":"/entry/volume/data"},"shape":[100,1024,1024],"roi":[[7,8],[0,1024],[0,1024]],"stride":[1,2,2],"encoding":"jpeg","window":[-2,2]}}
+```
+
+Supply half-open bounds and positive strides in descriptor order. A stored line detector with shape `(view,u)` can use its registered shape `(view,1,u)`. The result keeps the singleton axes. Use the descriptor for coordinates and units. The decoded plane can occupy up to 16 MiB.
+
+For `jpeg`, the worker maps the two window limits to grey levels 0 and 255, clips outside values and encodes an 8-bit grayscale JPEG at quality 60. A null or omitted window selects the finite minimum and maximum. A zero-width window or a non-finite sample maps to level 0. The terminal reports the window in `range`. For `float32`, decompress the frame with zstd. The four consecutive byte planes hold byte 0 of every little-endian float, then byte 1, byte 2 and byte 3, in C sample order.
+
+When a header such as `{"type":"block","request":"p1","bytes":65536}` arrives, consume the newline, then read exactly that many bytes. The next header starts immediately afterward. Append the bytes to the named request and send `{"credit":65536}` on its own line to return the number consumed. Credit starts at 262,144 bytes across all requests. Each block carries at most 65,536 bytes. Credit lines have no ID or reply.
+
+The worker sends pending JSON replies first. For each block it selects the ready frame with the fewest bytes remaining. Decode a frame when its successful terminal reports its shape, encoding and total byte count. A newer request on the same channel drops unsent blocks of the earlier fetch. Discard any partial frame on a `superseded` error and return credit even for bytes you discard. Up to eight off-channel fetches may be active. A fetch ID becomes available again after its terminal and does not count toward the session ID limit.
 
 ## Progress and array registration
 
@@ -92,7 +109,7 @@ Queued commands run in arrival order. A later admission on the same channel incr
 
 The writer preserves record order. Consecutive pending `advanced` events for one request and task may collapse to the newest event. Previews and their coordinate files are published before their record and stay available for release, including when a newer revision supersedes the job. The worker discards stale preview callbacks and disposes of their private reservations when the adapter exits. A partially written line always finishes before another begins.
 
-On shutdown, stdin EOF or `SIGTERM`, the worker closes admission, cancels outstanding work, wakes paused requests and joins the executor. Keep draining stdout through EOF to receive every terminal, including those after the shutdown acknowledgment. Broken stdout, more than 16 MiB of queued output in addition to the line being written, or two seconds without any writable pipe capacity during final drain means connection loss. The process exits with status 1 after cleanup. A draining client gets status 0. After an unexpected EOF, use the filesystem to check durable destinations whose terminals were lost.
+On shutdown, stdin EOF or `SIGTERM`, the worker closes admission, cancels outstanding work, wakes paused requests and joins the executor. Keep draining stdout through EOF to receive every terminal, including those after the shutdown acknowledgment. Broken stdout, more than 16 MiB of queued JSON lines in addition to the line being written, or two seconds without any writable pipe capacity during final drain means connection loss. The process exits with status 1 after cleanup. A draining client gets status 0. After an unexpected EOF, use the filesystem to check durable destinations whose terminals were lost.
 
 ## Durable files
 

@@ -13,13 +13,14 @@ import signal
 import socket
 import tempfile
 import threading
-from threading import Event, Lock
+from threading import Condition, Event
 from typing import TYPE_CHECKING
 
 import msgspec
 
 import tomojax
 from tomojax.cli import envelope as e, execution as ex, operations as op
+from tomojax.cli._pixel_lane import PixelLane
 from tomojax.cli._session import Session
 from tomojax.wire import progress as w
 
@@ -37,7 +38,8 @@ class _Outbox:
 
     def __init__(self, wake: socket.socket) -> None:
         self.wake = wake
-        self.lock = Lock()
+        self.lock = Condition()
+        self.pixels = PixelLane(self.lock, self.send, self.notify)
         self.queue: deque[tuple[bytes, tuple[str, int] | None]] = deque()
         self.size = 0
         self.lost = False
@@ -57,13 +59,16 @@ class _Outbox:
                 self.lost = True
             else:
                 self.queue.append((data, key))
-            with suppress(BlockingIOError):  # An unread wakeup already covers this change.
-                self.wake.send(b".")
+            self.notify()
+
+    def notify(self) -> None:
+        with suppress(BlockingIOError):  # An unread wakeup already covers this change.
+            self.wake.send(b".")
 
     def take(self) -> memoryview:
         with self.lock:
             if not self.queue:
-                return memoryview(b"")
+                return memoryview(self.pixels.take())
             data, _ = self.queue.popleft()
             self.size -= len(data)
             return memoryview(data)
@@ -92,15 +97,7 @@ class _Input:
         for index, chunk in enumerate(data.split(b"\n")):
             if index:
                 if not self.discard:
-                    try:
-                        request = self.decode.decode(self.buffer)
-                    except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as err:
-                        rid = None
-                        with suppress(msgspec.DecodeError, UnicodeDecodeError, RecursionError):
-                            rid = msgspec.json.decode(self.buffer, type=_RequestId).id
-                        session.emit(e.ProtocolError("invalid_request", str(err), rid))
-                    else:
-                        session.admit(request)
+                    self.admit_line(session)
                 self.buffer.clear()
                 self.discard = False
                 if session.closing:
@@ -111,6 +108,28 @@ class _Input:
                     self.discard = True
                     self.buffer.clear()
                     session.emit(e.ProtocolError("invalid_request", "line exceeds 1 MiB"))
+
+    def admit_line(self, session: Session) -> None:
+        try:
+            request = self.decode.decode(self.buffer)
+        except (msgspec.DecodeError, UnicodeDecodeError, RecursionError) as err:
+            try:
+                credit = msgspec.json.decode(self.buffer, type=e.Credit)
+            except (msgspec.DecodeError, UnicodeDecodeError, RecursionError):
+                self.reject(session, err)
+            else:
+                try:
+                    session.pixels.acknowledge(credit.credit)
+                except ValueError as invalid:
+                    self.reject(session, invalid)
+        else:
+            session.admit(request)
+
+    def reject(self, session: Session, err: Exception) -> None:
+        rid = None
+        with suppress(msgspec.DecodeError, UnicodeDecodeError, RecursionError):
+            rid = msgspec.json.decode(self.buffer, type=_RequestId).id
+        session.emit(e.ProtocolError("invalid_request", str(err), rid))
 
     def read(self, fd: int, session: Session) -> None:
         data = os.read(fd, 65536)
@@ -180,13 +199,16 @@ def serve(
         writer,
         tempfile.TemporaryDirectory(prefix="tomojax-") as root,
         ThreadPoolExecutor(max_workers=1, thread_name_prefix="tomojax-executor") as executor,
+        ThreadPoolExecutor(max_workers=4, thread_name_prefix="tomojax-io") as io,
     ):
         writer.setblocking(False)
         box = _Outbox(writer)
         terminated = Event()
         _stop_on_sigterm(terminated, writer)
         inventory = executor.submit(ready).result() if callable(ready) else ready
-        session = Session(Path(root), execute, box.send, inventory, description)
+        session = Session(Path(root), execute, box.send, inventory, description, box.pixels)
+        for _ in range(4):
+            io.submit(box.pixels.work).add_done_callback(_executor_done)
         box.send(inventory)
         running = executor.submit(session.work)
         running.add_done_callback(_executor_done)
@@ -195,6 +217,7 @@ def serve(
         finally:
             session.stop()
             running.result()
+            io.shutdown()
             session.close()
 
 
@@ -250,6 +273,7 @@ def _ready() -> e.Ready:
         2,
         e.Versions(tomojax.__version__, jax.__version__, cuda, cupy),
         (
+            "fetch",
             "describe",
             "devices",
             "status",

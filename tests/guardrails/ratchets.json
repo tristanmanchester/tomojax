@@ -69,7 +69,7 @@
   },
   "explicit_any": 429,
   "type_casts": 85,
-  "broad_except": 29,
+  "broad_except": 30,
   "studio_allows": 1,
   "studio_long_files": {
     "studio/crates/tomojax-studio/src/app/jobs.rs": 1055,
@@ -155,7 +155,7 @@
     "src/tomojax/recon/fourier.py::C901::_run_host_pipeline"
   ],
   "single_use_helpers": {
-    "tiny": 66,
+    "tiny": 65,
     "forwarders": 9,
     "chained": 6
   },
@@ -164,5 +164,5 @@
   "string_normalizers": 0,
   "first_device_probes": 0,
   "jaxlib_private_imports": 0,
-  "test_private_imports": 139
+  "test_private_imports": 140
 }

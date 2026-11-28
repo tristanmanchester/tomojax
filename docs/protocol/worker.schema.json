@@ -3,10 +3,16 @@
   "$id": "https://tomojax.dev/protocol/worker.schema.json",
   "oneOf": [
     {
+      "$ref": "#/$defs/Credit"
+    },
+    {
       "$ref": "#/$defs/Request"
     },
     {
       "anyOf": [
+        {
+          "$ref": "#/$defs/Block"
+        },
         {
           "$ref": "#/$defs/Ready"
         },
@@ -26,6 +32,7 @@
       "discriminator": {
         "propertyName": "type",
         "mapping": {
+          "block": "#/$defs/Block",
           "ready": "#/$defs/Ready",
           "progress": "#/$defs/EventReply",
           "result": "#/$defs/ResultReply",
@@ -36,6 +43,21 @@
     }
   ],
   "$defs": {
+    "Credit": {
+      "title": "Credit",
+      "description": "Return consumed pixel bytes to the shared flow-control window.",
+      "type": "object",
+      "properties": {
+        "credit": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "credit"
+      ],
+      "additionalProperties": false
+    },
     "Request": {
       "title": "Request",
       "description": "One client line. A non-null channel enables superseding.",
@@ -124,6 +146,9 @@
             {
               "anyOf": [
                 {
+                  "$ref": "#/$defs/Fetch"
+                },
+                {
                   "$ref": "#/$defs/Describe"
                 },
                 {
@@ -148,6 +173,7 @@
               "discriminator": {
                 "propertyName": "type",
                 "mapping": {
+                  "fetch": "#/$defs/Fetch",
                   "describe": "#/$defs/Describe",
                   "devices": "#/$defs/Devices",
                   "close": "#/$defs/Close",
@@ -176,6 +202,116 @@
       "required": [
         "id",
         "command"
+      ],
+      "additionalProperties": false
+    },
+    "Fetch": {
+      "title": "Fetch",
+      "description": "Fetch a plane from registered storage, independently of the executor.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "fetch"
+          ]
+        },
+        "roi": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 2,
+                "prefixItems": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "integer"
+                  }
+                ],
+                "items": false
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stride": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "storage": {
+          "anyOf": [
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy"
+            },
+            {
+              "$ref": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+            }
+          ],
+          "discriminator": {
+            "propertyName": "type",
+            "mapping": {
+              "npy": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Npy",
+              "hdf5": "https://tomojax.dev/protocol/arrays.schema.json#/$defs/Hdf5"
+            }
+          }
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "encoding": {
+          "enum": [
+            "float32",
+            "jpeg"
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "storage",
+        "shape",
+        "encoding"
       ],
       "additionalProperties": false
     },
@@ -401,6 +537,32 @@
       },
       "required": [
         "type"
+      ],
+      "additionalProperties": false
+    },
+    "Block": {
+      "title": "Block",
+      "description": "Read this many raw bytes immediately after the newline.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "block"
+          ]
+        },
+        "request": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "type",
+        "request",
+        "bytes"
       ],
       "additionalProperties": false
     },
@@ -636,6 +798,9 @@
         "result": {
           "anyOf": [
             {
+              "$ref": "#/$defs/Pixels"
+            },
+            {
               "$ref": "https://tomojax.dev/protocol/products.schema.json#/$defs/Output"
             },
             {
@@ -654,6 +819,7 @@
           "discriminator": {
             "propertyName": "type",
             "mapping": {
+              "pixels": "#/$defs/Pixels",
               "output": "https://tomojax.dev/protocol/products.schema.json#/$defs/Output",
               "description": "#/$defs/Description",
               "devices": "#/$defs/DeviceList",
@@ -668,6 +834,64 @@
         "request",
         "channel",
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "Pixels": {
+      "title": "Pixels",
+      "description": "Description of the complete payload in the preceding blocks.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "pixels"
+          ]
+        },
+        "shape": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          }
+        },
+        "encoding": {
+          "enum": [
+            "float32",
+            "jpeg"
+          ]
+        },
+        "bytes": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "range": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "type",
+        "shape",
+        "encoding",
+        "bytes"
       ],
       "additionalProperties": false
     },

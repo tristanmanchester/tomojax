@@ -35,6 +35,7 @@ class Client:
         self.port = port
         self.schema = schema
         self.buffer = b""
+        self.blocks = {}
         self.rows = []
         self.terminal = {}
 
@@ -53,6 +54,16 @@ class Client:
         data, self.buffer = self.buffer.split(b"\n", 1)
         row = json.loads(data)
         self.schema.validate(row)
+        if row["type"] == "block":
+            size = row["bytes"]
+            assert 0 < size <= 65536
+            while len(self.buffer) < size:
+                assert select.select([self.proc.stdout], [], [], 8)[0], "pixel block stalled"
+                part = os.read(self.proc.stdout.fileno(), size - len(self.buffer))
+                assert part
+                self.buffer += part
+            self.blocks.setdefault(row["request"], bytearray()).extend(self.buffer[:size])
+            self.buffer = self.buffer[size:]
         self.rows.append(row)
         if row["type"] in ("error", "result", "progress"):
             assert row["request"] not in self.terminal, "record after terminal"
@@ -519,3 +530,31 @@ sys.exit(main(['serve']))
     )
     assert b"library output" in raw.stderr
     assert [json.loads(line)["type"] for line in raw.stdout.splitlines()] == ["ready", "result"]
+
+
+def test_fetch_overtakes_paused_work_and_retires_queued_bytes(client, tmp_path):
+    rng = np.random.default_rng(19)
+    path = tmp_path / "plane.npy"
+    data = rng.standard_normal((1024, 1024), dtype=np.float32)
+    np.save(path, data)
+    fields = dict(
+        storage=dict(type="npy", path=str(path)), shape=list(data.shape), encoding="float32"
+    )
+    pause(client)
+    client.send("large", "fetch", channel="pane", **fields)
+    while client.read()["type"] != "block":
+        pass
+    client.send("small", "fetch", channel="pane", roi=[[0, 4], [0, 4]], **fields)
+    assert client.end("large")["error"]["kind"] == "superseded"
+    old_bytes = len(client.blocks["large"])
+    assert 0 < old_bytes <= 262144
+    client.proc.stdin.write(json.dumps({"credit": old_bytes}).encode() + b"\n")
+    result = client.end("small")
+    assert result["channel"] == {"name": "pane", "revision": 2}
+    assert result["result"]["shape"] == [4, 4]
+    assert len(client.blocks["small"]) == result["result"]["bytes"]
+    assert len(client.blocks["large"]) == old_bytes
+    client.send("cancel", "control", target="old", action="cancel")
+    assert client.end("old")["error"]["kind"] == "canceled"
+    client.end("cancel")
+    client.shutdown()
