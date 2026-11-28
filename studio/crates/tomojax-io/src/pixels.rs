@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 use studio_core::protocol::Storage;
 
 use crate::npy::Npy;
+#[cfg(feature = "static-hdf5")]
+mod chunks;
 mod neighbors;
 use neighbors::Neighbors;
 

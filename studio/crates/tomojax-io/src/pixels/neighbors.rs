@@ -78,7 +78,7 @@ impl<T> Default for Neighbors<T> {
     }
 }
 
-impl<T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>> Neighbors<T> {
+impl<T: hdf5::H5Type + Send + Copy + From<u8> + From<u16> + From<f32>> Neighbors<T> {
     pub(super) fn read(&self, data: &hdf5::Dataset, selection: &Selection) -> Result<Vec<T>> {
         let Some(key) = Key::for_selection::<T>(data, selection) else {
             return selection.read(data);
@@ -103,9 +103,15 @@ impl<T: hdf5::H5Type + Copy + From<u8> + From<u16> + From<f32>> Neighbors<T> {
             region.start = key.start.to_vec();
             region.count = key.count.to_vec();
             region.stride[axis] = 1;
-            let values = Arc::new(
-                data.read_slice::<T, _, ndarray::Ix3>(region.slab(&region.stride, &region.count))?,
-            );
+            #[cfg(feature = "static-hdf5")]
+            let block = super::chunks::read(data, &region);
+            #[cfg(not(feature = "static-hdf5"))]
+            let block = None;
+            let values = Arc::new(match block {
+                Some(block) => block,
+                None => data
+                    .read_slice::<T, _, ndarray::Ix3>(region.slab(&region.stride, &region.count))?,
+            });
             let mut entries = self.0.locked();
             // Three orthogonal panes, at most 16 MiB each, for each scalar precision.
             if entries.len() == 3 {
