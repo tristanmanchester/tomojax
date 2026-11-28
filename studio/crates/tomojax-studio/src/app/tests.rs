@@ -1944,3 +1944,62 @@ fn a_new_project_lives_in_the_folder_the_save_dialog_names() {
         );
     }
 }
+
+/// Prepare and Reconstruct as a user sees them once TomoJAX is ready: a simulated scan,
+/// the operation's form validated by the worker, and its projection and sinogram on screen.
+#[test]
+#[ignore = "runs a real worker; tools/verify_studio.py captures each workspace"]
+fn ready_workspace_capture() {
+    let Some(settings) = std::env::var_os("TOMOJAX_READY_CAPTURE") else {
+        return;
+    };
+    let (path, size, scale, scene): (PathBuf, String, String, String) =
+        serde_json::from_str(settings.to_str().unwrap()).unwrap();
+    let python = PathBuf::from(std::env::var_os("TOMOJAX_TEST_PYTHON").expect("installed Python"));
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let saved = std::process::Command::new(&python)
+        .args([
+            "-c",
+            "import sys, tomojax as tj; tj.save(sys.argv[1], tj.simulate('shepp', size=64, n_views=90, seed=0).scan)",
+        ])
+        .arg(root.join("Shepp scan.nxs"))
+        .env("JAX_PLATFORMS", "cpu")
+        .status()
+        .unwrap();
+    assert!(saved.success());
+    let mut state = AppState::init();
+    state.open_project(&root.join("Ready forms"), true).unwrap();
+    state.engine = session::Session::local(
+        Engine::spawn_through(
+            &python,
+            state.relay.as_deref().unwrap_or_default(),
+            std::sync::Arc::new(|| {}),
+        )
+        .unwrap(),
+    );
+    state.import_paths(vec![root.join("Shepp scan.nxs")]);
+    drive(&mut state, |s| {
+        s.model.backend.ready && s.metadata_pending == 0
+    });
+    let id = state.project.as_ref().unwrap().document.assets[0]
+        .id
+        .clone();
+    state.model.active_asset = Some(id.clone());
+    state.model.selected_assets.insert(id);
+    let (workspace, operation) = match scene.as_str() {
+        "prepare" => (Workspace::Prepare, "correct"),
+        "reconstruct" => (Workspace::Reconstruct, "reconstruct"),
+        other => panic!("unknown scene {other}"),
+    };
+    state.set_workspace(workspace);
+    state.set_operation(operation, None);
+    state.refresh_images();
+    drive(&mut state, |s| {
+        s.model.validation.phase == validation::Phase::Valid
+            && [PlaneKind::Projection, PlaneKind::Sinogram]
+                .iter()
+                .all(|kind| s.model.planes.get(kind).is_some_and(|p| p.available))
+    });
+    capture_native_viewport(state, &path, &size, &scale);
+}
